@@ -233,12 +233,15 @@ module Switchboard
       height = rows - 1
       scroll(height)
 
+      visible = @rows[@offset, height].to_a
       out = +"\e[H"
-      @rows[@offset, height].to_a.each_with_index do |node, i|
+      visible.each_with_index do |node, i|
         out << "\e[#{i + 1};1H\e[K" << line(node, @offset + i == @cursor, cols)
       end
+      # Erase rows left over from a previous, longer state (e.g. after a
+      # collapse) before drawing the footer at the bottom.
+      out << "\e[#{visible.size + 1};1H\e[0J"
       out << "\e[#{rows};1H\e[K\e[2m#{trunc('j/k ↵ n:new d:del r:↺ q:hide', cols)}\e[0m"
-      out << "\e[0J"
       $stdout.write(out)
     end
 
