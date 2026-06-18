@@ -57,6 +57,7 @@ module Switchboard
     # opens the browser. cwd = worktree so gh infers the right repo.
     def view_pr(worktree, branch, web:)
       return if branch.nil? || branch.strip.empty?
+      return if branch.start_with?("-") # never hand a dash-led name to gh as a flag
 
       args = ["gh", "pr", "view", branch]
       args << "--web" if web

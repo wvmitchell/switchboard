@@ -35,8 +35,11 @@ module Switchboard
       row(visible, path, branch, "br", project)
     end
 
+    # A tab/newline in a display name (emdash names are free-form) would shift
+    # the hidden \t-delimited fields and switch to the wrong worktree, so scrub
+    # control chars from the visible column.
     def row(visible, path, branch, kind, project)
-      "#{visible}\t#{path}\t#{branch}\t#{kind}\t#{project}"
+      "#{visible.tr("\t\n\r", ' ')}\t#{path}\t#{branch}\t#{kind}\t#{project}"
     end
 
     def preview(worktree, model)
@@ -69,7 +72,7 @@ module Switchboard
       out << field("base", blank(project.base_ref) ? "(none)" : project.base_ref)
       out << "\n#{bold('workspaces')} (#{workspaces.size})\n"
       workspaces.each do |w|
-        out << format("  %s %-36s %s\n", w.dirty ? "\e[33m●\e[0m" : "\e[32m○\e[0m",
+        out << format("  %s %-36s %s\n", w.dirty ? DOT_DIRTY : DOT_CLEAN,
                       truncate(w.display_name, 36), pr_badge(w.pr))
       end
       out
@@ -93,9 +96,10 @@ module Switchboard
       "\e[#{color}m#{pr['identifier'] || '#?'} #{state}\e[0m"
     end
 
+    # Same capped, deduped lineage the tree rows use, so the preview's branch
+    # list never disagrees with what you can actually navigate.
     def branches_in(worktree)
-      history = Git.branch_history(worktree.path)
-      history.empty? ? [worktree.branch].compact : history
+      Tree.lineage(worktree)
     end
 
     def field(label, value)
@@ -104,10 +108,6 @@ module Switchboard
 
     def bold(str)
       "\e[1m#{str}\e[0m"
-    end
-
-    def dim(str)
-      "\e[90m#{str}\e[0m"
     end
 
     def blank(str)

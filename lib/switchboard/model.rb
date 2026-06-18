@@ -3,7 +3,7 @@
 module Switchboard
   # A single worktree, the unit you switch between. `branch` is the live HEAD
   # (git truth), `name` is emdash's friendly label when we can recover it.
-  Worktree = Struct.new(:project, :path, :branch, :head, :name, :dirty, :pr, :base, :primary, keyword_init: true) do
+  Worktree = Struct.new(:project, :path, :branch, :name, :dirty, :pr, :base, :primary, keyword_init: true) do
     def leaf
       File.basename(path)
     end
@@ -13,7 +13,7 @@ module Switchboard
     end
   end
 
-  Project = Struct.new(:id, :name, :path, :base_ref, :worktrees, keyword_init: true)
+  Project = Struct.new(:name, :path, :base_ref, :worktrees, keyword_init: true)
 
   # Assembles the project -> worktree tree: git for truth, emdash for enrichment.
   class Model
@@ -26,7 +26,7 @@ module Switchboard
         next unless Dir.exist?(row["path"])
 
         Project.new(
-          id: row["id"], name: row["name"], path: row["path"], base_ref: row["base_ref"],
+          name: row["name"], path: row["path"], base_ref: row["base_ref"],
           worktrees: build_worktrees(row)
         )
       end
@@ -58,7 +58,6 @@ module Switchboard
           project: project["name"],
           path: w[:path],
           branch: branch,
-          head: w[:head],
           name: @emdash.task_names[branch] || @emdash.task_by_leaf[File.basename(w[:path])],
           dirty: Git.dirty?(w[:path]),
           pr: @emdash.prs[branch],

@@ -23,7 +23,7 @@ module Switchboard
     end
 
     def projects
-      query("SELECT id, name, path, base_ref FROM projects ORDER BY name")
+      query("SELECT name, path, base_ref FROM projects ORDER BY name")
     end
 
     # Friendly workspace name keyed by full branch (tasks.task_branch).

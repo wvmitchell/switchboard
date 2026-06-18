@@ -20,9 +20,7 @@ module Switchboard
         {
           path: h["worktree"],
           branch: h["branch"]&.sub("refs/heads/", ""),
-          head: h["HEAD"],
-          bare: h.key?("bare"),
-          detached: h.key?("detached")
+          bare: h.key?("bare")
         }
       end
     end
@@ -47,7 +45,11 @@ module Switchboard
       seen = {}
       File.readlines(head_log).reverse_each do |line|
         m = line.match(/checkout: moving from \S+ to (\S+)/)
-        seen[m[1]] = true if m && !seen.key?(m[1])
+        next unless m
+
+        ref = m[1]
+        next if ref.match?(/\A[0-9a-f]{40}\z/) # detached-HEAD checkout, not a branch
+        seen[ref] = true unless seen.key?(ref)
         break if limit && seen.size >= limit
       end
       seen.keys

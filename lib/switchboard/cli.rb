@@ -26,9 +26,11 @@ module Switchboard
       @model ||= Model.new
     end
 
-    # Absolute path to this binary, so fzf callbacks resolve regardless of cwd.
+    # Absolute path to this binary, so fzf callbacks resolve regardless of cwd
+    # or how the command was invoked (bin/switchboard sets SWITCHBOARD_BIN from
+    # __FILE__; the $0 fallback only matters when loaded some other way).
     def bin
-      File.expand_path($PROGRAM_NAME)
+      ENV["SWITCHBOARD_BIN"] || File.expand_path($PROGRAM_NAME)
     end
 
     def switch
@@ -67,7 +69,7 @@ module Switchboard
     end
 
     def doctor
-      %w[fzf tmux git gh delta sqlite3].each do |tool|
+      %w[fzf tmux git gh sqlite3].each do |tool|
         present = !`command -v #{tool} 2>/dev/null`.strip.empty?
         puts format("  %s %s", present ? "\e[32m✓\e[0m" : "\e[31m✗\e[0m", tool)
       end

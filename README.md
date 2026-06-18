@@ -60,10 +60,10 @@ bind-key s display-popup -E -w 90% -h 80% "/path/to/switchboard/bin/switchboard"
 
 ## Dependencies
 
-`ruby` `fzf` `tmux` `git` · optional: `gh`, `delta`
+`ruby` `fzf` `tmux` `git` `gh` (`gh` powers the PR view/open actions)
 
 ```sh
-brew install fzf git-delta
+brew install fzf gh
 ```
 
 ## Roadmap
