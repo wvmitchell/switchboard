@@ -63,10 +63,19 @@ module Switchboard
       spawn_sidebar(target: name, dir: dir) unless sidebar_pane(name)
     end
 
-    # Pane id of a session's sidebar, or nil.
+    # Pane id of a session's sidebar, or nil. -s covers all the session's
+    # windows so we never spawn a duplicate when one already exists elsewhere.
     def sidebar_pane(target)
-      `tmux list-panes -t #{Shellwords.escape(target)} -F '#\{pane_id} #\{pane_title}' 2>/dev/null`
+      `tmux list-panes -s -t #{Shellwords.escape(target)} -F '#\{pane_id} #\{pane_title}' 2>/dev/null`
         .lines.find { |line| line.include?(SIDEBAR_TITLE) }&.split&.first
+    end
+
+    # A pane's working directory (used to tell which worktree a session is in).
+    def pane_path(pane)
+      return unless pane
+
+      path = `tmux display-message -p -t #{Shellwords.escape(pane)} '#\{pane_current_path}' 2>/dev/null`.strip
+      path.empty? ? nil : path
     end
 
     # Re-assert the sidebar's fixed width. Windows rescale panes proportionally
@@ -94,14 +103,6 @@ module Switchboard
     def poke_current_sidebar
       pane = current_sidebar_pane
       system("tmux", "send-keys", "-t", pane, "C-l", out: File::NULL, err: File::NULL) if pane
-    end
-
-    # Session name a pane belongs to (used to find "you are here").
-    def session_of(pane)
-      return unless pane
-
-      name = `tmux display-message -p -t #{Shellwords.escape(pane)} '#\{session_name}' 2>/dev/null`.strip
-      name.empty? ? nil : name
     end
 
     # Is this pane on the active window of an attached session (i.e. on screen)?

@@ -119,14 +119,15 @@ module Switchboard
       @was_visible = true
     end
 
-    # Snap the cursor to the workspace this sidebar's session belongs to — so
-    # the highlight means "you are here", not "last thing I selected".
+    # Snap the cursor to the workspace this session is in — matched by the
+    # sidebar's working directory, so it works for any session sitting in a
+    # worktree (switchboard, emdash, conductor), not just sb/* session names.
     def cursor_to_current
-      session = Tmux.session_of(ENV["TMUX_PANE"])
-      return unless session
+      here = Tmux.pane_path(ENV["TMUX_PANE"])
+      return unless here
 
       idx = @rows.index do |n|
-        n.kind == "ws" && Tmux.session_name(Worktree.new(project: n.project, path: n.path)) == session
+        n.kind == "ws" && (n.path == here || here.start_with?("#{n.path}/"))
       end
       @cursor = idx if idx
     end
