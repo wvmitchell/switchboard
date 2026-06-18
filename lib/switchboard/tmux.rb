@@ -96,6 +96,14 @@ module Switchboard
       system("tmux", "send-keys", "-t", pane, "C-l", out: File::NULL, err: File::NULL) if pane
     end
 
+    # Session name a pane belongs to (used to find "you are here").
+    def session_of(pane)
+      return unless pane
+
+      name = `tmux display-message -p -t #{Shellwords.escape(pane)} '#\{session_name}' 2>/dev/null`.strip
+      name.empty? ? nil : name
+    end
+
     # Is this pane on the active window of an attached session (i.e. on screen)?
     def visible?(pane)
       return true unless pane

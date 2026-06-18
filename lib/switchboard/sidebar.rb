@@ -43,6 +43,7 @@ module Switchboard
       render          # clear + show the pane instantly (empty)
       rebuild         # structure only (no per-worktree git status) — fast
       refresh_agents
+      cursor_to_current # highlight the workspace this session is in
       loop do
         render
         if IO.select([$stdin], nil, nil, REFRESH)
@@ -96,6 +97,24 @@ module Switchboard
       refresh_agents
     end
 
+    # On switch (hook poke): refresh, then re-center on the workspace we're in.
+    def reload_and_locate
+      reload
+      cursor_to_current
+    end
+
+    # Snap the cursor to the workspace this sidebar's session belongs to — so
+    # the highlight means "you are here", not "last thing I selected".
+    def cursor_to_current
+      session = Tmux.session_of(ENV["TMUX_PANE"])
+      return unless session
+
+      idx = @rows.index do |n|
+        n.kind == "ws" && Tmux.session_name(Worktree.new(project: n.project, path: n.path)) == session
+      end
+      @cursor = idx if idx
+    end
+
     def current
       @rows[@cursor]
     end
@@ -130,7 +149,7 @@ module Switchboard
       when "n"                 then create
       when "d"                 then delete
       when "r"                 then rename
-      when "\f"                then reload # Ctrl-L: internal refresh (hook poke)
+      when "\f"                then reload_and_locate # Ctrl-L (hook poke on switch)
       when "g"                 then @cursor = 0
       when "G"                 then @cursor = @rows.size - 1
       when "q", "\x03"         then return false # q / ^C: hide
