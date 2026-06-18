@@ -81,10 +81,11 @@ module Switchboard
     end
 
     # Tell the current window's sidebar to reload (bound to a session-change
-    # hook, so switching sessions always lands on a fresh tree).
+    # hook, so switching sessions always lands on a fresh tree). Uses C-l (a
+    # non-user key) since `r` is the rename action.
     def poke_current_sidebar
       pane = current_sidebar_pane
-      system("tmux", "send-keys", "-t", pane, "r", out: File::NULL, err: File::NULL) if pane
+      system("tmux", "send-keys", "-t", pane, "C-l", out: File::NULL, err: File::NULL) if pane
     end
 
     # Is this pane on the active window of an attached session (i.e. on screen)?

@@ -16,10 +16,9 @@ module Switchboard
     IDLE = "\e[90m○\e[0m"        # dim: no agent
     BRANCH_FG = "\e[38;5;245m"   # readable medium gray for branch rows
 
-    # Key hints, spread over two readable lines. `r` (reload) is intentionally
-    # omitted — reloading is automatic (session-switch hook + periodic refresh);
-    # the key stays wired up because the hook pokes it to trigger a refresh.
-    FOOTER = ["j/k move · ↵ open/collapse", "n new · d delete · q hide"].freeze
+    # Key hints, spread over two readable lines. Reload isn't shown — it's
+    # automatic; Ctrl-L triggers it internally (the session-switch hook poke).
+    FOOTER = ["j/k move · ↵ open/collapse", "n new · r rename · d delete · q hide"].freeze
 
     def self.run
       new.run
@@ -130,7 +129,8 @@ module Switchboard
       when "\r", "\n"          then enter
       when "n"                 then create
       when "d"                 then delete
-      when "r"                 then reload
+      when "r"                 then rename
+      when "\f"                then reload # Ctrl-L: internal refresh (hook poke)
       when "g"                 then @cursor = 0
       when "G"                 then @cursor = @rows.size - 1
       when "q", "\x03"         then return false # q / ^C: hide
@@ -205,6 +205,30 @@ module Switchboard
         Git.remove_worktree(repo, node.path, force: true)
       end
       Git.delete_branch(repo, node.branch) # safe -d; unmerged branches are kept
+      Tmux.kill(Worktree.new(project: node.project, path: node.path, branch: node.branch,
+                             dirty: false, pr: nil, base: nil, primary: false))
+      reload
+    end
+
+    # Rename a workspace: move its worktree directory (the display name). The
+    # branch is left as-is so its PR link and git identity stay intact.
+    def rename
+      node = current
+      return unless node && node.kind == "ws"
+
+      project = @config.project(node.project)
+      return unless project
+
+      rows, = winsize
+      $stdin.cooked!
+      print "\e[#{rows};1H\e[K\e[?25hrename #{File.basename(node.path)} to › "
+      $stdout.flush
+      newname = $stdin.gets
+      $stdin.raw!
+      return reload if newname.nil? || newname.strip.empty?
+
+      dest = File.join(File.dirname(node.path), Creator.sanitize(newname))
+      Git.move_worktree(project["path"], node.path, dest)
       Tmux.kill(Worktree.new(project: node.project, path: node.path, branch: node.branch,
                              dirty: false, pr: nil, base: nil, primary: false))
       reload

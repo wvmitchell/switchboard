@@ -43,6 +43,11 @@ module Switchboard
       `git -C #{Shellwords.escape(repo)} remote 2>/dev/null`.split
     end
 
+    # Rename a worktree by moving its directory (keeps the branch/PR intact).
+    def move_worktree(repo, old_path, new_path)
+      system("git", "-C", repo, "worktree", "move", old_path, new_path, out: File::NULL, err: File::NULL)
+    end
+
     # Remove a worktree. Without force, git refuses if it's dirty (returns false
     # so the caller can ask before forcing).
     def remove_worktree(repo, path, force: false)
