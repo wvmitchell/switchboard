@@ -16,6 +16,9 @@ module Switchboard
     IDLE = "\e[90m○\e[0m"        # dim: no agent
     BRANCH_FG = "\e[38;5;245m"   # readable medium gray for branch rows
 
+    # Key hints, spread over a couple of lines so they're readable.
+    FOOTER = ["j/k move · ↵ open/collapse", "n new · d delete · r reload · q hide"].freeze
+
     def self.run
       new.run
     end
@@ -241,7 +244,7 @@ module Switchboard
 
     def render
       rows, cols = winsize
-      height = rows - 1
+      height = rows - FOOTER.size
       scroll(height)
 
       visible = @rows[@offset, height].to_a
@@ -250,9 +253,11 @@ module Switchboard
         out << "\e[#{i + 1};1H\e[K" << line(node, @offset + i == @cursor, cols)
       end
       # Erase rows left over from a previous, longer state (e.g. after a
-      # collapse) before drawing the footer at the bottom.
+      # collapse), then draw the footer hints on the bottom rows.
       out << "\e[#{visible.size + 1};1H\e[0J"
-      out << "\e[#{rows};1H\e[K\e[2m#{trunc('j/k ↵ n:new d:del r:↺ q:hide', cols)}\e[0m"
+      FOOTER.each_with_index do |text, i|
+        out << "\e[#{height + 1 + i};1H\e[K\e[2m#{trunc(text, cols)}\e[0m"
+      end
       $stdout.write(out)
     end
 
