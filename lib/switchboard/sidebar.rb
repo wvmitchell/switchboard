@@ -16,8 +16,10 @@ module Switchboard
     IDLE = "\e[90m○\e[0m"        # dim: no agent
     BRANCH_FG = "\e[38;5;245m"   # readable medium gray for branch rows
 
-    # Key hints, spread over a couple of lines so they're readable.
-    FOOTER = ["j/k move · ↵ open/collapse", "n new · d delete · r reload · q hide"].freeze
+    # Key hints, spread over two readable lines. `r` (reload) is intentionally
+    # omitted — reloading is automatic (session-switch hook + periodic refresh);
+    # the key stays wired up because the hook pokes it to trigger a refresh.
+    FOOTER = ["j/k move · ↵ open/collapse", "n new · d delete · q hide"].freeze
 
     def self.run
       new.run
