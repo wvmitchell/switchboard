@@ -35,6 +35,23 @@ module Switchboard
       system("git", "-C", repo, "fetch", "--quiet", out: File::NULL, err: File::NULL)
     end
 
+    # Remove a worktree. Without force, git refuses if it's dirty (returns false
+    # so the caller can ask before forcing).
+    def remove_worktree(repo, path, force: false)
+      args = ["git", "-C", repo, "worktree", "remove"]
+      args << "--force" if force
+      args << path
+      system(*args, out: File::NULL, err: File::NULL)
+    end
+
+    # Delete a branch. Default -d is safe (refuses if unmerged → returns false,
+    # branch kept, no commit loss). -D force-deletes.
+    def delete_branch(repo, branch, force: false)
+      return false if blank?(branch)
+
+      system("git", "-C", repo, "branch", force ? "-D" : "-d", branch, out: File::NULL, err: File::NULL)
+    end
+
     def current_branch(worktree)
       capture(worktree, "rev-parse", "--abbrev-ref", "HEAD").strip
     end

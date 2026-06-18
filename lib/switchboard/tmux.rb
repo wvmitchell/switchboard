@@ -37,6 +37,11 @@ module Switchboard
       system("tmux", "has-session", "-t", "=#{name}", out: File::NULL, err: File::NULL)
     end
 
+    # Kill a worktree's session (if any) — used when deleting a workspace.
+    def kill(worktree)
+      system("tmux", "kill-session", "-t", "=#{session_name(worktree)}", out: File::NULL, err: File::NULL)
+    end
+
     def switch(name)
       if ENV["TMUX"]
         system("tmux", "switch-client", "-t", name)

@@ -6,14 +6,14 @@ require "set"
 module Switchboard
   # The persistent, rendered tree sidebar (no fzf). Lives in a narrow tmux
   # pane, repaints on a short interval to keep agent-activity dots live, and
-  # navigates with j/k. ↵ switches to a workspace (keeping the sidebar beside
-  # you); n creates a worktree inline then drops you into it.
+  # navigates with j/k. ↵ switches to a workspace (or collapses a project);
+  # n creates a worktree inline then drops you in; d deletes a workspace.
   class Sidebar
     REFRESH = 3 # seconds between agent re-scans
 
-    AGENT_ON = "\e[1;32m●\e[0m"    # bright green: a live agent chat
-    IDLE = "\e[90m○\e[0m"          # dim: no agent
-    BRANCH_FG = "\e[38;5;245m"     # readable medium gray for branch rows
+    AGENT_ON = "\e[1;32m●\e[0m"  # bright green: a live agent chat
+    IDLE = "\e[90m○\e[0m"        # dim: no agent
+    BRANCH_FG = "\e[38;5;245m"   # readable medium gray for branch rows
 
     def self.run
       new.run
@@ -23,8 +23,10 @@ module Switchboard
       @config = Config.new
       @cursor = 0
       @offset = 0
-      @nodes = []
+      @nodes = []          # full tree
+      @rows = []           # visible rows (collapsed projects hide their children)
       @agents = Set.new
+      @collapsed = Set.new # project names that are collapsed
     end
 
     def run
@@ -34,33 +36,38 @@ module Switchboard
       pin_width
       render          # clear + show the pane instantly (empty)
       rebuild         # structure only (no per-worktree git status) — fast
-      refresh_agents  # agent dots
+      refresh_agents
       loop do
         render
         if IO.select([$stdin], nil, nil, REFRESH)
           break unless handle(read_key)
         else
           refresh_agents
-          pin_width # re-assert width against terminal/window resizes
+          pin_width
         end
       end
     ensure
       teardown
     end
 
-    # Keep our own pane at the fixed sidebar width.
+    private
+
     def pin_width
       Tmux.pin(ENV["TMUX_PANE"])
     end
 
-    private
-
-    # Structure + PR badges, NOT per-worktree dirty (that's 16 git-status calls
-    # and would stall the paint / make switching flicker). Fast.
+    # Structure + PR badges, NOT per-worktree dirty (16 git-status calls would
+    # stall the paint). Fast.
     def rebuild
       @model = Model.new(@config, with_dirty: false)
       @nodes = Tree.nodes(@model)
-      @cursor = [@cursor, [@nodes.size - 1, 0].max].min
+      recompute_rows
+    end
+
+    # Visible rows = all nodes, minus the children of collapsed projects.
+    def recompute_rows
+      @rows = @nodes.reject { |n| n.kind != "proj" && @collapsed.include?(n.project) }
+      @cursor = @cursor.clamp(0, [@rows.size - 1, 0].max)
     end
 
     def refresh_agents
@@ -72,6 +79,10 @@ module Switchboard
     def reload
       rebuild
       refresh_agents
+    end
+
+    def current
+      @rows[@cursor]
     end
 
     # --- input ---------------------------------------------------------------
@@ -100,33 +111,44 @@ module Switchboard
       case key
       when "j", "\e[B", "\x0E" then move(1)   # down (j / ↓ / ^N)
       when "k", "\e[A", "\x10" then move(-1)  # up   (k / ↑ / ^P)
-      when "\r", "\n"          then switch
+      when "\r", "\n"          then enter
       when "n"                 then create
+      when "d"                 then delete
       when "r"                 then reload
       when "g"                 then @cursor = 0
-      when "G"                 then @cursor = @nodes.size - 1
+      when "G"                 then @cursor = @rows.size - 1
       when "q", "\x03"         then return false # q / ^C: hide
       end
       true
     end
 
     def move(delta)
-      return if @nodes.empty?
+      return if @rows.empty?
 
-      @cursor = (@cursor + delta).clamp(0, @nodes.size - 1)
+      @cursor = (@cursor + delta).clamp(0, @rows.size - 1)
     end
 
-    def switch
-      node = @nodes[@cursor]
-      return if node.nil? || node.kind == "proj"
+    # ↵: collapse/expand a project header, or switch to a workspace/branch.
+    def enter
+      node = current
+      return unless node
 
+      node.kind == "proj" ? toggle_collapse(node.project) : switch(node)
+    end
+
+    def toggle_collapse(project)
+      @collapsed.include?(project) ? @collapsed.delete(project) : @collapsed.add(project)
+      recompute_rows
+    end
+
+    def switch(node)
       Tmux.go(Worktree.new(project: node.project, path: node.path, branch: node.branch,
                            dirty: false, pr: node.pr, base: nil, primary: false))
     end
 
     # Prompt inline, create the worktree (quiet), then drop into it.
     def create
-      node = @nodes[@cursor]
+      node = current
       return unless node
 
       rows, = winsize
@@ -146,6 +168,44 @@ module Switchboard
                              dirty: false, pr: nil, base: nil, primary: false))
       end
       reload
+    end
+
+    # Delete a workspace: remove the worktree (force-confirm if dirty), drop the
+    # branch if safely merged, and kill its tmux session.
+    def delete
+      node = current
+      return unless node && node.kind == "ws"
+
+      project = @config.project(node.project)
+      return unless project
+
+      repo = project["path"]
+      label = File.basename(node.path)
+      return unless confirm("delete #{label}?")
+
+      unless Git.remove_worktree(repo, node.path)
+        return unless confirm("#{label} has uncommitted changes — force?")
+
+        Git.remove_worktree(repo, node.path, force: true)
+      end
+      Git.delete_branch(repo, node.branch) # safe -d; unmerged branches are kept
+      Tmux.kill(Worktree.new(project: node.project, path: node.path, branch: node.branch,
+                             dirty: false, pr: nil, base: nil, primary: false))
+      reload
+    end
+
+    # Single-key y/N confirmation on the bottom row.
+    def confirm(message)
+      rows, = winsize
+      print "\e[#{rows};1H\e[K\e[?25h#{message} [y/N] "
+      $stdout.flush
+      answer = begin
+        $stdin.getc
+      rescue StandardError
+        nil
+      end
+      print "\e[?25l"
+      answer.to_s.downcase == "y"
     end
 
     # --- rendering -----------------------------------------------------------
@@ -174,11 +234,10 @@ module Switchboard
       scroll(height)
 
       out = +"\e[H"
-      @nodes[@offset, height].to_a.each_with_index do |node, i|
-        absolute = @offset + i
-        out << "\e[#{i + 1};1H\e[K" << line(node, absolute == @cursor, cols)
+      @rows[@offset, height].to_a.each_with_index do |node, i|
+        out << "\e[#{i + 1};1H\e[K" << line(node, @offset + i == @cursor, cols)
       end
-      out << "\e[#{rows};1H\e[K\e[2m#{trunc('j/k ↵switch n new r↺ q hide', cols)}\e[0m"
+      out << "\e[#{rows};1H\e[K\e[2m#{trunc('j/k ↵ n:new d:del r:↺ q:hide', cols)}\e[0m"
       out << "\e[0J"
       $stdout.write(out)
     end
@@ -197,7 +256,7 @@ module Switchboard
     # Plain (no color) — used for the highlighted row and as the base text.
     def plain(node)
       case node.kind
-      when "proj" then "▾ #{node.project}"
+      when "proj" then "#{@collapsed.include?(node.project) ? '▸' : '▾'} #{node.project}"
       when "ws"   then "  #{@agents.include?(node.path) ? '●' : '○'} #{node.name}"
       else             "     #{node.last ? '└' : '├'}#{node.active ? '●' : ' '}#{node.branch}"
       end
