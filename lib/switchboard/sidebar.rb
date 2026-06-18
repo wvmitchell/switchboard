@@ -31,6 +31,7 @@ module Switchboard
       return warn("no config — run `switchboard init`") unless Config.exist?
 
       setup
+      pin_width
       render          # clear + show the pane instantly (empty)
       rebuild         # structure only (no per-worktree git status) — fast
       refresh_agents  # agent dots
@@ -40,10 +41,16 @@ module Switchboard
           break unless handle(read_key)
         else
           refresh_agents
+          pin_width # re-assert width against terminal/window resizes
         end
       end
     ensure
       teardown
+    end
+
+    # Keep our own pane at the fixed sidebar width.
+    def pin_width
+      Tmux.pin(ENV["TMUX_PANE"])
     end
 
     private

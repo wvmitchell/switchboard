@@ -18,6 +18,7 @@ module Switchboard
       ensure_session(name, worktree.path)
       ensure_sidebar(name, worktree.path)
       switch(name)
+      pin(sidebar_pane(name)) # snap to fixed width at the now-current client size
     end
 
     # tmux forbids "." and ":" in session names.
@@ -46,11 +47,21 @@ module Switchboard
 
     # Add a sidebar pane to a session's active window if it lacks one.
     def ensure_sidebar(name, dir)
-      spawn_sidebar(target: name, dir: dir) unless sidebar_present?(name)
+      spawn_sidebar(target: name, dir: dir) unless sidebar_pane(name)
     end
 
-    def sidebar_present?(target)
-      panes(target).include?(SIDEBAR_TITLE)
+    # Pane id of a session's sidebar, or nil.
+    def sidebar_pane(target)
+      `tmux list-panes -t #{Shellwords.escape(target)} -F '#\{pane_id} #\{pane_title}' 2>/dev/null`
+        .lines.find { |line| line.include?(SIDEBAR_TITLE) }&.split&.first
+    end
+
+    # Re-assert the sidebar's fixed width. Windows rescale panes proportionally
+    # on resize (and aggressive-resize), which grows an absolute-width sidebar.
+    def pin(pane)
+      return unless pane
+
+      system("tmux", "resize-pane", "-t", pane, "-x", SIDEBAR_WIDTH.to_s, out: File::NULL, err: File::NULL)
     end
 
     # Toggle the sidebar in the CURRENT window — bound to a key.
@@ -80,10 +91,6 @@ module Switchboard
       return if pane.empty?
 
       system("tmux", "select-pane", "-t", pane, "-T", SIDEBAR_TITLE, out: File::NULL, err: File::NULL)
-    end
-
-    def panes(target)
-      `tmux list-panes -t #{Shellwords.escape(target)} -F '#\{pane_title}' 2>/dev/null`
     end
   end
 end
