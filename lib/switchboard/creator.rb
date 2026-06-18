@@ -19,9 +19,9 @@ module Switchboard
       return warn("already exists: #{dest}") if File.exist?(dest)
 
       branch = [config.branch_prefix, name].compact.join("/")
-      base = project["base_ref"]
+      base = project["base_ref"] # e.g. origin/main (global `base`, per-project override)
 
-      Git.fetch(project["path"]) # make sure the base ref is current
+      Git.fetch_base(project["path"], base) # make the base ref current first
       ok = system("git", "-C", project["path"], "worktree", "add", dest, "-b", branch, base,
                   out: File::NULL, err: File::NULL)
       ok ? dest : nil

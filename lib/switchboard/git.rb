@@ -30,9 +30,17 @@ module Switchboard
     end
 
     # Best-effort refresh so a base ref like origin/main is current before we
-    # branch a new worktree from it.
-    def fetch(repo)
-      system("git", "-C", repo, "fetch", "--quiet", out: File::NULL, err: File::NULL)
+    # branch a new worktree from it. Fetches the remote the base lives on
+    # (origin for origin/main) when that's a real remote; else the default.
+    def fetch_base(repo, base)
+      remote = base.to_s.split("/").first
+      args = ["git", "-C", repo, "fetch", "--quiet"]
+      args << remote if remote && remotes(repo).include?(remote)
+      system(*args, out: File::NULL, err: File::NULL)
+    end
+
+    def remotes(repo)
+      `git -C #{Shellwords.escape(repo)} remote 2>/dev/null`.split
     end
 
     # Remove a worktree. Without force, git refuses if it's dirty (returns false

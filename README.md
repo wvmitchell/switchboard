@@ -69,12 +69,17 @@ bind-key s display-popup -E -w 90% -h 80% "/path/to/switchboard/bin/switchboard"
 
 ```yaml
 worktree_root: ~/switchboard/worktrees   # where ^n puts new worktrees
+base: origin/main                        # default ref new worktrees branch from
 branch_prefix: wvmitchell                # optional: new branches become wvmitchell/<name>
 projects:
   - name: myapp
     path: ~/code/myapp
-    base: origin/main
+    base: origin/main                    # optional: per-project override of the base
 ```
+
+`^n` cuts a new branch from `base` (fetching its remote first, e.g. `origin`
+for `origin/main`). `base` defaults to `origin/main`; set it globally or per
+project. The branch is named `<name>` (or `<branch_prefix>/<name>`).
 
 ## Dependencies
 

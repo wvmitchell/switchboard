@@ -34,6 +34,12 @@ module Switchboard
       prefix.to_s.empty? ? nil : prefix
     end
 
+    # Default ref new worktrees branch from. Global, overridable per project.
+    def base
+      b = @data["base"]
+      b.to_s.empty? ? "origin/main" : b
+    end
+
     def projects
       Array(@data["projects"]).filter_map do |p|
         next unless p["name"] && p["path"]
@@ -41,7 +47,7 @@ module Switchboard
         {
           "name" => p["name"],
           "path" => File.expand_path(p["path"]),
-          "base_ref" => p["base"] || "origin/main"
+          "base_ref" => p["base"] || base
         }
       end
     end
