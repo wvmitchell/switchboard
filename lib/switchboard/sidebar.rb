@@ -33,6 +33,7 @@ module Switchboard
       @agents = Set.new
       @collapsed = Set.new # project names that are collapsed
       @ticks = 0
+      @was_visible = false
     end
 
     def run
@@ -44,26 +45,38 @@ module Switchboard
       rebuild         # structure only (no per-worktree git status) — fast
       refresh_agents
       cursor_to_current # highlight the workspace this session is in
+      @was_visible = true
       loop do
         render
         if IO.select([$stdin], nil, nil, REFRESH)
           break unless handle(read_key)
-        elsif Tmux.visible?(ENV["TMUX_PANE"])
-          # On screen + idle: keep agent dots live every tick; rebuild the whole
-          # tree only every TREE_TICKS (catches changes from other sessions
-          # without spawning git on every tick). Switch-time freshness comes
-          # from the client-session-changed hook poking us to reload.
-          refresh_agents
-          pin_width
-          @ticks += 1
-          if @ticks >= TREE_TICKS
-            @ticks = 0
-            rebuild
-          end
+        else
+          tick
         end
       end
     ensure
       teardown
+    end
+
+    # Idle tick. The moment this sidebar comes back on screen (visibility goes
+    # false -> true, i.e. you navigated back), refresh + snap to the current
+    # workspace. While it stays on screen, keep agent dots live and rebuild the
+    # whole tree every TREE_TICKS. Off screen: do nothing.
+    def tick
+      visible = Tmux.visible?(ENV["TMUX_PANE"])
+      if visible && !@was_visible
+        reload_and_locate
+      elsif visible
+        pin_width
+        @ticks += 1
+        if @ticks >= TREE_TICKS
+          @ticks = 0
+          reload
+        else
+          refresh_agents
+        end
+      end
+      @was_visible = visible
     end
 
     private
@@ -97,10 +110,13 @@ module Switchboard
       refresh_agents
     end
 
-    # On switch (hook poke): refresh, then re-center on the workspace we're in.
+    # Refresh, then re-center on the workspace we're in. Called on arrival
+    # (visibility transition) and by the hook poke; marks us visible so the
+    # next tick doesn't treat it as a fresh arrival and re-snap.
     def reload_and_locate
       reload
       cursor_to_current
+      @was_visible = true
     end
 
     # Snap the cursor to the workspace this sidebar's session belongs to — so
