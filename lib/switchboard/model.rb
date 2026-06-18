@@ -2,27 +2,29 @@
 
 module Switchboard
   # A single worktree, the unit you switch between. `branch` is the live HEAD
-  # (git truth), `name` is emdash's friendly label when we can recover it.
-  Worktree = Struct.new(:project, :path, :branch, :name, :dirty, :pr, :base, :primary, keyword_init: true) do
+  # (git truth); the display name is the worktree's directory leaf.
+  Worktree = Struct.new(:project, :path, :branch, :dirty, :pr, :base, :primary, keyword_init: true) do
     def leaf
       File.basename(path)
     end
 
     def display_name
-      name || branch || leaf
+      leaf
     end
   end
 
   Project = Struct.new(:name, :path, :base_ref, :worktrees, keyword_init: true)
 
-  # Assembles the project -> worktree tree: git for truth, emdash for enrichment.
+  # Assembles the project -> worktree tree from switchboard's own config (git
+  # for truth, gh for PR badges). No emdash/Conductor database at runtime.
   class Model
-    def initialize(emdash = Emdash.new)
-      @emdash = emdash
+    def initialize(config = Config.new)
+      @config = config
+      @prs = {}
     end
 
     def projects
-      @projects ||= @emdash.projects.filter_map do |row|
+      @projects ||= @config.projects.filter_map do |row|
         next unless Dir.exist?(row["path"])
 
         Project.new(
@@ -45,22 +47,26 @@ module Switchboard
       projects.find { |p| p.path == path }
     end
 
+    # PR for an arbitrary branch (cached map, accumulated as projects build).
     def pr_for(branch)
-      @emdash.prs[branch]
+      projects # ensure the map is populated
+      @prs[branch]
     end
 
     private
 
     def build_worktrees(project)
+      prs = Pr.for_project(project["name"])
+      @prs.merge!(prs)
+
       Git.worktrees(project["path"]).reject { |w| w[:bare] }.map do |w|
         branch = w[:branch] || Git.current_branch(w[:path])
         Worktree.new(
           project: project["name"],
           path: w[:path],
           branch: branch,
-          name: @emdash.task_names[branch] || @emdash.task_by_leaf[File.basename(w[:path])],
           dirty: Git.dirty?(w[:path]),
-          pr: @emdash.prs[branch],
+          pr: prs[branch],
           base: project["base_ref"],
           primary: w[:path] == project["path"]
         )

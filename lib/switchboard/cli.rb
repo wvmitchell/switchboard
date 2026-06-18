@@ -1,17 +1,25 @@
 # frozen_string_literal: true
 
+require "yaml"
+require "fileutils"
+
 module Switchboard
   # Command dispatch. The `_`-prefixed commands are internal callbacks invoked
-  # by fzf (preview + reload); the rest are the user-facing surface.
+  # by fzf (preview, reload, new); the rest are the user-facing surface.
   module CLI
     module_function
 
     def run(argv)
       case argv.first
       when nil, "switch", "ls" then switch
+      when "init"              then init
+      when "add"               then add_project(argv[1], argv[2], argv[3])
+      when "refresh"           then refresh
       when "_rowpreview"       then row_preview(argv[1], argv[2], argv[3])
       when "_pr"               then pr_action(argv[1], argv[2], argv[3])
+      when "_new"              then new_worktree(argv[1])
       when "_lines"            then lines
+      when "_refresh"          then refresh_and_lines
       when "doctor"            then doctor
       when "version", "-v", "--version" then puts("switchboard #{VERSION}")
       when "help", "-h", "--help"       then help
@@ -22,27 +30,52 @@ module Switchboard
       end
     end
 
+    def config
+      @config ||= Config.new
+    end
+
     def model
-      @model ||= Model.new
+      @model ||= Model.new(config)
     end
 
     # Absolute path to this binary, so fzf callbacks resolve regardless of cwd
-    # or how the command was invoked (bin/switchboard sets SWITCHBOARD_BIN from
-    # __FILE__; the $0 fallback only matters when loaded some other way).
+    # or how the command was invoked (bin/switchboard sets SWITCHBOARD_BIN).
     def bin
       ENV["SWITCHBOARD_BIN"] || File.expand_path($PROGRAM_NAME)
     end
 
     def switch
       ensure_fzf!
+      return unless ensure_config!
+
       selection = Picker.pick(model, bin)
       return unless selection
-      return if selection[:kind] == "proj" # headers aren't switch targets (v1: create here)
+      return new_worktree(selection[:project]) if selection[:key] == "ctrl-n"
+      return if selection[:kind] == "proj" # headers aren't switch targets
 
       worktree = model.find(selection[:path])
       return warn("worktree not found: #{selection[:path]}") unless worktree
 
       Tmux.open(worktree)
+    end
+
+    # Prompt for a name and create a worktree in the given project, then switch
+    # into it. Invoked by fzf's `^n` (become), so it owns the terminal.
+    def new_worktree(project_name)
+      project = config.project(project_name)
+      return warn("unknown project: #{project_name}") unless project
+
+      print "\nnew workspace in #{project_name} › "
+      name = $stdin.gets
+      return if name.nil? || name.strip.empty?
+
+      dest = Creator.create(config, project_name, name)
+      return unless dest
+
+      Tmux.open(Worktree.new(
+                  project: project_name, path: dest, branch: Git.current_branch(dest),
+                  dirty: false, pr: nil, base: project["base_ref"], primary: false
+                ))
     end
 
     # Preview a row, by kind. Called per-line by fzf with (kind, path, branch).
@@ -68,13 +101,52 @@ module Switchboard
       Tree.lines(model).each { |row| puts row }
     end
 
+    # Re-fetch PR badges from gh (bound to ^r), then re-emit the list.
+    def refresh_and_lines
+      refresh
+      lines
+    end
+
+    def refresh
+      config.projects.each do |p|
+        Pr.refresh(p["name"], p["path"]) if Dir.exist?(p["path"])
+      end
+    end
+
+    # Seed the config once from emdash's DB (read-only) if present, then warm
+    # the PR cache. After this, switchboard never reads emdash again.
+    def init
+      if Config.exist?
+        puts "config already exists: #{Config.path}"
+        return
+      end
+
+      projects = seed_projects
+      FileUtils.mkdir_p(File.dirname(Config.path))
+      File.write(Config.path, YAML.dump("worktree_root" => Config::DEFAULT_ROOT, "projects" => projects))
+      puts "wrote #{Config.path} (#{projects.size} projects)"
+      puts "edit it to taste, then run `switchboard` (prefix-s)."
+      refresh unless projects.empty?
+    end
+
+    def add_project(name, path, base = nil)
+      return warn("usage: switchboard add <name> <path> [base-ref]") if name.nil? || path.nil?
+
+      data = Config.exist? ? (YAML.safe_load_file(Config.path) || {}) : { "worktree_root" => Config::DEFAULT_ROOT }
+      entry = { "name" => name, "path" => path }
+      entry["base"] = base if base
+      (data["projects"] ||= []) << entry
+      FileUtils.mkdir_p(File.dirname(Config.path))
+      File.write(Config.path, YAML.dump(data))
+      puts "added #{name} -> #{path}"
+    end
+
     def doctor
       %w[fzf tmux git gh sqlite3].each do |tool|
         present = !`command -v #{tool} 2>/dev/null`.strip.empty?
         puts format("  %s %s", present ? "\e[32m✓\e[0m" : "\e[31m✗\e[0m", tool)
       end
-      db = Emdash.db_path
-      puts(db ? "  \e[32m✓\e[0m emdash db: #{db}" : "  \e[31m✗\e[0m emdash db not found")
+      puts(Config.exist? ? "  \e[32m✓\e[0m config: #{Config.path}" : "  \e[31m✗\e[0m no config — run `switchboard init`")
     end
 
     def ensure_fzf!
@@ -84,21 +156,40 @@ module Switchboard
       exit 1
     end
 
+    def ensure_config!
+      return true if Config.exist?
+
+      warn "No config at #{Config.path}. Run `switchboard init` to import your projects."
+      false
+    end
+
+    # Internal callback helper for seeding (uses the emdash reader once).
+    def seed_projects
+      emdash = Emdash.new
+      return [] unless emdash.available?
+
+      emdash.projects.map { |p| { "name" => p["name"], "path" => p["path"], "base" => p["base_ref"] } }
+    end
+
     def help
       puts <<~HELP
-        switchboard — keyboard-only worktree switcher
+        switchboard — keyboard-only worktree switcher + creator
 
         usage
-          switchboard           open the switcher (fzf)
-          switchboard doctor    check dependencies
-          switchboard help      show this help
+          switchboard              open the switcher (fzf)
+          switchboard init         create config (imports projects from emdash once)
+          switchboard add N P [B]  register a project (name, repo path, base ref)
+          switchboard refresh      re-fetch PR badges from gh
+          switchboard doctor       check dependencies + config
+          switchboard help         show this help
 
         in the switcher
-          ↑↓   move (workspaces, and a workspace's branches inline)
+          ↑↓   move (projects, workspaces, and a workspace's branches)
           ↵    switch to the highlighted worktree's tmux session
+          ^n   create a new worktree in the highlighted project
           ^o   open the highlighted branch's PR in the browser
           ^v   view the highlighted branch's PR in the terminal
-          ^r   reload the list
+          ^r   refresh PR badges + reload
           esc  cancel
       HELP
     end

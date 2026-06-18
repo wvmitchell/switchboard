@@ -1,15 +1,19 @@
 # frozen_string_literal: true
 
 require_relative "switchboard/version"
+require_relative "switchboard/config"
 require_relative "switchboard/emdash"
 require_relative "switchboard/git"
+require_relative "switchboard/pr"
 require_relative "switchboard/model"
 require_relative "switchboard/view"
 require_relative "switchboard/tree"
+require_relative "switchboard/creator"
 require_relative "switchboard/picker"
 require_relative "switchboard/tmux"
 require_relative "switchboard/cli"
 
-# Keyboard-only switcher over the git worktrees emdash (and plain git) create.
+# Keyboard-only, standalone switcher/creator over git worktrees. Reads its own
+# config (no emdash/Conductor DB at runtime); discovers worktrees via git.
 module Switchboard
 end

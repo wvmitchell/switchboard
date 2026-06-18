@@ -29,6 +29,12 @@ module Switchboard
       !capture(worktree, "status", "--porcelain").strip.empty?
     end
 
+    # Best-effort refresh so a base ref like origin/main is current before we
+    # branch a new worktree from it.
+    def fetch(repo)
+      system("git", "-C", repo, "fetch", "--quiet", out: File::NULL, err: File::NULL)
+    end
+
     def current_branch(worktree)
       capture(worktree, "rev-parse", "--abbrev-ref", "HEAD").strip
     end

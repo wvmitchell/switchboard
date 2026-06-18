@@ -21,11 +21,16 @@ module Switchboard
         io.read
       end
 
-      return nil if selected.nil? || selected.strip.empty?
+      return nil if selected.nil? || selected.empty?
+
+      # --expect prints the pressed key on line 1, then the selected row.
+      key, row = selected.split("\n", 2)
+      return nil if row.nil? || row.strip.empty?
 
       # fields: visible \t path \t branch \t kind \t project
-      fields = selected.split("\t")
-      { path: fields[1], branch: fields[2], kind: fields[3]&.strip }
+      fields = row.split("\t")
+      { key: key.to_s.strip, path: fields[1], branch: fields[2],
+        kind: fields[3]&.strip, project: fields[4]&.strip }
     end
 
     def fzf_command(bin)
@@ -40,11 +45,15 @@ module Switchboard
         "--with-nth", "1",
         "--no-multi",
         "--prompt", "switch › ",
-        "--header", "↵ switch    ^o PR in browser    ^v PR in terminal    ^r reload    esc cancel",
+        "--header", "↵ switch    ^n new    ^o PR (browser)    ^v PR (terminal)    ^r refresh    esc",
+        # ^n exits fzf cleanly (reported via --expect) and is handled by the
+        # parent process, which owns the popup's tty. `become` can't be used
+        # here: it would inherit the captured-stdout pipe and tangle the result.
+        "--expect", "ctrl-n",
         # preview args: kind, path, branch (hidden fields 4, 2, 3)
         "--preview", "#{escaped} _rowpreview {4} {2} {3}",
         "--preview-window", "right,55%,border-left,wrap",
-        "--bind", "ctrl-r:reload(#{escaped} _lines)",
+        "--bind", "ctrl-r:reload(#{escaped} _refresh)",
         "--bind", "ctrl-o:execute-silent(#{escaped} _pr {2} {3} web)",
         "--bind", "ctrl-v:execute(#{escaped} _pr {2} {3} term)",
         # preview scrolling on keys that pass through tmux reliably
