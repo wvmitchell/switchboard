@@ -1,0 +1,27 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# A tmux popup runs in a non-interactive shell that doesn't load rbenv (set up
+# in .zshrc), so `env ruby` can resolve to macOS system Ruby 2.6 — too old for
+# methods like filter_map. If so, re-exec once under a modern ruby. The
+# SB_REEXEC guard prevents any chance of an exec loop.
+if RUBY_VERSION < "2.7" && !ENV["SB_REEXEC"]
+  modern = [
+    File.expand_path("~/.rbenv/shims/ruby"),
+    "/opt/homebrew/opt/ruby/bin/ruby",
+    "/opt/homebrew/bin/ruby",
+    "/usr/local/bin/ruby"
+  ].find { |path| File.executable?(path) }
+
+  if modern
+    ENV["SB_REEXEC"] = "1"
+    exec(modern, __FILE__, *ARGV)
+  end
+  abort "switchboard needs Ruby >= 2.7 (running #{RUBY_VERSION}); none found on PATH"
+end
+
+# Resolve lib/ relative to this script (works even when symlinked onto PATH).
+$LOAD_PATH.unshift File.expand_path("../lib", __dir__)
+require "switchboard"
+
+Switchboard::CLI.run(ARGV)
