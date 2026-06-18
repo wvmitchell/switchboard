@@ -34,6 +34,7 @@ module Switchboard
       @collapsed = Set.new # project names that are collapsed
       @ticks = 0
       @was_visible = false
+      @current_path = nil # worktree this sidebar's session is in (shown bold)
     end
 
     def run
@@ -41,10 +42,8 @@ module Switchboard
 
       setup
       pin_width
-      render          # clear + show the pane instantly (empty)
-      rebuild         # structure only (no per-worktree git status) — fast
-      refresh_agents
-      cursor_to_current # highlight the workspace this session is in
+      render  # clear + show the pane instantly (empty)
+      reload  # rebuild + agents + locate "you are here"
       @was_visible = true
       loop do
         render
@@ -58,14 +57,13 @@ module Switchboard
       teardown
     end
 
-    # Idle tick. The moment this sidebar comes back on screen (visibility goes
-    # false -> true, i.e. you navigated back), refresh + snap to the current
-    # workspace. While it stays on screen, keep agent dots live and rebuild the
-    # whole tree every TREE_TICKS. Off screen: do nothing.
+    # Idle tick. When this sidebar comes back on screen (visibility false ->
+    # true, i.e. you navigated back) refresh the tree. While it stays on screen,
+    # keep agent dots live and rebuild every TREE_TICKS. Off screen: nothing.
     def tick
       visible = Tmux.visible?(ENV["TMUX_PANE"])
       if visible && !@was_visible
-        reload_and_locate
+        reload
       elsif visible
         pin_width
         @ticks += 1
@@ -108,28 +106,18 @@ module Switchboard
     def reload
       rebuild
       refresh_agents
+      locate
     end
 
-    # Refresh, then re-center on the workspace we're in. Called on arrival
-    # (visibility transition) and by the hook poke; marks us visible so the
-    # next tick doesn't treat it as a fresh arrival and re-snap.
-    def reload_and_locate
-      reload
-      cursor_to_current
-      @was_visible = true
-    end
-
-    # Snap the cursor to the workspace this session is in — matched by the
-    # sidebar's working directory, so it works for any session sitting in a
-    # worktree (switchboard, emdash, conductor), not just sb/* session names.
-    def cursor_to_current
+    # Which workspace is this sidebar's session in? Matched by the sidebar's
+    # working directory, so it covers any session in a worktree (switchboard,
+    # emdash, conductor). Shown in bold; independent of the navigation cursor.
+    def locate
       here = Tmux.pane_path(ENV["TMUX_PANE"])
-      return unless here
-
-      idx = @rows.index do |n|
-        n.kind == "ws" && (n.path == here || here.start_with?("#{n.path}/"))
-      end
-      @cursor = idx if idx
+      @current_path = here && @nodes.select { |n| n.kind == "ws" }
+                                    .map(&:path)
+                                    .select { |p| here == p || here.start_with?("#{p}/") }
+                                    .max_by(&:length)
     end
 
     def current
@@ -166,7 +154,7 @@ module Switchboard
       when "n"                 then create
       when "d"                 then delete
       when "r"                 then rename
-      when "\f"                then reload_and_locate # Ctrl-L (hook poke on switch)
+      when "\f"                then reload # Ctrl-L (hook poke on switch)
       when "g"                 then @cursor = 0
       when "G"                 then @cursor = @rows.size - 1
       when "q", "\x03"         then return false # q / ^C: hide
@@ -335,7 +323,9 @@ module Switchboard
 
     def line(node, active, cols)
       text = trunc(plain(node), cols)
-      active ? "\e[7m#{text.ljust(cols)}\e[0m" : colored(node, text)
+      return "\e[7m#{text.ljust(cols)}\e[0m" if active
+
+      colored(node, text, current: node.kind == "ws" && node.path == @current_path)
     end
 
     # Plain (no color) — used for the highlighted row and as the base text.
@@ -347,12 +337,14 @@ module Switchboard
       end
     end
 
-    def colored(node, text)
+    def colored(node, text, current: false)
       case node.kind
       when "proj" then "\e[1m#{text}\e[0m"
       when "ws"
         dot = @agents.include?(node.path) ? AGENT_ON : IDLE
-        "  #{dot} #{trunc(node.name.to_s, [text.length - 4, 1].max)}"
+        name = trunc(node.name.to_s, [text.length - 4, 1].max)
+        name = "\e[1m#{name}\e[0m" if current # "you are here"
+        "  #{dot} #{name}"
       else "#{BRANCH_FG}#{text}\e[0m"
       end
     end
