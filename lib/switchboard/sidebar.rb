@@ -7,13 +7,13 @@ module Switchboard
   # The persistent, rendered tree sidebar (no fzf). Lives in a narrow tmux
   # pane, repaints on a short interval to keep agent-activity dots live, and
   # navigates with j/k. ↵ switches to a workspace (keeping the sidebar beside
-  # you); n creates a worktree inline and stays put.
+  # you); n creates a worktree inline then drops you into it.
   class Sidebar
     REFRESH = 3 # seconds between agent re-scans
 
-    AGENT_ON = "\e[1;32m●\e[0m" # bright green: a live agent chat
-    DOT_DIRTY = "\e[33m●\e[0m"
-    DOT_CLEAN = "\e[32m○\e[0m"
+    AGENT_ON = "\e[1;32m●\e[0m"    # bright green: a live agent chat
+    IDLE = "\e[90m○\e[0m"          # dim: no agent
+    BRANCH_FG = "\e[38;5;245m"     # readable medium gray for branch rows
 
     def self.run
       new.run
@@ -32,8 +32,8 @@ module Switchboard
 
       setup
       render          # clear + show the pane instantly (empty)
-      rebuild         # git work (~1-2s): worktrees, dirty, branches
-      refresh_agents  # then the agent scan; dots fill in
+      rebuild         # structure only (no per-worktree git status) — fast
+      refresh_agents  # agent dots
       loop do
         render
         if IO.select([$stdin], nil, nil, REFRESH)
@@ -48,18 +48,23 @@ module Switchboard
 
     private
 
-    # Structure + dirty + PR. Cheap-ish; the slow agent scan is separate.
+    # Structure + PR badges, NOT per-worktree dirty (that's 16 git-status calls
+    # and would stall the paint / make switching flicker). Fast.
     def rebuild
-      @model = Model.new(@config)
+      @model = Model.new(@config, with_dirty: false)
       @nodes = Tree.nodes(@model)
       @cursor = [@cursor, [@nodes.size - 1, 0].max].min
     end
 
-    # Cheap: just re-scan which worktrees have a live agent.
     def refresh_agents
       @agents = Agents.active(@nodes.select { |n| n.kind == "ws" }.map(&:path))
     rescue StandardError
       @agents = Set.new
+    end
+
+    def reload
+      rebuild
+      refresh_agents
     end
 
     # --- input ---------------------------------------------------------------
@@ -72,7 +77,6 @@ module Switchboard
 
     # A fast key-repeat (holding j) delivers several bytes in one read, so
     # process the buffer token by token (escape sequences are 3 bytes).
-    # Returns false to exit the loop (hide the sidebar).
     def handle(buf)
       return true if buf.nil? || buf.empty?
 
@@ -105,11 +109,6 @@ module Switchboard
       @cursor = (@cursor + delta).clamp(0, @nodes.size - 1)
     end
 
-    def reload
-      rebuild
-      refresh_agents
-    end
-
     def switch
       node = @nodes[@cursor]
       return if node.nil? || node.kind == "proj"
@@ -118,7 +117,7 @@ module Switchboard
                            dirty: false, pr: node.pr, base: nil, primary: false))
     end
 
-    # Inline create: prompt in this pane, make the worktree, refresh — no jump.
+    # Prompt inline, create the worktree (quiet), then drop into it.
     def create
       node = @nodes[@cursor]
       return unless node
@@ -128,8 +127,17 @@ module Switchboard
       print "\e[#{rows};1H\e[K\e[?25hnew workspace in #{node.project} › "
       $stdout.flush
       name = $stdin.gets
-      Creator.create(@config, node.project, name) if name && !name.strip.empty?
+      if name && !name.strip.empty?
+        print "\r\ncreating…"
+        $stdout.flush
+        dest = Creator.create(@config, node.project, name)
+      end
       $stdin.raw!
+
+      if dest
+        Tmux.go(Worktree.new(project: node.project, path: dest, branch: nil,
+                             dirty: false, pr: nil, base: nil, primary: false))
+      end
       reload
     end
 
@@ -179,11 +187,11 @@ module Switchboard
       active ? "\e[7m#{text.ljust(cols)}\e[0m" : colored(node, text)
     end
 
-    # Plain (no color) form — used for the highlighted row and as the base text.
+    # Plain (no color) — used for the highlighted row and as the base text.
     def plain(node)
       case node.kind
       when "proj" then "▾ #{node.project}"
-      when "ws"   then "  #{@agents.include?(node.path) ? '●' : ' '}#{node.dirty ? '●' : '○'} #{node.name}"
+      when "ws"   then "  #{@agents.include?(node.path) ? '●' : '○'} #{node.name}"
       else             "     #{node.last ? '└' : '├'}#{node.active ? '●' : ' '}#{node.branch}"
       end
     end
@@ -192,10 +200,9 @@ module Switchboard
       case node.kind
       when "proj" then "\e[1m#{text}\e[0m"
       when "ws"
-        agent = @agents.include?(node.path) ? AGENT_ON : " "
-        dot = node.dirty ? DOT_DIRTY : DOT_CLEAN
-        "  #{agent}#{dot} #{trunc(node.name.to_s, text.length)}"
-      else "\e[90m#{text}\e[0m"
+        dot = @agents.include?(node.path) ? AGENT_ON : IDLE
+        "  #{dot} #{trunc(node.name.to_s, [text.length - 4, 1].max)}"
+      else "#{BRANCH_FG}#{text}\e[0m"
       end
     end
 

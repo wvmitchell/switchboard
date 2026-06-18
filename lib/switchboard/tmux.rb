@@ -69,7 +69,9 @@ module Switchboard
       bin = ENV["SWITCHBOARD_BIN"]
       return unless bin
 
-      cmd = +"tmux split-window -hb -d -P -F '#\{pane_id}'"
+      # -l fixes the new pane's width at split time (resize-after-split raced
+      # and sometimes left it at the 50/50 default).
+      cmd = +"tmux split-window -hb -d -l #{SIDEBAR_WIDTH} -P -F '#\{pane_id}'"
       cmd << " -t #{Shellwords.escape(target)}" if target
       cmd << " -c #{Shellwords.escape(dir)}" if dir
       cmd << " #{Shellwords.escape(bin)} sidebar"
@@ -78,7 +80,6 @@ module Switchboard
       return if pane.empty?
 
       system("tmux", "select-pane", "-t", pane, "-T", SIDEBAR_TITLE, out: File::NULL, err: File::NULL)
-      system("tmux", "resize-pane", "-t", pane, "-x", SIDEBAR_WIDTH.to_s, out: File::NULL, err: File::NULL)
     end
 
     def panes(target)

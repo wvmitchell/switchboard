@@ -18,9 +18,10 @@ module Switchboard
   # Assembles the project -> worktree tree from switchboard's own config (git
   # for truth, gh for PR badges). No emdash/Conductor database at runtime.
   class Model
-    def initialize(config = Config.new)
+    def initialize(config = Config.new, with_dirty: true)
       @config = config
       @prs = {}
+      @with_dirty = with_dirty # the sidebar skips the per-worktree git status
     end
 
     def projects
@@ -65,7 +66,7 @@ module Switchboard
           project: project["name"],
           path: w[:path],
           branch: branch,
-          dirty: Git.dirty?(w[:path]),
+          dirty: @with_dirty ? Git.dirty?(w[:path]) : false,
           pr: prs[branch],
           base: project["base_ref"],
           primary: w[:path] == project["path"]

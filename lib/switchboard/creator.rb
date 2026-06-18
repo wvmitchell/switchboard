@@ -23,8 +23,8 @@ module Switchboard
 
       Git.fetch(project["path"]) # make sure the base ref is current
       ok = system("git", "-C", project["path"], "worktree", "add", dest, "-b", branch, base,
-                  out: $stderr, err: $stderr)
-      ok ? dest : warn("git worktree add failed (base: #{base})")
+                  out: File::NULL, err: File::NULL)
+      ok ? dest : nil
     end
 
     # Filesystem- and branch-safe; spaces become dashes.
