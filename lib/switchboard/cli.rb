@@ -15,6 +15,8 @@ module Switchboard
       when "init"              then init
       when "add"               then add_project(argv[1], argv[2], argv[3])
       when "refresh"           then refresh
+      when "sidebar"           then Sidebar.run
+      when "toggle-sidebar"    then Tmux.toggle_sidebar
       when "_rowpreview"       then row_preview(argv[1], argv[2], argv[3])
       when "_pr"               then pr_action(argv[1], argv[2], argv[3])
       when "_new"              then new_worktree(argv[1])
@@ -56,7 +58,7 @@ module Switchboard
       worktree = model.find(selection[:path])
       return warn("worktree not found: #{selection[:path]}") unless worktree
 
-      Tmux.open(worktree)
+      Tmux.go(worktree)
     end
 
     # Prompt for a name and create a worktree in the given project, then switch
@@ -72,7 +74,7 @@ module Switchboard
       dest = Creator.create(config, project_name, name)
       return unless dest
 
-      Tmux.open(Worktree.new(
+      Tmux.go(Worktree.new(
                   project: project_name, path: dest, branch: Git.current_branch(dest),
                   dirty: false, pr: nil, base: project["base_ref"], primary: false
                 ))
