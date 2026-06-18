@@ -228,9 +228,13 @@ module Switchboard
       return reload if newname.nil? || newname.strip.empty?
 
       dest = File.join(File.dirname(node.path), Creator.sanitize(newname))
-      Git.move_worktree(project["path"], node.path, dest)
-      Tmux.kill(Worktree.new(project: node.project, path: node.path, branch: node.branch,
-                             dirty: false, pr: nil, base: nil, primary: false))
+      return reload unless Git.move_worktree(project["path"], node.path, dest)
+
+      # Rename the session in place (don't kill it) so a running agent and its
+      # conversation survive. The moved dir keeps its inode, so cwd follows.
+      old_name = Tmux.session_name(Worktree.new(project: node.project, path: node.path))
+      new_name = Tmux.session_name(Worktree.new(project: node.project, path: dest))
+      Tmux.rename_session(old_name, new_name)
       reload
     end
 

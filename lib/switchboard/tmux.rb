@@ -42,6 +42,14 @@ module Switchboard
       system("tmux", "kill-session", "-t", "=#{session_name(worktree)}", out: File::NULL, err: File::NULL)
     end
 
+    # Rename a worktree's session in place — keeps any running agent/shell (and
+    # its conversation) alive. Used on workspace rename.
+    def rename_session(old_name, new_name)
+      return if old_name == new_name
+
+      system("tmux", "rename-session", "-t", "=#{old_name}", new_name, out: File::NULL, err: File::NULL)
+    end
+
     def switch(name)
       if ENV["TMUX"]
         system("tmux", "switch-client", "-t", name)
