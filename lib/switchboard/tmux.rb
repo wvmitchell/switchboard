@@ -80,6 +80,22 @@ module Switchboard
         .lines.find { |line| line.include?(SIDEBAR_TITLE) }&.split&.first
     end
 
+    # Tell the current window's sidebar to reload (bound to a session-change
+    # hook, so switching sessions always lands on a fresh tree).
+    def poke_current_sidebar
+      pane = current_sidebar_pane
+      system("tmux", "send-keys", "-t", pane, "r", out: File::NULL, err: File::NULL) if pane
+    end
+
+    # Is this pane on the active window of an attached session (i.e. on screen)?
+    def visible?(pane)
+      return true unless pane
+
+      out = `tmux display-message -p -t #{Shellwords.escape(pane)} '#\{window_active},#\{session_attached}' 2>/dev/null`.strip
+      active, attached = out.split(",")
+      active == "1" && attached.to_i.positive?
+    end
+
     # Split a narrow sidebar pane on the left running `switchboard sidebar`.
     def spawn_sidebar(target: nil, dir: nil)
       bin = ENV["SWITCHBOARD_BIN"]

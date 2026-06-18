@@ -17,6 +17,7 @@ module Switchboard
       when "refresh"           then refresh
       when "sidebar"           then Sidebar.run
       when "toggle-sidebar"    then Tmux.toggle_sidebar
+      when "poke-sidebar"      then Tmux.poke_current_sidebar
       when "_rowpreview"       then row_preview(argv[1], argv[2], argv[3])
       when "_pr"               then pr_action(argv[1], argv[2], argv[3])
       when "_new"              then new_worktree(argv[1])

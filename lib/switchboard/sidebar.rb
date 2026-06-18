@@ -9,7 +9,8 @@ module Switchboard
   # navigates with j/k. ↵ switches to a workspace (or collapses a project);
   # n creates a worktree inline then drops you in; d deletes a workspace.
   class Sidebar
-    REFRESH = 3 # seconds between agent re-scans
+    REFRESH = 3    # seconds between agent re-scans
+    TREE_TICKS = 5 # rebuild the whole tree every Nth tick (~15s) while visible
 
     AGENT_ON = "\e[1;32m●\e[0m"  # bright green: a live agent chat
     IDLE = "\e[90m○\e[0m"        # dim: no agent
@@ -27,6 +28,7 @@ module Switchboard
       @rows = []           # visible rows (collapsed projects hide their children)
       @agents = Set.new
       @collapsed = Set.new # project names that are collapsed
+      @ticks = 0
     end
 
     def run
@@ -41,9 +43,18 @@ module Switchboard
         render
         if IO.select([$stdin], nil, nil, REFRESH)
           break unless handle(read_key)
-        else
+        elsif Tmux.visible?(ENV["TMUX_PANE"])
+          # On screen + idle: keep agent dots live every tick; rebuild the whole
+          # tree only every TREE_TICKS (catches changes from other sessions
+          # without spawning git on every tick). Switch-time freshness comes
+          # from the client-session-changed hook poking us to reload.
           refresh_agents
           pin_width
+          @ticks += 1
+          if @ticks >= TREE_TICKS
+            @ticks = 0
+            rebuild
+          end
         end
       end
     ensure
