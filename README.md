@@ -54,6 +54,7 @@ bin/switchboard init            # create config (imports projects from emdash on
 bin/switchboard add N P [B]     # register a project (name, repo path, base ref)
 bin/switchboard                 # open the switcher
 bin/switchboard refresh         # re-fetch PR badges from gh
+bin/switchboard enable-hooks [P]  # exact agent-state dots in a worktree (see below)
 bin/switchboard doctor          # check dependencies + config
 ```
 
@@ -71,6 +72,7 @@ bind-key s display-popup -E -w 90% -h 80% "/path/to/switchboard/bin/switchboard"
 worktree_root: ~/switchboard/worktrees   # where ^n puts new worktrees
 base: origin/main                        # default ref new worktrees branch from
 branch_prefix: wvmitchell                # optional: new branches become wvmitchell/<name>
+agent_state_hooks: true                  # optional: auto-wire agent-state dots on create (default true)
 projects:
   - name: myapp
     path: ~/code/myapp
@@ -80,6 +82,38 @@ projects:
 `^n` cuts a new branch from `base` (fetching its remote first, e.g. `origin`
 for `origin/main`). `base` defaults to `origin/main`; set it globally or per
 project. The branch is named `<name>` (or `<branch_prefix>/<name>`).
+
+## Agent status
+
+The persistent sidebar shows a dot next to each workspace that has a live agent
+(Claude Code, Codex, Aider). The dot's colour tells you what the agent is doing,
+so you can run several in parallel and glance over to see who needs you:
+
+```
+(blank)   no agent
+● blue    thinking — working a turn (a slow breathe, so it reads as "alive")
+● green   done — finished its turn (or just idle); ball's in your court
+● magenta wants input — blocked on a question/permission it needs you to answer
+```
+
+Two ways the dot learns what the agent's doing:
+
+- **Observation (default, zero-config).** Switchboard watches the agent's tmux
+  pane and infers busy-vs-idle from whether it's changing. Works for any agent,
+  installs nothing. It can't reliably tell "wants input" from "done", though.
+- **Hooks (exact).** Claude Code reports its state precisely. Switchboard scopes
+  this **per worktree** — it never touches your global `~/.claude`. New worktrees
+  switchboard creates get it automatically; for an existing one, run
+  `switchboard enable-hooks` from inside it (`disable-hooks` to undo).
+
+How the hooks stay clean: switchboard writes `<worktree>/.claude/settings.local.json`
+(merged on top of your own settings, and added to the worktree's local git
+excludes so it never dirties `git status`). The hook command points at a small
+reporter script switchboard materializes into its own data dir
+(`~/.local/share/switchboard/`) — a path that survives reinstalls and
+`brew upgrade`, so the wiring doesn't rot. The script only writes a state file;
+switchboard never launches or wraps your agent. Set `agent_state_hooks: false`
+in the config to stop auto-enabling on create.
 
 ## Dependencies
 
@@ -93,4 +127,5 @@ brew install fzf gh
 
 - v2 — clone a project from a git URL (not just register an existing one)
 - v3 — live diff + PR pane inside each workspace session
-- agent status (waiting/busy/idle) once switchboard launches the agents itself
+- richer fallback state for hook-less agents (Codex/Aider): detect "wants input"
+  from the pane, not just busy/idle

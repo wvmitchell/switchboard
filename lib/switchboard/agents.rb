@@ -25,10 +25,16 @@ module Switchboard
 
     # tmux panes whose foreground command is an agent CLI by name.
     def tmux_cwds
-      out = `tmux list-panes -a -F '#\{pane_current_command}#{TAB}#\{pane_current_path}' 2>/dev/null`
+      tmux_panes.map { |_id, path| path }
+    end
+
+    # [[pane_id, cwd], ...] for agent-CLI panes. Pane ids let the sidebar's
+    # activity fallback capture a specific pane to tell busy from idle.
+    def tmux_panes
+      out = `tmux list-panes -a -F '#\{pane_id}#{TAB}#\{pane_current_command}#{TAB}#\{pane_current_path}' 2>/dev/null`
       out.lines.filter_map do |line|
-        cmd, path = line.chomp.split("\t", 2)
-        path if path && CLIS.include?(cmd)
+        id, cmd, path = line.chomp.split("\t", 3)
+        [id, path] if path && CLIS.include?(cmd)
       end
     rescue StandardError
       []
