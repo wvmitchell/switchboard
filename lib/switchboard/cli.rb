@@ -2,6 +2,7 @@
 
 require "yaml"
 require "fileutils"
+require "shellwords"
 
 module Switchboard
   # Command dispatch. The `_`-prefixed commands are internal callbacks invoked
@@ -15,6 +16,8 @@ module Switchboard
       when "init"              then init
       when "add"               then add_project(argv[1], argv[2], argv[3])
       when "refresh"           then refresh
+      when "enable-hooks"      then enable_hooks(argv[1])
+      when "disable-hooks"     then disable_hooks(argv[1])
       when "sidebar"           then Sidebar.run
       when "toggle-sidebar"    then Tmux.toggle_sidebar
       when "poke-sidebar"      then Tmux.poke_current_sidebar
@@ -144,12 +147,50 @@ module Switchboard
       puts "added #{name} -> #{path}"
     end
 
+    # Wire agent-state hooks into a single worktree's local settings (scoped,
+    # never global). Defaults to the worktree you're standing in.
+    def enable_hooks(path = nil)
+      worktree = worktree_at(path) or return warn("not inside a git worktree (pass a path)")
+
+      Hook.enable(worktree)
+      puts "enabled agent-state hooks in #{worktree}"
+      puts "  reporter: #{Hook.script_path}"
+      puts "  restart `claude` here (or /hooks) to pick them up."
+    end
+
+    def disable_hooks(path = nil)
+      worktree = worktree_at(path) or return warn("not inside a git worktree (pass a path)")
+
+      Hook.disable(worktree)
+      puts "disabled agent-state hooks in #{worktree}"
+    end
+
+    # The worktree root for a path (or cwd) — what Claude treats as the project.
+    def worktree_at(path)
+      dir = path ? File.expand_path(path) : Dir.pwd
+      top = `git -C #{Shellwords.escape(dir)} rev-parse --show-toplevel 2>/dev/null`.strip
+      top.empty? ? nil : top
+    end
+
     def doctor
       %w[fzf tmux git gh sqlite3].each do |tool|
         present = !`command -v #{tool} 2>/dev/null`.strip.empty?
         puts format("  %s %s", present ? "\e[32m✓\e[0m" : "\e[31m✗\e[0m", tool)
       end
       puts(Config.exist? ? "  \e[32m✓\e[0m config: #{Config.path}" : "  \e[31m✗\e[0m no config — run `switchboard init`")
+      doctor_hooks
+    end
+
+    # Agent-state hooks are per-worktree, so report the materialized reporter and
+    # whether the worktree you're standing in is wired up.
+    def doctor_hooks
+      script = Hook.script_path
+      puts(File.exist?(script) ? "  \e[32m✓\e[0m agent-state reporter: #{script}" : "  \e[33m–\e[0m agent-state reporter not materialized yet (created on first worktree/enable-hooks)")
+      here = worktree_at(nil)
+      return unless here
+
+      on = Hook.enabled?(here)
+      puts(on ? "  \e[32m✓\e[0m hooks enabled here: #{here}" : "  \e[33m–\e[0m hooks off here (observation fallback) — `switchboard enable-hooks`")
     end
 
     def ensure_fzf!
@@ -183,6 +224,8 @@ module Switchboard
           switchboard init         create config (imports projects from emdash once)
           switchboard add N P [B]  register a project (name, repo path, base ref)
           switchboard refresh      re-fetch PR badges from gh
+          switchboard enable-hooks [P]   wire agent-state dots in a worktree (default: cwd)
+          switchboard disable-hooks [P]  remove them from that worktree
           switchboard doctor       check dependencies + config
           switchboard help         show this help
 

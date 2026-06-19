@@ -24,7 +24,16 @@ module Switchboard
       Git.fetch_base(project["path"], base) # make the base ref current first
       ok = system("git", "-C", project["path"], "worktree", "add", dest, "-b", branch, base,
                   out: File::NULL, err: File::NULL)
-      ok ? dest : nil
+      return nil unless ok
+
+      # Scope agent-state hooks to this worktree (never global). Best-effort: a
+      # hook-wiring hiccup must never sink an otherwise-good worktree.
+      begin
+        Hook.enable(dest) if config.agent_state_hooks?
+      rescue StandardError
+        nil
+      end
+      dest
     end
 
     # Filesystem- and branch-safe; spaces become dashes.

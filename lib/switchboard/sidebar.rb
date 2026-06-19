@@ -11,9 +11,16 @@ module Switchboard
   class Sidebar
     REFRESH = 3    # seconds between agent re-scans
     TREE_TICKS = 5 # rebuild the whole tree every Nth tick (~15s) while visible
+    PULSE = 0.45   # repaint cadence while an agent is thinking (drives the breathe)
 
-    AGENT_ON = "\e[1;32m●\e[0m"  # bright green: a live agent chat
-    IDLE = "\e[90m○\e[0m"        # dim: no agent
+    # Agent-state dots. Idle (no agent) draws nothing — just a blank slot — so
+    # the column only lights up when something's actually there.
+    DONE = "\e[1;32m●\e[0m"  # green: replied, ready for you (not blocked)
+    WANTS = "\e[1;35m●\e[0m" # magenta: blocked, wants your input
+    # Thinking breathes through a blue ramp (dim->bright->dim). We drive it
+    # ourselves on the PULSE repaint so it works on any terminal — no reliance
+    # on the blink attribute, which tmux passes through but many terminals drop.
+    THINK_FRAMES = %w[19 20 27 33 27 20].map { |c| "\e[1;38;5;#{c}m●\e[0m" }.freeze
     BRANCH_FG = "\e[38;5;245m"   # readable medium gray for branch rows
 
     # Key hints, spread over two readable lines. Reload isn't shown — it's
@@ -30,9 +37,12 @@ module Switchboard
       @offset = 0
       @nodes = []          # full tree
       @rows = []           # visible rows (collapsed projects hide their children)
-      @agents = Set.new
+      @agents = {}         # worktree path => :thinking | :done | :waiting
+      @agent_state = AgentState.new
       @collapsed = Set.new # project names that are collapsed
       @ticks = 0
+      @pulse = 0           # animation frame counter for the thinking breathe
+      @last_scan = nil     # monotonic time of the last agent re-scan
       @was_visible = false
       @current_path = nil # worktree this sidebar's session is in (shown bold)
     end
@@ -45,16 +55,44 @@ module Switchboard
       render  # clear + show the pane instantly (empty)
       reload  # rebuild + agents + locate "you are here"
       @was_visible = true
+      @last_scan = monotonic
       loop do
         render
-        if IO.select([$stdin], nil, nil, REFRESH)
+        # Wake often enough to animate the thinking breathe, but only while one
+        # is on screen; otherwise sit on the slow REFRESH interval. State scans
+        # stay gated to REFRESH (scan_due?) so the fast frames don't hammer tmux.
+        if IO.select([$stdin], nil, nil, frame_timeout)
           break unless handle(read_key)
         else
-          tick
+          @pulse += 1
+          tick if scan_due?
         end
       end
     ensure
       teardown
+    end
+
+    def frame_timeout
+      pulsing? ? PULSE : REFRESH
+    end
+
+    # A thinking dot is on screen and worth animating.
+    def pulsing?
+      @was_visible && @agents.value?(:thinking)
+    end
+
+    # True at most once per REFRESH seconds — throttles the actual agent scan
+    # even when the loop is spinning fast to drive the pulse.
+    def scan_due?
+      now = monotonic
+      return false if @last_scan && now - @last_scan < REFRESH
+
+      @last_scan = now
+      true
+    end
+
+    def monotonic
+      Process.clock_gettime(Process::CLOCK_MONOTONIC)
     end
 
     # Idle tick. When this sidebar comes back on screen (visibility false ->
@@ -98,9 +136,9 @@ module Switchboard
     end
 
     def refresh_agents
-      @agents = Agents.active(@nodes.select { |n| n.kind == "ws" }.map(&:path))
+      @agents = @agent_state.scan(@nodes.select { |n| n.kind == "ws" }.map(&:path))
     rescue StandardError
-      @agents = Set.new
+      @agents = {}
     end
 
     def reload
@@ -328,11 +366,13 @@ module Switchboard
       colored(node, text, current: node.kind == "ws" && node.path == @current_path)
     end
 
-    # Plain (no color) — used for the highlighted row and as the base text.
+    # Plain (no color) — used for the highlighted row and as the base text. The
+    # ws prefix is always 4 cols ("  ● ") so names line up whether or not a dot
+    # is present; idle just leaves the dot slot blank.
     def plain(node)
       case node.kind
       when "proj" then "#{@collapsed.include?(node.project) ? '▸' : '▾'} #{node.project}"
-      when "ws"   then "  #{@agents.include?(node.path) ? '●' : '○'} #{node.name}"
+      when "ws"   then "  #{@agents.key?(node.path) ? '●' : ' '} #{node.name}"
       else             "     #{node.last ? '└' : '├'}#{node.active ? '●' : ' '}#{node.branch}"
       end
     end
@@ -341,11 +381,21 @@ module Switchboard
       case node.kind
       when "proj" then "\e[1m#{text}\e[0m"
       when "ws"
-        dot = @agents.include?(node.path) ? AGENT_ON : IDLE
+        dot = dot_for(@agents[node.path])
         name = trunc(node.name.to_s, [text.length - 4, 1].max)
         name = "\e[36m#{name}\e[0m" if current # "you are here" — cyan, matching the prompt's directory color
         "  #{dot} #{name}"
       else "#{BRANCH_FG}#{text}\e[0m"
+      end
+    end
+
+    # State -> dot. Idle (nil) is a blank slot; thinking breathes via @pulse.
+    def dot_for(state)
+      case state
+      when :thinking then THINK_FRAMES[@pulse % THINK_FRAMES.size]
+      when :waiting  then WANTS
+      when :done     then DONE
+      else " "
       end
     end
 

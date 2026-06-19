@@ -28,6 +28,13 @@ module Switchboard
       File.expand_path(@data["worktree_root"] || DEFAULT_ROOT)
     end
 
+    # Whether to wire per-worktree agent-state hooks (sidebar dots) when creating
+    # a worktree. On by default; scoped to the worktree, never global. Set
+    # `agent_state_hooks: false` in config.yml to opt out.
+    def agent_state_hooks?
+      @data.fetch("agent_state_hooks", true) != false
+    end
+
     # Optional prefix for new branches, e.g. "wvmitchell" -> wvmitchell/<name>.
     def branch_prefix
       prefix = @data["branch_prefix"]
