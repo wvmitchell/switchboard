@@ -343,7 +343,7 @@ module Switchboard
       when "ws"
         dot = @agents.include?(node.path) ? AGENT_ON : IDLE
         name = trunc(node.name.to_s, [text.length - 4, 1].max)
-        name = "\e[4m#{name}\e[0m" if current # "you are here" — underline, distinct from the bold project header
+        name = "\e[36m#{name}\e[0m" if current # "you are here" — cyan, matching the prompt's directory color
         "  #{dot} #{name}"
       else "#{BRANCH_FG}#{text}\e[0m"
       end
