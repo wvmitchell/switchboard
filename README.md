@@ -51,12 +51,19 @@ esc  cancel
 
 ```sh
 bin/switchboard init            # create config (imports projects from emdash once)
-bin/switchboard add N P [B]     # register a project (name, repo path, base ref)
+bin/switchboard add N P [B]     # register an existing repo (name, path, base ref)
+bin/switchboard clone U [N]     # clone a repo under projects_root, then register it
 bin/switchboard                 # open the switcher
 bin/switchboard refresh         # re-fetch PR badges from gh
 bin/switchboard enable-hooks [P]  # exact agent-state dots in a worktree (see below)
 bin/switchboard doctor          # check dependencies + config
 ```
+
+You can also add a project without leaving the keyboard: press `a` in the
+sidebar to register an existing local repo or clone one from a URL. This is the
+keyboard path to your *first* project — `n` only creates worktrees inside a
+project that already exists — so switchboard stands up on a fresh machine, off
+emdash, entirely from the sidebar.
 
 Bind it to a tmux key for instant access, e.g. in `~/.tmux.conf`:
 
@@ -70,6 +77,7 @@ bind-key s display-popup -E -w 90% -h 80% "/path/to/switchboard/bin/switchboard"
 
 ```yaml
 worktree_root: ~/switchboard/worktrees   # where ^n puts new worktrees
+projects_root: ~/Programming             # where `a`/`clone` drop cloned repos
 base: origin/main                        # default ref new worktrees branch from
 branch_prefix: wvmitchell                # optional: new branches become wvmitchell/<name>
 agent_state_hooks: true                  # optional: auto-wire agent-state dots on create (default true)
@@ -125,7 +133,8 @@ brew install fzf gh
 
 ## Roadmap
 
-- v2 — clone a project from a git URL (not just register an existing one)
+- ~~v2 — clone a project from a git URL (not just register an existing one)~~ ✓
+  (`a` in the sidebar, or `switchboard clone`)
 - v3 — live diff + PR pane inside each workspace session
 - richer fallback state for hook-less agents (Codex/Aider): detect "wants input"
   from the pane, not just busy/idle
