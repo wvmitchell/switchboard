@@ -7,7 +7,8 @@ module Switchboard
   # The persistent, rendered tree sidebar (no fzf). Lives in a narrow tmux
   # pane, repaints on a short interval to keep agent-activity dots live, and
   # navigates with j/k. ↵ switches to a workspace (or collapses a project);
-  # n creates a worktree inline then drops you in; d deletes a workspace.
+  # a adds a project (register a local repo, or clone one); n creates a worktree
+  # inline then drops you in; d deletes a workspace.
   class Sidebar
     REFRESH = 3    # seconds between agent re-scans
     TREE_TICKS = 5 # rebuild the whole tree every Nth tick (~15s) while visible
@@ -23,9 +24,12 @@ module Switchboard
     THINK_FRAMES = %w[19 20 27 33 27 20].map { |c| "\e[1;38;5;#{c}m●\e[0m" }.freeze
     BRANCH_FG = "\e[38;5;245m"   # readable medium gray for branch rows
 
-    # Key hints, spread over two readable lines. Reload isn't shown — it's
-    # automatic; Ctrl-L triggers it internally (the session-switch hook poke).
-    FOOTER = ["j/k move · ↵ open/collapse", "n new · r rename · d delete · q hide"].freeze
+    # Key hints, spread over readable lines (kept within the pin width). Reload
+    # isn't shown — it's automatic; Ctrl-L triggers it internally (the
+    # session-switch hook poke).
+    FOOTER = ["j/k move · ↵ open/collapse",
+              "a add · n new · r rename",
+              "d delete · q hide"].freeze
 
     def self.run
       new.run
@@ -193,6 +197,7 @@ module Switchboard
       when "j", "\e[B", "\x0E" then move(1)   # down (j / ↓ / ^N)
       when "k", "\e[A", "\x10" then move(-1)  # up   (k / ↑ / ^P)
       when "\r", "\n"          then enter
+      when "a"                 then add
       when "n"                 then create
       when "d"                 then delete
       when "r"                 then rename
@@ -254,6 +259,55 @@ module Switchboard
       reload
     end
 
+    # a: register a new project. n only makes worktrees *inside* a project, so
+    # this is the keyboard path to the first project — switchboard can now stand
+    # up from an empty sidebar with no CLI round-trip. Two modes: point at a repo
+    # already on disk, or clone one from a URL.
+    def add
+      rows, cols = winsize
+      print "\e[#{rows};1H\e[K\e[?25h#{trunc('add — [l] local repo · [c] clone url', cols)}"
+      $stdout.flush
+      choice = read_char
+      print "\e[?25l"
+      case choice&.downcase
+      when "l" then add_local
+      when "c" then add_clone
+      else reload
+      end
+    end
+
+    # Register an existing local repo by path. Name derives from its basename.
+    def add_local
+      path = prompt_line("path to an existing git repo")
+      return reload if blank_input?(path)
+
+      _, err = Registrar.register(@config, path)
+      flash(err) if err
+      reload_config
+      reload
+    end
+
+    # Clone a URL under projects_root, then register it. The clone blocks the
+    # paint loop (like delete/rename do) — fine, it's a deliberate action.
+    def add_clone
+      url = prompt_line("git URL to clone")
+      return reload if blank_input?(url)
+
+      rows, cols = winsize
+      print "\e[#{rows};1H\e[K#{trunc("cloning #{url}…", cols)}"
+      $stdout.flush
+      _, err = Registrar.clone(@config, url)
+      flash(err) if err
+      reload_config
+      reload
+    end
+
+    # Re-read config from disk so a freshly added project shows on the next
+    # rebuild (@config is otherwise cached for the session).
+    def reload_config
+      @config = Config.new
+    end
+
     # Delete a workspace: remove the worktree (force-confirm if dirty), drop the
     # branch if safely merged, and kill its tmux session.
     def delete
@@ -311,13 +365,46 @@ module Switchboard
       rows, = winsize
       print "\e[#{rows};1H\e[K\e[?25h#{message} [y/N] "
       $stdout.flush
-      answer = begin
-        $stdin.getc
-      rescue StandardError
-        nil
-      end
+      answer = read_char
       print "\e[?25l"
       answer.to_s.downcase == "y"
+    end
+
+    # Cooked-mode line prompt on the bottom row. Returns the entered text
+    # (stripped) or nil. Raw mode and the hidden cursor are restored in an
+    # ensure, so a read that raises can't strand the sidebar in cooked mode.
+    def prompt_line(label)
+      rows, = winsize
+      $stdin.cooked!
+      print "\e[#{rows};1H\e[K\e[?25h#{label} › "
+      $stdout.flush
+      $stdin.gets&.strip
+    rescue StandardError
+      nil
+    ensure
+      $stdin.raw!
+      print "\e[?25l"
+    end
+
+    # An empty prompt result — nil (read failed) or "" (bare enter) — means cancel.
+    def blank_input?(text)
+      text.nil? || text.empty?
+    end
+
+    # Surface an error on the bottom row and wait for a keypress, so it's
+    # readable before the next repaint wipes it.
+    def flash(message)
+      rows, cols = winsize
+      print "\e[#{rows};1H\e[K\e[31m#{trunc(message, cols - 11)}\e[0m — any key "
+      $stdout.flush
+      read_char
+    end
+
+    # One key in raw mode (nil if the read fails).
+    def read_char
+      $stdin.getc
+    rescue StandardError
+      nil
     end
 
     # --- rendering -----------------------------------------------------------

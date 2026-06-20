@@ -43,6 +43,29 @@ module Switchboard
       `git -C #{Shellwords.escape(repo)} remote 2>/dev/null`.split
     end
 
+    # The repo root for a path (resolving up from a subdir), or nil if the path
+    # isn't inside a git working tree. Used to validate "register this dir".
+    def toplevel(path)
+      return nil unless File.directory?(path)
+
+      top = capture(path, "rev-parse", "--show-toplevel").strip
+      top.empty? ? nil : top
+    end
+
+    # The remote's default branch as a base ref (e.g. "origin/main"), read from
+    # the local origin/HEAD symref — set by clone, so it's reliable for fresh
+    # clones. nil when unset (caller falls back to the global base).
+    def remote_head(repo)
+      ref = capture(repo, "symbolic-ref", "--quiet", "refs/remotes/origin/HEAD").strip
+      ref.empty? ? nil : ref.sub(%r{\Arefs/remotes/}, "")
+    end
+
+    # Clone a repo to dest (quiet; output swallowed so it never corrupts the
+    # sidebar TUI). `--` guards against a URL that looks like a flag.
+    def clone(url, dest)
+      system("git", "clone", "--quiet", "--", url.to_s, dest.to_s, out: File::NULL, err: File::NULL)
+    end
+
     # Rename a worktree by moving its directory (keeps the branch/PR intact).
     def move_worktree(repo, old_path, new_path)
       system("git", "-C", repo, "worktree", "move", old_path, new_path, out: File::NULL, err: File::NULL)
