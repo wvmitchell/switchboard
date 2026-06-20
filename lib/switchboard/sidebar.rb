@@ -48,6 +48,7 @@ module Switchboard
       @pulse = 0           # animation frame counter for the thinking breathe
       @last_scan = nil     # monotonic time of the last agent re-scan
       @was_visible = false
+      @focused = false     # is the sidebar the active pane? (cursor bar only then)
       @current_path = nil # worktree this sidebar's session is in (shown bold)
     end
 
@@ -55,6 +56,8 @@ module Switchboard
       return warn("no config — run `switchboard init`") unless Config.exist?
 
       setup
+      Tmux.enable_focus_events # so focus in/out reaches us for an instant dim
+      @focused = Tmux.focused?(ENV["TMUX_PANE"])
       pin_width
       render  # clear + show the pane instantly (empty)
       reload  # rebuild + agents + locate "you are here"
@@ -103,6 +106,7 @@ module Switchboard
     # true, i.e. you navigated back) refresh the tree. While it stays on screen,
     # keep agent dots live and rebuild every TREE_TICKS. Off screen: nothing.
     def tick
+      @focused = Tmux.focused?(ENV["TMUX_PANE"]) # authoritative if focus-events are off
       visible = Tmux.visible?(ENV["TMUX_PANE"])
       if visible && !@was_visible
         reload
@@ -200,6 +204,8 @@ module Switchboard
       when "\f"                then reload # Ctrl-L (hook poke on switch)
       when "g"                 then @cursor = 0
       when "G"                 then @cursor = @rows.size - 1
+      when "\e[I"              then @focused = true  # tmux focus-in: light the cursor bar
+      when "\e[O"              then @focused = false # tmux focus-out: drop it
       when "q", "\x03"         then return false # q / ^C: hide
       end
       true
@@ -405,12 +411,14 @@ module Switchboard
 
     def setup
       $stdin.raw!
-      print "\e[?25l\e[2J" # hide cursor, clear
+      # ?1004h opts this pane into focus reporting — without it tmux won't send
+      # the focus in/out escapes (\e[I / \e[O) we use to dim instantly.
+      print "\e[?25l\e[?1004h\e[2J" # hide cursor, request focus events, clear
     end
 
     def teardown
       $stdin.cooked!
-      print "\e[?25h" # show cursor
+      print "\e[?1004l\e[?25h" # stop focus events, show cursor
     rescue StandardError
       nil
     end
@@ -448,7 +456,10 @@ module Switchboard
 
     def line(node, active, cols)
       text = trunc(plain(node), cols)
-      return "\e[7m#{text.ljust(cols)}\e[0m" if active
+      # The reverse-video cursor bar only when the sidebar is the focused pane;
+      # off-focus the cursor row renders like any other, so the bright bar never
+      # tugs at your eye while you're working in the pane beside it.
+      return "\e[7m#{text.ljust(cols)}\e[0m" if active && @focused
 
       colored(node, text, current: node.kind == "ws" && node.path == @current_path)
     end

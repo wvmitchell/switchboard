@@ -71,6 +71,23 @@ Bind it to a tmux key for instant access, e.g. in `~/.tmux.conf`:
 bind-key s display-popup -E -w 90% -h 80% "/path/to/switchboard/bin/switchboard"
 ```
 
+## Housekeeping
+
+Every workspace switchboard touches is its own tmux session named
+`sb/<project>/<leaf>`. To you it feels like one app, but under the hood it's many
+sessions. To close them all in one go — handy before relaunching from a clean
+slate, or to clear a stray session that's confusing the switcher:
+
+```sh
+# Kill every switchboard session. Others first, then the one you're in last, so
+# nothing is left behind when you run this from inside a session (works from a
+# plain terminal too).
+here=$(tmux display-message -p '#{session_name}' 2>/dev/null)
+tmux list-sessions -F '#{session_name}' 2>/dev/null | grep '^sb/' | grep -vxF "$here" \
+  | while read -r s; do tmux kill-session -t "=$s"; done
+case "$here" in sb/*) tmux kill-session -t "=$here";; esac
+```
+
 ## Config
 
 `~/.config/switchboard/config.yml`:
