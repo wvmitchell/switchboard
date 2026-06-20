@@ -21,18 +21,25 @@ module Switchboard
     MARK = "sb-agent-hook" # identifies our entries for idempotent merge/removal
 
     # Each Claude hook event mapped to the state it records (+ a tool matcher
-    # where the event is tool-scoped). PreToolUse re-asserts "thinking" so the
-    # dot flips from magenta back to blue the instant work resumes after you
-    # answer a prompt. Notification uses the special "notify" mode: it reads the
-    # payload's notification_type to tell a real "answer me" prompt — a permission
-    # request or elicitation dialog (-> waiting/magenta) — from the idle timer and
-    # everything else (-> done/green), which is NOT blocked.
+    # where the event is tool-scoped). PreToolUse, PostToolUse, and
+    # PostToolUseFailure all assert "thinking": PreToolUse fires BEFORE a tool runs
+    # — and the permission prompt comes after it, so it can't clear magenta once
+    # you answer. PostToolUse (tool succeeded) / PostToolUseFailure (tool errored)
+    # fire AFTER the granted tool runs — the earliest hook past the prompt — so the
+    # dot flips from magenta back to blue once work resumes, whichever way the tool
+    # went (no hook fires at the moment you answer a permission prompt).
+    # Notification uses the special "notify" mode: it reads the payload's
+    # notification_type to tell a real "answer me" prompt — a permission request or
+    # elicitation dialog (-> waiting/magenta) — from the idle timer and everything
+    # else (-> done/green), which is NOT blocked.
     EVENTS = [
-      ["UserPromptSubmit", "thinking", nil],
-      ["PreToolUse",       "thinking", "*"],
-      ["Notification",     "notify",   nil],
-      ["Stop",             "done",     nil],
-      ["SessionStart",     "done",     nil]
+      ["UserPromptSubmit",   "thinking", nil],
+      ["PreToolUse",         "thinking", "*"],
+      ["PostToolUse",        "thinking", "*"],
+      ["PostToolUseFailure", "thinking", "*"],
+      ["Notification",       "notify",   nil],
+      ["Stop",               "done",     nil],
+      ["SessionStart",       "done",     nil]
     ].freeze
 
     # POSIX sh, kept tiny: PreToolUse fires before every tool call, so Ruby
