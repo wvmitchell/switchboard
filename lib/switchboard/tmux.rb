@@ -17,8 +17,10 @@ module Switchboard
       name = session_name(worktree)
       ensure_session(name, worktree.path)
       ensure_sidebar(name, worktree.path)
-      switch(name)
-      pin(sidebar_pane(name)) # snap to fixed width at the now-current client size
+      sidebar = sidebar_pane(name)
+      focus_work(name, sidebar) # land on the workspace's terminal, not its tree
+      switch(name)              # may exec (attach) when launched outside tmux
+      pin(sidebar)              # snap to fixed width at the now-current client size
     end
 
     # tmux forbids "." and ":" in session names.
@@ -68,6 +70,32 @@ module Switchboard
     def sidebar_pane(target)
       `tmux list-panes -s -t #{Shellwords.escape(target)} -F '#\{pane_id} #\{pane_title}' 2>/dev/null`
         .lines.find { |line| line.include?(SIDEBAR_TITLE) }&.split&.first
+    end
+
+    # Select a session's terminal pane so switching lands you ready to type, not
+    # on the tree. Only redirects when the active pane IS the sidebar — a real
+    # terminal pane you'd left focused (even one of several splits) is kept. Runs
+    # before switch/attach so it covers both switch-client and the exec path.
+    def focus_work(name, sidebar)
+      return unless sidebar && active_pane(name) == sidebar
+
+      pane = work_pane(name, sidebar)
+      system("tmux", "select-pane", "-t", pane, out: File::NULL, err: File::NULL) if pane
+    end
+
+    # The pane id of a session's active (current-window) pane, or nil.
+    def active_pane(name)
+      id = `tmux display-message -p -t #{Shellwords.escape(name)} '#\{pane_id}' 2>/dev/null`.strip
+      id.empty? ? nil : id
+    end
+
+    # The terminal pane to land on: the last-active non-sidebar pane if there is
+    # one, else the first. Keeps you on the terminal you were actually using when
+    # a workspace has several splits, instead of snapping to the leftmost.
+    def work_pane(name, sidebar)
+      panes = `tmux list-panes -t #{Shellwords.escape(name)} -F '#\{pane_id} #\{pane_last}' 2>/dev/null`
+              .lines.map(&:split).reject { |id, _| id == sidebar }
+      (panes.find { |_, last| last == "1" } || panes.first)&.first
     end
 
     # A pane's working directory (used to tell which worktree a session is in).
