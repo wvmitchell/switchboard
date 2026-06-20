@@ -51,6 +51,7 @@ esc  cancel
 
 ```sh
 bin/switchboard init            # create config (imports projects from emdash once)
+bin/switchboard config          # edit config.yml in $EDITOR (per-project settings)
 bin/switchboard add N P [B]     # register an existing repo (name, path, base ref)
 bin/switchboard clone U [N]     # clone a repo under projects_root, then register it
 bin/switchboard                 # open the switcher
@@ -98,15 +99,40 @@ projects_root: ~/Programming             # where `a`/`clone` drop cloned repos
 base: origin/main                        # default ref new worktrees branch from
 branch_prefix: wvmitchell                # optional: new branches become wvmitchell/<name>
 agent_state_hooks: true                  # optional: auto-wire agent-state dots on create (default true)
+session_command: claude                  # optional: run this when a worktree's session is first created
 projects:
   - name: myapp
     path: ~/code/myapp
     base: origin/main                    # optional: per-project override of the base
+    session_command: claude --dangerously-skip-permissions  # optional: per-project override
 ```
+
+Edit this file with `switchboard config` (or `e` in the sidebar) — both open it
+in `$EDITOR` and reload on save, so a new project or a changed `session_command`
+takes effect on the next switch.
 
 `^n` cuts a new branch from `base` (fetching its remote first, e.g. `origin`
 for `origin/main`). `base` defaults to `origin/main`; set it globally or per
 project. The branch is named `<name>` (or `<branch_prefix>/<name>`).
+
+### Per-project settings
+
+`session_command` is the first project-level setting: the command switchboard
+types into a worktree's window the **first time** it creates that worktree's
+tmux session — your way to say "how should an agent start here." Set it globally
+and override it per project (per-project wins; an empty value falls back to the
+global). Leave it unset and you land in a plain shell, exactly as before. It
+only fires on session *creation*, never on a re-switch into a live session, so
+your running agent is never disturbed.
+
+```yaml
+session_command: claude                                     # default: bare claude everywhere
+projects:
+  - name: myapp
+    session_command: claude --dangerously-skip-permissions  # this repo: skip the prompts
+  - name: client-work
+    session_command: codex                                  # a different agent here
+```
 
 ## Agent status
 

@@ -14,6 +14,7 @@ module Switchboard
       case argv.first
       when nil, "switch", "ls" then switch
       when "init"              then init
+      when "config", "edit"    then edit_config
       when "add"               then add_project(argv[1], argv[2], argv[3])
       when "clone"             then clone_project(argv[1], argv[2])
       when "refresh"           then refresh
@@ -63,7 +64,7 @@ module Switchboard
       worktree = model.find(selection[:path])
       return warn("worktree not found: #{selection[:path]}") unless worktree
 
-      Tmux.go(worktree)
+      Tmux.go(worktree, start: config.session_command_for(worktree.project))
     end
 
     # Prompt for a name and create a worktree in the given project, then switch
@@ -82,7 +83,7 @@ module Switchboard
       Tmux.go(Worktree.new(
                   project: project_name, path: dest, branch: Git.current_branch(dest),
                   dirty: false, pr: nil, base: project["base_ref"], primary: false
-                ))
+                ), start: config.session_command_for(project_name))
     end
 
     # Preview a row, by kind. Called per-line by fzf with (kind, path, branch).
@@ -134,6 +135,24 @@ module Switchboard
       puts "wrote #{Config.path} (#{projects.size} projects)"
       puts "edit it to taste, then run `switchboard` (prefix-s)."
       refresh unless projects.empty?
+    end
+
+    # Open the config in $EDITOR (also bound to `e` in the sidebar). Writes a
+    # minimal stub first if there's no config yet, so there's always a real file
+    # to edit — and a place to add `session_command` / per-project overrides.
+    def edit_config
+      unless Config.exist?
+        FileUtils.mkdir_p(File.dirname(Config.path))
+        File.write(Config.path, YAML.dump("worktree_root" => Config::DEFAULT_ROOT, "projects" => []))
+      end
+      warn("could not launch editor: #{editor_command}") unless system("#{editor_command} #{Shellwords.escape(Config.path)}")
+    end
+
+    # $VISUAL/$EDITOR, treating an exported-but-empty value as unset — an empty
+    # string is truthy in Ruby, so a bare `||` chain would pick it and try to
+    # exec the config file itself. Falls back to vi.
+    def editor_command
+      [ENV["VISUAL"], ENV["EDITOR"]].find { |e| e && !e.empty? } || "vi"
     end
 
     def add_project(name, path, base = nil)
@@ -231,6 +250,7 @@ module Switchboard
         usage
           switchboard              open the switcher (fzf)
           switchboard init         create config (imports projects from emdash once)
+          switchboard config       edit config.yml in $EDITOR (per-project settings)
           switchboard add N P [B]  register an existing repo (name, path, base ref)
           switchboard clone U [N]  clone a repo under projects_root, then register
           switchboard refresh      re-fetch PR badges from gh
