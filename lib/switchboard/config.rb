@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "yaml"
+require "fileutils"
 
 module Switchboard
   # Switchboard's own project registry — what lets it stand alone, with no
@@ -9,6 +10,7 @@ module Switchboard
   class Config
     DEFAULT_PATH = File.expand_path("~/.config/switchboard/config.yml")
     DEFAULT_ROOT = "~/switchboard/worktrees"
+    DEFAULT_PROJECTS_ROOT = "~/Programming" # where the clone action drops repos
 
     def self.path
       ENV["SWITCHBOARD_CONFIG"] || DEFAULT_PATH
@@ -16,6 +18,21 @@ module Switchboard
 
     def self.exist?
       File.exist?(path)
+    end
+
+    # Append a project to the on-disk config, preserving the existing raw
+    # structure (unexpanded paths and per-project keys). The single config-write
+    # path shared by the CLI `add`/`clone` and the sidebar's add action, so the
+    # two never drift. Returns the written entry.
+    def self.add_project(name, repo, base = nil)
+      file = path
+      data = File.exist?(file) ? (YAML.safe_load_file(file) || {}) : { "worktree_root" => DEFAULT_ROOT }
+      entry = { "name" => name, "path" => repo }
+      entry["base"] = base if base
+      (data["projects"] ||= []) << entry
+      FileUtils.mkdir_p(File.dirname(file))
+      File.write(file, YAML.dump(data))
+      entry
     end
 
     def initialize(file = self.class.path)
@@ -26,6 +43,13 @@ module Switchboard
     # Where `switchboard` puts worktrees it creates: <root>/<project>/<name>.
     def worktree_root
       File.expand_path(@data["worktree_root"] || DEFAULT_ROOT)
+    end
+
+    # Where the clone action drops the repos it fetches: <root>/<name>. Kept
+    # separate from worktree_root — these are the canonical source checkouts,
+    # not the throwaway worktrees.
+    def projects_root
+      File.expand_path(@data["projects_root"] || DEFAULT_PROJECTS_ROOT)
     end
 
     # Whether to wire per-worktree agent-state hooks (sidebar dots) when creating

@@ -15,6 +15,7 @@ module Switchboard
       when nil, "switch", "ls" then switch
       when "init"              then init
       when "add"               then add_project(argv[1], argv[2], argv[3])
+      when "clone"             then clone_project(argv[1], argv[2])
       when "refresh"           then refresh
       when "enable-hooks"      then enable_hooks(argv[1])
       when "disable-hooks"     then disable_hooks(argv[1])
@@ -138,13 +139,21 @@ module Switchboard
     def add_project(name, path, base = nil)
       return warn("usage: switchboard add <name> <path> [base-ref]") if name.nil? || path.nil?
 
-      data = Config.exist? ? (YAML.safe_load_file(Config.path) || {}) : { "worktree_root" => Config::DEFAULT_ROOT }
-      entry = { "name" => name, "path" => path }
-      entry["base"] = base if base
-      (data["projects"] ||= []) << entry
-      FileUtils.mkdir_p(File.dirname(Config.path))
-      File.write(Config.path, YAML.dump(data))
-      puts "added #{name} -> #{path}"
+      entry, err = Registrar.register(config, path, name: name, base: base)
+      return warn(err) if err
+
+      puts "added #{entry['name']} -> #{entry['path']}"
+    end
+
+    # Clone a repo under `projects_root` and register it (realizes the v2
+    # roadmap item). Name defaults to the URL's basename.
+    def clone_project(url, name = nil)
+      return warn("usage: switchboard clone <git-url> [name]") if url.nil?
+
+      entry, err = Registrar.clone(config, url, name: name)
+      return warn(err) if err
+
+      puts "cloned + added #{entry['name']} -> #{entry['path']}"
     end
 
     # Wire agent-state hooks into a single worktree's local settings (scoped,
@@ -222,7 +231,8 @@ module Switchboard
         usage
           switchboard              open the switcher (fzf)
           switchboard init         create config (imports projects from emdash once)
-          switchboard add N P [B]  register a project (name, repo path, base ref)
+          switchboard add N P [B]  register an existing repo (name, path, base ref)
+          switchboard clone U [N]  clone a repo under projects_root, then register
           switchboard refresh      re-fetch PR badges from gh
           switchboard enable-hooks [P]   wire agent-state dots in a worktree (default: cwd)
           switchboard disable-hooks [P]  remove them from that worktree
