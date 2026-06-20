@@ -114,6 +114,23 @@ module Switchboard
       active == "1" && attached.to_i.positive?
     end
 
+    # Is this pane the one the user is actually driving — the active pane, on the
+    # active window, of an attached session? (Stronger than visible?: a sidebar
+    # split is visible while you type in the editor beside it, but not focused.)
+    def focused?(pane)
+      return true unless pane
+
+      out = `tmux display-message -p -t #{Shellwords.escape(pane)} '#\{pane_active},#\{window_active},#\{session_attached}' 2>/dev/null`.strip
+      pane_active, window_active, attached = out.split(",")
+      pane_active == "1" && window_active == "1" && attached.to_i.positive?
+    end
+
+    # Ask tmux to deliver focus in/out to the program in a pane, so the sidebar
+    # can dim its cursor the instant it loses focus. Idempotent, best-effort.
+    def enable_focus_events
+      system("tmux", "set", "-g", "focus-events", "on", out: File::NULL, err: File::NULL)
+    end
+
     # Split a narrow sidebar pane on the left running `switchboard sidebar`.
     def spawn_sidebar(target: nil, dir: nil)
       bin = ENV["SWITCHBOARD_BIN"]
