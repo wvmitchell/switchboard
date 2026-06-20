@@ -16,6 +16,7 @@ build step, and no test suite. See `README.md` for the user-facing feature tour.
 bin/switchboard            # open the switcher (run it to dev/test by hand)
 bin/switchboard doctor     # check that fzf/tmux/git/gh/sqlite3 + config exist
 bin/switchboard init       # create ~/.config/switchboard/config.yml (today: seeds from emdash if present — see #3)
+bin/switchboard config     # open config.yml in $EDITOR (sidebar `e` does the same)
 bin/switchboard sidebar    # run the persistent sidebar standalone (normally tmux-spawned)
 ```
 
@@ -69,7 +70,11 @@ with the `_`-prefixed internal subcommands (`_rowpreview`, `_pr`, `_new`,
 **tmux mapping** (`tmux.rb`): each worktree ⇆ one session named
 `sb/<project>/<leaf>`. Switching creates the session on demand and attaches a
 fixed-width sidebar pane. The sidebar reloads on session-change via a tmux hook
-that "pokes" it with `C-l` (`poke-sidebar`).
+that "pokes" it with `C-l` (`poke-sidebar`). On the *creation* of a session
+(only — never a re-switch), `Tmux.go(worktree, start:)` types the project's
+resolved `session_command` (`Config#session_command_for`, global default +
+per-project override) into the window — this is the "how the agent starts" knob,
+e.g. `claude --dangerously-skip-permissions`. Empty ⇒ a plain shell, as before.
 
 ### Agent-state dots (the subtle part)
 

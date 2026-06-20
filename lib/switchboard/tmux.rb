@@ -12,10 +12,12 @@ module Switchboard
     module_function
 
     # Switch to a worktree's session (creating it, with a sidebar, if needed).
-    # Non-exec so callers (the sidebar loop) keep running.
-    def go(worktree)
+    # `start` (config's session_command) is typed into the window only when the
+    # session is first created — never on a re-switch into a live one. Non-exec
+    # so callers (the sidebar loop) keep running.
+    def go(worktree, start: nil)
       name = session_name(worktree)
-      ensure_session(name, worktree.path)
+      ensure_session(name, worktree.path, start)
       ensure_sidebar(name, worktree.path)
       sidebar = sidebar_pane(name)
       focus_work(name, sidebar) # land on the workspace's terminal, not its tree
@@ -28,11 +30,28 @@ module Switchboard
       "sb/#{worktree.project}/#{worktree.leaf}".gsub(/[.:\s]/, "-")
     end
 
-    def ensure_session(name, dir)
+    def ensure_session(name, dir, start = nil)
       return if has_session?(name)
 
-      system("tmux", "new-session", "-d", "-s", name, "-c", dir, out: File::NULL, err: File::NULL)
+      # Gate the start command on new-session actually succeeding. If a racing
+      # process (a CLI switch and a sidebar in another pane are separate
+      # processes) created the session first, new-session fails — and we must
+      # NOT type the command into a session we didn't create, or it lands twice.
+      created = system("tmux", "new-session", "-d", "-s", name, "-c", dir, out: File::NULL, err: File::NULL)
       system("tmux", "rename-window", "-t", name, "work", out: File::NULL, err: File::NULL)
+      run_in_session(name, start) if start && created
+    end
+
+    # Type a command into a freshly created session's window and run it — how
+    # config's session_command auto-starts an agent. `-l` sends it as literal
+    # text: without it, a value that matches a tmux key name (e.g. "Enter",
+    # "C-l", "Space") would be interpreted as that key instead of typed. The
+    # Enter that submits the line is a separate, deliberately-interpreted key.
+    # chomp so a trailing newline (a YAML block scalar) doesn't double-submit.
+    # tmux buffers the keys until the shell is ready.
+    def run_in_session(name, command)
+      system("tmux", "send-keys", "-t", name, "-l", command.chomp, out: File::NULL, err: File::NULL)
+      system("tmux", "send-keys", "-t", name, "Enter", out: File::NULL, err: File::NULL)
     end
 
     def has_session?(name)

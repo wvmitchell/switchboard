@@ -71,6 +71,17 @@ module Switchboard
       b.to_s.empty? ? "origin/main" : b
     end
 
+    # Command switchboard types into a worktree's window the first time it
+    # creates that worktree's tmux session — e.g.
+    # "claude --dangerously-skip-permissions". Global default here; each project
+    # can override with its own `session_command`. Empty/unset means run nothing
+    # (you land in a plain shell, as before). This is the global; per-project
+    # resolution happens in `projects` / `session_command_for`.
+    def session_command
+      cmd = @data["session_command"]
+      cmd.to_s.empty? ? nil : cmd
+    end
+
     def projects
       Array(@data["projects"]).filter_map do |p|
         next unless p["name"] && p["path"]
@@ -78,13 +89,22 @@ module Switchboard
         {
           "name" => p["name"],
           "path" => File.expand_path(p["path"]),
-          "base_ref" => p["base"] || base
+          "base_ref" => p["base"] || base,
+          # Per-project override, falling back to the global default.
+          "session_command" => p["session_command"].to_s.empty? ? session_command : p["session_command"]
         }
       end
     end
 
     def project(name)
       projects.find { |p| p["name"] == name }
+    end
+
+    # Resolved session command for a project (its override, else the global
+    # default, else nil) — what Tmux.go runs once on session creation.
+    def session_command_for(name)
+      p = project(name)
+      p ? p["session_command"] : session_command
     end
   end
 end
