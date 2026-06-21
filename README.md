@@ -20,7 +20,9 @@ Switchboard is the same overview, driven entirely from the keyboard.
   list`, so anything you (or emdash, or Conductor) create shows up — nothing to
   sync.
 - **PR badges come from `gh`,** cached on disk so the sidebar never blocks on
-  the network. `switchboard refresh` re-fetches.
+  the network. The cache refreshes itself in the background — when an agent
+  finishes a turn, when you switch in, and on an idle timer — so badges stay
+  fresh without anyone running `switchboard refresh`.
 - **Each worktree maps to a tmux session.** Selecting one (↵) creates the
   session (if needed) and switches to it. `n` creates a brand-new worktree +
   branch under `worktree_root` and drops you in.
