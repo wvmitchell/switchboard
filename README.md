@@ -200,16 +200,23 @@ projects:
 
 ## Agent status
 
-The persistent sidebar shows a dot next to each workspace that has a live agent
-(Claude Code, Codex, Aider). The dot's colour tells you what the agent is doing,
-so you can run several in parallel and glance over to see who needs you:
+The persistent sidebar shows an animated icon next to each workspace that has a
+live agent (Claude Code, Codex, Aider). The icon's shape *and* colour tell you
+what the agent is doing, so you can run several in parallel and glance over to
+see who needs you:
 
 ```
-(blank)   no agent
-● blue    thinking — working a turn (a slow breathe, so it reads as "alive")
-● green   done — finished its turn (or just idle); ball's in your court
-● magenta wants input — blocked on a question/permission it needs you to answer
+(blank)    no agent
+⠹ blue     thinking — a braille spinner cycles while it works a turn
+◆ magenta  wants input — a blinking diamond; blocked on a question/permission
+● green    done — a steady dot; it finished its turn (or is idle), ball's in your court
 ```
+
+The colours are plain terminal-palette entries (ANSI blue / magenta / green), so
+they follow your terminal's light/dark theme automatically — nothing to configure.
+The motion lives in the glyph, not a brightness ramp, so the spinner reads the
+same on any background. (Branch rows use the palette's dim grey for the same
+reason.)
 
 Two ways the dot learns what the agent's doing:
 

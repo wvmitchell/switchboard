@@ -166,9 +166,32 @@ module Switchboard
     def test_dot_for_maps_state_to_a_glyph
       sb = sidebar(pulse: 0)
       assert_equal Sidebar::DONE, sb.send(:dot_for, :done)
-      assert_equal Sidebar::WANTS, sb.send(:dot_for, :waiting)
-      assert_equal Sidebar::THINK_FRAMES[0], sb.send(:dot_for, :thinking)
+      assert_equal Sidebar::WANTS_ON, sb.send(:dot_for, :waiting), "blink starts lit at pulse 0"
+      assert_equal Sidebar::SPIN_COLORED[0], sb.send(:dot_for, :thinking)
       assert_equal " ", sb.send(:dot_for, nil), "idle is a blank slot"
+    end
+
+    def test_spinner_advances_with_pulse
+      frames = Sidebar::SPIN_COLORED
+      assert_equal frames[1], sidebar(pulse: 1).send(:dot_for, :thinking), "next pulse, next frame"
+      refute_equal frames[0], frames[1], "frames are distinct"
+      assert_equal frames[0], sidebar(pulse: frames.size).send(:dot_for, :thinking), "wraps around"
+    end
+
+    def test_waiting_blink_toggles
+      assert_equal Sidebar::WANTS_ON, sidebar(pulse: 0).send(:dot_for, :waiting)
+      assert_equal Sidebar::WANTS_OFF, sidebar(pulse: Sidebar::BLINK_PERIOD).send(:dot_for, :waiting),
+                   "flips to hollow one BLINK_PERIOD later"
+    end
+
+    # The bare (uncolored) glyph backs both plain and the reverse-video selected row.
+    def test_glyph_for_is_the_bare_shape
+      sb = sidebar(pulse: 0)
+      assert_equal Sidebar::SPIN_FRAMES[0], sb.send(:glyph_for, :thinking), "no color escape"
+      assert_equal "◆", sb.send(:glyph_for, :waiting)
+      assert_equal "◇", sidebar(pulse: Sidebar::BLINK_PERIOD).send(:glyph_for, :waiting)
+      assert_equal "●", sb.send(:glyph_for, :done)
+      assert_equal " ", sb.send(:glyph_for, nil)
     end
 
     def test_plain_renders_each_node_kind
@@ -196,6 +219,62 @@ module Switchboard
       unfocused = sidebar(focused: false)
       refute_includes unfocused.send(:line, proj("app"), true, 20), "\e[7m",
                       "off-focus, the cursor row renders like any other"
+    end
+
+    def test_plain_shows_live_state_glyph_for_workspaces
+      sb = sidebar(agents: { "/wt/a" => :thinking }, pulse: 0)
+      assert_equal "  #{Sidebar::SPIN_FRAMES[0]} a", sb.send(:plain, ws("a", path: "/wt/a")),
+                   "plain carries the bare spinner glyph (not a static dot)"
+    end
+
+    # Review D3 / Codex: the new icons must survive on the focused cursor row,
+    # which is drawn from plain() under reverse-video (color stripped, shape kept).
+    def test_focused_row_shows_live_state_glyph
+      sb = sidebar(nodes: [ws("a", path: "/wt/a")], agents: { "/wt/a" => :thinking },
+                   focused: true, pulse: 0)
+      line0 = sb.send(:line, ws("a", path: "/wt/a"), true, 30)
+      assert_includes line0, "\e[7m", "focused cursor row is a reverse-video bar"
+      assert_includes line0, Sidebar::SPIN_FRAMES[0], "live spinner shows even on the selected row"
+      refute_includes line0, "\e[1;34m", "shape only — color is stripped under reverse video"
+
+      sb.instance_variable_set(:@pulse, 1)
+      assert_includes sb.send(:line, ws("a", path: "/wt/a"), true, 30), Sidebar::SPIN_FRAMES[1],
+                      "and it advances with @pulse"
+    end
+
+    # --- pulsing?: animate only for thinking/waiting dots actually on screen ----
+
+    def test_pulsing_wakes_for_thinking_or_waiting
+      sb = sidebar(nodes: [proj("app"), ws("a", path: "/wt/a")], agents: { "/wt/a" => :thinking })
+      sb.instance_variable_set(:@was_visible, true)
+      sb.instance_variable_set(:@visible_rows, rows_of(sb))
+      assert sb.send(:pulsing?), "a visible thinking dot pulses"
+
+      sb.instance_variable_set(:@agents, { "/wt/a" => :waiting })
+      assert sb.send(:pulsing?), "a visible waiting dot pulses (the blink)"
+
+      sb.instance_variable_set(:@agents, { "/wt/a" => :done })
+      refute sb.send(:pulsing?), "a done dot is steady — no pulse"
+    end
+
+    def test_pulsing_ignores_offscreen_agents
+      sb = sidebar(nodes: [proj("app"), ws("a", path: "/wt/a"), ws("b", path: "/wt/b")],
+                   agents: { "/wt/b" => :thinking })
+      sb.instance_variable_set(:@was_visible, true)
+      on_screen = ->(p) { rows_of(sb).select { |n| n.path == p } }
+
+      sb.instance_variable_set(:@visible_rows, on_screen.call("/wt/a"))
+      refute sb.send(:pulsing?), "a thinking dot scrolled off screen doesn't pulse"
+
+      sb.instance_variable_set(:@visible_rows, on_screen.call("/wt/b"))
+      assert sb.send(:pulsing?), "...but it pulses once it's on screen"
+    end
+
+    def test_pulsing_is_false_when_pane_hidden
+      sb = sidebar(nodes: [ws("a", path: "/wt/a")], agents: { "/wt/a" => :thinking })
+      sb.instance_variable_set(:@visible_rows, rows_of(sb))
+      sb.instance_variable_set(:@was_visible, false)
+      refute sb.send(:pulsing?), "a hidden pane never pulses, even with a thinking dot"
     end
 
     # --- completion_edges: a worktree newly at a resting state (issue #19) ----

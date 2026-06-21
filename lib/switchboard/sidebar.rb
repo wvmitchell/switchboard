@@ -13,7 +13,7 @@ module Switchboard
   class Sidebar
     REFRESH = 3    # seconds between agent re-scans
     TREE_TICKS = 5 # rebuild the whole tree every Nth tick (~15s) while visible
-    PULSE = 0.45   # repaint cadence while an agent is thinking (drives the breathe)
+    PULSE = 0.12   # animation frame cadence while a dot is on screen (drives the spinner/blink)
 
     # Background PR-badge refresh (issue #19): event-driven, never blocks the UI.
     PR_DEBOUNCE = 5          # min seconds between background refreshes per project
@@ -21,15 +21,24 @@ module Switchboard
     BACKSTOP_TTL = 600       # idle fallback: refresh a project staler than this
     MAX_SPAWN_PER_RELOAD = 3 # cap backstop spawns per reload (cold-home fan-out)
 
-    # Agent-state dots. Idle (no agent) draws nothing — just a blank slot — so
-    # the column only lights up when something's actually there.
-    DONE = "\e[1;32m●\e[0m"  # green: replied, ready for you (not blocked)
-    WANTS = "\e[1;35m●\e[0m" # magenta: blocked, wants your input
-    # Thinking breathes through a blue ramp (dim->bright->dim). We drive it
-    # ourselves on the PULSE repaint so it works on any terminal — no reliance
-    # on the blink attribute, which tmux passes through but many terminals drop.
-    THINK_FRAMES = %w[19 20 27 33 27 20].map { |c| "\e[1;38;5;#{c}m●\e[0m" }.freeze
-    BRANCH_FG = "\e[38;5;245m"   # readable medium gray for branch rows
+    # Agent-state icons. Idle (no agent) draws a blank slot, so the column only
+    # lights up when something's there. Motion lives in the GLYPH (the spinner
+    # cycles, the diamond blinks) — driven by @pulse on the PULSE repaint — so
+    # each state needs only a single palette ANSI color that follows the
+    # terminal's light/dark theme for free. No 256-color ramp, no bg detection.
+    #
+    # Two forms per animated state: a bare glyph (`glyph_for`, used on the
+    # reverse-video selected row where color is stripped but shape survives) and
+    # a pre-built colored string (`dot_for`, normal rows — built once, no
+    # per-frame allocation). Thinking cycles a braille spinner; waiting blinks a
+    # filled/hollow diamond; done is a steady dot.
+    SPIN_FRAMES  = %w[⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏].freeze              # thinking: bare spinner glyphs
+    SPIN_COLORED = SPIN_FRAMES.map { |g| "\e[1;34m#{g}\e[0m" }.freeze # ...pre-built in blue
+    WANTS_ON  = "\e[1;35m◆\e[0m"  # input needed: magenta diamond, lit
+    WANTS_OFF = "\e[1;35m◇\e[0m"  # ...and hollow, the blink's off-beat
+    DONE      = "\e[1;32m●\e[0m"  # green: replied, ready for you (not blocked)
+    BLINK_PERIOD = 4             # @pulse ticks per blink half-cycle (~0.5s at PULSE)
+    BRANCH_FG = "\e[90m"         # branch rows: bright-black, a theme-relative dim (#23)
 
     # Key hints, spread over readable lines (kept within the pin width). Reload
     # isn't shown — it's automatic; Ctrl-L triggers it internally (the
@@ -72,11 +81,12 @@ module Switchboard
       @offset = 0
       @nodes = []          # full tree
       @rows = []           # visible rows (collapsed projects hide their children)
+      @visible_rows = []   # the on-screen slice of @rows (set in render; gates pulsing?)
       @agents = {}         # worktree path => :thinking | :done | :waiting
       @agent_state = AgentState.new
       @collapsed = Set.new # project names that are collapsed
       @ticks = 0
-      @pulse = 0           # animation frame counter for the thinking breathe
+      @pulse = 0           # animation frame counter (spinner cycle + blink phase)
       @last_scan = nil     # monotonic time of the last agent re-scan
       @was_visible = false
       @focused = false     # is the sidebar the active pane? (cursor bar only then)
@@ -100,9 +110,9 @@ module Switchboard
       @last_scan = monotonic
       loop do
         render
-        # Wake often enough to animate the thinking breathe, but only while one
-        # is on screen; otherwise sit on the slow REFRESH interval. State scans
-        # stay gated to REFRESH (scan_due?) so the fast frames don't hammer tmux.
+        # Wake often enough to animate the spinner/blink, but only while a dot is
+        # on screen; otherwise sit on the slow REFRESH interval. State scans stay
+        # gated to REFRESH (scan_due?) so the fast frames don't hammer tmux.
         if IO.select([$stdin], nil, nil, frame_timeout)
           break unless handle(read_key)
         else
@@ -118,9 +128,13 @@ module Switchboard
       pulsing? ? PULSE : REFRESH
     end
 
-    # A thinking dot is on screen and worth animating.
+    # A thinking/waiting dot is actually on screen and worth animating. Gated on
+    # the rendered slice (not all @agents) so a collapsed or scrolled-off agent
+    # never drives repaints; :done is steady and never pulses.
     def pulsing?
-      @was_visible && @agents.value?(:thinking)
+      return false unless @was_visible
+
+      @visible_rows.any? { |n| %i[thinking waiting].include?(@agents[n.path]) }
     end
 
     # True at most once per REFRESH seconds — throttles the actual agent scan
@@ -605,6 +619,7 @@ module Switchboard
       scroll(height)
 
       visible = @rows[@offset, height].to_a
+      @visible_rows = visible # the on-screen slice — pulsing? animates only for these
       out = +"\e[H"
       visible.each_with_index do |node, i|
         out << "\e[#{i + 1};1H\e[K" << line(node, @offset + i == @cursor, cols)
@@ -650,12 +665,15 @@ module Switchboard
     end
 
     # Plain (no color) — used for the highlighted row and as the base text. The
-    # ws prefix is always 4 cols ("  ● ") so names line up whether or not a dot
-    # is present; idle just leaves the dot slot blank.
+    # ws prefix is always 4 cols ("  X ") so names line up whether or not a dot is
+    # present; idle leaves the dot slot blank. The dot carries the live, uncolored
+    # state glyph (`glyph_for`): under the reverse-video cursor bar color is
+    # stripped but the spinner/diamond/dot SHAPE survives, so the selected row
+    # still shows what its agent is doing.
     def plain(node)
       case node.kind
       when "proj" then "#{@collapsed.include?(node.project) ? '▸' : '▾'} #{node.project}"
-      when "ws"   then "  #{@agents.key?(node.path) ? '●' : ' '} #{node.name}"
+      when "ws"   then "  #{glyph_for(@agents[node.path])} #{node.name}"
       else             "     #{node.last ? '└' : '├'}#{node.active ? '●' : ' '}#{node.branch}"
       end
     end
@@ -672,11 +690,25 @@ module Switchboard
       end
     end
 
-    # State -> dot. Idle (nil) is a blank slot; thinking breathes via @pulse.
+    # Bare state glyph (no color), the single source for both render paths. The
+    # spinner cycles through SPIN_FRAMES on @pulse; the diamond blinks filled/
+    # hollow every BLINK_PERIOD ticks; done is steady; idle is a blank slot.
+    def glyph_for(state)
+      case state
+      when :thinking then SPIN_FRAMES[@pulse % SPIN_FRAMES.size]
+      when :waiting  then (@pulse / BLINK_PERIOD).even? ? "◆" : "◇"
+      when :done     then "●"
+      else " "
+      end
+    end
+
+    # Colored state glyph for a normal (non-selected) row. Mirrors glyph_for in
+    # palette ANSI; thinking indexes the pre-built SPIN_COLORED so there's no
+    # per-frame string allocation.
     def dot_for(state)
       case state
-      when :thinking then THINK_FRAMES[@pulse % THINK_FRAMES.size]
-      when :waiting  then WANTS
+      when :thinking then SPIN_COLORED[@pulse % SPIN_COLORED.size]
+      when :waiting  then (@pulse / BLINK_PERIOD).even? ? WANTS_ON : WANTS_OFF
       when :done     then DONE
       else " "
       end
