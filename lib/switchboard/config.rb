@@ -6,7 +6,8 @@ require "fileutils"
 module Switchboard
   # Switchboard's own project registry — what lets it stand alone, with no
   # emdash (or Conductor) database at runtime. Lives at
-  # ~/.config/switchboard/config.yml and is seeded once by `switchboard init`.
+  # ~/.config/switchboard/config.yml, created empty by `switchboard install`
+  # (or `init`) and grown by the add-project flow.
   class Config
     DEFAULT_PATH = File.expand_path("~/.config/switchboard/config.yml")
     DEFAULT_ROOT = "~/switchboard/worktrees"
@@ -20,13 +21,33 @@ module Switchboard
       File.exist?(path)
     end
 
+    # One source of truth for "what an empty switchboard config looks like" —
+    # shared by scaffold, the CLI `init`/`config`, and `add_project`'s default,
+    # so a fresh file written by any of them is byte-identical. Fresh hash each
+    # call (never a shared mutable constant).
+    def self.default_data
+      { "worktree_root" => DEFAULT_ROOT, "projects" => [] }
+    end
+
+    # Write the default config if none exists yet; return the path either way.
+    # Never clobbers an existing file (even a malformed/empty one) — callers that
+    # want to read or seed it open the real file. Idempotent.
+    def self.scaffold
+      file = path
+      unless File.exist?(file)
+        FileUtils.mkdir_p(File.dirname(file))
+        File.write(file, YAML.dump(default_data))
+      end
+      file
+    end
+
     # Append a project to the on-disk config, preserving the existing raw
     # structure (unexpanded paths and per-project keys). The single config-write
     # path shared by the CLI `add`/`clone` and the sidebar's add action, so the
     # two never drift. Returns the written entry.
     def self.add_project(name, repo, base = nil)
       file = path
-      data = File.exist?(file) ? (YAML.safe_load_file(file) || {}) : { "worktree_root" => DEFAULT_ROOT }
+      data = File.exist?(file) ? (YAML.safe_load_file(file) || {}) : default_data
       entry = { "name" => name, "path" => repo }
       entry["base"] = base if base
       (data["projects"] ||= []) << entry

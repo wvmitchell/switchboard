@@ -14,8 +14,8 @@ Switchboard is the same overview, driven entirely from the keyboard.
 ## How it works
 
 - **Standalone, config-driven.** Projects live in `~/.config/switchboard/config.yml`
-  (name, repo path, base ref). No emdash or Conductor database at runtime.
-  `switchboard init` seeds the config from emdash's DB once, if present.
+  (name, repo path, base ref). No emdash or Conductor database at runtime —
+  `switchboard install` writes an empty config and you grow it from the sidebar.
 - **Git is the source of truth.** Worktrees are discovered with `git worktree
   list`, so anything you (or emdash, or Conductor) create shows up — nothing to
   sync.
@@ -54,10 +54,40 @@ e        edit config.yml in $EDITOR
 q        hide the sidebar
 ```
 
+## Install
+
+```sh
+git clone https://github.com/wvmitchell/switchboard
+cd switchboard && bin/switchboard install
+```
+
+`install` is idempotent and does three things:
+
+1. **Symlinks `switchboard` onto your PATH** (`~/.local/bin/switchboard`, or
+   `$SWITCHBOARD_BIN_DIR`). If that dir isn't on `$PATH`, it tells you the line
+   to add.
+2. **Wires the tmux binding** by adding one marker-delimited line to your
+   tmux.conf that sources the shipped `switchboard.tmux` fragment. The fragment
+   is self-locating, so the binding keeps working wherever the repo lives, and
+   it binds `prefix-s` to toggle the sidebar plus a session-switch refresh hook.
+3. **Creates an empty config** if you don't have one yet.
+
+It finds the tmux.conf tmux actually loads (via `#{config_files}`) and backs it
+up to `.bak` before the first edit. Flags: `--no-tmux` (skip the tmux edit),
+`--print-tmux` (print the line instead of writing it), `--tmux-conf PATH` (target
+a specific file). `switchboard uninstall` reverses all of it; your config and
+agent state are left untouched. `switchboard doctor` reports what's wired.
+
+Then add your first project: press `a` in the sidebar (`n` only creates
+worktrees inside a project that already exists), so switchboard stands up on a
+fresh machine, off emdash, entirely from the keyboard.
+
 ## Usage
 
 ```sh
-bin/switchboard init            # create config (imports projects from emdash once)
+bin/switchboard install         # symlink onto PATH + wire tmux bindings + empty config
+bin/switchboard uninstall       # reverse install (symlink + tmux bindings)
+bin/switchboard init            # create an empty config (no projects yet)
 bin/switchboard home            # attach to the persistent home session (anchor + settings)
 bin/switchboard config          # edit config.yml in $EDITOR (per-project settings)
 bin/switchboard add N P [B]     # register an existing repo (name, path, base ref)
@@ -68,20 +98,13 @@ bin/switchboard enable-hooks [P]  # exact agent-state dots in a worktree (see be
 bin/switchboard doctor          # check dependencies + config
 ```
 
-You can also add a project without leaving the keyboard: press `a` in the
-sidebar to register an existing local repo or clone one from a URL. This is the
-keyboard path to your *first* project — `n` only creates worktrees inside a
-project that already exists — so switchboard stands up on a fresh machine, off
-emdash, entirely from the sidebar.
-
-Bind the sidebar toggle to a tmux key for instant access, e.g. in `~/.tmux.conf`:
+The sidebar also spawns automatically beside every session switchboard creates,
+so the bound `prefix-s` is really just show/hide for the current window. Prefer
+to wire it by hand instead of via `install`? Add this to `~/.tmux.conf`:
 
 ```tmux
-bind-key s run-shell "/path/to/switchboard/bin/switchboard toggle-sidebar"
+run-shell "/path/to/switchboard/switchboard.tmux"
 ```
-
-The sidebar also spawns automatically beside every session switchboard creates,
-so the bound key is really just show/hide for the current window.
 
 ## Home session
 
@@ -99,11 +122,13 @@ reasons:
   (land focused on the tree, ready to navigate). It's the obvious place to manage
   switchboard: `a` adds a project, `e` opens the config — the footer says so.
 
-Home is created lazily the moment it's needed, so there's nothing to set up. Bind
-it for one-key access alongside the popup, e.g.:
+Home is created lazily the moment it's needed, so there's nothing to set up.
+`install` deliberately doesn't bind it (one less key taken). If you want one-key
+access, add a bind on a key that's free in your config — `prefix-S` is freed by
+switchboard, while `prefix-h` is a common pane-nav key, so pick what fits:
 
 ```tmux
-bind-key h run-shell "/path/to/switchboard/bin/switchboard home"
+bind-key S run-shell "/path/to/switchboard/bin/switchboard home"
 ```
 
 ## Housekeeping

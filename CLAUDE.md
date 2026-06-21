@@ -6,25 +6,33 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Switchboard is a keyboard-only switcher/creator for git-worktree workspaces — a
 terminal-native alternative to Conductor/emdash. It's pure Ruby with **zero gem
-dependencies**: everything is stdlib plus shelling out to `tmux`, `git`, `gh`,
-and (for a legacy one-time import only) `sqlite3`. There is no Gemfile, no
-build step, and no test suite. See `README.md` for the user-facing feature tour.
+dependencies**: everything is stdlib plus shelling out to `tmux`, `git`, and
+`gh`. There is no Gemfile and no build step. The test suite is stdlib Minitest
+(no gems) under `test/` — run it with
+`ruby -Itest -e 'Dir["test/*_test.rb"].each { |f| require File.expand_path(f) }'`
+(or a single file, `ruby -Itest test/installer_test.rb`). See `README.md` for
+the user-facing feature tour.
 
 ## Commands
 
 ```sh
 bin/switchboard            # toggle the sidebar in the current tmux window
-bin/switchboard doctor     # check that tmux/git/gh/sqlite3 + config exist
-bin/switchboard init       # create ~/.config/switchboard/config.yml (today: seeds from emdash if present — see #3)
+bin/switchboard install    # symlink onto PATH + wire tmux bindings + empty config (--no-tmux/--print-tmux/--tmux-conf)
+bin/switchboard uninstall  # reverse install (symlink + tmux marker block + live unbind)
+bin/switchboard doctor     # check that tmux/git/gh + config + install wiring exist
+bin/switchboard init       # create ~/.config/switchboard/config.yml (empty; grown by the add-project flow)
 bin/switchboard config     # open config.yml in $EDITOR (sidebar `e` does the same)
 bin/switchboard sidebar    # run the persistent sidebar standalone (normally tmux-spawned)
 ```
 
-> **In flux (issue #3):** standing switchboard up is currently manual (symlink
-> `bin/switchboard`, hand-add tmux bindings, hand-edit the config). A
-> `switchboard install`/`uninstall` command and an emdash-optional `init` are
-> planned. Verify the current command surface in `cli.rb` before documenting
-> setup — this is the area most likely to have moved on.
+Setup is one command: `git clone && bin/switchboard install` (`Installer`,
+`installer.rb`). It symlinks `bin/switchboard` to `~/.local/bin`, adds a
+marker-delimited line to the tmux.conf tmux actually loads (found via
+`#{config_files}`) that sources the self-locating `switchboard.tmux` fragment,
+and scaffolds an empty config. The fragment binds `prefix-s` (toggle) and an
+indexed `client-session-changed[99]` poke hook; `home` is intentionally not
+bound (configurable keys are issue #15). All steps are idempotent and reversed
+by `uninstall`.
 
 Ruby **>= 2.7** is required (`filter_map` etc.). `bin/switchboard` re-execs
 itself under a modern ruby if launched on macOS system Ruby 2.6 — relevant
@@ -38,12 +46,12 @@ Useful env overrides when running locally without disturbing real state:
 
 **Git is the source of truth at runtime; the config is just a project registry.**
 Worktrees are discovered live via `git worktree list`; the config
-(`~/.config/switchboard/config.yml`) only lists which repos to scan. emdash's
-SQLite DB (`lib/switchboard/emdash.rb`) is a **legacy one-time import**, read
-during `init` to seed that registry and never touched again at runtime — and
-even that coupling is being decoupled (issue #3), so treat it as an optional
-import path, not a core dependency. PR badges come from `gh`, cached on disk
-(`~/.cache/switchboard/prs`) so the UI never blocks on the network.
+(`~/.config/switchboard/config.yml`) only lists which repos to scan. emdash and
+Conductor are peer tools whose worktrees still show up (git finds them), but
+there's **no database coupling** — `install`/`init` write an empty config and
+the add-project flow grows it (the old emdash SQLite seed import was removed in
+issue #3). PR badges come from `gh`, cached on disk (`~/.cache/switchboard/prs`)
+so the UI never blocks on the network.
 
 **One data model, one front-end.** `Model` (`model.rb`) assembles the
 `project → worktree` tree from `Config` + `Git` + cached `Pr` data. `Tree.nodes`
@@ -104,8 +112,9 @@ get this automatically (`Creator.create` → `Hook.enable`, gated on
 ### Conventions
 
 - Every file starts with `# frozen_string_literal: true`.
-- Stateless helpers are `module_function` modules; only `Model`, `Config`,
-  `Sidebar`, `Emdash`, and `AgentState` are classes (they hold state).
+- Stateless helpers are `module_function` modules (`Hook`, `Tmux`, `Installer`,
+  …); only `Model`, `Config`, `Sidebar`, and `AgentState` are classes (they hold
+  state).
 - All shell-outs escape args with `Shellwords` and swallow stderr; failures
   degrade gracefully (return `[]`/`{}`/`nil`) rather than crash the UI.
 - Code is meant to be self-documenting; the existing comments explain *why* a

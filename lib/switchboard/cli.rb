@@ -15,6 +15,8 @@ module Switchboard
       case argv.first
       when nil, "toggle-sidebar" then toggle_sidebar
       when "home"              then Tmux.go_home
+      when "install"           then install(argv.drop(1))
+      when "uninstall"         then uninstall(argv.drop(1))
       when "init"              then init
       when "config", "edit"    then edit_config
       when "add"               then add_project(argv[1], argv[2], argv[3])
@@ -47,36 +49,51 @@ module Switchboard
       Tmux.toggle_sidebar
     end
 
+    # Stand switchboard up from a fresh clone: PATH symlink + tmux wiring + an
+    # empty config. `--no-tmux` skips the tmux.conf edit; `--print-tmux` prints
+    # the line instead of writing it; `--tmux-conf PATH` targets a specific conf.
+    def install(args)
+      Installer.install(
+        no_tmux: args.include?("--no-tmux"),
+        print_tmux: args.include?("--print-tmux"),
+        conf: flag_value(args, "--tmux-conf")
+      )
+    end
+
+    def uninstall(args)
+      Installer.uninstall(conf: flag_value(args, "--tmux-conf"))
+    end
+
+    # Value following a `--flag` in args, or nil.
+    def flag_value(args, name)
+      i = args.index(name)
+      i && args[i + 1]
+    end
+
     def refresh
       config.projects.each do |p|
         Pr.refresh(p["name"], p["path"]) if Dir.exist?(p["path"])
       end
     end
 
-    # Seed the config once from emdash's DB (read-only) if present, then warm
-    # the PR cache. After this, switchboard never reads emdash again.
+    # Create an empty config (no projects yet). Add your first project from the
+    # sidebar (`a`) or `switchboard add`; `install` runs this for you.
     def init
       if Config.exist?
         puts "config already exists: #{Config.path}"
         return
       end
 
-      projects = seed_projects
-      FileUtils.mkdir_p(File.dirname(Config.path))
-      File.write(Config.path, YAML.dump("worktree_root" => Config::DEFAULT_ROOT, "projects" => projects))
-      puts "wrote #{Config.path} (#{projects.size} projects)"
-      puts "edit it to taste, then press your sidebar key (or run `switchboard`)."
-      refresh unless projects.empty?
+      Config.scaffold
+      puts "wrote #{Config.path}"
+      puts "add a project from the sidebar (`a`) or `switchboard add <name> <path>`."
     end
 
-    # Open the config in $EDITOR (also bound to `e` in the sidebar). Writes a
+    # Open the config in $EDITOR (also bound to `e` in the sidebar). Scaffolds a
     # minimal stub first if there's no config yet, so there's always a real file
     # to edit — and a place to add `session_command` / per-project overrides.
     def edit_config
-      unless Config.exist?
-        FileUtils.mkdir_p(File.dirname(Config.path))
-        File.write(Config.path, YAML.dump("worktree_root" => Config::DEFAULT_ROOT, "projects" => []))
-      end
+      Config.scaffold
       warn("could not launch editor: #{editor_command}") unless system("#{editor_command} #{Shellwords.escape(Config.path)}")
     end
 
@@ -133,12 +150,27 @@ module Switchboard
     end
 
     def doctor
-      %w[tmux git gh sqlite3].each do |tool|
-        present = !`command -v #{tool} 2>/dev/null`.strip.empty?
-        puts format("  %s %s", present ? "\e[32m✓\e[0m" : "\e[31m✗\e[0m", tool)
+      %w[tmux git gh].each do |tool|
+        puts row(!`command -v #{tool} 2>/dev/null`.strip.empty?, tool)
       end
-      puts(Config.exist? ? "  \e[32m✓\e[0m config: #{Config.path}" : "  \e[31m✗\e[0m no config — run `switchboard init`")
+      exists = Config.exist?
+      puts row(exists, exists ? "config: #{Config.path}" : "no config — run `switchboard install`")
+      doctor_install
       doctor_hooks
+    end
+
+    # Report install wiring: PATH symlink, the tmux marker block, and a tmux new
+    # enough for the session-switch refresh. Read-only; logic lives in Installer.
+    def doctor_install
+      puts row(Installer.linked?, "PATH symlink: #{Installer.symlink_path}")
+      puts row(Installer.tmux_wired?, "tmux bindings wired (switchboard.tmux)")
+      v = Installer.tmux_version
+      puts row(!v.nil? && v >= 3.0, v ? "tmux #{v} (>= 3.0 for the session-switch refresh)" : "tmux not found")
+    end
+
+    # ✓/✗ status line shared by the doctor checks.
+    def row(ok, msg)
+      format("  %s %s", ok ? "\e[32m✓\e[0m" : "\e[31m✗\e[0m", msg)
     end
 
     # Agent-state hooks are per-worktree, so report the materialized reporter and
@@ -153,14 +185,6 @@ module Switchboard
       puts(on ? "  \e[32m✓\e[0m hooks enabled here: #{here}" : "  \e[33m–\e[0m hooks off here (observation fallback) — `switchboard enable-hooks`")
     end
 
-    # Internal callback helper for seeding (uses the emdash reader once).
-    def seed_projects
-      emdash = Emdash.new
-      return [] unless emdash.available?
-
-      emdash.projects.map { |p| { "name" => p["name"], "path" => p["path"], "base" => p["base_ref"] } }
-    end
-
     def help
       puts <<~HELP
         switchboard — keyboard-only worktree switcher + creator
@@ -168,7 +192,10 @@ module Switchboard
         usage
           switchboard              toggle the sidebar in the current tmux window
           switchboard home         attach to the persistent home session (anchor + settings)
-          switchboard init         create config (imports projects from emdash once)
+          switchboard install      symlink onto PATH + wire tmux bindings + empty config
+                                     (--no-tmux | --print-tmux | --tmux-conf PATH)
+          switchboard uninstall    reverse install (symlink + tmux bindings)
+          switchboard init         create an empty config (no projects yet)
           switchboard config       edit config.yml in $EDITOR (per-project settings)
           switchboard add N P [B]  register an existing repo (name, path, base ref)
           switchboard clone U [N]  clone a repo under projects_root, then register
