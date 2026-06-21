@@ -25,8 +25,14 @@ module Switchboard
     STATES = %w[thinking done waiting].freeze
     PRESENCE_TTL = 900 # seconds a hook report counts as a live agent
 
+    # Hook-derived states from the last scan (path => state), excluding the
+    # coarse activity fallback. The sidebar's PR-refresh edge trigger reads this
+    # so it only fires on the exact hook signal, never the 3s capture-hash guess.
+    attr_reader :last_hook_states
+
     def initialize
       @seen = {} # pane_id => last capture hash, for the activity fallback
+      @last_hook_states = {}
     end
 
     # worktree_paths -> Hash<path, state>. Only worktrees with an agent appear.
@@ -34,14 +40,17 @@ module Switchboard
       hooks = read_hooks
       process = nil # Agents.active, fetched lazily (skipped entirely if all hooked)
       panes = nil
-      worktree_paths.each_with_object({}) do |wt, out|
+      hook_states = {} # the hook-only subset, stashed for last_hook_states
+      states = worktree_paths.each_with_object({}) do |wt, out|
         state = fresh_hook(wt, hooks)
         if state
-          out[wt] = state
+          out[wt] = hook_states[wt] = state
         elsif (process ||= Agents.active(worktree_paths)).include?(wt)
           out[wt] = activity(wt, panes ||= Agents.tmux_panes)
         end
       end
+      @last_hook_states = hook_states
+      states
     end
 
     private

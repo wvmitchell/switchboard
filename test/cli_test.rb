@@ -34,6 +34,41 @@ module Switchboard
       assert_includes out, "already exists"
     end
 
+    # `refresh [name] [--poke PANE]` argument parsing.
+    def test_refresh_args_parses_name_and_poke
+      assert_equal ["proj", "%5"], CLI.refresh_args(["refresh", "proj", "--poke", "%5"])
+    end
+
+    def test_refresh_args_name_only
+      assert_equal ["proj", nil], CLI.refresh_args(["refresh", "proj"])
+    end
+
+    def test_refresh_args_poke_without_name
+      assert_equal [nil, "%5"], CLI.refresh_args(["refresh", "--poke", "%5"])
+    end
+
+    def test_refresh_args_bare
+      assert_equal [nil, nil], CLI.refresh_args(["refresh"])
+    end
+
+    # refresh must never raise or touch tmux in the sandbox (TMUX unset), whether
+    # the config is empty or the named project is unknown.
+    def test_refresh_is_a_noop_on_empty_config
+      File.write(Config.path, "worktree_root: /mine\nprojects: []\n")
+      assert_nil CLI.refresh
+    end
+
+    def test_refresh_unknown_project_is_a_noop
+      File.write(Config.path, "worktree_root: /mine\nprojects: []\n")
+      assert_nil CLI.refresh("ghost")
+    end
+
+    # CLI memoizes its Config; clear it so each test reads its own sandbox config.
+    def teardown
+      CLI.instance_variable_set(:@config, nil)
+      super
+    end
+
     private
 
     def capture
