@@ -6,15 +6,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Switchboard is a keyboard-only switcher/creator for git-worktree workspaces — a
 terminal-native alternative to Conductor/emdash. It's pure Ruby with **zero gem
-dependencies**: everything is stdlib plus shelling out to `fzf`, `tmux`, `git`,
-`gh`, and (for a legacy one-time import only) `sqlite3`. There is no Gemfile, no
+dependencies**: everything is stdlib plus shelling out to `tmux`, `git`, `gh`,
+and (for a legacy one-time import only) `sqlite3`. There is no Gemfile, no
 build step, and no test suite. See `README.md` for the user-facing feature tour.
 
 ## Commands
 
 ```sh
-bin/switchboard            # open the switcher (run it to dev/test by hand)
-bin/switchboard doctor     # check that fzf/tmux/git/gh/sqlite3 + config exist
+bin/switchboard            # toggle the sidebar in the current tmux window
+bin/switchboard doctor     # check that tmux/git/gh/sqlite3 + config exist
 bin/switchboard init       # create ~/.config/switchboard/config.yml (today: seeds from emdash if present — see #3)
 bin/switchboard config     # open config.yml in $EDITOR (sidebar `e` does the same)
 bin/switchboard sidebar    # run the persistent sidebar standalone (normally tmux-spawned)
@@ -28,7 +28,7 @@ bin/switchboard sidebar    # run the persistent sidebar standalone (normally tmu
 
 Ruby **>= 2.7** is required (`filter_map` etc.). `bin/switchboard` re-execs
 itself under a modern ruby if launched on macOS system Ruby 2.6 — relevant
-because tmux popups run a non-interactive shell that skips rbenv.
+because tmux panes run a non-interactive shell that skips rbenv.
 
 Useful env overrides when running locally without disturbing real state:
 `SWITCHBOARD_CONFIG` (config path), `SWITCHBOARD_STATE_DIR` (agent-state files),
@@ -45,27 +45,30 @@ even that coupling is being decoupled (issue #3), so treat it as an optional
 import path, not a core dependency. PR badges come from `gh`, cached on disk
 (`~/.cache/switchboard/prs`) so the UI never blocks on the network.
 
-**One data model, two front-ends.** `Model` (`model.rb`) assembles the
-`project → worktree` tree from `Config` + `Git` + cached `Pr` data. `Tree`
-(`tree.rb`) turns that model into an ordered list of rows, emitted two ways:
+**One data model, one front-end.** `Model` (`model.rb`) assembles the
+`project → worktree` tree from `Config` + `Git` + cached `Pr` data. `Tree.nodes`
+(`tree.rb`) turns that into ordered `Node` structs, which the **persistent
+sidebar** (`sidebar.rb`) draws as a hand-rolled ANSI TUI in a narrow tmux pane
+(no fzf). It's the only navigator — the bare `bin/switchboard` command and the
+bound tmux key both just toggle this sidebar. `view.rb` is now reduced to the
+compact PR-badge helpers the sidebar uses (`pr_identifier` / `pr_tag`: state via
+color, just the `#number` to fit the ~40-col pane).
 
-- `Tree.lines` → tab-delimited strings for the **fzf picker** (`picker.rb`,
-  rendered by `view.rb`). Hidden fields after the visible column carry
-  `path / branch / kind / project`.
-- `Tree.nodes` → structured `Node` structs for the **persistent sidebar**
-  (`sidebar.rb`), a hand-rolled ANSI TUI in a narrow tmux pane (no fzf).
+> Until recently there was a second front-end — an `fzf` popup picker
+> (`picker.rb`, `Tree.lines`, the `view.rb` preview functions, and `_`-prefixed
+> fzf-callback subcommands in `cli.rb`). It was removed so the sidebar is the
+> single source of truth; if you see references to it in old commits or issues,
+> that's why it's gone.
 
-Both expand a workspace that has multiple branches in its HEAD-reflog history
-into inline child rows (`Git.branch_history`) — the multiple-PRs-per-workspace
-case. The canonical trunk checkout (`primary`) is always filtered out as a
-switch target.
+The sidebar expands a workspace that has multiple branches in its HEAD-reflog
+history into inline child rows (`Git.branch_history`) — the
+multiple-PRs-per-workspace case. The canonical trunk checkout (`primary`) is
+always filtered out as a switch target.
 
-**The binary calls back into itself.** fzf can't call Ruby methods, so
-`bin/switchboard` exports its own absolute path as `SWITCHBOARD_BIN`, and
-`picker.rb` builds fzf `--preview`/`--bind` commands that re-invoke that binary
-with the `_`-prefixed internal subcommands (`_rowpreview`, `_pr`, `_new`,
-`_refresh`). `cli.rb` dispatches both the user-facing and internal commands; the
-`_`-prefixed ones are fzf callbacks, not public surface.
+**The binary re-invokes itself to spawn the sidebar.** `bin/switchboard` exports
+its own absolute path as `SWITCHBOARD_BIN`; `tmux.rb` uses it to `split-window`
+a pane running `switchboard sidebar` beside each session. `cli.rb` dispatches the
+user-facing commands plus the tmux-internal `toggle-sidebar` / `poke-sidebar`.
 
 **tmux mapping** (`tmux.rb`): each worktree ⇆ one session named
 `sb/<project>/<leaf>`. Switching creates the session on demand and attaches a
