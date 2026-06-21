@@ -1,9 +1,9 @@
 # switchboard
 
 A keyboard-only switcher and creator for git-worktree workspaces. No mouse, no
-Electron — `fzf` for the picker, `tmux` for the sessions, `nvim` for the
-editing. A terminal-native alternative to Conductor/emdash that stands on its
-own.
+Electron — a persistent `tmux` sidebar for the tree, `git` for the truth, `gh`
+for PR badges. A terminal-native alternative to Conductor/emdash that stands on
+its own.
 
 ## Why
 
@@ -19,32 +19,39 @@ Switchboard is the same overview, driven entirely from the keyboard.
 - **Git is the source of truth.** Worktrees are discovered with `git worktree
   list`, so anything you (or emdash, or Conductor) create shows up — nothing to
   sync.
-- **PR badges come from `gh`,** cached on disk so the list never blocks on the
-  network. `^r` (or `switchboard refresh`) re-fetches.
-- **Each worktree maps to a tmux session.** Selecting one creates the session
-  (if needed) and switches to it. `^n` creates a brand-new worktree + branch
-  under `worktree_root` and drops you in.
+- **PR badges come from `gh`,** cached on disk so the sidebar never blocks on
+  the network. `switchboard refresh` re-fetches.
+- **Each worktree maps to a tmux session.** Selecting one (↵) creates the
+  session (if needed) and switches to it. `n` creates a brand-new worktree +
+  branch under `worktree_root` and drops you in.
 
 ## What it does
 
-One `fzf` list rendered as a 3-level tree — **project → workspace → branch**.
-The canonical trunk checkout is omitted (you never switch to it). A workspace
-that has spawned more than one branch (derived from the worktree's HEAD reflog)
-expands into **inline child rows** — the multiple-branches/PRs-per-workspace
-case that otherwise lives only in your head and on GitHub. You cycle every
-level with the same arrow keys; the active branch is marked with a dot.
+A persistent **sidebar** in a narrow tmux pane, rendered as a 3-level tree —
+**project → workspace → branch**. It rides along beside every session, so the
+tree is always a glance away and reloads itself as you switch. The canonical
+trunk checkout is omitted (you never switch to it). A workspace that has spawned
+more than one branch (derived from the worktree's HEAD reflog) expands into
+**inline child rows** — the multiple-branches/PRs-per-workspace case that
+otherwise lives only in your head and on GitHub.
 
-Keys:
+Each row carries its signals inline: an agent-state dot (whether Claude is
+thinking / done / waiting), the active branch marked with a dot, and the PR as a
+color-coded `#number` flush right — green open, yellow draft, magenta merged,
+red closed.
+
+Keys (in the sidebar):
 
 ```
-↑↓   move (projects, workspaces, and a workspace's branches)
-↵    switch to the highlighted worktree's tmux session
-^n   create a new worktree in the highlighted project
-^o   open the highlighted branch's PR in the browser
-^v   view the highlighted branch's PR in the terminal (gh pr view)
-^r   refresh PR badges + reload
-pgup/pgdn, shift-↑/↓   scroll the preview
-esc  cancel
+j/k ↑↓   move (projects, workspaces, and a workspace's branches)
+↵        switch to the workspace's tmux session (or collapse a project header)
+a        add a project (register a local repo or clone a URL)
+n        create a new worktree in the highlighted project
+o        open the highlighted PR in the browser (gh pr view --web)
+r        rename a workspace
+d        delete a workspace
+e        edit config.yml in $EDITOR
+q        hide the sidebar
 ```
 
 ## Usage
@@ -55,7 +62,7 @@ bin/switchboard home            # attach to the persistent home session (anchor 
 bin/switchboard config          # edit config.yml in $EDITOR (per-project settings)
 bin/switchboard add N P [B]     # register an existing repo (name, path, base ref)
 bin/switchboard clone U [N]     # clone a repo under projects_root, then register it
-bin/switchboard                 # open the switcher
+bin/switchboard                 # toggle the sidebar in the current tmux window
 bin/switchboard refresh         # re-fetch PR badges from gh
 bin/switchboard enable-hooks [P]  # exact agent-state dots in a worktree (see below)
 bin/switchboard doctor          # check dependencies + config
@@ -67,11 +74,14 @@ keyboard path to your *first* project — `n` only creates worktrees inside a
 project that already exists — so switchboard stands up on a fresh machine, off
 emdash, entirely from the sidebar.
 
-Bind it to a tmux key for instant access, e.g. in `~/.tmux.conf`:
+Bind the sidebar toggle to a tmux key for instant access, e.g. in `~/.tmux.conf`:
 
 ```tmux
-bind-key s display-popup -E -w 90% -h 80% "/path/to/switchboard/bin/switchboard"
+bind-key s run-shell "/path/to/switchboard/bin/switchboard toggle-sidebar"
 ```
+
+The sidebar also spawns automatically beside every session switchboard creates,
+so the bound key is really just show/hide for the current window.
 
 ## Home session
 
@@ -101,7 +111,7 @@ bind-key h run-shell "/path/to/switchboard/bin/switchboard home"
 Every workspace switchboard touches is its own tmux session named
 `sb/<project>/<leaf>`. To you it feels like one app, but under the hood it's many
 sessions. To close them all in one go — handy before relaunching from a clean
-slate, or to clear a stray session that's confusing the switcher:
+slate, or to clear a stray session that's confusing the sidebar:
 
 ```sh
 # Kill every switchboard session. Others first, then the one you're in last, so
@@ -121,7 +131,7 @@ switchboard needs it.
 `~/.config/switchboard/config.yml`:
 
 ```yaml
-worktree_root: ~/switchboard/worktrees   # where ^n puts new worktrees
+worktree_root: ~/switchboard/worktrees   # where `n` puts new worktrees
 projects_root: ~/Programming             # where `a`/`clone` drop cloned repos
 base: origin/main                        # default ref new worktrees branch from
 branch_prefix: wvmitchell                # optional: new branches become wvmitchell/<name>
@@ -138,7 +148,7 @@ Edit this file with `switchboard config` (or `e` in the sidebar) — both open i
 in `$EDITOR` and reload on save, so a new project or a changed `session_command`
 takes effect on the next switch.
 
-`^n` cuts a new branch from `base` (fetching its remote first, e.g. `origin`
+`n` cuts a new branch from `base` (fetching its remote first, e.g. `origin`
 for `origin/main`). `base` defaults to `origin/main`; set it globally or per
 project. The branch is named `<name>` (or `<branch_prefix>/<name>`).
 
@@ -195,10 +205,10 @@ in the config to stop auto-enabling on create.
 
 ## Dependencies
 
-`ruby` `fzf` `tmux` `git` `gh` (`gh` powers PR badges and the view/open actions)
+`ruby` `tmux` `git` `gh` (`gh` powers the PR badges and the `o` open action)
 
 ```sh
-brew install fzf gh
+brew install gh
 ```
 
 ## Roadmap

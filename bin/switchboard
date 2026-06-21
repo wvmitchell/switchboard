@@ -20,9 +20,10 @@ if RUBY_VERSION < "2.7" && !ENV["SB_REEXEC"]
   abort "switchboard needs Ruby >= 2.7 (running #{RUBY_VERSION}); none found on PATH"
 end
 
-# Canonical path to this script, used to build fzf callback commands. Resolved
-# from __FILE__ (not $0) so callbacks work when symlinked onto PATH or run as a
-# bare command, where $0 carries no directory.
+# Canonical path to this script, so tmux can spawn the sidebar pane by
+# re-invoking us (`switchboard sidebar`). Resolved from __FILE__ (not $0) so it
+# works when symlinked onto PATH or run as a bare command, where $0 carries no
+# directory.
 ENV["SWITCHBOARD_BIN"] = File.realpath(__FILE__)
 
 # Resolve lib/ relative to this script (works even when symlinked onto PATH).

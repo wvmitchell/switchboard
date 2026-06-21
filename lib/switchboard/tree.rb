@@ -1,9 +1,9 @@
 # frozen_string_literal: true
 
 module Switchboard
-  # Builds the flat list fzf renders as a project -> worktree -> branch tree.
-  # A worktree with more than one branch in its history expands into inline
-  # child rows you cycle with the normal arrow keys — no second picker.
+  # Builds the flat project -> worktree -> branch list the sidebar renders as a
+  # tree. A worktree with more than one branch in its history expands into
+  # inline child rows you cycle with the normal arrow keys.
   module Tree
     module_function
 
@@ -11,8 +11,7 @@ module Switchboard
     # short-lived, but we never want a runaway list.
     MAX_BRANCHES = 8
 
-    # Structured tree node — what the rendered sidebar draws (the fzf picker
-    # uses the string-based `lines` instead).
+    # Structured tree node — what the rendered sidebar draws.
     Node = Struct.new(:kind, :project, :path, :branch, :name, :pr, :dirty, :active, :last,
                       keyword_init: true)
 
@@ -34,26 +33,6 @@ module Switchboard
           end
         end
         list
-      end
-    end
-
-    def lines(model)
-      model.projects.flat_map do |project|
-        rows = [View.project_row(project)]
-        # The canonical/trunk checkout is never a switch target.
-        project.worktrees.reject(&:primary).each do |worktree|
-          rows << View.workspace_row(worktree)
-          branches = lineage(worktree)
-          next unless branches.size > 1
-
-          branches.each_with_index do |branch, i|
-            rows << View.branch_row(
-              worktree.path, branch, model.pr_for(branch),
-              project: project.name, active: branch == worktree.branch, last: i == branches.size - 1
-            )
-          end
-        end
-        rows
       end
     end
 
