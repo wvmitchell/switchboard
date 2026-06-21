@@ -110,7 +110,15 @@ module Switchboard
         next unless m
 
         ref = m[1]
-        next if ref.match?(/\A[0-9a-f]{40}\z/) # detached-HEAD checkout, not a branch
+        # Drop detached-HEAD checkouts. The reflog line's 2nd field is the full
+        # new OID; a detached checkout records the commit-ish you typed (full or
+        # abbreviated SHA), always a hex prefix of that OID. A real branch name —
+        # even all-hex like "deadbeef" — won't prefix the commit it points to
+        # except by astronomical coincidence. >=4 is git's minimum abbreviation;
+        # below it a token is a branch name. Downcase: git OIDs are lowercase but
+        # a user-typed abbrev could be uppercase.
+        new_oid = line.split[1].to_s
+        next if ref.match?(/\A[0-9a-f]{4,}\z/i) && new_oid.downcase.start_with?(ref.downcase)
         seen[ref] = true unless seen.key?(ref)
         break if limit && seen.size >= limit
       end

@@ -44,6 +44,63 @@ module Switchboard
       assert_equal "main", hist.first, "the most recent checkout target comes first"
     end
 
+    # A detached-HEAD checkout records the commit-ish (full or abbreviated SHA) in
+    # the reflog `to` token; it must not surface as a branch row. Covers the #21
+    # regression (abbreviated SHA) plus the 4-char and full-SHA cases — the latter
+    # two pin both ends of the filter on the line we changed.
+    def test_branch_history_excludes_detached_sha_checkouts
+      repo = temp_git_repo
+      full = git(repo, "rev-parse", "HEAD").strip
+      short = git(repo, "rev-parse", "--short=7", "HEAD").strip
+      four = full[0, 4] # git's minimum abbreviation; unique in a one-commit repo
+      [short, four, full].each do |sha|
+        git(repo, "checkout", "-q", sha) # detached HEAD at a SHA
+        git(repo, "checkout", "-q", "main")
+      end
+      hist = Git.branch_history(repo)
+      refute_includes hist, short, "abbreviated (7-char) detached SHA is not a branch"
+      refute_includes hist, four, "abbreviated (4-char) detached SHA is not a branch"
+      refute_includes hist, full, "full SHA detached checkout is not a branch"
+      assert_includes hist, "main"
+    end
+
+    # The inverse of the SHA filter: a real branch whose name happens to be hex
+    # (the failure mode of a naive length regex) must still appear. "abc" sits
+    # below the 4-char floor; "deadbeef" exercises the OID-prefix discrimination.
+    def test_branch_history_keeps_hex_named_branches
+      repo = temp_git_repo
+      git(repo, "checkout", "-q", "-b", "abc") # 3 hex chars, below the abbrev floor
+      git(repo, "checkout", "-q", "main")
+      git(repo, "checkout", "-q", "-b", "deadbeef") # 8 hex chars, looks like a SHA
+      git(repo, "checkout", "-q", "main")
+      hist = Git.branch_history(repo)
+      assert_includes hist, "abc", "a short hex branch name is still a branch"
+      assert_includes hist, "deadbeef", "a real hex-named branch is not mistaken for a SHA"
+    end
+
+    # The OID-prefix filter is hash-agnostic; prove it on SHA-256. Skipped (not
+    # failed) on git builds that lack the object format.
+    def test_branch_history_excludes_sha256_detached_checkout
+      repo = begin
+        temp_git_repo("sha256repo", object_format: "sha256")
+      rescue RuntimeError
+        skip "git lacks sha256 object format"
+      end
+      short = git(repo, "rev-parse", "--short=12", "HEAD").strip
+      git(repo, "checkout", "-q", short)
+      git(repo, "checkout", "-q", "main")
+      refute_includes Git.branch_history(repo), short, "sha256 abbreviated detached checkout is not a branch"
+    end
+
+    # The guard path: a repo with no checkout reflog (a fresh init has no
+    # logs/HEAD at all) yields no branches instead of raising.
+    def test_branch_history_empty_without_checkout_reflog
+      repo = path("freshrepo")
+      FileUtils.mkdir_p(repo)
+      git(repo, "init", "-q", "-b", "main") # no commits → no logs/HEAD
+      assert_empty Git.branch_history(repo)
+    end
+
     def test_remote_head_with_and_without_origin
       assert_equal "origin/main", Git.remote_head(temp_git_repo("withremote", origin: true))
       assert_nil Git.remote_head(temp_git_repo("noremote"))

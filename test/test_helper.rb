@@ -73,11 +73,16 @@ module Switchboard
     # the runner's init.defaultBranch), a seeded commit, and local identity (the
     # global config is isolated to an empty file). With `origin:`, also wires an
     # origin remote backed by a bare clone AND sets refs/remotes/origin/HEAD, so
-    # Git.remote_head / Registrar see a real default-branch symref. Returns the path.
-    def temp_git_repo(name = "repo", origin: false)
+    # Git.remote_head / Registrar see a real default-branch symref. With
+    # `object_format:` (e.g. "sha256"), passes it through to `git init` — the
+    # `git` helper raises if the local build lacks the format, so callers can
+    # rescue to `skip`. Returns the path.
+    def temp_git_repo(name = "repo", origin: false, object_format: nil)
       repo = path(name)
       FileUtils.mkdir_p(repo)
-      git(repo, "init", "-q", "-b", "main")
+      init = ["init", "-q", "-b", "main"]
+      init << "--object-format=#{object_format}" if object_format
+      git(repo, *init)
       git(repo, "config", "user.email", "test@example.com")
       git(repo, "config", "user.name", "Switchboard Test")
       File.write(File.join(repo, "README.md"), "seed\n")
