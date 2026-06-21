@@ -29,7 +29,7 @@ module Switchboard
     # isn't shown — it's automatic; Ctrl-L triggers it internally (the
     # session-switch hook poke).
     FOOTER = ["j/k move · ↵ open/collapse",
-              "a add · n new · r rename",
+              "a add · n new · o PR · r rename",
               "d delete · e edit · q hide"].freeze
 
     def self.run
@@ -200,6 +200,7 @@ module Switchboard
       when "\r", "\n"          then enter
       when "a"                 then add
       when "n"                 then create
+      when "o", "\x0F"         then open_pr # open the PR in the browser (o / ^O)
       when "d"                 then delete
       when "r"                 then rename
       when "e"                 then edit_config
@@ -236,6 +237,25 @@ module Switchboard
       Tmux.go(Worktree.new(project: node.project, path: node.path, branch: node.branch,
                            dirty: false, pr: node.pr, base: nil, primary: false),
               start: @config.session_command_for(node.project))
+    end
+
+    # o: open the highlighted workspace/branch's PR in the browser. Runs in the
+    # worktree dir so `gh` infers the repo. Detached, not `system`: `gh pr view
+    # --web` hits the API to resolve the PR before opening the browser, so a slow
+    # network would otherwise freeze the paint loop. spawn raises (unlike system)
+    # if the dir or `gh` is missing, so swallow that to keep the UI alive. No PR
+    # for the branch ⇒ gh exits quietly and nothing opens.
+    def open_pr
+      node = current
+      return unless node && node.kind != "proj"
+
+      branch = node.branch.to_s
+      return if branch.empty? || branch.start_with?("-") # never hand a dash-led name to gh as a flag
+
+      pid = Process.spawn("gh", "pr", "view", branch, "--web", chdir: node.path, out: File::NULL, err: File::NULL)
+      Process.detach(pid)
+    rescue SystemCallError
+      nil
     end
 
     # Prompt inline, create the worktree (quiet), then drop into it.
@@ -488,13 +508,28 @@ module Switchboard
     end
 
     def line(node, active, cols)
-      text = trunc(plain(node), cols)
+      # PR identifier ("#12") rendered flush right; reserve its width (plus a
+      # gap) so the name truncates to fit rather than overrunning the badge.
+      # Projects carry no PR, so they get the full width.
+      id = node.kind == "proj" ? "" : View.pr_identifier(node.pr)
+      left_cols = id.empty? ? cols : [cols - id.length - 1, 1].max
+      text = trunc(plain(node), left_cols)
+
       # The reverse-video cursor bar only when the sidebar is the focused pane;
       # off-focus the cursor row renders like any other, so the bright bar never
-      # tugs at your eye while you're working in the pane beside it.
-      return "\e[7m#{text.ljust(cols)}\e[0m" if active && @focused
+      # tugs at your eye while you're working in the pane beside it. The badge
+      # goes plain here so it reads under the inverted bar.
+      if active && @focused
+        bar = id.empty? ? text : "#{text.ljust(left_cols)} #{id}"
+        return "\e[7m#{bar.ljust(cols)}\e[0m"
+      end
 
-      colored(node, text, current: node.kind == "ws" && node.path == @current_path)
+      body = colored(node, text, current: node.kind == "ws" && node.path == @current_path)
+      return body if id.empty?
+
+      # `colored` preserves `text`'s visible width, so pad off the plain length.
+      pad = [cols - text.length - id.length, 1].max
+      "#{body}#{' ' * pad}#{View.pr_tag(node.pr)}"
     end
 
     # Plain (no color) — used for the highlighted row and as the base text. The

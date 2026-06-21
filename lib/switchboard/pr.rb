@@ -5,9 +5,9 @@ require "fileutils"
 require "shellwords"
 
 module Switchboard
-  # PR badges sourced from `gh` and cached on disk, so the list never blocks on
-  # the network. The picker reads the cache (instant); `^r` / `switchboard
-  # refresh` re-fetch. Replaces reading emdash's pull_requests table.
+  # PR badges sourced from `gh` and cached on disk, so the sidebar never blocks
+  # on the network. The sidebar reads the cache (instant); `switchboard refresh`
+  # re-fetches. Replaces reading emdash's pull_requests table.
   module Pr
     CACHE_DIR = File.expand_path("~/.cache/switchboard/prs")
 

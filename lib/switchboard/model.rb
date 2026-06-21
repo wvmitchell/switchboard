@@ -35,19 +35,6 @@ module Switchboard
       end
     end
 
-    # Flat list across all projects — what the picker consumes.
-    def worktrees
-      projects.flat_map(&:worktrees)
-    end
-
-    def find(path)
-      worktrees.find { |w| w.path == path }
-    end
-
-    def project_at(path)
-      projects.find { |p| p.path == path }
-    end
-
     # PR for an arbitrary branch (cached map, accumulated as projects build).
     def pr_for(branch)
       projects # ensure the map is populated
