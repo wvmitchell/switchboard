@@ -97,7 +97,10 @@ module Switchboard
     # `limit` caps the result (dedicated worktrees are short-lived, but the
     # canonical checkout's reflog can be enormous).
     def branch_history(worktree, limit: nil)
-      gitdir = capture(worktree, "rev-parse", "--git-dir").strip
+      # --absolute-git-dir, not --git-dir: the latter returns a relative ".git",
+      # which would resolve logs/HEAD against the process cwd (one worktree) for
+      # every row in the tree. Absolute makes it the worktree's own reflog.
+      gitdir = capture(worktree, "rev-parse", "--absolute-git-dir").strip
       head_log = File.join(gitdir, "logs", "HEAD")
       return [] unless File.exist?(head_log)
 

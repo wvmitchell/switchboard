@@ -313,7 +313,7 @@ module Switchboard
       when "e"                 then edit_config
       when "\f"                then reload_and_refresh # Ctrl-L (hook poke on switch)
       when "g"                 then @cursor = 0
-      when "G"                 then @cursor = @rows.size - 1
+      when "G"                 then @cursor = [@rows.size - 1, 0].max # clamp: empty tree → 0, not -1
       when "\e[I"              then @focused = true  # tmux focus-in: light the cursor bar
       when "\e[O"              then @focused = false # tmux focus-out: drop it
       when "q", "\x03"         then return false # q / ^C: hide

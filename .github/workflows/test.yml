@@ -1,0 +1,23 @@
+name: test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The stdlib-Minitest suite + the YAML.safe_load_file floor; 3.0 is the
+        # documented minimum, 3.3 a current release. No `bundle install` — the
+        # whole point is zero gem dependencies on a clean runner.
+        ruby: ['3.0', '3.3']
+    name: ruby ${{ matrix.ruby }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ matrix.ruby }}
+      - run: ruby bin/test

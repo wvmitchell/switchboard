@@ -18,10 +18,6 @@ module Switchboard
   # A hook report counts only while fresh (PRESENCE_TTL) so a closed agent's last
   # state ages out; the process scan covers a still-running idle agent past that.
   class AgentState
-    STATE_DIR = File.expand_path(
-      ENV["SWITCHBOARD_STATE_DIR"] ||
-        File.join(ENV["XDG_STATE_HOME"] || "~/.local/state", "switchboard", "agents")
-    )
     STATES = %w[thinking done waiting].freeze
     PRESENCE_TTL = 900 # seconds a hook report counts as a live agent
 
@@ -55,6 +51,17 @@ module Switchboard
 
     private
 
+    # Where the reporter drops <state>\t<cwd>\t<epoch> files. Resolved from ENV on
+    # every scan (not frozen at load) so tests can redirect it per-example, and so
+    # it tracks the exact precedence the hook sh-script uses: SWITCHBOARD_STATE_DIR,
+    # else XDG_STATE_HOME, else ~/.local/state.
+    def state_dir
+      File.expand_path(
+        ENV["SWITCHBOARD_STATE_DIR"] ||
+          File.join(ENV["XDG_STATE_HOME"] || "~/.local/state", "switchboard", "agents")
+      )
+    end
+
     # Hook files: one line "<state>\t<cwd>\t<epoch>", keyed by cwd as [state, age].
     # A fully-formed line whose worktree no longer exists is garbage-collected so
     # the dir can't grow without bound. Requiring all three fields keeps a torn
@@ -63,7 +70,7 @@ module Switchboard
     # is bounded by live worktree count regardless of age.
     def read_hooks
       now = Time.now.to_i
-      Dir.glob(File.join(STATE_DIR, "*")).each_with_object({}) do |file, h|
+      Dir.glob(File.join(state_dir, "*")).each_with_object({}) do |file, h|
         state, cwd, epoch = File.read(file).chomp.split("\t", 3)
         next unless state && cwd && epoch && STATES.include?(state)
 

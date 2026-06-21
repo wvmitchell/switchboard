@@ -15,7 +15,10 @@ module Switchboard
       name = sanitize(workspace_name)
       return warn("invalid workspace name") if name.empty?
 
-      dest = File.join(config.worktree_root, project_name, name)
+      # Sanitize the project segment too: an explicit project name can carry
+      # traversal (`switchboard add ../x …`), and File.join would otherwise let it
+      # escape the worktree root just like an unsanitized workspace name would.
+      dest = File.join(config.worktree_root, sanitize(project_name), name)
       return warn("already exists: #{dest}") if File.exist?(dest)
 
       branch = [config.branch_prefix, name].compact.join("/")
@@ -36,9 +39,13 @@ module Switchboard
       dest
     end
 
-    # Filesystem- and branch-safe; spaces become dashes.
+    # Filesystem- and branch-safe: spaces become dashes, the char class drops
+    # anything exotic, and ".", ".." and empty path segments are stripped so a
+    # name can never climb out of (or absolute-jump around) the worktree root via
+    # File.join — "../../etc" sanitizes to "etc", "/tmp/x" to "tmp/x", "." to "".
     def sanitize(name)
-      name.to_s.strip.gsub(/\s+/, "-").gsub(%r{[^\w./-]}, "")
+      cleaned = name.to_s.strip.gsub(/\s+/, "-").gsub(%r{[^\w./-]}, "")
+      cleaned.split("/").reject { |seg| seg.empty? || seg == "." || seg == ".." }.join("/")
     end
   end
 end

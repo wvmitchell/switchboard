@@ -8,10 +8,12 @@ Switchboard is a keyboard-only switcher/creator for git-worktree workspaces — 
 terminal-native alternative to Conductor/emdash. It's pure Ruby with **zero gem
 dependencies**: everything is stdlib plus shelling out to `tmux`, `git`, and
 `gh`. There is no Gemfile and no build step. The test suite is stdlib Minitest
-(no gems) under `test/` — run it with
-`ruby -Itest -e 'Dir["test/*_test.rb"].each { |f| require File.expand_path(f) }'`
-(or a single file, `ruby -Itest test/installer_test.rb`). See `README.md` for
-the user-facing feature tour.
+(no gems) under `test/` — run the whole thing with `bin/test`, or one file with
+`bin/test test/installer_test.rb`. Every test runs **offline**: `SandboxTest`
+(`test/test_helper.rb`) walls off real state — config, XDG dirs, git global,
+`HOME`, `TMUX` — into a tmpdir, and its `temp_git_repo` helper spins up throwaway
+repos for the git-backed tests (tmux/gh shell-outs are stubbed). See `README.md`
+for the user-facing feature tour.
 
 ## Commands
 
@@ -23,6 +25,7 @@ bin/switchboard doctor     # check that tmux/git/gh + config + install wiring ex
 bin/switchboard init       # create ~/.config/switchboard/config.yml (empty; grown by the add-project flow)
 bin/switchboard config     # open config.yml in $EDITOR (sidebar `e` does the same)
 bin/switchboard sidebar    # run the persistent sidebar standalone (normally tmux-spawned)
+bin/test                   # run the stdlib-Minitest suite (offline; bin/test <file> for one)
 ```
 
 Setup is one command: `git clone && bin/switchboard install` (`Installer`,
@@ -34,9 +37,10 @@ indexed `client-session-changed[99]` poke hook; `home` is intentionally not
 bound (configurable keys are issue #15). All steps are idempotent and reversed
 by `uninstall`.
 
-Ruby **>= 2.7** is required (`filter_map` etc.). `bin/switchboard` re-execs
-itself under a modern ruby if launched on macOS system Ruby 2.6 — relevant
-because tmux panes run a non-interactive shell that skips rbenv.
+Ruby **>= 3.0** is required (`Config` uses `YAML.safe_load_file`, added in Psych
+3.3 / Ruby 3.0). `bin/switchboard` re-execs itself under a modern ruby if launched
+on macOS system Ruby 2.6 — relevant because tmux panes run a non-interactive shell
+that skips rbenv.
 
 Useful env overrides when running locally without disturbing real state:
 `SWITCHBOARD_CONFIG` (config path), `SWITCHBOARD_STATE_DIR` (agent-state files),

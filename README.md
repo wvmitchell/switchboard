@@ -238,6 +238,9 @@ in the config to stop auto-enabling on create.
 brew install gh
 ```
 
+Ruby **3.0+** (no gems — stdlib only). There's a test suite (stdlib Minitest, no
+build step): run it with `bin/test`.
+
 ## Roadmap
 
 - ~~v2 — clone a project from a git URL (not just register an existing one)~~ ✓

@@ -62,5 +62,91 @@ module Switchboard
       names = YAML.safe_load_file(Config.path)["projects"].map { |p| p["name"] }
       assert_equal %w[a b], names
     end
+
+    # --- resolution accessors (extends #18's scaffold/add_project coverage) ---
+    # The session_command chain is the part issue #10 specifically named and #18
+    # didn't touch: global default, per-project override, empty->global fallback,
+    # unknown project.
+
+    # Build a Config from a raw hash written to the sandboxed config path.
+    def cfg(data)
+      File.write(Config.path, YAML.dump(data))
+      Config.new
+    end
+
+    def test_worktree_root_defaults_and_expands
+      assert_equal File.expand_path(Config::DEFAULT_ROOT), cfg({}).worktree_root
+      assert_equal File.expand_path("/tmp/wt"), cfg("worktree_root" => "/tmp/wt").worktree_root
+    end
+
+    def test_projects_root_defaults_and_overrides
+      assert_equal File.expand_path(Config::DEFAULT_PROJECTS_ROOT), cfg({}).projects_root
+      assert_equal File.expand_path("/src"), cfg("projects_root" => "/src").projects_root
+    end
+
+    def test_base_defaults_to_origin_main_and_overrides
+      assert_equal "origin/main", cfg({}).base
+      assert_equal "origin/main", cfg("base" => "").base   # empty -> default
+      assert_equal "main", cfg("base" => "main").base
+    end
+
+    def test_branch_prefix_is_nil_unless_set
+      assert_nil cfg({}).branch_prefix
+      assert_nil cfg("branch_prefix" => "").branch_prefix
+      assert_equal "wvmitchell", cfg("branch_prefix" => "wvmitchell").branch_prefix
+    end
+
+    def test_agent_state_hooks_on_by_default_off_only_when_false
+      assert cfg({}).agent_state_hooks?
+      assert cfg("agent_state_hooks" => true).agent_state_hooks?
+      refute cfg("agent_state_hooks" => false).agent_state_hooks?
+    end
+
+    def test_session_command_global_is_nil_unless_set
+      assert_nil cfg({}).session_command
+      assert_nil cfg("session_command" => "").session_command
+      assert_equal "claude", cfg("session_command" => "claude").session_command
+    end
+
+    def test_session_command_for_uses_global_default
+      c = cfg("session_command" => "claude", "projects" => [{ "name" => "app", "path" => "/p" }])
+      assert_equal "claude", c.session_command_for("app")
+    end
+
+    def test_session_command_for_honors_per_project_override
+      c = cfg("session_command" => "claude",
+              "projects" => [{ "name" => "app", "path" => "/p", "session_command" => "codex" }])
+      assert_equal "codex", c.session_command_for("app")
+    end
+
+    def test_session_command_for_empty_override_falls_back_to_global
+      c = cfg("session_command" => "claude",
+              "projects" => [{ "name" => "app", "path" => "/p", "session_command" => "" }])
+      assert_equal "claude", c.session_command_for("app")
+    end
+
+    def test_session_command_for_unknown_project_uses_global
+      assert_equal "claude", cfg("session_command" => "claude", "projects" => []).session_command_for("nope")
+    end
+
+    def test_session_command_for_nil_when_no_global_and_no_override
+      c = cfg("projects" => [{ "name" => "app", "path" => "/p" }])
+      assert_nil c.session_command_for("app")
+    end
+
+    def test_projects_resolves_paths_and_base_ref
+      c = cfg("base" => "origin/trunk",
+              "projects" => [{ "name" => "a", "path" => "~/x" },
+                             { "name" => "b", "path" => "/y", "base" => "main" }])
+      a, b = c.projects
+      assert_equal File.expand_path("~/x"), a["path"]
+      assert_equal "origin/trunk", a["base_ref"] # inherits global base
+      assert_equal "main", b["base_ref"]         # per-project base
+    end
+
+    def test_projects_skips_entries_missing_name_or_path
+      c = cfg("projects" => [{ "name" => "ok", "path" => "/p" }, { "name" => "noPath" }, { "path" => "/noName" }])
+      assert_equal ["ok"], c.projects.map { |p| p["name"] }
+    end
   end
 end

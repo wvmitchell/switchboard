@@ -3,12 +3,202 @@
 require_relative "test_helper"
 
 module Switchboard
-  # The pure decision helpers behind the background PR refresh (issue #19): which
-  # agent transitions count as "a turn finished" (completion_edges), and the
-  # per-project spawn debounce (spawn_due?). Both are class methods so the logic
-  # is testable without standing up a TUI or spawning a process.
-  class SidebarTest < Minitest::Test
-    # --- completion_edges: a worktree newly at a resting state ---
+  # The sidebar is now the only navigator (#17 removed the fzf picker), so its
+  # navigation + rendering logic is the whole UX and worth pinning. It's a
+  # stateful TUI with no E2E hook (needs a real tty), so we test white-box:
+  # construct an instance, set the ivars the loop would, and drive the private
+  # methods directly. The raw-tty primitives (read_key/setup/teardown/render-to-
+  # stdout) stay out of scope — only the pure decisions are tested.
+  #
+  # Also covers the pure class-method helpers behind the background PR refresh
+  # (issue #19): which agent transitions count as "a turn finished"
+  # (completion_edges) and the per-project spawn debounce (spawn_due?).
+  class SidebarTest < SandboxTest
+    # --- node + sidebar builders --------------------------------------------
+
+    def proj(name)
+      Tree::Node.new(kind: "proj", project: name, path: "/repos/#{name}")
+    end
+
+    def ws(name, project: "app", path: nil, pr: nil)
+      Tree::Node.new(kind: "ws", project: project, path: path || "/wt/#{name}", name: name, pr: pr)
+    end
+
+    def br(branch, active: false, last: false)
+      Tree::Node.new(kind: "br", project: "app", branch: branch, active: active, last: last)
+    end
+
+    def sidebar(nodes: [], collapsed: [], cursor: 0, agents: {}, focused: true,
+                current_path: nil, pulse: 0)
+      sb = Sidebar.new
+      sb.instance_variable_set(:@nodes, nodes)
+      sb.instance_variable_set(:@collapsed, Set.new(collapsed))
+      sb.instance_variable_set(:@agents, agents)
+      sb.instance_variable_set(:@focused, focused)
+      sb.instance_variable_set(:@current_path, current_path)
+      sb.instance_variable_set(:@pulse, pulse)
+      sb.send(:recompute_rows)                      # derive @rows from @nodes/@collapsed
+      sb.instance_variable_set(:@cursor, cursor)    # set after: recompute_rows clamps it
+      sb
+    end
+
+    def cursor_of(sb)  = sb.instance_variable_get(:@cursor)
+    def rows_of(sb)    = sb.instance_variable_get(:@rows)
+    def offset_of(sb)  = sb.instance_variable_get(:@offset)
+
+    # --- navigation ----------------------------------------------------------
+
+    def test_move_clamps_to_the_visible_rows
+      sb = sidebar(nodes: [proj("app"), ws("a"), ws("b")])
+      sb.send(:move, -1)
+      assert_equal 0, cursor_of(sb), "can't move above the first row"
+      sb.send(:move, 99)
+      assert_equal 2, cursor_of(sb), "can't move past the last row"
+    end
+
+    def test_move_is_a_noop_with_no_rows
+      sb = sidebar(nodes: [])
+      sb.send(:move, 1)
+      assert_equal 0, cursor_of(sb)
+    end
+
+    def test_toggle_collapse_hides_then_shows_a_projects_children
+      sb = sidebar(nodes: [proj("app"), ws("a"), ws("b")])
+      assert_equal 3, rows_of(sb).size
+      sb.send(:toggle_collapse, "app")
+      assert_equal 1, rows_of(sb).size, "collapsed project hides its workspaces"
+      sb.send(:toggle_collapse, "app")
+      assert_equal 3, rows_of(sb).size
+    end
+
+    def test_enter_on_a_project_header_collapses_it
+      sb = sidebar(nodes: [proj("app"), ws("a")], cursor: 0)
+      sb.send(:enter)
+      assert_includes sb.instance_variable_get(:@collapsed), "app"
+    end
+
+    def test_enter_on_a_workspace_switches_to_it_threading_the_session_command
+      # Pin that switch() threads the project's resolved session_command into
+      # Tmux.go(start:), not just the worktree.
+      File.write(Config.path, YAML.dump("session_command" => "claude",
+                                        "projects" => [{ "name" => "app", "path" => "/x" }]))
+      sb = sidebar(nodes: [proj("app"), ws("a", path: "/wt/a")], cursor: 1)
+      sb.instance_variable_set(:@config, Config.new)
+      target = nil
+      started = :unset
+      stub_method(Tmux, :go, ->(worktree, start:) { target = worktree; started = start }) do
+        sb.send(:enter)
+      end
+      assert_equal "/wt/a", target.path
+      assert_equal "claude", started
+    end
+
+    def test_dispatch_routes_movement_and_jump_keys
+      sb = sidebar(nodes: [proj("app"), ws("a"), ws("b")])
+      sb.send(:dispatch, "j")
+      assert_equal 1, cursor_of(sb)
+      sb.send(:dispatch, "k")
+      assert_equal 0, cursor_of(sb)
+      sb.send(:dispatch, "G")
+      assert_equal 2, cursor_of(sb)
+      sb.send(:dispatch, "g")
+      assert_equal 0, cursor_of(sb)
+    end
+
+    def test_jump_keys_stay_in_bounds_on_an_empty_tree
+      sb = sidebar(nodes: [])
+      sb.send(:dispatch, "G")
+      assert_equal 0, cursor_of(sb), "G on an empty tree must not go negative"
+      sb.send(:dispatch, "g")
+      assert_equal 0, cursor_of(sb)
+    end
+
+    def test_dispatch_q_signals_exit_other_keys_keep_running
+      sb = sidebar(nodes: [proj("app")])
+      refute sb.send(:dispatch, "q"), "q exits the loop"
+      assert sb.send(:dispatch, "j"), "movement keeps the loop alive"
+    end
+
+    def test_handle_processes_every_token_in_a_key_repeat_buffer
+      sb = sidebar(nodes: [proj("app"), ws("a"), ws("b")])
+      sb.send(:handle, "jj") # a held 'j' arrives as one multi-byte read
+      assert_equal 2, cursor_of(sb)
+    end
+
+    def test_handle_returns_false_when_a_token_quits
+      sb = sidebar(nodes: [proj("app")])
+      refute sb.send(:handle, "q")
+    end
+
+    def test_locate_marks_the_workspace_the_pane_sits_in
+      sb = sidebar(nodes: [proj("app"), ws("a", path: "/wt/a"), ws("b", path: "/wt/b")])
+      stub_method(Tmux, :pane_path, ->(_pane) { "/wt/b/sub" }) do
+        sb.send(:locate)
+      end
+      assert_equal "/wt/b", sb.instance_variable_get(:@current_path)
+    end
+
+    # --- scrolling -----------------------------------------------------------
+
+    def test_scroll_keeps_the_cursor_within_the_window
+      nodes = [proj("app")] + Array.new(20) { |i| ws("w#{i}") }
+      sb = sidebar(nodes: nodes, cursor: 15)
+      sb.send(:scroll, 10) # window height 10
+      off = offset_of(sb)
+      assert off <= 15 && 15 < off + 10, "cursor 15 should be visible in [#{off}, #{off + 10})"
+    end
+
+    def test_scroll_offset_never_goes_negative
+      sb = sidebar(nodes: [proj("app"), ws("a")], cursor: 0)
+      sb.send(:scroll, 10)
+      assert_equal 0, offset_of(sb)
+    end
+
+    # --- render primitives ---------------------------------------------------
+
+    def test_trunc_ellipsizes_and_handles_zero_width
+      sb = sidebar
+      assert_equal "ab…", sb.send(:trunc, "abcdef", 3)
+      assert_equal "abc", sb.send(:trunc, "abc", 3)
+      assert_equal "", sb.send(:trunc, "abc", 0)
+    end
+
+    def test_dot_for_maps_state_to_a_glyph
+      sb = sidebar(pulse: 0)
+      assert_equal Sidebar::DONE, sb.send(:dot_for, :done)
+      assert_equal Sidebar::WANTS, sb.send(:dot_for, :waiting)
+      assert_equal Sidebar::THINK_FRAMES[0], sb.send(:dot_for, :thinking)
+      assert_equal " ", sb.send(:dot_for, nil), "idle is a blank slot"
+    end
+
+    def test_plain_renders_each_node_kind
+      sb = sidebar(agents: { "/wt/a" => :done })
+      assert_equal "▾ app", sb.send(:plain, proj("app"))
+      assert_equal "  ● a", sb.send(:plain, ws("a", path: "/wt/a")), "agent fills the dot slot"
+      assert_equal "    b", sb.send(:plain, ws("b", path: "/wt/b")), "no agent leaves it blank"
+      assert_equal "     └●main", sb.send(:plain, br("main", active: true, last: true))
+      assert_equal "     ├ feat", sb.send(:plain, br("feat"))
+    end
+
+    def test_plain_uses_the_collapsed_glyph
+      sb = sidebar(collapsed: ["app"])
+      assert_equal "▸ app", sb.send(:plain, proj("app"))
+    end
+
+    def test_colored_project_is_bold
+      sb = sidebar
+      assert_equal "\e[1m▾ app\e[0m", sb.send(:colored, proj("app"), "▾ app")
+    end
+
+    def test_line_draws_a_reverse_video_bar_only_for_the_focused_cursor_row
+      focused = sidebar(focused: true)
+      assert_includes focused.send(:line, proj("app"), true, 20), "\e[7m"
+      unfocused = sidebar(focused: false)
+      refute_includes unfocused.send(:line, proj("app"), true, 20), "\e[7m",
+                      "off-focus, the cursor row renders like any other"
+    end
+
+    # --- completion_edges: a worktree newly at a resting state (issue #19) ----
 
     def test_thinking_to_done_is_an_edge
       assert_equal ["/a"], Sidebar.completion_edges({ "/a" => :thinking }, { "/a" => :done })
@@ -40,7 +230,7 @@ module Switchboard
       assert_equal ["/b"], Sidebar.completion_edges(prev, now)
     end
 
-    # --- spawn_due?: per-project debounce ---
+    # --- spawn_due?: per-project debounce (issue #19) ------------------------
 
     def test_spawn_due_when_never_spawned
       assert Sidebar.spawn_due?(nil, 100.0)
