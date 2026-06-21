@@ -32,6 +32,13 @@ module Switchboard
               "a add · n new · r rename",
               "d delete · e edit · q hide"].freeze
 
+    # In the home session the sidebar is the switchboard base, not a workspace's
+    # strip — label it as such and foreground the management keys. Same line
+    # count as FOOTER so the render geometry is unchanged.
+    HOME_FOOTER = ["switchboard · home",
+                   "a add project · e settings",
+                   "j/k move · ↵ open · q hide"].freeze
+
     def self.run
       new.run
     end
@@ -51,6 +58,7 @@ module Switchboard
       @was_visible = false
       @focused = false     # is the sidebar the active pane? (cursor bar only then)
       @current_path = nil # worktree this sidebar's session is in (shown bold)
+      @home = false        # is this the persistent home session? (settings base)
     end
 
     def run
@@ -58,6 +66,7 @@ module Switchboard
 
       setup
       Tmux.enable_focus_events # so focus in/out reaches us for an instant dim
+      @home = Tmux.session_of == Tmux::HOME # stable for this pane's lifetime
       @focused = Tmux.focused?(ENV["TMUX_PANE"])
       pin_width
       render  # clear + show the pane instantly (empty)
@@ -360,9 +369,18 @@ module Switchboard
         Git.remove_worktree(repo, node.path, force: true)
       end
       Git.delete_branch(repo, node.branch) # safe -d; unmerged branches are kept
-      Tmux.kill(Worktree.new(project: node.project, path: node.path, branch: node.branch,
-                             dirty: false, pr: nil, base: nil, primary: false))
-      reload
+
+      worktree = Worktree.new(project: node.project, path: node.path, branch: node.branch,
+                              dirty: false, pr: nil, base: nil, primary: false)
+      # If we're deleting the very session we're attached to, killing it would
+      # eject us from switchboard (this sidebar lives inside it). Fall back to
+      # the persistent home session first, then kill — "the one you're in, last".
+      # Our process dies with that session, so home's own sidebar drives from
+      # here (it reloads to the post-deletion tree, which git already reflects).
+      deleting_current = Tmux.session_of == Tmux.session_name(worktree)
+      Tmux.go_home if deleting_current
+      Tmux.kill(worktree)
+      reload unless deleting_current
     end
 
     # Rename a workspace: move its worktree directory (the display name). The
@@ -464,7 +482,8 @@ module Switchboard
 
     def render
       rows, cols = winsize
-      height = rows - FOOTER.size
+      foot = @home ? HOME_FOOTER : FOOTER
+      height = rows - foot.size
       scroll(height)
 
       visible = @rows[@offset, height].to_a
@@ -475,7 +494,7 @@ module Switchboard
       # Erase rows left over from a previous, longer state (e.g. after a
       # collapse), then draw the footer hints on the bottom rows.
       out << "\e[#{visible.size + 1};1H\e[0J"
-      FOOTER.each_with_index do |text, i|
+      foot.each_with_index do |text, i|
         out << "\e[#{height + 1 + i};1H\e[K\e[2m#{trunc(text, cols)}\e[0m"
       end
       $stdout.write(out)

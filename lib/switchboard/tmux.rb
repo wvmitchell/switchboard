@@ -8,6 +8,7 @@ module Switchboard
   module Tmux
     SIDEBAR_TITLE = "sb-sidebar"
     SIDEBAR_WIDTH = 40
+    HOME = "sb/home" # the persistent anchor session (see go_home)
 
     module_function
 
@@ -23,6 +24,35 @@ module Switchboard
       focus_work(name, sidebar) # land on the workspace's terminal, not its tree
       switch(name)              # may exec (attach) when launched outside tmux
       pin(sidebar)              # snap to fixed width at the now-current client size
+    end
+
+    # Switch to the persistent home session — switchboard's anchor and settings
+    # base. Unlike a worktree session it maps to no worktree (it lives in $HOME,
+    # so the tree — built from `git worktree list` — never lists it) and carries
+    # its own sidebar, so landing here drops you into switchboard with the full
+    # tree, not a bare shell. It's the fallback when you delete the session
+    # you're in, and a stable launch target. Created lazily, the moment something
+    # needs it. Lands focused on the tree — home is for navigating, not working.
+    def go_home
+      ensure_home
+      sidebar = sidebar_pane(HOME)
+      # Focus the tree before switch, so the exec/attach path keeps it too.
+      system("tmux", "select-pane", "-t", sidebar, out: File::NULL, err: File::NULL) if sidebar
+      switch(HOME) # may exec (attach) when launched outside tmux
+      poke(sidebar) # force a fresh tree now (e.g. right after a delete)
+      pin(sidebar)
+    end
+
+    def ensure_home
+      ensure_session(HOME, home_dir)
+      ensure_sidebar(HOME, home_dir)
+    end
+
+    # Home sits in $HOME: a neutral, always-present directory owned by no project.
+    # Fall back to the cwd if $HOME is somehow unset — expand_path("~") would
+    # itself raise without $HOME, so don't route the fallback through it.
+    def home_dir
+      File.expand_path(ENV["HOME"] || Dir.pwd)
     end
 
     # tmux forbids "." and ":" in session names.
@@ -56,6 +86,16 @@ module Switchboard
 
     def has_session?(name)
       system("tmux", "has-session", "-t", "=#{name}", out: File::NULL, err: File::NULL)
+    end
+
+    # The session a pane belongs to (this process's own pane by default), or nil.
+    # Lets the sidebar tell whether the workspace it's deleting is the very
+    # session it's running inside — the case that needs the home fallback.
+    def session_of(pane = ENV["TMUX_PANE"])
+      return nil unless pane
+
+      name = `tmux display-message -p -t #{Shellwords.escape(pane)} '#\{session_name}' 2>/dev/null`.strip
+      name.empty? ? nil : name
     end
 
     # Kill a worktree's session (if any) — used when deleting a workspace.
@@ -148,7 +188,11 @@ module Switchboard
     # hook, so switching sessions always lands on a fresh tree). Uses C-l (a
     # non-user key) since `r` is the rename action.
     def poke_current_sidebar
-      pane = current_sidebar_pane
+      poke(current_sidebar_pane)
+    end
+
+    # Tell a specific sidebar pane to reload (C-l, a non-user key — `r` renames).
+    def poke(pane)
       system("tmux", "send-keys", "-t", pane, "C-l", out: File::NULL, err: File::NULL) if pane
     end
 

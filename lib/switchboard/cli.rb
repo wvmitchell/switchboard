@@ -13,6 +13,7 @@ module Switchboard
     def run(argv)
       case argv.first
       when nil, "switch", "ls" then switch
+      when "home"              then Tmux.go_home
       when "init"              then init
       when "config", "edit"    then edit_config
       when "add"               then add_project(argv[1], argv[2], argv[3])
@@ -249,6 +250,7 @@ module Switchboard
 
         usage
           switchboard              open the switcher (fzf)
+          switchboard home         attach to the persistent home session (anchor + settings)
           switchboard init         create config (imports projects from emdash once)
           switchboard config       edit config.yml in $EDITOR (per-project settings)
           switchboard add N P [B]  register an existing repo (name, path, base ref)

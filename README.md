@@ -51,6 +51,7 @@ esc  cancel
 
 ```sh
 bin/switchboard init            # create config (imports projects from emdash once)
+bin/switchboard home            # attach to the persistent home session (anchor + settings)
 bin/switchboard config          # edit config.yml in $EDITOR (per-project settings)
 bin/switchboard add N P [B]     # register an existing repo (name, path, base ref)
 bin/switchboard clone U [N]     # clone a repo under projects_root, then register it
@@ -72,6 +73,29 @@ Bind it to a tmux key for instant access, e.g. in `~/.tmux.conf`:
 bind-key s display-popup -E -w 90% -h 80% "/path/to/switchboard/bin/switchboard"
 ```
 
+## Home session
+
+Switchboard keeps a single persistent **home** session, `sb/home`, as its anchor.
+Unlike a workspace session it maps to no worktree — it lives in `$HOME`, so it
+never shows up in the tree as a switch target — and it carries its own sidebar,
+so it's a usable base you can navigate the whole tree from. It exists for two
+reasons:
+
+- **A safe fallback.** Deleting the workspace you're *currently in* used to eject
+  you from switchboard, because the sidebar you're driving lives inside that
+  session. Now switchboard switches you to home first, *then* kills the
+  workspace — you land back on the full tree, not a bare shell.
+- **A stable launch + settings base.** `switchboard home` attaches you to it
+  (land focused on the tree, ready to navigate). It's the obvious place to manage
+  switchboard: `a` adds a project, `e` opens the config — the footer says so.
+
+Home is created lazily the moment it's needed, so there's nothing to set up. Bind
+it for one-key access alongside the popup, e.g.:
+
+```tmux
+bind-key h run-shell "/path/to/switchboard/bin/switchboard home"
+```
+
 ## Housekeeping
 
 Every workspace switchboard touches is its own tmux session named
@@ -88,6 +112,9 @@ tmux list-sessions -F '#{session_name}' 2>/dev/null | grep '^sb/' | grep -vxF "$
   | while read -r s; do tmux kill-session -t "=$s"; done
 case "$here" in sb/*) tmux kill-session -t "=$here";; esac
 ```
+
+This sweeps `sb/home` too; that's fine — it's recreated lazily the next time
+switchboard needs it.
 
 ## Config
 
