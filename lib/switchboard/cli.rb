@@ -21,7 +21,7 @@ module Switchboard
       when "config", "edit"    then edit_config
       when "add"               then add_project(argv[1], argv[2], argv[3])
       when "clone"             then clone_project(argv[1], argv[2])
-      when "refresh"           then refresh
+      when "refresh"           then refresh(*refresh_args(argv))
       when "enable-hooks"      then enable_hooks(argv[1])
       when "disable-hooks"     then disable_hooks(argv[1])
       when "sidebar"           then Sidebar.run
@@ -70,9 +70,33 @@ module Switchboard
       i && args[i + 1]
     end
 
-    def refresh
-      config.projects.each do |p|
+    # Re-fetch PR badges. With a name, just that project; otherwise all. After
+    # fetching, redraw the sidebar (the sidebar passes its own pane via --poke; a
+    # hand-run refresh inside tmux pokes the current window's sidebar). The
+    # sidebar fires this detached, so the gh call stays off the UI thread.
+    def refresh(name = nil, poke_pane = nil)
+      projects = name ? config.projects.select { |p| p["name"] == name } : config.projects
+      projects.each do |p|
         Pr.refresh(p["name"], p["path"]) if Dir.exist?(p["path"])
+      end
+      poke_after(poke_pane)
+    end
+
+    # Parse `refresh [name] [--poke PANE]`: the optional project name (first
+    # non-flag arg after the subcommand) and the sidebar pane to redraw.
+    def refresh_args(argv)
+      name = argv[1] unless argv[1].to_s.start_with?("--")
+      [name, flag_value(argv, "--poke")]
+    end
+
+    # Redraw after a refresh: the explicit pane the sidebar handed us
+    # (deterministic, survives navigation) or, for a hand-run refresh inside
+    # tmux, the current window's sidebar. A no-op outside tmux / with no sidebar.
+    def poke_after(pane)
+      if pane && !pane.empty?
+        Tmux.poke(pane)
+      elsif ENV["TMUX"]
+        Tmux.poke_current_sidebar
       end
     end
 
@@ -199,7 +223,7 @@ module Switchboard
           switchboard config       edit config.yml in $EDITOR (per-project settings)
           switchboard add N P [B]  register an existing repo (name, path, base ref)
           switchboard clone U [N]  clone a repo under projects_root, then register
-          switchboard refresh      re-fetch PR badges from gh
+          switchboard refresh      re-fetch PR badges from gh (normally automatic)
           switchboard enable-hooks [P]   wire agent-state dots in a worktree (default: cwd)
           switchboard disable-hooks [P]  remove them from that worktree
           switchboard doctor       check dependencies + config

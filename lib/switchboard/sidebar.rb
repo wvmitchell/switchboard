@@ -15,6 +15,12 @@ module Switchboard
     TREE_TICKS = 5 # rebuild the whole tree every Nth tick (~15s) while visible
     PULSE = 0.45   # repaint cadence while an agent is thinking (drives the breathe)
 
+    # Background PR-badge refresh (issue #19): event-driven, never blocks the UI.
+    PR_DEBOUNCE = 5          # min seconds between background refreshes per project
+    NAV_TTL = 45             # refresh-on-switch only if the cache is older than this
+    BACKSTOP_TTL = 600       # idle fallback: refresh a project staler than this
+    MAX_SPAWN_PER_RELOAD = 3 # cap backstop spawns per reload (cold-home fan-out)
+
     # Agent-state dots. Idle (no agent) draws nothing — just a blank slot — so
     # the column only lights up when something's actually there.
     DONE = "\e[1;32m●\e[0m"  # green: replied, ready for you (not blocked)
@@ -43,6 +49,23 @@ module Switchboard
       new.run
     end
 
+    # Paths whose agent state newly entered a resting state (:done/:waiting) since
+    # the previous scan — i.e. a hooked agent just finished a turn. Steady resting
+    # states and transitions back to :thinking don't count. Pure, so the edge
+    # logic is unit-testable. (Drives the PR-refresh trigger; issue #19.)
+    def self.completion_edges(prev, now)
+      now.keys.select do |path|
+        %i[done waiting].include?(now[path]) && prev[path] != now[path]
+      end
+    end
+
+    # Debounce predicate: may we spawn a refresh for this project now? Yes if we
+    # never have, or the last spawn is at least `window` seconds old. Pure so the
+    # window logic is unit-testable without launching a process.
+    def self.spawn_due?(last, now, window = PR_DEBOUNCE)
+      last.nil? || now - last >= window
+    end
+
     def initialize
       @config = Config.new
       @cursor = 0
@@ -59,6 +82,8 @@ module Switchboard
       @focused = false     # is the sidebar the active pane? (cursor bar only then)
       @current_path = nil # worktree this sidebar's session is in (shown bold)
       @home = false        # is this the persistent home session? (settings base)
+      @pr_spawned = {}     # project => monotonic of its last background PR refresh
+      @prev_hook_states = nil # last scan's hook states; nil until the first scan
     end
 
     def run
@@ -155,6 +180,7 @@ module Switchboard
 
     def refresh_agents
       @agents = @agent_state.scan(@nodes.select { |n| n.kind == "ws" }.map(&:path))
+      refresh_prs_on_agent_edges
     rescue StandardError
       @agents = {}
     end
@@ -163,6 +189,7 @@ module Switchboard
       rebuild
       refresh_agents
       locate
+      refresh_stale_prs
     end
 
     # Which workspace is this sidebar's session in? Matched by the sidebar's
@@ -178,6 +205,77 @@ module Switchboard
 
     def current
       @rows[@cursor]
+    end
+
+    # --- PR badge refresh (issue #19) ----------------------------------------
+    #
+    # Badges are cached on disk and read instantly; these triggers keep that
+    # cache fresh in the background, never blocking the paint loop. Three triggers
+    # funnel into maybe_refresh_prs, which debounces per project then detaches a
+    # `switchboard refresh` child that rewrites the cache and pokes us to redraw.
+
+    # T2 — the session-change poke (\f): reload, then refresh the project we just
+    # landed in, but only if its badges are older than NAV_TTL so rapid j/k-driven
+    # reloads don't re-fetch. Catches PR changes no local agent made (a manual
+    # push, a teammate's merge, a PR opened with `o`).
+    def reload_and_refresh
+      reload
+      project = @current_path && project_for_path(@current_path)
+      maybe_refresh_prs(project) if project && Pr.stale?(project, NAV_TTL)
+    end
+
+    # T1 — a hooked agent just reached a resting state (finished a turn), so it
+    # may have pushed a branch / opened a PR: refresh that worktree's project.
+    # Uses the hook-only states (never the activity fallback, which flips every 3s
+    # and would fire on noise). Skips the first scan — no baseline to diff.
+    def refresh_prs_on_agent_edges
+      now = @agent_state.last_hook_states
+      if @prev_hook_states
+        self.class.completion_edges(@prev_hook_states, now)
+            .filter_map { |path| project_for_path(path) }.uniq
+            .each { |project| maybe_refresh_prs(project) }
+      end
+      @prev_hook_states = now
+    end
+
+    # T3 — idle backstop: refresh any project whose badges have gone stale past
+    # BACKSTOP_TTL, the safety net that stops the cache rotting for days when
+    # nothing else fires. Capped at MAX_SPAWN_PER_RELOAD so opening home on a cold
+    # cache doesn't launch one gh per project at once; the rest catch up later.
+    def refresh_stale_prs
+      @config.projects
+             .map { |p| p["name"] }
+             .select { |name| Pr.stale?(name, BACKSTOP_TTL) }
+             .first(MAX_SPAWN_PER_RELOAD)
+             .each { |name| maybe_refresh_prs(name) }
+    rescue StandardError
+      nil
+    end
+
+    # Fire a non-blocking PR refresh for a project, debounced per project.
+    # Detaches `switchboard refresh <project> --poke <our pane>` (mirrors
+    # open_pr): the gh call stays off this paint loop, and the child redraws THIS
+    # sidebar — the explicit pane id survives us navigating away before gh
+    # returns, where a "current pane" lookup would drift. No SWITCHBOARD_BIN
+    # (launched without the wrapper) ⇒ skip; cached badges still show.
+    def maybe_refresh_prs(project)
+      bin = ENV["SWITCHBOARD_BIN"]
+      return unless bin && project
+
+      now = monotonic
+      return unless self.class.spawn_due?(@pr_spawned[project], now)
+
+      @pr_spawned[project] = now
+      pid = Process.spawn(bin, "refresh", project, "--poke", ENV["TMUX_PANE"].to_s,
+                          out: File::NULL, err: File::NULL)
+      Process.detach(pid)
+    rescue SystemCallError
+      nil
+    end
+
+    # The project owning a worktree path (over the ws nodes), or nil.
+    def project_for_path(path)
+      @nodes.find { |n| n.kind == "ws" && n.path == path }&.project
     end
 
     # --- input ---------------------------------------------------------------
@@ -213,7 +311,7 @@ module Switchboard
       when "d"                 then delete
       when "r"                 then rename
       when "e"                 then edit_config
-      when "\f"                then reload # Ctrl-L (hook poke on switch)
+      when "\f"                then reload_and_refresh # Ctrl-L (hook poke on switch)
       when "g"                 then @cursor = 0
       when "G"                 then @cursor = @rows.size - 1
       when "\e[I"              then @focused = true  # tmux focus-in: light the cursor bar
