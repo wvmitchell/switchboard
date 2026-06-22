@@ -7,6 +7,22 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.17.2] — keep a symlinked tmux.conf intact on install (2026-06-22)
+
+### Fixed
+- **`install` no longer clobbers a symlinked `~/.tmux.conf`.** When your
+  tmux.conf is a symlink into a dotfiles repo, the atomic write now follows the
+  link and rewrites the real file instead of replacing the symlink with a
+  detached copy — which silently decoupled `~/.tmux.conf` from the repo it
+  pointed at, so later `git pull`s in the dotfiles never reached the live
+  config. The install output now shows the resolved destination
+  (`tmux: wired in ~/.tmux.conf → …`).
+- **The test suite no longer touches your real tmux server.** Uninstall's live
+  cleanup runs `tmux unbind-key`/`set-hook -gu` ungated by `$TMUX` by design, so
+  `bin/test` was shelling those into the running server and unbinding live
+  switchboard keys. Tests now redirect tmux's socket dir (`TMUX_TMPDIR`) into the
+  sandbox, restoring the offline-test guarantee.
+
 ## [0.17.1] — make the unviewed-completion highlight pop (2026-06-22)
 
 ### Changed

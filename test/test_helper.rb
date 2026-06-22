@@ -31,8 +31,9 @@ module Switchboard
   # overrides so NOTHING reads or writes outside the sandbox: the config, the
   # symlink dir, the agent-state + PR-cache dirs, the XDG roots Hook materializes
   # its reporter into, the git global/system config, HOME, and gh's config dir.
-  # TMUX is unset so no test ever pokes a live tmux server. Everything is
-  # restored on teardown by replacing ENV wholesale.
+  # TMUX is unset AND tmux's socket dir is redirected into the sandbox, so no
+  # test pokes a live tmux server. Everything is restored on teardown by
+  # replacing ENV wholesale.
   class SandboxTest < Minitest::Test
     def setup
       @dir = Dir.mktmpdir("switchboard-test")
@@ -58,6 +59,13 @@ module Switchboard
       ENV["GH_CONFIG_DIR"]     = path("gh")
       ENV.delete("GH_TOKEN")
       ENV.delete("TMUX")
+      # Unsetting TMUX only stops a test from looking like it's INSIDE a server;
+      # a fresh `tmux` shell-out still talks to the default socket. Point that
+      # socket dir at the empty sandbox so even the deliberately-ungated server
+      # ops (uninstall's teardown_live runs `tmux unbind-key`/`set-hook -gu`
+      # without the TMUX gate, by design) can't reach — let alone clobber — the
+      # developer's real tmux. No server lives here, so those calls just no-op.
+      ENV["TMUX_TMPDIR"] = @dir
     end
 
     def teardown

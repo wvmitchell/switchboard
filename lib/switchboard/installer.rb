@@ -169,7 +169,8 @@ module Switchboard
       backup(conf) if File.exist?(conf)
       atomic_write(conf, with_block(strip_block(body)))
       reload(conf)
-      ok "tmux: wired in #{conf}"
+      dest = real_target(conf)
+      ok(dest == conf ? "tmux: wired in #{conf}" : "tmux: wired in #{conf} → #{dest}")
       note "prefix-s now toggles the sidebar (was: #{prev})" if prev && !prev.include?("switchboard")
     rescue StandardError => e
       bad "tmux: #{e.message}"
@@ -332,10 +333,31 @@ module Switchboard
     # Write via temp-file + rename so the user's tmux.conf update is atomic: a
     # crash or ENOSPC mid-write leaves the old file intact, never a truncated
     # one (and never a half-written marker block). Rename is atomic within a dir.
+    #
+    # Symlink-aware: when `path` is a symlink (a tmux.conf stowed into a dotfiles
+    # repo, say), write THROUGH it to the file it points at, so the link itself
+    # survives. Renaming onto the symlink would replace it with a detached
+    # regular-file copy — silently decoupling ~/.tmux.conf from the repo it links
+    # into, so a later `git pull` in the dotfiles never reaches the live config.
+    # The temp lands beside the resolved target, keeping the rename within one dir.
     def atomic_write(path, content)
-      tmp = "#{path}.#{Process.pid}.sb-tmp"
+      dest = real_target(path)
+      tmp = "#{dest}.#{Process.pid}.sb-tmp"
       File.write(tmp, content)
-      File.rename(tmp, path)
+      File.rename(tmp, dest)
+    end
+
+    # Follow a symlink chain to the real file it ultimately points at, so writes
+    # go through the link rather than clobbering it. A non-symlink path is
+    # returned unchanged; a dangling link still resolves to its intended target
+    # (the write can create it). Cycle-guarded against a pathological link loop.
+    def real_target(path)
+      seen = {}
+      while File.symlink?(path) && !seen[path]
+        seen[path] = true
+        path = File.absolute_path(File.readlink(path), File.dirname(path))
+      end
+      path
     end
 
     def reload(conf)

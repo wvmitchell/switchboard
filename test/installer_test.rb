@@ -126,6 +126,69 @@ module Switchboard
       assert_empty Dir[path("tmux.conf*.sb-tmp")]
     end
 
+    # --- atomic write through a symlinked conf (the dotfiles footgun) ---------
+
+    # A tmux.conf symlinked into a dotfiles repo must survive a write: renaming
+    # onto the link would replace it with a detached regular-file copy, silently
+    # decoupling ~/.tmux.conf from the repo it points at. atomic_write follows the
+    # link and writes the real file, leaving the symlink intact.
+    def test_atomic_write_preserves_a_symlinked_target
+      real = path("dotfiles", "tmux.conf")
+      FileUtils.mkdir_p(File.dirname(real))
+      File.write(real, "old\n")
+      link = path("tmux.conf")
+      File.symlink(real, link)
+
+      Installer.atomic_write(link, "new\n")
+
+      assert File.symlink?(link), "the symlink was replaced by a regular file"
+      assert_equal "new\n", File.read(real), "content didn't reach the link's target"
+    end
+
+    # Same protection end-to-end through install: the marker lands in the repo
+    # file (preserving its prior content), and ~/.tmux.conf stays a link into it.
+    def test_install_writes_through_a_symlinked_conf
+      real = path("dotfiles", "tmux.conf")
+      FileUtils.mkdir_p(File.dirname(real))
+      File.write(real, "# base\n")
+      link = path("tmux.conf")
+      File.symlink(real, link)
+
+      silently { Installer.install(conf: link) }
+
+      assert File.symlink?(link), "install clobbered the symlink"
+      body = File.read(real)
+      assert_includes body, Installer::BEGIN_MARK
+      assert_includes body, "# base"
+    end
+
+    # The temp file lands beside the resolved target (so the rename stays atomic
+    # within one dir), and a multi-hop chain resolves to the real file.
+    def test_atomic_write_follows_a_symlink_chain_and_leaves_no_temp
+      real = path("dotfiles", "tmux.conf")
+      FileUtils.mkdir_p(File.dirname(real))
+      File.write(real, "old\n")
+      mid = path("mid.conf");  File.symlink(real, mid)
+      link = path("tmux.conf"); File.symlink(mid, link)
+
+      Installer.atomic_write(link, "new\n")
+
+      assert_equal "new\n", File.read(real)
+      assert File.symlink?(link) && File.symlink?(mid), "a hop in the chain was clobbered"
+      assert_empty Dir[path("**", "*.sb-tmp")], "atomic write left a temp file behind"
+    end
+
+    # real_target passes a plain path through untouched and resolves a link even
+    # when its target doesn't exist yet (so the write can create it) — no raise.
+    def test_real_target_resolves_symlinks_and_passes_plain_paths
+      plain = path("plain.conf")
+      assert_equal plain, Installer.real_target(plain)
+
+      dangling = path("dangling")
+      File.symlink(path("dotfiles", "nope.conf"), dangling)
+      assert_equal path("dotfiles", "nope.conf"), Installer.real_target(dangling)
+    end
+
     # --- install: symlink ----------------------------------------------------
 
     def test_install_creates_symlink_into_repo
