@@ -97,6 +97,7 @@ bin/switchboard clone U [N]     # clone a repo under projects_root, then registe
 bin/switchboard                 # toggle the sidebar in the current tmux window
 bin/switchboard refresh         # re-fetch PR badges from gh
 bin/switchboard enable-hooks [P]  # exact agent-state dots in a worktree (see below)
+bin/switchboard sound [done|waiting]  # play a state's sound (try audio / pick sounds)
 bin/switchboard doctor          # check dependencies + config
 ```
 
@@ -198,6 +199,10 @@ base: origin/main                        # default ref new worktrees branch from
 branch_prefix: wvmitchell                # optional: new branches become wvmitchell/<name>
 agent_state_hooks: true                  # optional: auto-wire agent-state dots on create (default true)
 session_command: claude                  # optional: run this when a worktree's session is first created
+sounds:                                  # optional: completion sounds (on by default — see below)
+  enabled: true                          #   set false to mute everything
+  done: train                            #   built-in (train|chime), a file path, or a macOS sound name
+  waiting: chime
 projects:
   - name: myapp
     path: ~/code/myapp
@@ -270,6 +275,41 @@ reporter script switchboard materializes into its own data dir
 `brew upgrade`, so the wiring doesn't rot. The script only writes a state file;
 switchboard never launches or wraps your agent. Set `agent_state_hooks: false`
 in the config to stop auto-enabling on create.
+
+## Sound effects
+
+The audible twin of the dots: when a hooked agent finishes a turn or asks for
+input, switchboard plays a short sound — so you can switch away to another
+workspace and still hear when one is **done** (a two-blast train horn) or
+**waiting** on you (a soft two-note chime). On by default, gentle by default.
+
+The sounds are *synthesized* in pure Ruby and cached under
+`~/.local/share/switchboard/sounds/` on first use — nothing is shipped or
+downloaded, and there's no asset to license. Playback shells out to whatever's on
+PATH (`afplay` on macOS; `paplay`/`aplay`/`ffplay` on Linux); with no player they
+simply stay silent.
+
+Configure globally or per project — the same shape as `session_command`:
+
+```yaml
+sounds:
+  enabled: true        # false mutes everything
+  done: train          # built-in (train|chime), a file path (~/horn.wav), or a macOS system sound (Glass)
+  waiting: chime
+projects:
+  - name: myapp
+    sounds:
+      enabled: false   # this repo stays quiet
+  - name: client-work
+    sounds:
+      done: ~/sounds/celebrate.wav  # per-project override; omit a key to inherit the global one
+```
+
+Try them (or audition replacements) with `switchboard sound [done|waiting]`, and
+`switchboard doctor` reports whether a player is on PATH and each sound resolves.
+Sound rides the same **per-worktree hooks** as the exact dots, so a worktree
+needs hooks enabled to make sound — automatic on switchboard-created worktrees,
+or run `switchboard enable-hooks` in an existing one.
 
 ## Dependencies
 

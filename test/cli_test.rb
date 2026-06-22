@@ -63,6 +63,47 @@ module Switchboard
       assert_nil CLI.refresh("ghost")
     end
 
+    # --- sound: the demo/diagnostic command ----------------------------------
+
+    def test_sound_rejects_an_unknown_state
+      err = capture_err { CLI.play_sound("bogus") }
+      assert_includes err, "usage"
+    end
+
+    def test_sound_warns_when_muted
+      File.write(Config.path, YAML.dump("sounds" => { "enabled" => false }))
+      err = capture_err { CLI.play_sound("done") }
+      assert_includes err, "muted"
+    end
+
+    def test_sound_warns_when_no_player_on_path
+      err = capture_err do
+        stub_method(Sound, :player_argv, -> { nil }) { CLI.play_sound("done") }
+      end
+      assert_includes err, "no audio player"
+    end
+
+    def test_sound_plays_the_resolved_spec_blocking
+      captured = nil
+      stub_method(Sound, :player_argv, -> { ["afplay"] }) do
+        stub_method(Sound, :play, ->(spec, **kw) { captured = [spec, kw] }) do
+          CLI.play_sound("done")
+        end
+      end
+      spec, kw = captured
+      assert_equal "train", spec      # default :done sound
+      assert kw[:wait], "CLI plays blocking so the one-shot finishes"
+    end
+
+    def test_doctor_reports_player_and_sound_rows
+      out = capture do
+        stub_method(Sound, :player_argv, -> { ["afplay"] }) { CLI.doctor }
+      end
+      assert_includes out, "audio player: afplay"
+      assert_includes out, "sound done: train"
+      assert_includes out, "sound waiting: chime"
+    end
+
     # --- prune / quit (Reconcile + Tmux stubbed so no real tmux is touched) ---
 
     def report(reachable: true, sb_count: 0, orphans: [])
@@ -163,6 +204,16 @@ module Switchboard
       out.string
     ensure
       $stdout = orig
+    end
+
+    def capture_err
+      err = StringIO.new
+      orig = $stderr
+      $stderr = err
+      yield
+      err.string
+    ensure
+      $stderr = orig
     end
   end
 end

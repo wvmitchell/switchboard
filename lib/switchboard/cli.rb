@@ -24,6 +24,7 @@ module Switchboard
       when "refresh"           then refresh(*refresh_args(argv))
       when "enable-hooks"      then enable_hooks(argv[1])
       when "disable-hooks"     then disable_hooks(argv[1])
+      when "sound"             then play_sound(argv[1])
       when "sidebar"           then Sidebar.run
       when "poke-sidebar"      then Tmux.poke_current_sidebar
       when "prune"             then prune(argv.drop(1))
@@ -206,6 +207,28 @@ module Switchboard
       top.empty? ? nil : top
     end
 
+    # Play a configured sound, for trying audio out / picking sounds (and showing
+    # it off). `switchboard sound [done|waiting]` — defaults to done. Uses the
+    # GLOBAL sound config (no project context), blocks until it finishes, and
+    # reports WHY nothing played (muted / no player / unresolvable spec) so a
+    # silent run is never mistaken for success.
+    def play_sound(state = nil)
+      state = state || "done"
+      return warn("usage: switchboard sound [done|waiting]") unless %w[done waiting].include?(state)
+
+      spec = config.sound_for(nil, state.to_sym)
+      return warn("sounds are muted for #{state} (set `sounds: { enabled: true }`)") if spec.nil?
+      return warn("no audio player on PATH (need afplay, paplay, aplay, or ffplay)") unless Sound.player_argv
+
+      case Sound.status(spec)
+      when :ok then Sound.play(spec, wait: true)
+      when :missing_file then warn("sound #{state}: file not found — #{spec}")
+      when :macos_only then warn("sound #{state}: '#{spec}' is a macOS system-sound name, not available on this OS")
+      when :missing_system_sound then warn("sound #{state}: no system sound named '#{spec}'")
+      else warn("sound #{state}: couldn't resolve '#{spec}'")
+      end
+    end
+
     def doctor
       %w[tmux git gh].each do |tool|
         puts row(!`command -v #{tool} 2>/dev/null`.strip.empty?, tool)
@@ -214,7 +237,36 @@ module Switchboard
       puts row(exists, exists ? "config: #{Config.path}" : "no config — run `switchboard install`")
       doctor_install
       doctor_hooks
+      doctor_sounds
       doctor_sessions
+    end
+
+    # Report sound wiring: an audio player on PATH, and whether each state's
+    # configured (or default) spec resolves to something playable.
+    def doctor_sounds
+      player = Sound.player_argv
+      puts row(!player.nil?, player ? "audio player: #{player.first}" : "no audio player (afplay/paplay/aplay/ffplay) — sounds stay silent")
+      %w[done waiting].each do |state|
+        spec = config.sound_for(nil, state.to_sym)
+        if spec.nil?
+          puts "  \e[33m–\e[0m sound #{state}: muted"
+          next
+        end
+
+        st = Sound.status(spec)
+        puts row(st == :ok, "sound #{state}: #{spec}#{sound_note(st)}")
+      end
+    end
+
+    # Trailing clause explaining a non-:ok sound status (empty when :ok).
+    def sound_note(status)
+      case status
+      when :missing_file then " (file not found)"
+      when :macos_only then " (macOS-only name, not on this OS)"
+      when :missing_system_sound then " (no such system sound)"
+      when :ok then ""
+      else " (unresolved)"
+      end
     end
 
     # Surface orphaned sessions where the problem is detected, with the fix
@@ -275,6 +327,7 @@ module Switchboard
           switchboard refresh      re-fetch PR badges from gh (normally automatic)
           switchboard enable-hooks [P]   wire agent-state dots in a worktree (default: cwd)
           switchboard disable-hooks [P]  remove them from that worktree
+          switchboard sound [done|waiting]  play a state's sound (try audio / pick sounds)
           switchboard prune        kill orphaned sb/ sessions (--dry-run / -n previews)
           switchboard quit         close ALL switchboard sessions (full teardown — kills the one you're in too)
           switchboard doctor       check dependencies + config

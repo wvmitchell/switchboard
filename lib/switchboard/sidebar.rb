@@ -195,7 +195,7 @@ module Switchboard
 
     def refresh_agents
       @agents = @agent_state.scan(@nodes.select { |n| n.kind == "ws" }.map(&:path))
-      refresh_prs_on_agent_edges
+      on_agent_edges
     rescue StandardError
       @agents = {}
     end
@@ -251,18 +251,42 @@ module Switchboard
       maybe_refresh_prs(project) if project && Pr.stale?(project, NAV_TTL)
     end
 
-    # T1 — a hooked agent just reached a resting state (finished a turn), so it
-    # may have pushed a branch / opened a PR: refresh that worktree's project.
-    # Uses the hook-only states (never the activity fallback, which flips every 3s
-    # and would fire on noise). Skips the first scan — no baseline to diff.
-    def refresh_prs_on_agent_edges
+    # T1 — a hooked agent just reached a resting state (finished a turn / asked
+    # for input). Two consumers ride the same edge: a background PR refresh (it
+    # may have pushed a branch / opened a PR) and a completion sound (the audible
+    # twin of the dot). Uses the hook-only states (never the activity fallback,
+    # which flips every 3s and would fire on noise). Skips the first scan — no
+    # baseline to diff.
+    #
+    # Ordering + isolation are load-bearing: PR refresh runs first, the sound is
+    # fully rescued (play_sounds_for) so a sound fault can't starve it, and
+    # @prev_hook_states ALWAYS advances (ensure) so a raise here can't corrupt the
+    # next edge diff — or trip refresh_agents' broad rescue into blanking the dots.
+    def on_agent_edges
       now = @agent_state.last_hook_states
       if @prev_hook_states
-        self.class.completion_edges(@prev_hook_states, now)
-            .filter_map { |path| project_for_path(path) }.uniq
-            .each { |project| maybe_refresh_prs(project) }
+        edges = self.class.completion_edges(@prev_hook_states, now)
+        refresh_prs_for(edges)
+        play_sounds_for(edges, now)
       end
+    ensure
       @prev_hook_states = now
+    end
+
+    # Edge paths -> owning projects -> debounced PR refresh (deduped per project).
+    def refresh_prs_for(edges)
+      edges.filter_map { |path| project_for_path(path) }.uniq
+           .each { |project| maybe_refresh_prs(project) }
+    end
+
+    # Edge paths -> a completion sound each. completion_edges returns distinct
+    # paths, so this is one sound per [worktree, state]: every worktree's
+    # completion is heard, but a worktree can't double-fire in one scan. Fully
+    # rescued — a sound fault never disturbs the scan or the PR refresh above.
+    def play_sounds_for(edges, now)
+      edges.each { |path| Sound.play(@config.sound_for(project_for_path(path), now[path])) }
+    rescue StandardError
+      nil
     end
 
     # T3 — idle backstop: refresh any project whose badges have gone stale past

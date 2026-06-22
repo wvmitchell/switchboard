@@ -154,5 +154,62 @@ module Switchboard
       c = cfg("projects" => [{ "name" => "ok", "path" => "/p" }, { "name" => "noPath" }, { "path" => "/noName" }])
       assert_equal ["ok"], c.projects.map { |p| p["name"] }
     end
+
+    # --- sounds: global + per-project resolution (mirrors session_command) -----
+
+    def test_sound_for_defaults_to_built_ins_and_on
+      c = cfg({})
+      assert c.sounds_enabled?
+      assert_equal "train", c.sound_for(nil, :done)
+      assert_equal "chime", c.sound_for(nil, :waiting)
+    end
+
+    def test_sounds_global_mute_via_enabled_false
+      c = cfg("sounds" => { "enabled" => false })
+      refute c.sounds_enabled?
+      assert_nil c.sound_for(nil, :done)
+    end
+
+    def test_sounds_global_mute_via_bare_false
+      c = cfg("sounds" => false)
+      refute c.sounds_enabled?
+      assert_nil c.sound_for(nil, :waiting)
+    end
+
+    def test_sound_for_global_override
+      c = cfg("sounds" => { "done" => "/horn.wav" })
+      assert_equal "/horn.wav", c.sound_for(nil, :done)
+      assert_equal "chime", c.sound_for(nil, :waiting) # untouched key falls to default
+    end
+
+    def test_sound_for_blank_override_inherits_never_mutes
+      # Per-state keys are override-or-inherit only; muting is enabled:false.
+      c = cfg("sounds" => { "done" => "" })
+      assert_equal "train", c.sound_for(nil, :done)
+    end
+
+    def test_sound_for_per_project_override
+      c = cfg("sounds" => { "done" => "Glass" },
+              "projects" => [{ "name" => "app", "path" => "/p", "sounds" => { "done" => "Hero" } }])
+      assert_equal "Hero", c.sound_for("app", :done)     # per-project wins
+      assert_equal "chime", c.sound_for("app", :waiting) # inherits global (here: default)
+      assert_equal "Glass", c.sound_for(nil, :done)      # global, no project
+    end
+
+    def test_sounds_per_project_mute
+      c = cfg("projects" => [{ "name" => "app", "path" => "/p", "sounds" => { "enabled" => false } }])
+      refute c.sounds_enabled?("app")
+      assert_nil c.sound_for("app", :done)
+      assert c.sounds_enabled? # global still on
+      assert_equal "train", c.sound_for(nil, :done)
+    end
+
+    def test_sounds_per_project_enable_overrides_global_mute
+      c = cfg("sounds" => { "enabled" => false },
+              "projects" => [{ "name" => "app", "path" => "/p", "sounds" => { "enabled" => true } }])
+      assert c.sounds_enabled?("app")
+      assert_equal "train", c.sound_for("app", :done)
+      refute c.sounds_enabled?(nil) # global still muted
+    end
   end
 end

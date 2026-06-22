@@ -347,5 +347,81 @@ module Switchboard
     def test_spawn_due_exactly_at_window
       assert Sidebar.spawn_due?(100.0, 105.0, 5)
     end
+
+    # --- on_agent_edges: PR refresh + sound ride the same edge ----------------
+    #
+    # The refactor that folded the sound trigger in must not break the existing
+    # PR-refresh trigger (which the suite only covered statically via
+    # completion_edges). These drive the integration: first-scan skip, dual
+    # dispatch, and the load-bearing guarantee that @prev_hook_states ALWAYS
+    # advances so a fault can't corrupt the next edge diff.
+
+    # Feed on_agent_edges a fixed hook-state snapshot (stands in for AgentState).
+    def set_hook_states(sb, states)
+      sb.instance_variable_set(:@agent_state, Struct.new(:last_hook_states).new(states))
+    end
+
+    def test_on_agent_edges_skips_the_first_scan
+      sb = sidebar(nodes: [ws("a", path: "/wt/a")])
+      set_hook_states(sb, { "/wt/a" => :done })
+      sb.instance_variable_set(:@prev_hook_states, nil) # no baseline yet
+      prs = []
+      sounds = []
+      sb.define_singleton_method(:maybe_refresh_prs) { |p| prs << p }
+      stub_method(Sound, :play, ->(spec, **) { sounds << spec }) do
+        sb.send(:on_agent_edges)
+      end
+      assert_empty prs, "no baseline -> no PR refresh on first scan"
+      assert_empty sounds, "no baseline -> no sound on first scan"
+      assert_equal({ "/wt/a" => :done }, sb.instance_variable_get(:@prev_hook_states))
+    end
+
+    def test_on_agent_edges_dispatches_pr_and_sound_on_an_edge
+      sb = sidebar(nodes: [ws("a", project: "app", path: "/wt/a")])
+      set_hook_states(sb, { "/wt/a" => :done })
+      sb.instance_variable_set(:@prev_hook_states, { "/wt/a" => :thinking })
+      prs = []
+      sounds = []
+      sb.define_singleton_method(:maybe_refresh_prs) { |p| prs << p }
+      stub_method(Sound, :play, ->(spec, **) { sounds << spec }) do
+        sb.send(:on_agent_edges)
+      end
+      assert_equal ["app"], prs            # PR trigger survives the refactor
+      assert_equal ["train"], sounds       # :done -> default train
+      assert_equal({ "/wt/a" => :done }, sb.instance_variable_get(:@prev_hook_states))
+    end
+
+    def test_on_agent_edges_advances_baseline_even_when_sound_raises
+      sb = sidebar(nodes: [ws("a", path: "/wt/a")])
+      set_hook_states(sb, { "/wt/a" => :waiting })
+      sb.instance_variable_set(:@prev_hook_states, { "/wt/a" => :thinking })
+      sb.define_singleton_method(:maybe_refresh_prs) { |_p| }
+      stub_method(Sound, :play, ->(*) { raise "boom" }) do
+        sb.send(:on_agent_edges) # must not raise — play_sounds_for rescues
+      end
+      assert_equal({ "/wt/a" => :waiting }, sb.instance_variable_get(:@prev_hook_states))
+    end
+
+    def test_play_sounds_for_one_sound_per_worktree_mapped_by_state
+      sb = sidebar(nodes: [ws("a", project: "app", path: "/wt/a"),
+                           ws("b", project: "app", path: "/wt/b")])
+      sounds = []
+      now = { "/wt/a" => :done, "/wt/b" => :waiting }
+      stub_method(Sound, :play, ->(spec, **) { sounds << spec }) do
+        sb.send(:play_sounds_for, ["/wt/a", "/wt/b"], now)
+      end
+      assert_equal %w[train chime], sounds # each distinct worktree heard, by state
+    end
+
+    def test_play_sounds_for_silent_when_muted
+      File.write(Config.path, YAML.dump("sounds" => { "enabled" => false }))
+      sb = sidebar(nodes: [ws("a", path: "/wt/a")])
+      sb.instance_variable_set(:@config, Config.new)
+      played = []
+      stub_method(Sound, :play, ->(spec, **) { played << spec if spec }) do
+        sb.send(:play_sounds_for, ["/wt/a"], { "/wt/a" => :done })
+      end
+      assert_empty played # sound_for -> nil, so nothing is actually played
+    end
   end
 end

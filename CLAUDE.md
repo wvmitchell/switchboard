@@ -115,6 +115,27 @@ that survives `brew upgrade` — and the hook command points there. New worktree
 get this automatically (`Creator.create` → `Hook.enable`, gated on
 `agent_state_hooks?`); existing ones via `switchboard enable-hooks`.
 
+### Completion sounds (the audible twin)
+
+`Sound` (`sound.rb`) plays a short sound when a worktree's hook state newly
+enters a resting state — the same `Sidebar.completion_edges` the PR refresh
+rides. Both consumers live in `Sidebar#on_agent_edges`: it computes the edges
+once, runs the PR refresh **first**, then `play_sounds_for` (fully rescued), and
+advances `@prev_hook_states` in an `ensure` — so a sound fault can never starve
+the PR trigger, blank the dots (the broad `refresh_agents` rescue), or corrupt
+the next edge diff. Hook-only states, like the PR trigger, so observation-only
+agents make no sound. Deduped per `[worktree, state]`: every distinct worktree's
+completion is heard, but one worktree can't double-fire in a scan.
+
+The two defaults are **synthesized** (16-bit PCM WAV via `Array#pack`) and
+materialized into the XDG data dir on first use (atomic temp+rename, so racing
+sidebar processes never read a half-written file) — same self-healing trick as
+`Hook.ensure_script`, no shipped binary assets. Config resolves a state to a
+built-in name (`train`/`chime`), a file path, or a bare macOS system-sound name,
+via `Config#sound_for` (global default + per-project override, like
+`session_command_for`; mute only via `enabled: false`). Bump
+`Sound::ASSET_VERSION` to regenerate the cached WAVs.
+
 ### Conventions
 
 - Every file starts with `# frozen_string_literal: true`.
