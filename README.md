@@ -52,7 +52,7 @@ n        create a new worktree in the highlighted project
 o        open the highlighted PR in the browser (gh pr view --web)
 r        rename a workspace
 d        delete a workspace
-e        edit config.yml in $EDITOR
+e        edit config.yml ($EDITOR, full-size in the home session; returns you on quit)
 q        hide the sidebar
 ```
 

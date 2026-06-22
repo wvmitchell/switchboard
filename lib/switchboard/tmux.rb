@@ -14,6 +14,10 @@ module Switchboard
     # so the two can't drift (reconcile matches a session to its project by
     # prefix, so identical sanitization is load-bearing).
     SANITIZE = /[.:\s]/
+    # A non-user key the sidebar maps to "re-read config + rebuild" — the
+    # dedicated post-edit reload signal, distinct from C-l (the session-switch
+    # refresh poke) so an ordinary switch never re-reads config off disk.
+    RELOAD_CONFIG_POKE = "C-r"
 
     module_function
 
@@ -55,6 +59,28 @@ module Switchboard
     def ensure_home
       ensure_session(HOME, home_dir)
       ensure_sidebar(HOME)
+    end
+
+    # Open an editor command in its OWN throwaway pane in the home session,
+    # zoomed full-window, then land on it. The pane runs `command` as its
+    # foreground process (tmux execs it via the shell) and closes on exit (:q) —
+    # so editing config never types into a live shell (no idle guard, no
+    # pending-input corruption, no shell-history leak). `command` carries its own
+    # return-to-origin + reload trailer, so this stays a dumb "run it in a home
+    # pane" primitive. Array-form spawn so `command` reaches tmux as one literal
+    # arg (its `;` and spaces are the inner shell's to parse, not ours).
+    def edit_in_home(command)
+      ensure_home
+      pane = IO.popen(
+        ["tmux", "split-window", "-t", "#{HOME}:", "-c", home_dir, "-P", "-F", "#\{pane_id}", command],
+        err: File::NULL, &:read
+      ).to_s.strip
+      return switch(HOME) if pane.empty? # split failed: at least land in home
+
+      system("tmux", "resize-pane", "-Z", "-t", pane, out: File::NULL, err: File::NULL) # zoom editor full
+      switch(HOME) # land on the new (active) editor pane
+    rescue StandardError
+      switch(HOME) # IO.popen can raise (e.g. tmux missing); never crash the `e` keypress
     end
 
     # Home sits in $HOME: a neutral, always-present directory owned by no project.
@@ -343,6 +369,23 @@ module Switchboard
     # Tell a specific sidebar pane to reload (C-l, a non-user key — `r` renames).
     def poke(pane)
       system("tmux", "send-keys", "-t", pane, "C-l", out: File::NULL, err: File::NULL) if pane
+    end
+
+    # Poke a session's sidebar by session name (vs. poke's pane id). reload_config:
+    # sends C-r (the dedicated config-reload signal) instead of C-l, so only a
+    # real edit re-reads config off disk. Returns nil when the session has no
+    # sidebar (e.g. it was killed mid-edit), so callers can fall back.
+    def poke_sidebar_of(session, reload_config: false)
+      pane = sidebar_pane(session) or return
+
+      key = reload_config ? RELOAD_CONFIG_POKE : "C-l"
+      system("tmux", "send-keys", "-t", pane, key, out: File::NULL, err: File::NULL)
+    end
+
+    # Surface a short message on tmux's status line — visible no matter which
+    # pane has focus (a sidebar-only flash is missed when you're not on the tree).
+    def notify(message)
+      system("tmux", "display-message", message.to_s, out: File::NULL, err: File::NULL)
     end
 
     # Is this pane on the active window of an attached session (i.e. on screen)?

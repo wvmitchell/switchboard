@@ -482,5 +482,26 @@ module Switchboard
       end
       assert_empty played # sound_for -> nil, so nothing is actually played
     end
+
+    # --- reload_config_and_rebuild: the post-edit (Ctrl-R) reload -------------
+    # `e` lets you hand-edit raw YAML, so a syntax slip is expected. A bad save
+    # must NOT tear the sidebar down: keep the last good @config and surface the
+    # error on tmux's status line (Tmux.notify) instead.
+
+    def test_reload_config_and_rebuild_keeps_last_good_config_on_bad_yaml
+      File.write(Config.path, YAML.dump("worktree_root" => "~/wt", "projects" => []))
+      sb = sidebar(nodes: [])
+      good = Config.new
+      sb.instance_variable_set(:@config, good)
+
+      File.write(Config.path, "a: : :\n  - broken") # now invalid YAML
+      captured = nil
+      stub_method(Tmux, :notify, ->(msg) { captured = msg }) do
+        sb.send(:reload_config_and_rebuild)
+      end
+
+      assert_same good, sb.instance_variable_get(:@config), "kept the last good config on a parse error"
+      assert_match(/config not reloaded/, captured.to_s, "surfaced the error via tmux notify")
+    end
   end
 end

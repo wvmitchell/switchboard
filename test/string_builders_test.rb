@@ -139,6 +139,21 @@ module Switchboard
       assert_includes draft_tag, "\e[33m" # DRAFT -> yellow
     end
 
+    # --- Editor.command ($VISUAL > $EDITOR > vi; empty is unset) -------------
+
+    def test_editor_command_prefers_visual_then_editor
+      with_env("VISUAL" => "code -w", "EDITOR" => "nano") { assert_equal "code -w", Editor.command }
+      with_env("VISUAL" => nil, "EDITOR" => "nano") { assert_equal "nano", Editor.command }
+    end
+
+    def test_editor_command_treats_empty_as_unset_and_falls_back_to_vi
+      # "" is truthy in Ruby; a bare || chain would pick it and try to exec the
+      # config file. The empty VISUAL must fall through to EDITOR, both-empty to vi.
+      with_env("VISUAL" => "", "EDITOR" => "nano") { assert_equal "nano", Editor.command }
+      with_env("VISUAL" => "", "EDITOR" => "") { assert_equal "vi", Editor.command }
+      with_env("VISUAL" => nil, "EDITOR" => nil) { assert_equal "vi", Editor.command }
+    end
+
     private
 
     # Set/clear env vars for the block, restoring prior values after.

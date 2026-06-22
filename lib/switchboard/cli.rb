@@ -27,6 +27,7 @@ module Switchboard
       when "sound"             then play_sound(argv[1])
       when "sidebar"           then Sidebar.run
       when "poke-sidebar"      then Tmux.poke_current_sidebar
+      when "reload-config"     then reload_config_poke(argv[1])
       when "sidebar-sync"      then Tmux.sidebar_sync(argv[1])
       when "prune"             then prune(argv.drop(1))
       when "quit"              then quit
@@ -148,19 +149,27 @@ module Switchboard
       puts "add a project from the sidebar (`a`) or `switchboard add <name> <path>`."
     end
 
-    # Open the config in $EDITOR (also bound to `e` in the sidebar). Scaffolds a
-    # minimal stub first if there's no config yet, so there's always a real file
-    # to edit — and a place to add `session_command` / per-project overrides.
+    # Open the config in $EDITOR in the current terminal. The sidebar's `e` opens
+    # it full-size in the home session instead (Sidebar#edit_config); a shell
+    # invocation edits right where you typed it — the "edit in place" escape
+    # hatch. Scaffolds a minimal stub first so there's always a real file to edit.
     def edit_config
       Config.scaffold
-      warn("could not launch editor: #{editor_command}") unless system("#{editor_command} #{Shellwords.escape(Config.path)}")
+      warn("could not launch editor: #{Editor.command}") unless system("#{Editor.command} #{Shellwords.escape(Config.path)}")
     end
 
-    # $VISUAL/$EDITOR, treating an exported-but-empty value as unset — an empty
-    # string is truthy in Ruby, so a bare `||` chain would pick it and try to
-    # exec the config file itself. Falls back to vi.
-    def editor_command
-      [ENV["VISUAL"], ENV["EDITOR"]].find { |e| e && !e.empty? } || "vi"
+    # Run from `e`'s throwaway editor pane after :q (see Sidebar#edit_config):
+    # switch the client back to the session `e` was pressed from (origin, if it's
+    # still alive), then poke THAT sidebar to re-read config and redraw. Origin
+    # blank/home ⇒ poke home in place. A dedicated path (the Ctrl-R poke), so the
+    # cheap C-l session-switch poke never re-reads config. No-op outside tmux.
+    def reload_config_poke(origin)
+      return unless ENV["TMUX"]
+
+      target = origin.to_s.empty? ? Tmux::HOME : origin
+      Tmux.switch(target) if target != Tmux.session_of
+      Tmux.poke_sidebar_of(target, reload_config: true) ||
+        Tmux.poke_sidebar_of(Tmux::HOME, reload_config: true)
     end
 
     def add_project(name, path, base = nil)
@@ -342,7 +351,7 @@ module Switchboard
           o        open the highlighted PR in the browser (gh pr view --web)
           r        rename a workspace
           d        delete a workspace
-          e        edit config.yml in $EDITOR
+          e        edit config (opens full-size in home, returns you on quit)
           q        hide the sidebar
       HELP
     end

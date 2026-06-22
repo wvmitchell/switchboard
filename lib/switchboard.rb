@@ -2,6 +2,7 @@
 
 require_relative "switchboard/version"
 require_relative "switchboard/config"
+require_relative "switchboard/editor"
 require_relative "switchboard/git"
 require_relative "switchboard/pr"
 require_relative "switchboard/agents"

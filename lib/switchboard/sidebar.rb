@@ -42,6 +42,7 @@ module Switchboard
     DONE      = "\e[1;32m●\e[0m"  # green: replied, ready for you (not blocked)
     BLINK_PERIOD = 4             # @pulse ticks per blink half-cycle (~0.5s at PULSE)
     BRANCH_FG = "\e[90m"         # branch rows: bright-black, a theme-relative dim (#23)
+    RELOAD_CONFIG_BYTE = "\x12"  # C-r: the dedicated post-edit "re-read config" poke (Tmux.poke_sidebar_of)
 
     # Key hints, spread over readable lines (kept within the pin width). Reload
     # isn't shown — it's automatic; Ctrl-L triggers it internally (the
@@ -382,6 +383,7 @@ module Switchboard
       when "r"                 then rename
       when "e"                 then edit_config
       when "\f"                then reload_and_refresh # Ctrl-L (hook poke on switch)
+      when RELOAD_CONFIG_BYTE  then reload_config_and_rebuild # Ctrl-R (post-edit reload)
       when "g"                 then @cursor = 0
       when "G"                 then @cursor = [@rows.size - 1, 0].max # clamp: empty tree → 0, not -1
       when "\e[I"              then @focused = true  # tmux focus-in: light the cursor bar
@@ -523,33 +525,32 @@ module Switchboard
       @config = Config.new
     end
 
-    # e: edit config.yml in $EDITOR, then reload — a changed session_command or
-    # a newly added project shows on the next paint. The editor takes over the
-    # pane, so drop raw mode and hand it a clean screen; the ensure restores raw
-    # mode and our cursor even if the editor dies, so we can't strand the pane.
+    # e: edit config.yml in a dedicated, full-size pane in the home session, then
+    # return to wherever we are now. Scaffold first so there's always a real file
+    # to edit. The editor owns its OWN throwaway pane (not this narrow strip, not
+    # the shared home shell), so there's no raw-mode dance and we just stay a live
+    # tree. The trailer — run in that pane after :q — switches the client back to
+    # this session and pokes its sidebar to re-read config (Ctrl-R), so a changed
+    # session_command / new project shows the moment you quit.
     def edit_config
-      # $VISUAL/$EDITOR, treating exported-but-empty as unset ("" is truthy in
-      # Ruby, so a bare `||` chain would pick it and exec the config file).
-      editor = [ENV["VISUAL"], ENV["EDITOR"]].find { |e| e && !e.empty? } || "vi"
-      $stdin.cooked!
-      print "\e[?25h\e[2J\e[H" # show cursor, clear, home
-      $stdout.flush
-      system("#{editor} #{Shellwords.escape(Config.path)}")
-    ensure
-      $stdin.raw!
-      print "\e[?25l\e[?1004h\e[2J" # hide cursor, re-arm focus events (editor cleared them), clear
-      reload_after_edit
+      Config.scaffold
+      bin    = Shellwords.escape(ENV["SWITCHBOARD_BIN"] || "switchboard")
+      path   = Shellwords.escape(Config.path)
+      origin = Shellwords.escape(Tmux.session_of.to_s) # the session `e` was pressed from
+      Tmux.edit_in_home("#{Editor.command} #{path}; #{bin} reload-config #{origin}")
     end
 
-    # Re-read the (possibly hand-edited) config and rebuild. Guard the parse:
-    # the whole point of `e` is editing raw YAML, so a syntax slip is expected —
-    # keep the last good config and flash the error rather than let an unrescued
-    # Config.new (YAML.safe_load_file raises on bad YAML) tear down the sidebar.
-    def reload_after_edit
+    # Re-read the (possibly hand-edited) config and rebuild — driven by the
+    # dedicated post-edit poke (Ctrl-R) after `e`'s editor exits. Guard the parse:
+    # the whole point of `e` is editing raw YAML, so a syntax slip is expected.
+    # Keep the last good config (Config.new raises *before* the @config assignment
+    # completes) and surface the error on tmux's status line — visible even when
+    # focus isn't on the tree — rather than tear the sidebar down.
+    def reload_config_and_rebuild
       reload_config
       reload
     rescue StandardError => e
-      flash("config not reloaded: #{e.message}")
+      Tmux.notify("switchboard: config not reloaded — #{e.message}")
     end
 
     # Delete a workspace: remove the worktree (force-confirm if dirty), drop the
