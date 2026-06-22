@@ -50,13 +50,14 @@ module Switchboard
     # anywhere. From a plain shell it bootstraps the home session and attaches
     # (go_home execs the attach when TMUX is unset), so launching is a single
     # command with no manual `tmux` first and no key to remember. Already inside
-    # tmux it just toggles the sidebar in the current window, like the bound key.
+    # tmux it just toggles the sidebar (summon or dismiss, session-wide), like the key.
     def start
       ENV["TMUX"] ? Tmux.toggle_sidebar : Tmux.go_home
     end
 
-    # Show/hide the sidebar in the current tmux window — the bound tmux key
-    # (`toggle-sidebar`) lands here. Outside tmux there's no pane to toggle; run
+    # Summon or dismiss the sidebar session-wide (direction read from the current
+    # window) — the bound tmux key (`toggle-sidebar`) lands here. Outside tmux
+    # there's no pane to toggle; run
     # bare `switchboard` to start one instead, rather than fail silently.
     def toggle_sidebar
       return warn("switchboard toggle-sidebar runs inside tmux — run `switchboard` to start a session") unless ENV["TMUX"]
@@ -379,8 +380,8 @@ module Switchboard
           r        rename a workspace
           d        delete a workspace
           e        edit config (opens beside the home tree, returns you on quit)
-          h        hide the sidebar (session-wide)
           q        quit switchboard — tear down every sb/ session (confirms first)
+          (prefix-s toggles the sidebar: summon + focus when hidden, dismiss when visible)
       HELP
     end
   end

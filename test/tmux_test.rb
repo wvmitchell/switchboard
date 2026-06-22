@@ -123,7 +123,58 @@ module Switchboard
       assert_empty order, "nothing killed when tmux is unreachable"
     end
 
+    # --- toggle_sidebar: prefix-s is the one summon/dismiss verb --------------
+
+    # Visible in the current window → dismiss session-wide: persist @sb_sidebar
+    # off and reconcile the session closed. No focus move (nothing to focus).
+    def test_toggle_sidebar_dismisses_when_the_tree_is_visible
+      flag = nil
+      reconciled = nil
+      focused = false
+      with_toggle_stubs(current_pane: "%9", on_flag: ->(s, v) { flag = [s, v] },
+                        on_reconcile: ->(s, on) { reconciled = [s, on] },
+                        on_focus: -> { focused = true }) do
+        Tmux.toggle_sidebar
+      end
+      assert_equal ["sb/app/x", "off"], flag, "persists the off intent on the session"
+      assert_equal ["sb/app/x", false], reconciled, "reconciles the session closed"
+      refute focused, "dismiss never moves focus"
+    end
+
+    # Hidden in the current window → summon every window AND focus the new tree,
+    # so prefix-s is the whole round-trip (the retired `h` left focus on the work
+    # pane).
+    def test_toggle_sidebar_summons_and_focuses_when_the_tree_is_hidden
+      flag = nil
+      reconciled = nil
+      focused = false
+      with_toggle_stubs(current_pane: nil, on_flag: ->(s, v) { flag = [s, v] },
+                        on_reconcile: ->(s, on) { reconciled = [s, on] },
+                        on_focus: -> { focused = true }) do
+        Tmux.toggle_sidebar
+      end
+      assert_equal ["sb/app/x", "on"], flag, "persists the on intent on the session"
+      assert_equal ["sb/app/x", true], reconciled, "reconciles the session open"
+      assert focused, "summon drops focus into the tree"
+    end
+
     private
+
+    # Stub the seams toggle_sidebar drives: the session it reads, whether the
+    # current window already shows a sidebar, and the three effects.
+    def with_toggle_stubs(current_pane:, on_flag:, on_reconcile:, on_focus:)
+      stub_method(Tmux, :current_session, -> { "sb/app/x" }) do
+        stub_method(Tmux, :current_sidebar_pane, -> { current_pane }) do
+          stub_method(Tmux, :set_sidebar_flag, ->(s, v) { on_flag.call(s, v) }) do
+            stub_method(Tmux, :reconcile_sidebars, ->(s, on) { on_reconcile.call(s, on) }) do
+              stub_method(Tmux, :focus_current_sidebar, -> { on_focus.call }) do
+                return yield
+              end
+            end
+          end
+        end
+      end
+    end
 
     # Stub the three Tmux seams kill_all leans on, then run the block.
     def with_tmux_stubs(live, current:, recorder:)

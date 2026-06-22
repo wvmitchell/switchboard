@@ -241,15 +241,15 @@ module Switchboard
     # Spawn-or-kill each window's sidebar so the whole session matches `on`.
     # Window-scoped throughout: per-window split into the right window id, and a
     # per-window presence check — that's the fix for "new window had no sidebar."
-    # `except:` spares one pane from the kill sweep: the sidebar's own `h` hide
-    # leaves its pane for the run-loop to close, so killing it here mid-iteration
-    # can't abort the sweep before it reaches the other windows.
-    def reconcile_sidebars(session, on, except: nil)
+    # Dismiss (prefix-s) runs in its own run-shell process, not the sidebar's loop,
+    # so killing the focused sidebar pane here is safe — tmux just moves focus to
+    # the work pane.
+    def reconcile_sidebars(session, on)
       windows(session).each do |window|
         pane = window_sidebar_pane(window)
         if on && !pane
           pin(spawn_sidebar(target: window))
-        elsif !on && pane && pane != except
+        elsif !on && pane
           system("tmux", "kill-pane", "-t", pane, out: File::NULL, err: File::NULL)
         end
       end
@@ -354,15 +354,32 @@ module Switchboard
       system("tmux", "resize-pane", "-t", pane, "-x", SIDEBAR_WIDTH.to_s, out: File::NULL, err: File::NULL)
     end
 
-    # Toggle the sidebar for the WHOLE current session — bound to prefix-s. The
-    # direction follows what you can see in the current window (so a press in a
-    # session that's never shown one reads as "show", not a dead key), then we
-    # persist that intent on the session and reconcile every window to match.
+    # prefix-s is switchboard's ONE sidebar verb (the in-sidebar `h` is retired):
+    # visible in the current window → DISMISS it session-wide; hidden → SUMMON it
+    # and drop focus into the tree, so a single key is the whole round-trip
+    # (summon → navigate → dismiss). Direction reads from the current window, so a
+    # press in a session that's never shown one summons rather than dead-keys; the
+    # intent is persisted on the session and reconciled across every window.
     def toggle_sidebar
       session = current_session or return
-      on = current_sidebar_pane.nil? # hidden here → the press means "show"
-      set_sidebar_flag(session, on ? "on" : "off")
-      reconcile_sidebars(session, on)
+      if current_sidebar_pane               # visible here → dismiss for the whole session
+        set_sidebar_flag(session, "off")
+        reconcile_sidebars(session, false)
+      else                                  # hidden here → summon every window, then enter the tree
+        set_sidebar_flag(session, "on")
+        reconcile_sidebars(session, true)
+        focus_current_sidebar
+      end
+    end
+
+    # Land focus on the current window's sidebar pane (just spawned by reconcile),
+    # so summoning the tree leaves you ready to navigate instead of back on the
+    # work pane — split-window -d never steals focus, so we redirect it here.
+    # Best-effort: a missing pane (spawn failed) is a no-op.
+    def focus_current_sidebar
+      pane = current_sidebar_pane or return
+
+      system("tmux", "select-pane", "-t", pane, out: File::NULL, err: File::NULL)
     end
 
     # Give a freshly created window its sidebar if the session opts in — bound to

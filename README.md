@@ -53,9 +53,11 @@ o        open the highlighted PR in the browser (gh pr view --web)
 r        rename a workspace
 d        delete a workspace
 e        edit config.yml ($EDITOR, full-size in the home session; returns you on quit)
-h        hide the sidebar (session-wide, like prefix-s)
 q        quit switchboard — tear down every sb/ session (asks to confirm first)
 ```
+
+Showing and hiding the sidebar is `prefix-s` — one verb, from any pane: hidden →
+summon it and drop you in the tree, visible → dismiss it (session-wide).
 
 ## Install
 
@@ -104,8 +106,9 @@ bin/switchboard doctor          # check dependencies + config
 ```
 
 The sidebar also spawns automatically beside every session switchboard creates,
-so the bound `prefix-s` is really just show/hide for the current window. Prefer
-to wire it by hand instead of via `install`? Add this to `~/.tmux.conf`:
+so the bound `prefix-s` is switchboard's one sidebar verb: hidden → summon it and
+drop you in the tree, visible → dismiss it (session-wide). Prefer to wire it by
+hand instead of via `install`? Add this to `~/.tmux.conf`:
 
 ```tmux
 run-shell "/path/to/switchboard/switchboard.tmux"

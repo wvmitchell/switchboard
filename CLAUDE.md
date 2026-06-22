@@ -103,8 +103,9 @@ e.g. `claude --dangerously-skip-permissions`. Empty ⇒ a plain shell, as before
 **Sidebar visibility is per-session, applied to every window** (issue #24). The
 intent lives on the session as a tmux option (`@sb_sidebar` on/off; unset reads
 as on, preserving auto-show). `Tmux.reconcile_sidebars` is the one primitive that
-spawns-or-kills each window's sidebar to match: toggling (`prefix-s`) or hiding
-from inside the sidebar (`h`) flips the flag and reconciles every window;
+spawns-or-kills each window's sidebar to match: `prefix-s` (`Tmux.toggle_sidebar`,
+switchboard's one summon/dismiss verb — visible ⇒ dismiss session-wide, hidden ⇒
+summon every window AND focus the tree) flips the flag and reconciles every window;
 `ensure_session` stamps `on` on first creation; `go`/`go_home` reconcile to the
 saved flag on switch-in (and `go_home` always restores the navigator). New
 windows are covered by the `after-new-window[99]` hook → `sidebar-sync <window>`,
