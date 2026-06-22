@@ -540,5 +540,36 @@ module Switchboard
       assert_same good, sb.instance_variable_get(:@config), "kept the last good config on a parse error"
       assert_match(/config not reloaded/, captured.to_s, "surfaced the error via tmux notify")
     end
+
+    # --- edit_config: the `e` command handed to edit_in_home ------------------
+    # The editor is left UNescaped so the spawned shell resolves $EDITOR at run
+    # time (the nvim fix); the path is escaped; the trailer returns to origin and
+    # pokes that sidebar to re-read config.
+    def test_edit_config_builds_a_runtime_resolved_editor_command
+      ENV["SWITCHBOARD_BIN"] = "/opt/sb"
+      captured = nil
+      stub_method(Tmux, :session_of, -> { "sb/app/feat" }) do
+        stub_method(Tmux, :edit_in_home, ->(cmd) { captured = cmd }) do
+          sidebar(nodes: []).send(:edit_config)
+        end
+      end
+      assert captured.start_with?("${VISUAL:-${EDITOR:-vi}} "), "editor resolved by the spawned shell, not baked"
+      assert_includes captured, Shellwords.escape(Config.path)
+      assert_match(%r{/opt/sb reload-config sb/app/feat\z}, captured, "returns to origin + reloads on :q")
+    end
+
+    # Pressing `e` from outside tmux (or with no TMUX_PANE) makes Tmux.session_of
+    # nil; .to_s collapses it to "", so the trailer still emits a reload-config
+    # with an empty origin — which reload_config_poke special-cases back to HOME.
+    # Must not raise and must still carry the trailer.
+    def test_edit_config_tolerates_a_nil_origin_session
+      captured = nil
+      stub_method(Tmux, :session_of, -> { nil }) do
+        stub_method(Tmux, :edit_in_home, ->(cmd) { captured = cmd }) do
+          sidebar(nodes: []).send(:edit_config)
+        end
+      end
+      assert_match(/reload-config\s*('')?\z/, captured.to_s, "empty origin still produces a reload trailer")
+    end
   end
 end

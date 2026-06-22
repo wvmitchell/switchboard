@@ -61,24 +61,43 @@ module Switchboard
       ensure_sidebar(HOME)
     end
 
-    # Open an editor command in its OWN throwaway pane in the home session,
-    # zoomed full-window, then land on it. The pane runs `command` as its
-    # foreground process (tmux execs it via the shell) and closes on exit (:q) —
-    # so editing config never types into a live shell (no idle guard, no
-    # pending-input corruption, no shell-history leak). `command` carries its own
+    # Open an editor command in its OWN throwaway pane in the home session, beside
+    # the sidebar, then land on it. The pane runs `command` as its foreground
+    # process (tmux execs it via the shell) and closes on exit (:q) — so editing
+    # config never types into a live shell (no idle guard, no pending-input
+    # corruption, no shell-history leak). `command` carries its own
     # return-to-origin + reload trailer, so this stays a dumb "run it in a home
     # pane" primitive. Array-form spawn so `command` reaches tmux as one literal
-    # arg (its `;` and spaces are the inner shell's to parse, not ours).
+    # arg (its `;`, spaces, and any `$EDITOR` are the inner shell's to parse, not
+    # ours).
+    #
+    # We split the WORK pane explicitly, never the active pane: after go_home the
+    # sidebar is the active pane, so the old `-t "#{HOME}:"` (active-pane target)
+    # nested the editor *inside* the tree, and a stray zoom toggle made it flip
+    # between full-screen and split. Splitting the work pane gives a deterministic
+    # layout — sidebar at left, editor stacked above the home shell on the right
+    # (`-b` = above, so it aligns with the tree's top; the shell keeps the bottom
+    # 20%). `-p 80` (a percentage of the work pane) not `-l 80%`: the bare-`%`
+    # form on `-l` needs tmux >= 3.1, but we support 3.0 (see installer), where it
+    # would silently fail the split and leave `e` a dead key.
     def edit_in_home(command)
       ensure_home
-      pane = IO.popen(
-        ["tmux", "split-window", "-t", "#{HOME}:", "-c", home_dir, "-P", "-F", "#\{pane_id}", command],
+      sidebar = window_sidebar_pane(HOME)
+      # Only ever split the work pane. NO active-pane fallback: when home has no
+      # work pane the active pane is the sidebar, and splitting it is exactly the
+      # nest-in-the-tree bug this method exists to avoid.
+      target = work_pane(HOME, sidebar)
+      pane = target && IO.popen(
+        ["tmux", "split-window", "-b", "-t", target, "-c", home_dir, "-p", "80", "-P", "-F", "#\{pane_id}", command],
         err: File::NULL, &:read
       ).to_s.strip
-      return switch(HOME) if pane.empty? # split failed: at least land in home
+      if pane.nil? || pane.empty? # no work pane, or the split failed
+        notify("switchboard: couldn't open the editor pane") # not a silent dead key
+        return switch(HOME)                                  # at least land in home
+      end
 
-      system("tmux", "resize-pane", "-Z", "-t", pane, out: File::NULL, err: File::NULL) # zoom editor full
-      switch(HOME) # land on the new (active) editor pane
+      pin(sidebar) # the split reflows the right column; keep the sidebar fixed-width
+      switch(HOME) # land on the new (active) editor pane, beside the tree
     rescue StandardError
       switch(HOME) # IO.popen can raise (e.g. tmux missing); never crash the `e` keypress
     end

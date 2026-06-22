@@ -154,6 +154,14 @@ module Switchboard
       with_env("VISUAL" => nil, "EDITOR" => nil) { assert_equal "vi", Editor.command }
     end
 
+    # SHELL_COMMAND mirrors #command's precedence (VISUAL > EDITOR > vi) and its
+    # empty-is-unset rule (shell `:-`), but defers resolution to the spawned shell
+    # — so the sidebar's `e` editor pane sees an EDITOR set after the long-lived
+    # sidebar process started. Pinned so the two resolutions can't drift.
+    def test_editor_shell_command_defers_resolution_to_the_shell
+      assert_equal "${VISUAL:-${EDITOR:-vi}}", Editor::SHELL_COMMAND
+    end
+
     private
 
     # Set/clear env vars for the block, restoring prior values after.

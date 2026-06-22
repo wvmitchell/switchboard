@@ -542,19 +542,21 @@ module Switchboard
       @config = Config.new
     end
 
-    # e: edit config.yml in a dedicated, full-size pane in the home session, then
-    # return to wherever we are now. Scaffold first so there's always a real file
-    # to edit. The editor owns its OWN throwaway pane (not this narrow strip, not
-    # the shared home shell), so there's no raw-mode dance and we just stay a live
-    # tree. The trailer — run in that pane after :q — switches the client back to
-    # this session and pokes its sidebar to re-read config (Ctrl-R), so a changed
-    # session_command / new project shows the moment you quit.
+    # e: edit config.yml in its own pane beside the home sidebar, then return to
+    # wherever we are now. Scaffold first so there's always a real file to edit.
+    # The editor owns its OWN throwaway pane (not this narrow strip, not the
+    # shared home shell), so there's no raw-mode dance and we just stay a live
+    # tree. The editor is left UNescaped (Editor::SHELL_COMMAND) so the spawned
+    # shell expands $EDITOR at run time, not this sidebar process. The trailer —
+    # run in that pane after :q — switches the client back to this session and
+    # pokes its sidebar to re-read config (Ctrl-R), so a changed session_command /
+    # new project shows the moment you quit.
     def edit_config
       Config.scaffold
       bin    = Shellwords.escape(ENV["SWITCHBOARD_BIN"] || "switchboard")
       path   = Shellwords.escape(Config.path)
       origin = Shellwords.escape(Tmux.session_of.to_s) # the session `e` was pressed from
-      Tmux.edit_in_home("#{Editor.command} #{path}; #{bin} reload-config #{origin}")
+      Tmux.edit_in_home("#{Editor::SHELL_COMMAND} #{path}; #{bin} reload-config #{origin}")
     end
 
     # Re-read the (possibly hand-edited) config and rebuild — driven by the

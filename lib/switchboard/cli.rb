@@ -150,8 +150,8 @@ module Switchboard
     end
 
     # Open the config in $EDITOR in the current terminal. The sidebar's `e` opens
-    # it full-size in the home session instead (Sidebar#edit_config); a shell
-    # invocation edits right where you typed it — the "edit in place" escape
+    # it in a dedicated pane beside the home tree instead (Sidebar#edit_config); a
+    # shell invocation edits right where you typed it — the "edit in place" escape
     # hatch. Scaffolds a minimal stub first so there's always a real file to edit.
     def edit_config
       Config.scaffold
@@ -351,7 +351,7 @@ module Switchboard
           o        open the highlighted PR in the browser (gh pr view --web)
           r        rename a workspace
           d        delete a workspace
-          e        edit config (opens full-size in home, returns you on quit)
+          e        edit config (opens beside the home tree, returns you on quit)
           q        hide the sidebar
       HELP
     end
