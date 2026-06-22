@@ -1004,7 +1004,7 @@ module Switchboard
         if current
           name = "\e[36m#{name}\e[0m"            # "you are here" — cyan, matching the prompt's directory color
         elsif @attention.include?(node.path)
-          name = "\e[1m#{name}\e[0m"             # unviewed completion — bold until you look (the current row is never marked)
+          name = "\e[1;33m#{name}\e[0m"          # unviewed completion — bold yellow until you look (the current row is never marked)
         end
         "  #{dot} #{name}"
       else "#{BRANCH_FG}#{text}\e[0m"

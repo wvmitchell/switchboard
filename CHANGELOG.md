@@ -7,6 +7,14 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.17.1] — make the unviewed-completion highlight pop (2026-06-22)
+
+### Changed
+- The "needs attention" workspace name now renders **bold yellow** instead of
+  bold alone — many terminal themes barely weight bold on default-foreground
+  text, so the cue was easy to miss. Yellow is distinct from the cyan
+  "you are here" highlight.
+
 ## [0.17.0] — bold a workspace until you view its completion (2026-06-22)
 
 ### Added

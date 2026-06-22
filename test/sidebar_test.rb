@@ -229,8 +229,8 @@ module Switchboard
 
     def test_colored_bolds_a_workspace_with_an_unviewed_completion
       sb = sidebar(attention: ["/wt/a"])
-      assert_includes sb.send(:colored, ws("a", path: "/wt/a"), "  ● a"), "\e[1m",
-                      "an unviewed completion renders bold"
+      assert_includes sb.send(:colored, ws("a", path: "/wt/a"), "  ● a"), "\e[1;33m",
+                      "an unviewed completion renders bold yellow"
     end
 
     # The current ("you are here") row is always cleared, so it's cyan, never bold —
@@ -239,7 +239,7 @@ module Switchboard
       sb = sidebar(attention: ["/wt/a"], current_path: "/wt/a")
       out = sb.send(:colored, ws("a", path: "/wt/a"), "  ● a", current: true)
       assert_includes out, "\e[36m", "the current workspace is cyan"
-      refute_includes out, "\e[1m", "...and never also bold"
+      refute_includes out, "\e[1;33m", "...and never also the attention highlight"
     end
 
     # --- scrolling -----------------------------------------------------------
