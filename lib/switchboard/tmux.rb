@@ -250,6 +250,24 @@ module Switchboard
         .lines.find { |line| line.include?(SIDEBAR_TITLE) }&.split&.first
     end
 
+    # The worktree a window's sidebar should sit in: its work pane's cwd. Each
+    # worktree window's shell is cd'd to the worktree, so we read that back rather
+    # than trust split-window's cwd inheritance (it takes the invoking client's
+    # directory). Tab-delimited so paths with spaces survive the split.
+    def window_work_dir(target)
+      work_dir(`tmux list-panes -t #{Shellwords.escape(target)} -F '#\{pane_title}\t#\{pane_current_path}' 2>/dev/null`)
+    end
+
+    # Pure: the first non-sidebar pane's cwd from `list-panes` output (one
+    # "title<TAB>path" line per pane). Skips the sidebar by its title; nil when
+    # there's no work pane, so spawn_sidebar just omits -c. Split out so it's
+    # unit-testable without a server.
+    def work_dir(raw)
+      raw.to_s.lines.map { |line| line.chomp.split("\t", 2) }
+         .reject { |title, _| title == SIDEBAR_TITLE }
+         .dig(0, 1)
+    end
+
     # --- per-session visibility flag (@sb_sidebar) ---------------------------
     # Stored on the tmux session itself, so it survives window churn and is the
     # source of truth for "should this session show a sidebar." Unset reads as on,
@@ -417,11 +435,18 @@ module Switchboard
     # Split a narrow sidebar pane on the left running `switchboard sidebar`, and
     # return its pane id (nil on failure) so callers can pin it to width. `target`
     # may be a session or a specific window id; -d means spawning into another
-    # window never steals focus from the pane you're in. cwd is inherited from the
-    # target's active pane (each worktree window is already cd'd there).
+    # window never steals focus from the pane you're in.
     def spawn_sidebar(target: nil, dir: nil)
       bin = ENV["SWITCHBOARD_BIN"]
       return unless bin
+
+      # Pin the sidebar's cwd to the window's worktree. Without -c, split-window
+      # adopts the *invoking client's* cwd (e.g. the primary checkout you switched
+      # from), NOT the target pane's — which silently broke the "you are here"
+      # highlight: `locate` matches the sidebar pane's path against the worktree
+      # tree, and the client's path matches nothing. So read it back from the
+      # window's work pane, which is reliably cd'd to the worktree.
+      dir ||= target && window_work_dir(target)
 
       # -l fixes the new pane's width at split time (resize-after-split raced
       # and sometimes left it at the 50/50 default).

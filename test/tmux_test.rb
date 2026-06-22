@@ -32,6 +32,26 @@ module Switchboard
       assert_empty Tmux.sb_sessions("")
     end
 
+    # --- work_dir: the pure pane-cwd pick (drives the sidebar's -c) -----------
+    # spawn_sidebar pins the sidebar pane's cwd to the worktree by reading the
+    # window's work-pane path; if it picked the client's path instead the "you
+    # are here" highlight wouldn't fire (locate matches the pane path to a node).
+
+    def test_work_dir_picks_the_first_non_sidebar_panes_cwd
+      raw = "#{Tmux::SIDEBAR_TITLE}\t/repo/primary\nbash\t/wt/feature\n"
+      assert_equal "/wt/feature", Tmux.work_dir(raw)
+    end
+
+    def test_work_dir_preserves_paths_with_spaces
+      raw = "vim\t/wt/feature one\n#{Tmux::SIDEBAR_TITLE}\t/repo/primary\n"
+      assert_equal "/wt/feature one", Tmux.work_dir(raw)
+    end
+
+    def test_work_dir_is_nil_when_only_the_sidebar_is_present
+      assert_nil Tmux.work_dir("#{Tmux::SIDEBAR_TITLE}\t/repo/primary\n")
+      assert_nil Tmux.work_dir(""), "no panes (server gone) -> nil, so -c is just omitted"
+    end
+
     # --- name builders share one sanitization --------------------------------
 
     def test_session_prefix_matches_session_name_under_sanitization
