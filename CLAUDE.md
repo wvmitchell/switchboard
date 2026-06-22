@@ -55,6 +55,7 @@ that skips rbenv.
 
 Useful env overrides when running locally without disturbing real state:
 `SWITCHBOARD_CONFIG` (config path), `SWITCHBOARD_STATE_DIR` (agent-state files),
+`SWITCHBOARD_ATTENTION_DIR` (bold "needs attention" markers),
 `XDG_DATA_HOME`/`XDG_STATE_HOME` (reporter script + state dirs).
 
 ## Architecture
@@ -185,6 +186,24 @@ file path, or a bare macOS system-sound name,
 via `Config#sound_for` (global default + per-project override, like
 `session_command_for`; mute only via `enabled: false`). Bump
 `Sound::ASSET_VERSION` to regenerate the cached WAVs.
+
+### Bold until viewed (the visual twin)
+
+`Attention` (`attention.rb`) bolds a workspace's name in the sidebar from the
+moment its hooked agent finishes a turn (`:done`) or asks for input
+(`:waiting`) until you actually look at it — so a completion you weren't
+watching can't slip past unnoticed. It rides the **same `completion_edges`** as
+the sound/PR triggers (the third consumer in `Sidebar#on_agent_edges`), but with
+two deliberate differences from the sound: (1) it is **persistent on-disk
+state**, one marker file per worktree in a `switchboard/attention` sibling of the
+agent-state dir — because every window's sidebar is its own process, only a
+shared file renders bold consistently across all of them (same reasoning as the
+hook-file dots); and (2) it is **not gated by `announce_sounds`** — which process
+writes the marker doesn't matter (idempotent create/delete, GC'd like the hook
+files), so catch-up scans mark too. The workspace you're *currently in* is never
+marked (`viewing?` skips it on the edge, and `locate` clears the marker the
+instant you switch in — bold gone on view, no input required). To keep that
+clearing correct, `reload` runs `locate` **before** `refresh_agents`.
 
 ### Conventions
 

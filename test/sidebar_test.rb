@@ -29,11 +29,12 @@ module Switchboard
     end
 
     def sidebar(nodes: [], collapsed: [], cursor: 0, agents: {}, focused: true,
-                current_path: nil, pulse: 0)
+                current_path: nil, pulse: 0, attention: [])
       sb = Sidebar.new
       sb.instance_variable_set(:@nodes, nodes)
       sb.instance_variable_set(:@collapsed, Set.new(collapsed))
       sb.instance_variable_set(:@agents, agents)
+      sb.instance_variable_set(:@attention, Set.new(attention))
       sb.instance_variable_set(:@focused, focused)
       sb.instance_variable_set(:@current_path, current_path)
       sb.instance_variable_set(:@pulse, pulse)
@@ -176,6 +177,69 @@ module Switchboard
         sb.send(:locate)
       end
       assert_equal "/wt/b", sb.instance_variable_get(:@current_path)
+    end
+
+    # --- bold until viewed (attention markers) -------------------------------
+    # A completion edge bolds the workspace until you switch into it. The markers
+    # are real files in the sandbox, so the canonicalization runs for real.
+
+    def real_dir(sub)
+      d = path(sub)
+      FileUtils.mkdir_p(d)
+      File.realpath(d)
+    end
+
+    # The edge marks every newly-resting workspace EXCEPT the one you're sitting in
+    # — you're watching that one finish, so it needs no nudge.
+    def test_mark_attention_for_marks_edges_except_the_viewed_one
+      a = real_dir("a")
+      b = real_dir("b")
+      sb = sidebar(nodes: [ws("a", path: a), ws("b", path: b)], current_path: a)
+      sb.send(:mark_attention_for, [a, b])
+      marked = Attention.marked([a, b])
+      refute_includes marked, a, "the workspace you're watching isn't bolded"
+      assert_includes marked, b, "another workspace's completion is bolded"
+    end
+
+    # Viewing a workspace clears its bold immediately — on disk AND in the
+    # in-memory set, so the un-bold shows this frame, not on the next scan.
+    def test_locate_clears_the_viewed_workspaces_attention
+      w = real_dir("w")
+      Attention.mark(w)
+      sb = sidebar(nodes: [proj("app"), ws("w", path: w)], attention: [w])
+      stub_method(Tmux, :pane_path, ->(_pane) { w }) do
+        sb.send(:locate)
+      end
+      refute_includes sb.instance_variable_get(:@attention), w, "cleared from memory this frame"
+      assert_empty Attention.marked([w]), "and cleared on disk"
+    end
+
+    # The completion edge (T1) wires through to a mark, the visual twin of the dot.
+    def test_on_agent_edges_marks_attention_on_an_edge
+      w = real_dir("wt")
+      sb = sidebar(nodes: [ws("w", project: "app", path: w)])
+      set_hook_states(sb, { w => :done })
+      sb.instance_variable_set(:@prev_hook_states, { w => :thinking })
+      sb.define_singleton_method(:maybe_refresh_prs) { |_p| }
+      stub_method(Sound, :play, ->(*) {}) do
+        sb.send(:on_agent_edges)
+      end
+      assert_includes Attention.marked([w]), w, "a completion edge bolds the workspace"
+    end
+
+    def test_colored_bolds_a_workspace_with_an_unviewed_completion
+      sb = sidebar(attention: ["/wt/a"])
+      assert_includes sb.send(:colored, ws("a", path: "/wt/a"), "  ● a"), "\e[1m",
+                      "an unviewed completion renders bold"
+    end
+
+    # The current ("you are here") row is always cleared, so it's cyan, never bold —
+    # even if a marker lingered, current takes precedence.
+    def test_colored_does_not_bold_the_current_workspace
+      sb = sidebar(attention: ["/wt/a"], current_path: "/wt/a")
+      out = sb.send(:colored, ws("a", path: "/wt/a"), "  ● a", current: true)
+      assert_includes out, "\e[36m", "the current workspace is cyan"
+      refute_includes out, "\e[1m", "...and never also bold"
     end
 
     # --- scrolling -----------------------------------------------------------

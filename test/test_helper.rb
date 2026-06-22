@@ -41,8 +41,9 @@ module Switchboard
       # switchboard's own knobs
       ENV["SWITCHBOARD_CONFIG"]    = path("config.yml")
       ENV["SWITCHBOARD_BIN_DIR"]   = path("bin")
-      ENV["SWITCHBOARD_STATE_DIR"] = path("state")  # AgentState (T3 seam)
-      ENV["SWITCHBOARD_CACHE_DIR"] = path("cache")  # Pr cache (T3 seam)
+      ENV["SWITCHBOARD_STATE_DIR"]     = path("state")     # AgentState (T3 seam)
+      ENV["SWITCHBOARD_ATTENTION_DIR"] = path("attention") # Attention markers (bold-until-viewed)
+      ENV["SWITCHBOARD_CACHE_DIR"]     = path("cache")     # Pr cache (T3 seam)
 
       # Anything that reads $HOME / XDG / git-global must land in the sandbox —
       # Hook.ensure_script writes a reporter into XDG_DATA_HOME, Creator shells

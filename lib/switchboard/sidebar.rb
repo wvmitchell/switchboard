@@ -102,6 +102,7 @@ module Switchboard
       @rows = []           # visible rows (collapsed projects hide their children)
       @visible_rows = []   # the on-screen slice of @rows (set in render; gates pulsing?)
       @agents = {}         # worktree path => :thinking | :done | :waiting
+      @attention = Set.new # worktree paths with an unviewed completion (rendered bold)
       @agent_state = AgentState.new
       @collapsed = Set.new # project names that are collapsed
       @ticks = 0
@@ -288,8 +289,10 @@ module Switchboard
     end
 
     def refresh_agents(announce_sounds: true)
-      @agents = @agent_state.scan(@nodes.select { |n| n.kind == "ws" }.map(&:path))
-      on_agent_edges(announce_sounds: announce_sounds)
+      ws_paths = @nodes.select { |n| n.kind == "ws" }.map(&:path)
+      @agents = @agent_state.scan(ws_paths)
+      on_agent_edges(announce_sounds: announce_sounds) # may mark new completions
+      @attention = Attention.marked(ws_paths)          # load for render, after the marks land
     rescue StandardError
       @agents = {}
     end
@@ -300,8 +303,8 @@ module Switchboard
     # while-visible scans ring as they always have.
     def reload(announce_sounds: true)
       rebuild
+      locate # before refresh_agents: marks below skip the workspace you're in, and viewing it clears its bold
       refresh_agents(announce_sounds: announce_sounds)
-      locate
       refresh_stale_prs
       # Stamp BOTH clocks: @last_reload throttles the next switch poke (reload_due?),
       # and @last_scan stops the next loop timeout from firing a redundant agent scan
@@ -339,6 +342,12 @@ module Switchboard
                                     .map(&:path)
                                     .select { |p| here == p || here.start_with?("#{p}/") }
                                     .max_by(&:length)
+      return unless @current_path
+
+      # Viewing a workspace clears its bold — even with no input submitted. Drop it
+      # from the in-memory set too, so the un-bold shows this frame, not next scan.
+      Attention.clear(@current_path)
+      @attention.delete(@current_path)
     end
 
     def current
@@ -379,19 +388,20 @@ module Switchboard
     end
 
     # T1 — a hooked agent just reached a resting state (finished a turn / asked
-    # for input). Two consumers ride the same edge: a background PR refresh (it
-    # may have pushed a branch / opened a PR) and a completion sound (the audible
-    # twin of the dot). Uses the hook-only states (never the activity fallback,
-    # which flips every 3s and would fire on noise). Skips the first scan — no
-    # baseline to diff.
+    # for input). Three consumers ride the same edge: a bold "needs attention"
+    # marker (the visual twin of the dot, persisted so it survives until viewed), a
+    # background PR refresh (it may have pushed a branch / opened a PR), and a
+    # completion sound (the audible twin). Uses the hook-only states (never the
+    # activity fallback, which flips every 3s and would fire on noise). Skips the
+    # first scan — no baseline to diff.
     #
-    # Ordering + isolation are load-bearing: PR refresh runs first, the sound is
-    # fully rescued (play_sounds_for) so a sound fault can't starve it, and
-    # @prev_hook_states ALWAYS advances (ensure) so a raise here can't corrupt the
-    # next edge diff — or trip refresh_agents' broad rescue into blanking the dots.
+    # Ordering + isolation are load-bearing: the mark and PR refresh run first,
+    # each fully rescued so its fault can't starve the others, and @prev_hook_states
+    # ALWAYS advances (ensure) so a raise here can't corrupt the next edge diff — or
+    # trip refresh_agents' broad rescue into blanking the dots.
     #
-    # announce_sounds gates ONLY the sound, not the PR refresh or the baseline
-    # advance. A catch-up scan (switch-in / reappear) passes false: each sidebar
+    # announce_sounds gates ONLY the sound, not the mark, the PR refresh, or the
+    # baseline advance. A catch-up scan (switch-in / reappear) passes false: each sidebar
     # is its own process with its own baseline, frozen while off-screen, so without
     # this it would re-ring every completion that finished while it slept (already
     # heard from the sidebar that was on screen then). PRs still refresh — debounced
@@ -401,6 +411,7 @@ module Switchboard
       now = @agent_state.last_hook_states
       if @prev_hook_states
         edges = self.class.completion_edges(@prev_hook_states, now)
+        mark_attention_for(edges)
         refresh_prs_for(edges)
         play_sounds_for(edges, now) if announce_sounds
       end
@@ -414,6 +425,26 @@ module Switchboard
       # remembered :done, so it's a non-change, not an edge. Bounded by worktrees
       # seen this process — tiny; never pruned.
       @prev_hook_states = (@prev_hook_states || {}).merge(now)
+    end
+
+    # Edge paths -> a bold "needs attention" marker each, except the workspace
+    # you're already sitting in (you're watching it finish — no nudge needed). The
+    # marker is persistent disk state, so unlike the sound it rides EVERY scan
+    # (continuous and catch-up alike, no announce_sounds gate): which process
+    # writes it doesn't matter, every sidebar reads the same file and bolds the row
+    # until you view it (locate clears it). Fully rescued — never disturbs the scan.
+    def mark_attention_for(edges)
+      edges.each { |path| Attention.mark(path) unless viewing?(path) }
+    rescue StandardError
+      nil
+    end
+
+    # Are we currently sitting in this worktree? Canonicalizes both sides — edge
+    # paths come realpath'd from the hook, @current_path raw from git.
+    def viewing?(path)
+      return false unless @current_path
+
+      Attention.same_path?(path, @current_path)
     end
 
     # Edge paths -> owning projects -> debounced PR refresh (deduped per project).
@@ -970,7 +1001,11 @@ module Switchboard
       when "ws"
         dot = dot_for(@agents[node.path])
         name = trunc(node.name.to_s, [text.length - 4, 1].max)
-        name = "\e[36m#{name}\e[0m" if current # "you are here" — cyan, matching the prompt's directory color
+        if current
+          name = "\e[36m#{name}\e[0m"            # "you are here" — cyan, matching the prompt's directory color
+        elsif @attention.include?(node.path)
+          name = "\e[1m#{name}\e[0m"             # unviewed completion — bold until you look (the current row is never marked)
+        end
         "  #{dot} #{name}"
       else "#{BRANCH_FG}#{text}\e[0m"
       end

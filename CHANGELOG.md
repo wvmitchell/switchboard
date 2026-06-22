@@ -7,6 +7,19 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.17.0] — bold a workspace until you view its completion (2026-06-22)
+
+### Added
+- **Unviewed completions go bold.** When a hooked agent finishes a turn
+  (done) or asks for input (waiting), its workspace name turns **bold** in the
+  sidebar and stays bold until you switch into that session — so a completion
+  that lands while you're working elsewhere is still flagged when you glance
+  back. Viewing clears it (no input required); the workspace you're already in
+  is never bolded. The dot is the live state now; the bold is the
+  unviewed-since-it-finished flag (the visual twin of the completion sound).
+  Shared on disk (one marker per worktree), so every window's sidebar bolds the
+  same rows.
+
 ## [0.16.0] — sidebar off-screen dormancy + honest doctor (2026-06-22)
 
 ### Changed

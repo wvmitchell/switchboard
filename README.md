@@ -291,6 +291,13 @@ The motion lives in the glyph, not a brightness ramp, so the spinner reads the
 same on any background. (Branch rows use the palette's dim grey for the same
 reason.)
 
+**Bold until you look.** When a hooked agent finishes a turn or asks for input,
+its workspace name goes **bold** and stays bold until you switch into it — so a
+completion that lands while you're heads-down elsewhere is still waiting for your
+eye when you glance back. Viewing it is enough; the bold clears the moment you're
+in the session, no input required. The dot is the live state *now*; the bold is
+the unviewed-since-it-finished flag (the visual twin of the completion sound).
+
 Two ways the dot learns what the agent's doing:
 
 - **Observation (default, zero-config).** Switchboard watches the agent's tmux
