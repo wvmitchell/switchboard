@@ -113,25 +113,25 @@ module Switchboard
       assert_equal 0, cursor_of(sb)
     end
 
-    def test_dispatch_q_signals_exit_other_keys_keep_running
+    def test_dispatch_h_signals_exit_other_keys_keep_running
       sb = sidebar(nodes: [proj("app")])
-      # Stub the session lookup so q's hide path never touches a real tmux.
+      # Stub the session lookup so h's hide path never touches a real tmux.
       stub_method(Tmux, :session_of, ->(*) { nil }) do
-        refute sb.send(:dispatch, "q"), "q exits the loop"
+        refute sb.send(:dispatch, "h"), "h exits the loop"
         assert sb.send(:dispatch, "j"), "movement keeps the loop alive"
       end
     end
 
-    # q hides session-wide (like prefix-s): persists @sb_sidebar off and
+    # h hides session-wide (like prefix-s): persists @sb_sidebar off and
     # reconciles the session closed, sparing its own pane for the loop to close.
-    def test_q_hides_the_whole_session_and_persists_the_off_flag
+    def test_h_hides_the_whole_session_and_persists_the_off_flag
       sb = sidebar(nodes: [proj("app")])
       flag = nil
       reconciled = nil
       stub_method(Tmux, :session_of, ->(*) { "sb/app/x" }) do
         stub_method(Tmux, :set_sidebar_flag, ->(s, v) { flag = [s, v] }) do
           stub_method(Tmux, :reconcile_sidebars, ->(s, on, **kw) { reconciled = [s, on, kw] }) do
-            refute sb.send(:dispatch, "q"), "q still exits the loop"
+            refute sb.send(:dispatch, "h"), "h still exits the loop"
           end
         end
       end
@@ -141,15 +141,50 @@ module Switchboard
       assert reconciled[2].key?(:except), "spares its own pane from the kill sweep"
     end
 
+    # q tears down every sb/ session — but only after a y/N confirm. A confirmed
+    # q kills all and exits the loop; an unconfirmed q kills nothing and keeps
+    # the loop alive (so a stray q can't nuke everything by muscle memory).
+    def test_q_quits_all_sessions_only_when_confirmed
+      sb = sidebar(nodes: [proj("app")])
+      killed = false
+      stub_method(Tmux, :kill_all, ->(*) { killed = true; [] }) do
+        stub_method(sb, :confirm, ->(*) { true }) do
+          refute sb.send(:dispatch, "q"), "a confirmed q exits the loop"
+        end
+        assert killed, "a confirmed q tears down every session"
+
+        killed = false
+        stub_method(sb, :confirm, ->(*) { false }) do
+          assert sb.send(:dispatch, "q"), "an unconfirmed q keeps the loop alive"
+        end
+        refute killed, "an unconfirmed q kills nothing"
+      end
+    end
+
     def test_handle_processes_every_token_in_a_key_repeat_buffer
       sb = sidebar(nodes: [proj("app"), ws("a"), ws("b")])
       sb.send(:handle, "jj") # a held 'j' arrives as one multi-byte read
       assert_equal 2, cursor_of(sb)
     end
 
-    def test_handle_returns_false_when_a_token_quits
+    def test_handle_returns_false_when_a_token_hides
       sb = sidebar(nodes: [proj("app")])
-      refute sb.send(:handle, "q")
+      stub_method(Tmux, :session_of, ->(*) { nil }) do
+        refute sb.send(:handle, "h")
+      end
+    end
+
+    # A stop-token (h hide) must END the buffer loop — a key buffered after it
+    # (here q) must NOT fall through into q's destructive quit confirm.
+    def test_handle_stops_at_a_stop_token_and_skips_the_rest
+      sb = sidebar(nodes: [proj("app")])
+      quit_prompted = false
+      stub_method(Tmux, :session_of, ->(*) { nil }) do
+        stub_method(sb, :confirm, ->(*) { quit_prompted = true; false }) do
+          refute sb.send(:handle, "hq"), "the stop-token still exits the loop"
+        end
+      end
+      refute quit_prompted, "a q buffered after h must not reach the quit confirm"
     end
 
     def test_locate_marks_the_workspace_the_pane_sits_in

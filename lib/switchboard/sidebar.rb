@@ -49,14 +49,14 @@ module Switchboard
     # session-switch hook poke).
     FOOTER = ["j/k move · ↵ open/collapse",
               "a add · n new · o PR · r rename",
-              "d delete · e edit · q hide"].freeze
+              "d delete · e edit · h hide · q quit"].freeze
 
     # In the home session the sidebar is the switchboard base, not a workspace's
     # strip — label it as such and foreground the management keys. Same line
     # count as FOOTER so the render geometry is unchanged.
     HOME_FOOTER = ["switchboard · home",
                    "a add project · e settings",
-                   "j/k move · ↵ open · q hide"].freeze
+                   "j/k move · ↵ open · h hide · q quit"].freeze
 
     def self.run
       new.run
@@ -395,17 +395,19 @@ module Switchboard
     end
 
     # A fast key-repeat (holding j) delivers several bytes in one read, so
-    # process the buffer token by token (escape sequences are 3 bytes).
+    # process the buffer token by token (escape sequences are 3 bytes). A
+    # stop-token (hide/quit ⇒ dispatch returns false) ends the loop NOW: never
+    # dispatch the rest of the buffer past it, or a buffered key after `h` could
+    # fall through into `q`'s destructive quit confirm.
     def handle(buf)
       return true if buf.nil? || buf.empty?
 
-      keep = true
       buf = buf.dup
       until buf.empty?
         token = buf.start_with?("\e") ? buf.slice!(0, 3) : buf.slice!(0, 1)
-        keep = false unless dispatch(token)
+        return false unless dispatch(token)
       end
-      keep
+      true
     end
 
     def dispatch(key)
@@ -425,12 +427,25 @@ module Switchboard
       when "G"                 then @cursor = [@rows.size - 1, 0].max # clamp: empty tree → 0, not -1
       when "\e[I"              then @focused = true  # tmux focus-in: light the cursor bar
       when "\e[O"              then @focused = false # tmux focus-out: drop it
-      when "q", "\x03"         then return hide # q / ^C: hide (session-wide)
+      when "h", "\x03"         then return hide # h / ^C: hide (session-wide)
+      when "q"                 then return quit # q: tear down ALL switchboard sessions
       end
       true
     end
 
-    # q/^C hides the sidebar for the WHOLE session, like prefix-s: persist the
+    # q: full teardown — kill every sb/ session (Tmux.kill_all), our own last so
+    # the sweep finishes before this process dies with it. Guarded by a y/N
+    # confirm because q meant "hide" until recently — an unconfirmed q just stays
+    # in the loop (returns true). Confirmed, we return false too, so a no-server
+    # quit (nothing to kill) still drops out cleanly.
+    def quit
+      return true unless confirm("quit all switchboard sessions?")
+
+      Tmux.kill_all
+      false
+    end
+
+    # h/^C hides the sidebar for the WHOLE session, like prefix-s: persist the
     # intent (@sb_sidebar off) and kill every sibling window's sidebar. We spare
     # our own pane (except:) and drop out of the loop instead — letting the run
     # loop close this pane, so killing it can't abort the sweep early. Returns

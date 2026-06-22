@@ -47,3 +47,18 @@ and where to start.
   Claude's, add a presence-precise signal for them rather than leaning on the
   capture-hash. Start in `agent_state.rb` (`activity`) and the T1 wiring in
   `sidebar.rb` (`refresh_prs_on_agent_edges`).
+
+## Sidebar input handling follow-ups
+
+- **Flush the rest of the read buffer after an in-dispatch confirm.** `Sidebar#confirm`
+  (used by `q` quit, `d` delete) reads its y/N from `$stdin` directly, while `#handle`
+  may still hold later bytes from the same `read_key` chunk in its local buffer. So a
+  fast `qy`/`dy` or pasted/`tmux send-keys` input can leave stale keys that dispatch
+  *after* the confirm resolves. The `q`→quit footgun is already closed (`#handle` now
+  breaks on a stop-token), so the residue is benign today — extra navigation, at worst
+  another confirm. *Why not fix now:* a clean fix means draining the buffer across all
+  three confirm callers (`q`/`d`, and the `rename`/`create` cooked-mode prompts), which
+  is broader than the quit change. *Start in:* `Sidebar#handle` / `#confirm` — either
+  pass the remaining buffer into the prompt helpers, or clear `$stdin` after a prompt
+  returns. Low priority — needs buffered/pasted input to trigger and nothing destructive
+  results.

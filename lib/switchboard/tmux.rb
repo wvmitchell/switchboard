@@ -241,7 +241,7 @@ module Switchboard
     # Spawn-or-kill each window's sidebar so the whole session matches `on`.
     # Window-scoped throughout: per-window split into the right window id, and a
     # per-window presence check — that's the fix for "new window had no sidebar."
-    # `except:` spares one pane from the kill sweep: the sidebar's own `q` hide
+    # `except:` spares one pane from the kill sweep: the sidebar's own `h` hide
     # leaves its pane for the run-loop to close, so killing it here mid-iteration
     # can't abort the sweep before it reaches the other windows.
     def reconcile_sidebars(session, on, except: nil)

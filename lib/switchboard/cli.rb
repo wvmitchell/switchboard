@@ -352,7 +352,8 @@ module Switchboard
           r        rename a workspace
           d        delete a workspace
           e        edit config (opens beside the home tree, returns you on quit)
-          q        hide the sidebar
+          h        hide the sidebar (session-wide)
+          q        quit switchboard — tear down every sb/ session (confirms first)
       HELP
     end
   end

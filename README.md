@@ -53,7 +53,8 @@ o        open the highlighted PR in the browser (gh pr view --web)
 r        rename a workspace
 d        delete a workspace
 e        edit config.yml ($EDITOR, full-size in the home session; returns you on quit)
-q        hide the sidebar
+h        hide the sidebar (session-wide, like prefix-s)
+q        quit switchboard — tear down every sb/ session (asks to confirm first)
 ```
 
 ## Install
