@@ -19,6 +19,55 @@ module Switchboard
       assert_nil CLI.flag_value(["--tmux-conf"], "--tmux-conf")
     end
 
+    # Bare `switchboard` is the single launch command: from a plain shell (TMUX
+    # unset, the sandbox default) it bootstraps + attaches home; inside tmux it
+    # toggles the sidebar in the current window.
+    def test_bare_command_outside_tmux_attaches_home
+      called = []
+      stub_method(Tmux, :go_home, -> { called << :home }) do
+        stub_method(Tmux, :toggle_sidebar, -> { called << :toggle }) do
+          CLI.run([])
+        end
+      end
+      assert_equal [:home], called
+    end
+
+    def test_bare_command_inside_tmux_toggles_sidebar
+      ENV["TMUX"] = "/tmp/fake,1,0"
+      called = []
+      stub_method(Tmux, :go_home, -> { called << :home }) do
+        stub_method(Tmux, :toggle_sidebar, -> { called << :toggle }) do
+          CLI.run([])
+        end
+      end
+      assert_equal [:toggle], called
+    end
+
+    # The keybind dispatches the explicit `toggle-sidebar` subcommand, which must
+    # keep toggling (never the new go-home launch) regardless of the bare path.
+    def test_toggle_sidebar_subcommand_toggles
+      ENV["TMUX"] = "/tmp/fake,1,0"
+      called = []
+      stub_method(Tmux, :toggle_sidebar, -> { called << :toggle }) do
+        CLI.run(["toggle-sidebar"])
+      end
+      assert_equal [:toggle], called
+    end
+
+    # Outside tmux there's no pane to toggle: the subcommand warns and must NOT
+    # call into Tmux (which would operate on a nonexistent pane). TMUX is unset
+    # by the sandbox default.
+    def test_toggle_sidebar_subcommand_outside_tmux_warns_without_calling_tmux
+      called = []
+      err = capture_err do
+        stub_method(Tmux, :toggle_sidebar, -> { called << :toggle }) do
+          CLI.run(["toggle-sidebar"])
+        end
+      end
+      assert_empty called
+      assert_includes err, "runs inside tmux"
+    end
+
     # The after-new-window hook routes the new window's id through to Tmux.
     def test_sidebar_sync_dispatch_forwards_the_window_id
       got = :unset
@@ -111,6 +160,44 @@ module Switchboard
       assert_includes out, "audio player: afplay"
       assert_includes out, "sound done: train"
       assert_includes out, "sound waiting: chime"
+    end
+
+    # --- doctor: PATH symlink rows (the required command + the optional alias) ---
+
+    def test_doctor_reports_both_symlink_rows
+      capture { Installer.install(no_tmux: true) }
+      out = capture { CLI.doctor }
+      assert_includes out, "PATH symlink: #{Installer.symlink_path}"
+      assert_includes out, "PATH symlink: #{Installer.symlink_path('sb')}"
+    end
+
+    # A missing `sb` is a soft note, never a hard ✗ — doctor must agree with
+    # install that the optional shorthand isn't a failure.
+    def test_doctor_marks_missing_sb_as_optional_not_a_failure
+      capture { Installer.install(no_tmux: true) }
+      File.delete(Installer.symlink_path("sb")) # shorthand absent (collision / old install)
+      out = capture { CLI.doctor }
+
+      sb_line = out.lines.find { |l| l.include?(Installer.symlink_path("sb")) }
+      assert sb_line, "expected a doctor row for the sb shorthand"
+      assert_includes sb_line, "optional shorthand"
+      refute_includes sb_line, "✗"
+
+      sw_line = out.lines.find { |l| l.include?("PATH symlink: #{Installer.symlink_path}") }
+      assert_includes sw_line, "✓" # the required command symlink stays a hard check
+    end
+
+    # The required command symlink is the opposite case: absent → a hard ✗, not a
+    # soft note, so doctor still flags a broken core install.
+    def test_doctor_marks_missing_command_symlink_as_failure
+      capture { Installer.install(no_tmux: true) }
+      File.delete(Installer.symlink_path) # remove the required `switchboard` link
+      out = capture { CLI.doctor }
+
+      sw_line = out.lines.find { |l| l.include?("PATH symlink: #{Installer.symlink_path}") }
+      assert sw_line, "expected a doctor row for the switchboard command"
+      assert_includes sw_line, "✗"
+      refute_includes sw_line, "optional shorthand"
     end
 
     # --- prune / quit (Reconcile + Tmux stubbed so no real tmux is touched) ---

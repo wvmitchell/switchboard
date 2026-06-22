@@ -18,9 +18,9 @@ for the user-facing feature tour.
 ## Commands
 
 ```sh
-bin/switchboard            # toggle the sidebar in the current tmux window
-bin/switchboard install    # symlink onto PATH + wire tmux bindings + empty config (--no-tmux/--print-tmux/--tmux-conf)
-bin/switchboard uninstall  # reverse install (symlink + tmux marker block + live unbind)
+bin/switchboard            # start: attach home from a shell, or toggle the sidebar inside tmux (alias: sb)
+bin/switchboard install    # symlinks (switchboard + sb) onto PATH + wire tmux bindings + empty config (--no-tmux/--print-tmux/--tmux-conf)
+bin/switchboard uninstall  # reverse install (both symlinks + tmux marker block + live unbind)
 bin/switchboard doctor     # check that tmux/git/gh + config + install wiring exist
 bin/switchboard init       # create ~/.config/switchboard/config.yml (empty; grown by the add-project flow)
 bin/switchboard config     # open config.yml in $EDITOR (sidebar `e` does the same)
@@ -31,7 +31,9 @@ bin/test                   # run the stdlib-Minitest suite (offline; bin/test <f
 ```
 
 Setup is one command: `git clone && bin/switchboard install` (`Installer`,
-`installer.rb`). It symlinks `bin/switchboard` to `~/.local/bin`, adds a
+`installer.rb`). It symlinks `bin/switchboard` to `~/.local/bin` (plus a short
+`sb` alias beside it; a collided `sb` is skipped, the real command still
+installs), adds a
 marker-delimited line to the tmux.conf tmux actually loads (found via
 `#{config_files}`) that sources the self-locating `switchboard.tmux` fragment,
 and scaffolds an empty config. The fragment binds `prefix-s` (toggle) and two
@@ -65,8 +67,11 @@ so the UI never blocks on the network.
 `project → worktree` tree from `Config` + `Git` + cached `Pr` data. `Tree.nodes`
 (`tree.rb`) turns that into ordered `Node` structs, which the **persistent
 sidebar** (`sidebar.rb`) draws as a hand-rolled ANSI TUI in a narrow tmux pane
-(no fzf). It's the only navigator — the bare `bin/switchboard` command and the
-bound tmux key both just toggle this sidebar. `view.rb` is now reduced to the
+(no fzf). It's the only navigator. The bound tmux key toggles it; bare
+`bin/switchboard` is context-aware (`CLI#start`) — inside tmux it toggles the
+sidebar like the key, from a plain shell it bootstraps and attaches the home
+session (`Tmux.go_home`), so launching switchboard is a single command.
+`view.rb` is now reduced to the
 compact PR-badge helpers the sidebar uses (`pr_identifier` / `pr_tag`: state via
 color, just the `#number` to fit the ~40-col pane).
 
@@ -99,7 +104,7 @@ e.g. `claude --dangerously-skip-permissions`. Empty ⇒ a plain shell, as before
 intent lives on the session as a tmux option (`@sb_sidebar` on/off; unset reads
 as on, preserving auto-show). `Tmux.reconcile_sidebars` is the one primitive that
 spawns-or-kills each window's sidebar to match: toggling (`prefix-s`) or hiding
-from inside the sidebar (`q`) flips the flag and reconciles every window;
+from inside the sidebar (`h`) flips the flag and reconciles every window;
 `ensure_session` stamps `on` on first creation; `go`/`go_home` reconcile to the
 saved flag on switch-in (and `go_home` always restores the navigator). New
 windows are covered by the `after-new-window[99]` hook → `sidebar-sync <window>`,

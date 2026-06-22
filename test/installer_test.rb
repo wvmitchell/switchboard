@@ -93,6 +93,34 @@ module Switchboard
       assert File.identical?(Installer.symlink_path, Installer.bin_path)
     end
 
+    # The short `sb` alias is symlinked beside the full command, so you can start
+    # switchboard from any shell with two keystrokes.
+    def test_install_creates_the_sb_shorthand_symlink
+      silently { Installer.install(no_tmux: true) }
+      sb = Installer.symlink_path("sb")
+      assert File.symlink?(sb)
+      assert File.identical?(sb, Installer.bin_path)
+    end
+
+    def test_uninstall_removes_both_the_command_and_the_shorthand
+      silently { Installer.install(no_tmux: true) }
+      silently { Installer.uninstall }
+      refute File.symlink?(Installer.symlink_path)
+      refute File.symlink?(Installer.symlink_path("sb"))
+    end
+
+    # A taken name only blocks that one name: a foreign `sb` is left untouched,
+    # but the real `switchboard` command still links (the alias is optional).
+    def test_foreign_sb_is_left_alone_and_does_not_block_the_command
+      FileUtils.mkdir_p(Installer.bin_dir)
+      sb = Installer.symlink_path("sb")
+      File.write(sb, "not ours")
+      silently { Installer.install(no_tmux: true) }
+      refute File.symlink?(sb)
+      assert_equal "not ours", File.read(sb)
+      assert File.identical?(Installer.symlink_path, Installer.bin_path)
+    end
+
     def test_refuses_to_clobber_a_foreign_file
       FileUtils.mkdir_p(File.dirname(Installer.symlink_path))
       File.write(Installer.symlink_path, "not ours")
@@ -158,6 +186,18 @@ module Switchboard
       File.write(Installer.symlink_path, "not ours")
       silently { Installer.uninstall }
       assert_equal "not ours", File.read(Installer.symlink_path)
+    end
+
+    # A foreign *symlink* (vs. the foreign regular file above) at our path is also
+    # left alone — the "left foreign symlink" branch of unlink_one.
+    def test_uninstall_leaves_a_foreign_symlink_alone
+      other = path("other"); FileUtils.mkdir_p(other)
+      File.write(File.join(other, "thing"), "x")
+      FileUtils.mkdir_p(File.dirname(Installer.symlink_path))
+      File.symlink(File.join(other, "thing"), Installer.symlink_path)
+      silently { Installer.uninstall }
+      assert File.symlink?(Installer.symlink_path)
+      assert_equal File.join(other, "thing"), File.readlink(Installer.symlink_path)
     end
 
     # --- conf selection ------------------------------------------------------

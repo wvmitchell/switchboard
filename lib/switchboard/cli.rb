@@ -13,7 +13,8 @@ module Switchboard
 
     def run(argv)
       case argv.first
-      when nil, "toggle-sidebar" then toggle_sidebar
+      when nil                 then start
+      when "toggle-sidebar"    then toggle_sidebar
       when "home"              then Tmux.go_home
       when "install"           then install(argv.drop(1))
       when "uninstall"         then uninstall(argv.drop(1))
@@ -45,11 +46,20 @@ module Switchboard
       @config ||= Config.new
     end
 
-    # Show/hide the sidebar in the current tmux window — the bare command and
-    # the bound tmux key both land here. Outside tmux there's no pane to toggle,
-    # so say so rather than fail silently.
+    # Bare `switchboard` — the one command to start or reach switchboard from
+    # anywhere. From a plain shell it bootstraps the home session and attaches
+    # (go_home execs the attach when TMUX is unset), so launching is a single
+    # command with no manual `tmux` first and no key to remember. Already inside
+    # tmux it just toggles the sidebar in the current window, like the bound key.
+    def start
+      ENV["TMUX"] ? Tmux.toggle_sidebar : Tmux.go_home
+    end
+
+    # Show/hide the sidebar in the current tmux window — the bound tmux key
+    # (`toggle-sidebar`) lands here. Outside tmux there's no pane to toggle; run
+    # bare `switchboard` to start one instead, rather than fail silently.
     def toggle_sidebar
-      return warn("switchboard lives in tmux — start a tmux session first") unless ENV["TMUX"]
+      return warn("switchboard toggle-sidebar runs inside tmux — run `switchboard` to start a session") unless ENV["TMUX"]
 
       Tmux.toggle_sidebar
     end
@@ -297,10 +307,26 @@ module Switchboard
     # Report install wiring: PATH symlink, the tmux marker block, and a tmux new
     # enough for the session-switch refresh. Read-only; logic lives in Installer.
     def doctor_install
-      puts row(Installer.linked?, "PATH symlink: #{Installer.symlink_path}")
+      doctor_symlinks
       puts row(Installer.tmux_wired?, "tmux bindings wired (switchboard.tmux)")
       v = Installer.tmux_version
       puts row(!v.nil? && v >= 3.0, v ? "tmux #{v} (>= 3.0 for the session-switch refresh)" : "tmux not found")
+    end
+
+    # The `switchboard` command symlink is required (✓/✗); the `sb` shorthand is
+    # optional, so a missing one reads as a soft note (–), not a ✗ that would
+    # imply switchboard is broken — matching install, which skips a collided
+    # shorthand rather than failing.
+    def doctor_symlinks
+      Installer.symlink_targets.each do |link, optional|
+        if Installer.linked?(link)
+          puts row(true, "PATH symlink: #{link}")
+        elsif optional
+          puts "  \e[33m–\e[0m PATH symlink: #{link} (optional shorthand, not linked)"
+        else
+          puts row(false, "PATH symlink: #{link}")
+        end
+      end
     end
 
     # ✓/✗ status line shared by the doctor checks.
@@ -325,7 +351,8 @@ module Switchboard
         switchboard — keyboard-only worktree switcher + creator
 
         usage
-          switchboard              toggle the sidebar in the current tmux window
+          switchboard              start switchboard — attach the home session from a shell, or toggle the sidebar inside tmux
+          sb                       alias for `switchboard` (installed on PATH)
           switchboard home         attach to the persistent home session (anchor + settings)
           switchboard install      symlink onto PATH + wire tmux bindings + empty config
                                      (--no-tmux | --print-tmux | --tmux-conf PATH)

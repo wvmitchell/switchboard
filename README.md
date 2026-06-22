@@ -67,8 +67,9 @@ cd switchboard && bin/switchboard install
 `install` is idempotent and does three things:
 
 1. **Symlinks `switchboard` onto your PATH** (`~/.local/bin/switchboard`, or
-   `$SWITCHBOARD_BIN_DIR`). If that dir isn't on `$PATH`, it tells you the line
-   to add.
+   `$SWITCHBOARD_BIN_DIR`), plus a short `sb` alias beside it. If that dir isn't
+   on `$PATH`, it tells you the line to add. (If something else already owns
+   `sb`, the alias is skipped and the full command still installs.)
 2. **Wires the tmux binding** by adding one marker-delimited line to your
    tmux.conf that sources the shipped `switchboard.tmux` fragment. The fragment
    is self-locating, so the binding keeps working wherever the repo lives, and
@@ -88,14 +89,14 @@ fresh machine, off emdash, entirely from the keyboard.
 ## Usage
 
 ```sh
-bin/switchboard install         # symlink onto PATH + wire tmux bindings + empty config
-bin/switchboard uninstall       # reverse install (symlink + tmux bindings)
+bin/switchboard install         # symlinks (switchboard + sb) onto PATH + wire tmux bindings + empty config
+bin/switchboard uninstall       # reverse install (both symlinks + tmux bindings)
 bin/switchboard init            # create an empty config (no projects yet)
 bin/switchboard home            # attach to the persistent home session (anchor + settings)
 bin/switchboard config          # edit config.yml in $EDITOR (per-project settings)
 bin/switchboard add N P [B]     # register an existing repo (name, path, base ref)
 bin/switchboard clone U [N]     # clone a repo under projects_root, then register it
-bin/switchboard                 # toggle the sidebar in the current tmux window
+bin/switchboard                 # start: attach home from a shell, or toggle the sidebar inside tmux (alias: sb)
 bin/switchboard refresh         # re-fetch PR badges from gh
 bin/switchboard enable-hooks [P]  # exact agent-state dots in a worktree (see below)
 bin/switchboard sound [done|waiting]  # play a state's sound (try audio / pick sounds)
@@ -122,9 +123,13 @@ reasons:
   you from switchboard, because the sidebar you're driving lives inside that
   session. Now switchboard switches you to home first, *then* kills the
   workspace — you land back on the full tree, not a bare shell.
-- **A stable launch + settings base.** `switchboard home` attaches you to it
-  (land focused on the tree, ready to navigate). It's the obvious place to manage
-  switchboard: `a` adds a project, `e` opens the config — the footer says so.
+- **A stable launch + settings base.** Running bare `switchboard` (or `sb`) from
+  any shell — not already in tmux — bootstraps and attaches home for you, so
+  starting switchboard is a single command: no manual `tmux` first, no key to
+  remember. (`switchboard home` does the same explicitly.) You land focused on
+  the tree, ready to navigate. It's the obvious place to manage switchboard: `a`
+  adds a project, `e` opens the config — the footer says so. Run bare
+  `switchboard` again from *inside* tmux and it just toggles the sidebar.
 
 Home is created lazily the moment it's needed, so there's nothing to set up.
 `install` deliberately doesn't bind it (one less key taken). If you want one-key

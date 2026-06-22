@@ -4,13 +4,14 @@ require "fileutils"
 require "shellwords"
 
 module Switchboard
-  # Stands switchboard up from a fresh clone: a `switchboard` symlink on PATH, a
-  # tmux.conf line that sources the self-locating `switchboard.tmux` fragment, and
-  # an empty config — all idempotent and reversible by `uninstall`. Every step is
-  # best-effort and prints its own status; one failing step never aborts the rest
-  # (same degrade-gracefully posture as the rest of the codebase).
+  # Stands switchboard up from a fresh clone: a `switchboard` symlink on PATH
+  # (plus a short `sb` alias beside it), a tmux.conf line that sources the
+  # self-locating `switchboard.tmux` fragment, and an empty config — all
+  # idempotent and reversible by `uninstall`. Every step is best-effort and
+  # prints its own status; one failing step never aborts the rest (same
+  # degrade-gracefully posture as the rest of the codebase).
   #
-  #   install ──┬─ symlink  ~/.local/bin/switchboard → <repo>/bin/switchboard
+  #   install ──┬─ symlink  ~/.local/bin/{switchboard,sb} → <repo>/bin/switchboard
   #             ├─ tmux     marker block ⇒ run-shell '<repo>/switchboard.tmux'
   #             └─ init     Config.scaffold (empty config if none)
   #
@@ -47,8 +48,28 @@ module Switchboard
       File.expand_path(ENV["SWITCHBOARD_BIN_DIR"] || "~/.local/bin")
     end
 
-    def symlink_path
-      File.join(bin_dir, "switchboard")
+    # Names we put on PATH: the full command plus a short alias you can type
+    # from any shell. `sb` is pure convenience — install/uninstall/doctor treat
+    # both uniformly, but a name already owned by something else only blocks the
+    # real command (a ✗ to fix); the shorthand just gets skipped (switchboard
+    # still works, you just type the full name).
+    COMMAND_NAME = "switchboard"
+    SHORTHAND    = "sb"
+    SYMLINK_NAMES = [COMMAND_NAME, SHORTHAND].freeze
+
+    def symlink_path(name = COMMAND_NAME)
+      File.join(bin_dir, name)
+    end
+
+    def symlink_paths
+      symlink_targets.map(&:first)
+    end
+
+    # Each PATH symlink as [path, optional?]. The `sb` shorthand is optional, so
+    # doctor can render a missing one as a soft note (–) instead of a hard ✗ —
+    # matching install, which skips a collided shorthand rather than failing.
+    def symlink_targets
+      SYMLINK_NAMES.map { |name| [symlink_path(name), name != COMMAND_NAME] }
     end
 
     # The single tmux.conf line that sources the fragment. Single tmux quotes
@@ -76,24 +97,42 @@ module Switchboard
       step_init
       warn_path
       warn_tmux_version
-      puts "\nDone — press prefix-s to toggle the sidebar."
+      puts "\nDone — run `switchboard` (or `sb`) from any shell to start; press prefix-s to toggle the sidebar inside tmux."
       puts "(If the key doesn't respond yet, reload tmux: `tmux source-file <your conf>`.)"
     end
 
     def step_symlink
       FileUtils.mkdir_p(bin_dir)
-      if File.symlink?(symlink_path)
-        return ok("symlink already points here: #{symlink_path}") if File.identical?(symlink_path, bin_path)
-        return bad("left a foreign symlink at #{symlink_path} (points elsewhere) — remove it and re-run") unless ours_symlink?(symlink_path)
+      SYMLINK_NAMES.each { |name| link_one(symlink_path(name), primary: name == COMMAND_NAME) }
+    end
 
-        File.delete(symlink_path) # ours but stale (e.g. repo moved) → repoint
-      elsif File.exist?(symlink_path)
-        return bad("#{symlink_path} already exists and isn't ours — leaving it untouched")
+    # Symlink one name → our bin. A name already taken (a real file, or a symlink
+    # into a live tree elsewhere) is left untouched. Per-name rescue so one bad
+    # name never aborts the others.
+    def link_one(link, primary:)
+      if File.symlink?(link)
+        return ok("symlink already points here: #{link}") if File.identical?(link, bin_path)
+        return foreign(link, primary, "points elsewhere") unless ours_symlink?(link)
+
+        File.delete(link) # ours but stale (e.g. repo moved) → repoint
+      elsif File.exist?(link)
+        return foreign(link, primary, "isn't ours")
       end
-      File.symlink(bin_path, symlink_path)
-      ok "symlink: #{symlink_path} → #{bin_path}"
+      File.symlink(bin_path, link)
+      ok "symlink: #{link} → #{bin_path}"
     rescue StandardError => e
       bad "symlink: #{e.message}"
+    end
+
+    # A name we won't take over. The command failing to link is a problem to fix
+    # (✗); the shorthand is optional, so a collision there is a soft note (–) —
+    # switchboard works regardless, you just don't get the `sb` alias.
+    def foreign(link, primary, why)
+      if primary
+        bad "#{link} #{why} — remove it and re-run"
+      else
+        note "shorthand `#{File.basename(link)}` skipped: #{link} #{why}"
+      end
     end
 
     # All three tmux paths (write / print / skip) sit behind the path-safety
@@ -145,13 +184,17 @@ module Switchboard
     end
 
     def unlink_symlink
-      if File.symlink?(symlink_path) && ours_symlink?(symlink_path)
-        File.delete(symlink_path)
-        ok "removed symlink: #{symlink_path}"
-      elsif File.symlink?(symlink_path)
-        note "left foreign symlink at #{symlink_path} (not ours)"
+      symlink_paths.each { |link| unlink_one(link) }
+    end
+
+    def unlink_one(link)
+      if File.symlink?(link) && ours_symlink?(link)
+        File.delete(link)
+        ok "removed symlink: #{link}"
+      elsif File.symlink?(link)
+        note "left foreign symlink at #{link} (not ours)"
       else
-        note "no symlink at #{symlink_path}"
+        note "no symlink at #{link}"
       end
     rescue StandardError => e
       bad "symlink: #{e.message}"
@@ -183,8 +226,8 @@ module Switchboard
 
     # --- doctor support (read-only predicates; cli renders the rows) ----------
 
-    def linked?
-      File.symlink?(symlink_path) && File.exist?(symlink_path) && File.identical?(symlink_path, bin_path)
+    def linked?(link = symlink_path)
+      File.symlink?(link) && File.exist?(link) && File.identical?(link, bin_path)
     rescue StandardError
       false
     end
