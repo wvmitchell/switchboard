@@ -140,6 +140,15 @@ the next edge diff. Hook-only states, like the PR trigger, so observation-only
 agents make no sound. Deduped per `[worktree, state]`: every distinct worktree's
 completion is heard, but one worktree can't double-fire in a scan.
 
+Each window's sidebar is its own process with its own `@prev_hook_states`, frozen
+while off-screen — so a naive scan on switch-in would re-ring every completion
+that finished while that sidebar slept (already heard from the sidebar on screen
+then), spraying duplicates as you move between sessions. Catch-up scans (the
+switch poke `reload_and_refresh`, and the `visible && !@was_visible` reappear in
+`tick`) therefore reload with `announce_sounds: false`: they re-baseline and still
+refresh PRs, but ring nothing. Only continuous while-visible scans announce — so a
+completion is heard once, from wherever you're watching when it lands.
+
 The two defaults are **synthesized** (16-bit PCM WAV via `Array#pack`) and
 materialized into the XDG data dir on first use (atomic temp+rename, so racing
 sidebar processes never read a half-written file) — same self-healing trick as

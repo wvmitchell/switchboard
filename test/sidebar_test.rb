@@ -278,7 +278,7 @@ module Switchboard
     def test_rapid_switch_pokes_coalesce_into_one_reload
       sb = sidebar(nodes: [proj("app"), ws("a", path: "/wt/a")])
       reloads = 0
-      sb.define_singleton_method(:reload) { reloads += 1; @last_reload = monotonic }
+      sb.define_singleton_method(:reload) { |announce_sounds: true| reloads += 1; @last_reload = monotonic }
       sb.define_singleton_method(:locate) { nil }            # neutralize the tmux call
       sb.define_singleton_method(:maybe_refresh_prs) { |*| nil }
       sb.send(:reload_and_refresh) # due -> reloads
@@ -287,16 +287,63 @@ module Switchboard
       assert_equal 1, reloads, "rapid switch pokes coalesce into a single heavy reload"
     end
 
+    # The switch-in poke is a catch-up: it must reload SILENTLY so stale
+    # completions don't re-ring as you move between sessions (sound-chorus).
+    def test_switch_poke_reloads_without_announcing_sounds
+      sb = sidebar(nodes: [proj("app"), ws("a", path: "/wt/a")])
+      announced = :unset
+      sb.define_singleton_method(:reload) { |announce_sounds: true| announced = announce_sounds; @last_reload = monotonic }
+      sb.define_singleton_method(:locate) { nil }
+      sb.define_singleton_method(:maybe_refresh_prs) { |*| nil }
+      sb.send(:reload_and_refresh)
+      refute announced, "a switch-in re-baselines silently, not ringing prior completions"
+    end
+
     def test_poke_reloads_again_once_the_window_passes
       sb = sidebar(nodes: [proj("app"), ws("a", path: "/wt/a")])
       reloads = 0
-      sb.define_singleton_method(:reload) { reloads += 1; @last_reload = monotonic }
+      sb.define_singleton_method(:reload) { |announce_sounds: true| reloads += 1; @last_reload = monotonic }
       sb.define_singleton_method(:locate) { nil }
       sb.define_singleton_method(:maybe_refresh_prs) { |*| nil }
       sb.send(:reload_and_refresh)                                    # reload #1
       sb.instance_variable_set(:@last_reload, sb.send(:monotonic) - Sidebar::POKE_TTL - 1)
       sb.send(:reload_and_refresh)                                    # window passed -> reload #2
       assert_equal 2, reloads
+    end
+
+    # --- tick: the catch-up vs continuous reload split (sound-chorus) ----------
+    # tick is the headline entry point: switching INTO a session reappears its
+    # sidebar (off-screen -> on-screen), and that reload must be SILENT. A
+    # continuously-visible tick stays loud. Tmux.visible?/focused? are stubbed —
+    # the raw tmux calls stay out of scope, the branch decision is what we pin.
+
+    def test_tick_reappearing_from_offscreen_reloads_silently
+      sb = sidebar(nodes: [proj("app"), ws("a", path: "/wt/a")])
+      sb.instance_variable_set(:@was_visible, false) # was off-screen, baseline frozen
+      announced = :unset
+      sb.define_singleton_method(:reload) { |announce_sounds: true| announced = announce_sounds }
+      stub_method(Tmux, :focused?, ->(*) { false }) do
+        stub_method(Tmux, :visible?, ->(*) { true }) do # now back on screen
+          sb.send(:tick)
+        end
+      end
+      refute announced, "reappearing re-baselines silently — stale completions don't re-ring"
+      assert sb.instance_variable_get(:@was_visible), "tick records that we're now visible"
+    end
+
+    def test_tick_while_continuously_visible_keeps_ringing
+      sb = sidebar(nodes: [proj("app"), ws("a", path: "/wt/a")])
+      sb.instance_variable_set(:@was_visible, true) # already on screen, never slept
+      sb.instance_variable_set(:@ticks, 0)          # < TREE_TICKS -> refresh_agents path
+      announce = :unset
+      sb.define_singleton_method(:pin_width) { nil }
+      sb.define_singleton_method(:refresh_agents) { |announce_sounds: true| announce = announce_sounds }
+      stub_method(Tmux, :focused?, ->(*) { true }) do
+        stub_method(Tmux, :visible?, ->(*) { true }) do
+          sb.send(:tick)
+        end
+      end
+      assert announce, "a live, continuously-visible scan still announces completions"
     end
 
     # --- live-state icons (#23) ----------------------------------------------
@@ -452,6 +499,44 @@ module Switchboard
       assert_equal ["app"], prs            # PR trigger survives the refactor
       assert_equal ["train"], sounds       # :done -> default train
       assert_equal({ "/wt/a" => :done }, sb.instance_variable_get(:@prev_hook_states))
+    end
+
+    # A catch-up scan (switch-in / reappear) must NOT ring for a completion that
+    # finished while this sidebar was off-screen — another sidebar already rang it.
+    # The PR refresh and the baseline advance still ride: announce_sounds gates the
+    # sound alone. This is the duplicate-notification fix (sound-chorus).
+    def test_on_agent_edges_silent_catch_up_holds_the_sound_but_keeps_pr_and_baseline
+      sb = sidebar(nodes: [ws("a", project: "app", path: "/wt/a")])
+      set_hook_states(sb, { "/wt/a" => :done })
+      sb.instance_variable_set(:@prev_hook_states, { "/wt/a" => :thinking })
+      prs = []
+      sounds = []
+      sb.define_singleton_method(:maybe_refresh_prs) { |p| prs << p }
+      stub_method(Sound, :play, ->(spec, **) { sounds << spec }) do
+        sb.send(:on_agent_edges, announce_sounds: false)
+      end
+      assert_empty sounds, "a catch-up re-baselines silently — another sidebar already rang"
+      assert_equal ["app"], prs, "...but the PR refresh still rides the edge"
+      assert_equal({ "/wt/a" => :done }, sb.instance_variable_get(:@prev_hook_states),
+                   "baseline advances so the next genuine completion still fires")
+    end
+
+    # After a silent switch-in, a completion that lands while we're actually here
+    # rings as normal — the suppression is one scan, not a permanent mute.
+    def test_silent_catch_up_then_a_live_completion_rings
+      sb = sidebar(nodes: [ws("a", project: "app", path: "/wt/a")])
+      sb.instance_variable_set(:@prev_hook_states, { "/wt/a" => :thinking })
+      sb.define_singleton_method(:maybe_refresh_prs) { |_p| }
+      sounds = []
+      stub_method(Sound, :play, ->(spec, **) { sounds << spec }) do
+        set_hook_states(sb, { "/wt/a" => :done })
+        sb.send(:on_agent_edges, announce_sounds: false)     # switch-in: stale completion, silent
+        set_hook_states(sb, { "/wt/a" => :thinking })
+        sb.send(:on_agent_edges)                              # a new turn begins
+        set_hook_states(sb, { "/wt/a" => :done })
+        sb.send(:on_agent_edges)                              # finishes while we watch -> rings
+      end
+      assert_equal ["train"], sounds
     end
 
     def test_on_agent_edges_advances_baseline_even_when_sound_raises

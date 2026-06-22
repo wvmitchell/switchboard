@@ -173,7 +173,12 @@ module Switchboard
       @focused = Tmux.focused?(ENV["TMUX_PANE"]) # authoritative if focus-events are off
       visible = Tmux.visible?(ENV["TMUX_PANE"])
       if visible && !@was_visible
-        reload
+        # Catch-up: this sidebar was off-screen (not scanning, baseline frozen) and
+        # just reappeared — a window/session switch-in. Re-baseline SILENTLY:
+        # completions that landed while it slept were already rung by whichever
+        # sidebar was on screen then, so replaying them here is the duplicate-sound
+        # bug. PR refresh and the baseline merge still ride; only the sound is held.
+        reload(announce_sounds: false)
       elsif visible
         pin_width
         @ticks += 1
@@ -207,16 +212,20 @@ module Switchboard
       @cursor = @cursor.clamp(0, [@rows.size - 1, 0].max)
     end
 
-    def refresh_agents
+    def refresh_agents(announce_sounds: true)
       @agents = @agent_state.scan(@nodes.select { |n| n.kind == "ws" }.map(&:path))
-      on_agent_edges
+      on_agent_edges(announce_sounds: announce_sounds)
     rescue StandardError
       @agents = {}
     end
 
-    def reload
+    # announce_sounds: false on a catch-up scan (a sidebar waking from off-screen,
+    # or the session-switch poke) — re-baseline + refresh PRs without ringing for
+    # completions another sidebar already announced. Defaults true: continuous
+    # while-visible scans ring as they always have.
+    def reload(announce_sounds: true)
       rebuild
-      refresh_agents
+      refresh_agents(announce_sounds: announce_sounds)
       locate
       refresh_stale_prs
       @last_reload = monotonic
@@ -275,7 +284,10 @@ module Switchboard
     def reload_and_refresh
       return locate unless reload_due?
 
-      reload
+      # A switch-in is a catch-up: ring nothing for completions that finished
+      # before we arrived (the next genuine completion, scanned while we're here,
+      # still rings). PR refresh below is unaffected — debounced and idempotent.
+      reload(announce_sounds: false)
       project = @current_path && project_for_path(@current_path)
       maybe_refresh_prs(project) if project && Pr.stale?(project, NAV_TTL)
     end
@@ -291,12 +303,20 @@ module Switchboard
     # fully rescued (play_sounds_for) so a sound fault can't starve it, and
     # @prev_hook_states ALWAYS advances (ensure) so a raise here can't corrupt the
     # next edge diff — or trip refresh_agents' broad rescue into blanking the dots.
-    def on_agent_edges
+    #
+    # announce_sounds gates ONLY the sound, not the PR refresh or the baseline
+    # advance. A catch-up scan (switch-in / reappear) passes false: each sidebar
+    # is its own process with its own baseline, frozen while off-screen, so without
+    # this it would re-ring every completion that finished while it slept (already
+    # heard from the sidebar that was on screen then). PRs still refresh — debounced
+    # and idempotent — and the baseline still advances, so the next real completion
+    # scanned while we're here rings normally.
+    def on_agent_edges(announce_sounds: true)
       now = @agent_state.last_hook_states
       if @prev_hook_states
         edges = self.class.completion_edges(@prev_hook_states, now)
         refresh_prs_for(edges)
-        play_sounds_for(edges, now)
+        play_sounds_for(edges, now) if announce_sounds
       end
     ensure
       # Merge, not replace: keep a STICKY baseline. A worktree whose hook report
@@ -567,7 +587,11 @@ module Switchboard
     # focus isn't on the tree — rather than tear the sidebar down.
     def reload_config_and_rebuild
       reload_config
-      reload
+      # Also a catch-up: `e` switches the client to home to edit, so this sidebar
+      # was off-screen with a frozen baseline while the (visible) home sidebar
+      # rang any completions. Reload silently on the Ctrl-R return — else those
+      # already-heard completions re-ring here, the same duplicate this fix kills.
+      reload(announce_sounds: false)
     rescue StandardError => e
       Tmux.notify("switchboard: config not reloaded — #{e.message}")
     end
