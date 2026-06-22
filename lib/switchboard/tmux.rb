@@ -24,8 +24,8 @@ module Switchboard
     def go(worktree, start: nil)
       name = session_name(worktree)
       ensure_session(name, worktree.path, start)
-      ensure_sidebar(name, worktree.path)
-      sidebar = sidebar_pane(name)
+      ensure_sidebar(name)      # reconcile every window to the saved @sb_sidebar flag
+      sidebar = window_sidebar_pane(name) # the window we'll land on (nil if hidden)
       focus_work(name, sidebar) # land on the workspace's terminal, not its tree
       switch(name)              # may exec (attach) when launched outside tmux
       pin(sidebar)              # snap to fixed width at the now-current client size
@@ -39,8 +39,12 @@ module Switchboard
     # you're in, and a stable launch target. Created lazily, the moment something
     # needs it. Lands focused on the tree — home is for navigating, not working.
     def go_home
+      # Going home means "show me the navigator" — home is for navigating, not
+      # working. Re-stamp the flag on so a session you'd hidden the sidebar in
+      # never strands you on a bare shell (e.g. the post-delete fallback).
+      set_sidebar_flag(HOME, "on")
       ensure_home
-      sidebar = sidebar_pane(HOME)
+      sidebar = window_sidebar_pane(HOME)
       # Focus the tree before switch, so the exec/attach path keeps it too.
       system("tmux", "select-pane", "-t", sidebar, out: File::NULL, err: File::NULL) if sidebar
       switch(HOME) # may exec (attach) when launched outside tmux
@@ -50,7 +54,7 @@ module Switchboard
 
     def ensure_home
       ensure_session(HOME, home_dir)
-      ensure_sidebar(HOME, home_dir)
+      ensure_sidebar(HOME)
     end
 
     # Home sits in $HOME: a neutral, always-present directory owned by no project.
@@ -104,6 +108,11 @@ module Switchboard
       # NOT type the command into a session we didn't create, or it lands twice.
       created = system("tmux", "new-session", "-d", "-s", name, "-c", dir, out: File::NULL, err: File::NULL)
       system("tmux", "rename-window", "-t", name, "work", out: File::NULL, err: File::NULL)
+      # Record the first-creation default (on) explicitly, so new windows in this
+      # session inherit a sidebar via the after-new-window hook. Gated on `created`
+      # for the same reason as run_in_session: never stamp a session we lost a race
+      # to create.
+      set_sidebar_flag(name, "on") if created
       run_in_session(name, start) if start && created
     end
 
@@ -176,16 +185,68 @@ module Switchboard
       end
     end
 
-    # Add a sidebar pane to a session's active window if it lacks one.
-    def ensure_sidebar(name, dir)
-      spawn_sidebar(target: name, dir: dir) unless sidebar_pane(name)
+    # Bring every window of a session into line with its saved @sb_sidebar flag —
+    # the one entry point for "make this session's sidebars match its intent."
+    # Honors an explicit `off` (so switching back into a session you hid keeps it
+    # hidden) and self-heals any window that drifted.
+    def ensure_sidebar(name)
+      reconcile_sidebars(name, sidebar_on?(name))
     end
 
-    # Pane id of a session's sidebar, or nil. -s covers all the session's
-    # windows so we never spawn a duplicate when one already exists elsewhere.
-    def sidebar_pane(target)
-      `tmux list-panes -s -t #{Shellwords.escape(target)} -F '#\{pane_id} #\{pane_title}' 2>/dev/null`
+    # Spawn-or-kill each window's sidebar so the whole session matches `on`.
+    # Window-scoped throughout: per-window split into the right window id, and a
+    # per-window presence check — that's the fix for "new window had no sidebar."
+    # `except:` spares one pane from the kill sweep: the sidebar's own `q` hide
+    # leaves its pane for the run-loop to close, so killing it here mid-iteration
+    # can't abort the sweep before it reaches the other windows.
+    def reconcile_sidebars(session, on, except: nil)
+      windows(session).each do |window|
+        pane = window_sidebar_pane(window)
+        if on && !pane
+          pin(spawn_sidebar(target: window))
+        elsif !on && pane && pane != except
+          system("tmux", "kill-pane", "-t", pane, out: File::NULL, err: File::NULL)
+        end
+      end
+    end
+
+    # Window ids of a session, oldest first. [] if the session is gone.
+    def windows(session)
+      `tmux list-windows -t #{Shellwords.escape(session)} -F '#\{window_id}' 2>/dev/null`
+        .split("\n").map(&:strip).reject(&:empty?)
+    end
+
+    # The sidebar pane in a single window (or a session's active window when given
+    # a session name) — NO -s, so it answers "does *this window* have one?" rather
+    # than the old session-wide check that suppressed per-window spawns.
+    def window_sidebar_pane(target)
+      `tmux list-panes -t #{Shellwords.escape(target)} -F '#\{pane_id} #\{pane_title}' 2>/dev/null`
         .lines.find { |line| line.include?(SIDEBAR_TITLE) }&.split&.first
+    end
+
+    # --- per-session visibility flag (@sb_sidebar) ---------------------------
+    # Stored on the tmux session itself, so it survives window churn and is the
+    # source of truth for "should this session show a sidebar." Unset reads as on,
+    # preserving the historic auto-show-on-switch behavior.
+
+    def set_sidebar_flag(session, value)
+      system("tmux", "set-option", "-t", session, "@sb_sidebar", value, out: File::NULL, err: File::NULL)
+    end
+
+    # Raw flag value ("on"/"off"/""), "" when unset (the tmux "invalid option"
+    # error lands on stderr, which we swallow).
+    def sidebar_flag(session)
+      `tmux show-options -v -t #{Shellwords.escape(session)} @sb_sidebar 2>/dev/null`.strip
+    end
+
+    def sidebar_on?(session)
+      sidebar_flag_on?(sidebar_flag(session))
+    end
+
+    # The pure decision, split out so it's unit-testable without tmux: only an
+    # explicit "off" hides; unset ("") and "on" both show.
+    def sidebar_flag_on?(value)
+      value != "off"
     end
 
     # Select a session's terminal pane so switching lands you ready to type, not
@@ -230,10 +291,41 @@ module Switchboard
       system("tmux", "resize-pane", "-t", pane, "-x", SIDEBAR_WIDTH.to_s, out: File::NULL, err: File::NULL)
     end
 
-    # Toggle the sidebar in the CURRENT window — bound to a key.
+    # Toggle the sidebar for the WHOLE current session — bound to prefix-s. The
+    # direction follows what you can see in the current window (so a press in a
+    # session that's never shown one reads as "show", not a dead key), then we
+    # persist that intent on the session and reconcile every window to match.
     def toggle_sidebar
-      pane = current_sidebar_pane
-      pane ? system("tmux", "kill-pane", "-t", pane) : spawn_sidebar
+      session = current_session or return
+      on = current_sidebar_pane.nil? # hidden here → the press means "show"
+      set_sidebar_flag(session, on ? "on" : "off")
+      reconcile_sidebars(session, on)
+    end
+
+    # Give a freshly created window its sidebar if the session opts in — bound to
+    # the after-new-window hook, which hands us the new window's id. Idempotent:
+    # the title check means a racing `go`/reconcile can't double-spawn. (Spawning
+    # is a split, which fires after-split-window — not this hook — so no loop.)
+    def sidebar_sync(window)
+      return if window.to_s.empty?
+
+      session = session_of_window(window)
+      return if session.empty? || !sidebar_on?(session) || window_sidebar_pane(window)
+
+      pin(spawn_sidebar(target: window))
+    end
+
+    # The session a window id belongs to ("" if it's gone).
+    def session_of_window(window)
+      `tmux display-message -p -t #{Shellwords.escape(window)} '#\{session_name}' 2>/dev/null`.strip
+    end
+
+    # The session the invoking client is currently in ("" outside tmux). Resolves
+    # against the current client, like poke_current_sidebar — fine for the single
+    # attached client that prefix-s comes from.
+    def current_session
+      name = `tmux display-message -p '#\{session_name}' 2>/dev/null`.strip
+      name.empty? ? nil : name
     end
 
     def current_sidebar_pane
@@ -279,7 +371,11 @@ module Switchboard
       system("tmux", "set", "-g", "focus-events", "on", out: File::NULL, err: File::NULL)
     end
 
-    # Split a narrow sidebar pane on the left running `switchboard sidebar`.
+    # Split a narrow sidebar pane on the left running `switchboard sidebar`, and
+    # return its pane id (nil on failure) so callers can pin it to width. `target`
+    # may be a session or a specific window id; -d means spawning into another
+    # window never steals focus from the pane you're in. cwd is inherited from the
+    # target's active pane (each worktree window is already cd'd there).
     def spawn_sidebar(target: nil, dir: nil)
       bin = ENV["SWITCHBOARD_BIN"]
       return unless bin
@@ -295,6 +391,7 @@ module Switchboard
       return if pane.empty?
 
       system("tmux", "select-pane", "-t", pane, "-T", SIDEBAR_TITLE, out: File::NULL, err: File::NULL)
+      pane
     end
   end
 end

@@ -115,8 +115,30 @@ module Switchboard
 
     def test_dispatch_q_signals_exit_other_keys_keep_running
       sb = sidebar(nodes: [proj("app")])
-      refute sb.send(:dispatch, "q"), "q exits the loop"
-      assert sb.send(:dispatch, "j"), "movement keeps the loop alive"
+      # Stub the session lookup so q's hide path never touches a real tmux.
+      stub_method(Tmux, :session_of, ->(*) { nil }) do
+        refute sb.send(:dispatch, "q"), "q exits the loop"
+        assert sb.send(:dispatch, "j"), "movement keeps the loop alive"
+      end
+    end
+
+    # q hides session-wide (like prefix-s): persists @sb_sidebar off and
+    # reconciles the session closed, sparing its own pane for the loop to close.
+    def test_q_hides_the_whole_session_and_persists_the_off_flag
+      sb = sidebar(nodes: [proj("app")])
+      flag = nil
+      reconciled = nil
+      stub_method(Tmux, :session_of, ->(*) { "sb/app/x" }) do
+        stub_method(Tmux, :set_sidebar_flag, ->(s, v) { flag = [s, v] }) do
+          stub_method(Tmux, :reconcile_sidebars, ->(s, on, **kw) { reconciled = [s, on, kw] }) do
+            refute sb.send(:dispatch, "q"), "q still exits the loop"
+          end
+        end
+      end
+      assert_equal ["sb/app/x", "off"], flag, "persists the off intent on the session"
+      assert_equal "sb/app/x", reconciled[0]
+      refute reconciled[1], "reconciles the session closed"
+      assert reconciled[2].key?(:except), "spares its own pane from the kill sweep"
     end
 
     def test_handle_processes_every_token_in_a_key_repeat_buffer

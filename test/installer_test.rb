@@ -21,6 +21,17 @@ module Switchboard
       assert_equal Installer.fragment_path, Shellwords.split(inner).first
     end
 
+    # The shipped fragment must wire the per-session sidebar sync: an indexed
+    # after-new-window hook (so uninstall can clear exactly it) that hands the new
+    # window's id to sidebar-sync. The matching `set-hook -gu after-new-window[99]`
+    # in teardown_live is live-only (TMUX-gated), verified manually.
+    def test_fragment_wires_the_indexed_after_new_window_sync_hook
+      frag = File.read(Installer.fragment_path)
+      assert_includes frag, "after-new-window[99]"
+      assert_includes frag, "sidebar-sync"
+      assert_includes frag, '#{window_id}' # literal; tmux expands it at fire time
+    end
+
     def test_strip_block_is_inverse_of_with_block
       base = "# my conf\nbind-key x display-message hi\n"
       wired = Installer.with_block(base)

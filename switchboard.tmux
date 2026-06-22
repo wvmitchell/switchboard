@@ -17,6 +17,13 @@ tmux bind-key s run-shell "'$BIN' toggle-sidebar"
 # client-session-changed hook; uninstall clears exactly this slot.
 tmux set-hook -g 'client-session-changed[99]' "run-shell \"'$BIN' poke-sidebar\""
 
+# Sidebar visibility is per-session: a new window (prefix-c) in a session that's
+# showing the sidebar gets its own. tmux expands #{window_id} here and hands the
+# new window's id to sidebar-sync, which spawns one iff the session opts in.
+# (split-window — how the sidebar is spawned — fires after-split-window, not this
+# hook, so there's no spawn loop.) Indexed slot [99]; uninstall clears it.
+tmux set-hook -g 'after-new-window[99]' "run-shell \"'$BIN' sidebar-sync #{window_id}\""
+
 # Optional: one-key jump to the home/anchor session. Not bound by default —
 # prefix-h is a common pane-nav key. Uncomment on a key that's free for you
 # (prefix-S is freed by switchboard):

@@ -19,6 +19,15 @@ module Switchboard
       assert_nil CLI.flag_value(["--tmux-conf"], "--tmux-conf")
     end
 
+    # The after-new-window hook routes the new window's id through to Tmux.
+    def test_sidebar_sync_dispatch_forwards_the_window_id
+      got = :unset
+      stub_method(Tmux, :sidebar_sync, ->(window) { got = window }) do
+        CLI.run(["sidebar-sync", "@7"])
+      end
+      assert_equal "@7", got
+    end
+
     def test_init_writes_an_empty_config_when_absent
       out = capture { CLI.init }
       assert Config.exist?

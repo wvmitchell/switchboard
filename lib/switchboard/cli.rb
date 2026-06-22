@@ -27,6 +27,7 @@ module Switchboard
       when "sound"             then play_sound(argv[1])
       when "sidebar"           then Sidebar.run
       when "poke-sidebar"      then Tmux.poke_current_sidebar
+      when "sidebar-sync"      then Tmux.sidebar_sync(argv[1])
       when "prune"             then prune(argv.drop(1))
       when "quit"              then quit
       when "doctor"            then doctor

@@ -108,6 +108,14 @@ module Switchboard
       with_env("HOME" => nil) { assert_equal Dir.pwd, Tmux.home_dir }
     end
 
+    # --- Tmux.sidebar_flag_on? (@sb_sidebar decision; unset reads as on) ------
+
+    def test_sidebar_flag_on_only_explicit_off_hides
+      assert Tmux.sidebar_flag_on?(""),    "unset (no flag) shows — preserves auto-show"
+      assert Tmux.sidebar_flag_on?("on"),  "explicit on shows"
+      refute Tmux.sidebar_flag_on?("off"), "explicit off is the only hide"
+    end
+
     # --- View PR-badge helpers (all that survived the picker removal) --------
 
     def test_pr_identifier_handles_missing_and_non_hash

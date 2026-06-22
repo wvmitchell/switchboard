@@ -34,10 +34,12 @@ Setup is one command: `git clone && bin/switchboard install` (`Installer`,
 `installer.rb`). It symlinks `bin/switchboard` to `~/.local/bin`, adds a
 marker-delimited line to the tmux.conf tmux actually loads (found via
 `#{config_files}`) that sources the self-locating `switchboard.tmux` fragment,
-and scaffolds an empty config. The fragment binds `prefix-s` (toggle) and an
-indexed `client-session-changed[99]` poke hook; `home` is intentionally not
+and scaffolds an empty config. The fragment binds `prefix-s` (toggle) and two
+indexed hooks: `client-session-changed[99]` (poke the sidebar to reload) and
+`after-new-window[99]` (give a new window its own sidebar when the session is
+showing one — see per-session visibility below); `home` is intentionally not
 bound (configurable keys are issue #15). All steps are idempotent and reversed
-by `uninstall`.
+by `uninstall` (which clears both hook slots).
 
 Ruby **>= 3.0** is required (`Config` uses `YAML.safe_load_file`, added in Psych
 3.3 / Ruby 3.0). `bin/switchboard` re-execs itself under a modern ruby if launched
@@ -92,6 +94,17 @@ that "pokes" it with `C-l` (`poke-sidebar`). On the *creation* of a session
 resolved `session_command` (`Config#session_command_for`, global default +
 per-project override) into the window — this is the "how the agent starts" knob,
 e.g. `claude --dangerously-skip-permissions`. Empty ⇒ a plain shell, as before.
+
+**Sidebar visibility is per-session, applied to every window** (issue #24). The
+intent lives on the session as a tmux option (`@sb_sidebar` on/off; unset reads
+as on, preserving auto-show). `Tmux.reconcile_sidebars` is the one primitive that
+spawns-or-kills each window's sidebar to match: toggling (`prefix-s`) or hiding
+from inside the sidebar (`q`) flips the flag and reconciles every window;
+`ensure_session` stamps `on` on first creation; `go`/`go_home` reconcile to the
+saved flag on switch-in (and `go_home` always restores the navigator). New
+windows are covered by the `after-new-window[99]` hook → `sidebar-sync <window>`,
+which spawns one iff the session opts in. No spawn recursion: the sidebar is a
+`split-window`, which fires `after-split-window`, not the hooked `after-new-window`.
 
 ### Agent-state dots (the subtle part)
 

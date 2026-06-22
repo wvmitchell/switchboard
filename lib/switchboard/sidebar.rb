@@ -386,9 +386,23 @@ module Switchboard
       when "G"                 then @cursor = [@rows.size - 1, 0].max # clamp: empty tree → 0, not -1
       when "\e[I"              then @focused = true  # tmux focus-in: light the cursor bar
       when "\e[O"              then @focused = false # tmux focus-out: drop it
-      when "q", "\x03"         then return false # q / ^C: hide
+      when "q", "\x03"         then return hide # q / ^C: hide (session-wide)
       end
       true
+    end
+
+    # q/^C hides the sidebar for the WHOLE session, like prefix-s: persist the
+    # intent (@sb_sidebar off) and kill every sibling window's sidebar. We spare
+    # our own pane (except:) and drop out of the loop instead — letting the run
+    # loop close this pane, so killing it can't abort the sweep early. Returns
+    # false to signal "stop the loop." A no-op outside a session (defensive).
+    def hide
+      session = Tmux.session_of
+      if session
+        Tmux.set_sidebar_flag(session, "off")
+        Tmux.reconcile_sidebars(session, false, except: ENV["TMUX_PANE"])
+      end
+      false
     end
 
     def move(delta)

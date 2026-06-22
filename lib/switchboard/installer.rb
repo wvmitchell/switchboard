@@ -178,6 +178,7 @@ module Switchboard
 
       system("tmux", "unbind-key", "s", out: File::NULL, err: File::NULL)
       system("tmux", "set-hook", "-gu", "client-session-changed[99]", out: File::NULL, err: File::NULL)
+      system("tmux", "set-hook", "-gu", "after-new-window[99]", out: File::NULL, err: File::NULL)
     end
 
     # --- doctor support (read-only predicates; cli renders the rows) ----------
