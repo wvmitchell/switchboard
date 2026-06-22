@@ -63,6 +63,33 @@ module Switchboard
       assert_equal %w[a b], names
     end
 
+    # --- remove_project: the inverse write path (single source of truth) ------
+
+    def test_remove_project_drops_the_named_entry_and_keeps_the_rest
+      File.write(Config.path, YAML.dump("worktree_root" => "/mine", "projects" => [
+                                          { "name" => "a", "path" => "/p" },
+                                          { "name" => "b", "path" => "/q", "base" => "origin/dev" }
+                                        ]))
+      removed = Config.remove_project("a")
+      data = YAML.safe_load_file(Config.path)
+      assert_equal({ "name" => "a", "path" => "/p" }, removed, "returns the removed raw entry")
+      assert_equal %w[b], data["projects"].map { |p| p["name"] }
+      assert_equal "/mine", data["worktree_root"], "preserves the rest of the config"
+      assert_equal "origin/dev", data["projects"].first["base"], "preserves the survivor's keys"
+    end
+
+    def test_remove_project_returns_nil_for_an_unknown_name
+      File.write(Config.path, YAML.dump("projects" => [{ "name" => "a", "path" => "/p" }]))
+      assert_nil Config.remove_project("nope")
+      assert_equal %w[a], YAML.safe_load_file(Config.path)["projects"].map { |p| p["name"] },
+                   "an unknown name leaves the config untouched"
+    end
+
+    def test_remove_project_returns_nil_when_no_config_exists
+      refute Config.exist?
+      assert_nil Config.remove_project("a")
+    end
+
     # --- resolution accessors (extends #18's scaffold/add_project coverage) ---
     # The session_command chain is the part issue #10 specifically named and #18
     # didn't touch: global default, per-project override, empty->global fallback,

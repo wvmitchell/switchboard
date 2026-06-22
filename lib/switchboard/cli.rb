@@ -21,6 +21,7 @@ module Switchboard
       when "init"              then init
       when "config", "edit"    then edit_config
       when "add"               then add_project(argv[1], argv[2], argv[3])
+      when "remove", "rm"      then remove_project(argv[1])
       when "clone"             then clone_project(argv[1], argv[2])
       when "refresh"           then refresh(*refresh_args(argv))
       when "enable-hooks"      then enable_hooks(argv[1])
@@ -192,6 +193,19 @@ module Switchboard
       puts "added #{entry['name']} -> #{entry['path']}"
     end
 
+    # Drop a project from the registry — the CLI twin of the sidebar's `d` on a
+    # project row, minus the tmux session teardown (a shell invocation isn't
+    # inside a session, and `prune` cleans the leftovers). The repo on disk is
+    # untouched; you can re-add it anytime.
+    def remove_project(name)
+      return warn("usage: switchboard remove <name>") if name.nil?
+
+      _, err = Registrar.unregister(config, name)
+      return warn(err) if err
+
+      puts "removed #{name} (its repo on disk is untouched)"
+    end
+
     # Clone a repo under `projects_root` and register it (realizes the v2
     # roadmap item). Name defaults to the URL's basename.
     def clone_project(url, name = nil)
@@ -361,6 +375,7 @@ module Switchboard
           switchboard init         create an empty config (no projects yet)
           switchboard config       edit config.yml in $EDITOR (per-project settings)
           switchboard add N P [B]  register an existing repo (name, path, base ref)
+          switchboard remove N     unregister a project (its repo on disk stays; alias: rm)
           switchboard clone U [N]  clone a repo under projects_root, then register
           switchboard refresh      re-fetch PR badges from gh (normally automatic)
           switchboard enable-hooks [P]   wire agent-state dots in a worktree (default: cwd)
@@ -378,7 +393,7 @@ module Switchboard
           n        create a new worktree in the highlighted project
           o        open the highlighted PR in the browser (gh pr view --web)
           r        rename a workspace
-          d        delete a workspace
+          d        remove the highlighted row — delete a workspace, or unregister a project (+ close its sessions)
           e        edit config (opens beside the home tree, returns you on quit)
           q        quit switchboard — tear down every sb/ session (confirms first)
           (prefix-s toggles the sidebar: summon + focus when hidden, dismiss when visible)

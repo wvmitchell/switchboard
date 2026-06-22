@@ -48,5 +48,29 @@ module Switchboard
       assert_nil entry
       assert_match(/name taken/, err)
     end
+
+    # --- unregister: the inverse of register ---------------------------------
+
+    def test_unregister_drops_a_registered_project
+      repo = temp_git_repo("gone", origin: true)
+      Registrar.register(Config.new, repo)
+      entry, err = Registrar.unregister(Config.new, "gone")
+      assert_nil err
+      assert_equal "gone", entry["name"]
+      refute Config.new.project("gone"), "the project is gone from the config"
+    end
+
+    def test_unregister_rejects_an_unknown_project
+      entry, err = Registrar.unregister(Config.new, "ghost")
+      assert_nil entry
+      assert_match(/no such project/, err)
+    end
+
+    def test_unregister_leaves_the_repo_on_disk
+      repo = temp_git_repo("keepme", origin: true)
+      Registrar.register(Config.new, repo)
+      Registrar.unregister(Config.new, "keepme")
+      assert Dir.exist?(repo), "unregister is pure registry surgery — the repo stays"
+    end
   end
 end

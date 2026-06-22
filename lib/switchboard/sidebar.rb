@@ -9,7 +9,8 @@ module Switchboard
   # pane, repaints on a short interval to keep agent-activity dots live, and
   # navigates with j/k. ↵ switches to a workspace (or collapses a project);
   # a adds a project (register a local repo, or clone one); n creates a worktree
-  # inline then drops you in; d deletes a workspace.
+  # inline then drops you in; d removes the highlighted row — a workspace's
+  # worktree, or a whole project from the registry. The legend tracks the row.
   class Sidebar
     REFRESH = 3    # seconds between agent re-scans
     TREE_TICKS = 5 # rebuild the whole tree every Nth tick (~15s) while visible
@@ -44,19 +45,15 @@ module Switchboard
     BRANCH_FG = "\e[90m"         # branch rows: bright-black, a theme-relative dim (#23)
     RELOAD_CONFIG_BYTE = "\x12"  # C-r: the dedicated post-edit "re-read config" poke (Tmux.poke_sidebar_of)
 
-    # Key hints, spread over readable lines (kept within the pin width). Reload
-    # isn't shown — it's automatic; Ctrl-L triggers it internally (the
-    # session-switch hook poke).
-    FOOTER = ["j/k move · ↵ open/collapse",
-              "a add · n new · o PR · r rename",
-              "d delete · e settings · q quit"].freeze
-
-    # In the home session the sidebar is the switchboard base, not a workspace's
-    # strip — label it as such and foreground the management keys. Same line
-    # count as FOOTER so the render geometry is unchanged.
-    HOME_FOOTER = ["switchboard · home",
-                   "a add project · e settings",
-                   "j/k move · ↵ open · q quit"].freeze
+    # Key-hint legend, built by `footer` (below) and kept within the pin width.
+    # Reload isn't shown — it's automatic; Ctrl-L triggers it internally (the
+    # session-switch hook poke). The first line is the session label: in the home
+    # session it's the "you are at the base" title (HOME_TITLE), otherwise the
+    # navigation keys, which differ by row kind (a project opens/collapses).
+    HOME_TITLE = "switchboard · home"
+    NAV_PROJ   = "j/k move · ↵ open/collapse"
+    NAV_WS     = "j/k move · ↵ open"
+    NAV_BR     = "j/k move · ↵ switch"
 
     def self.run
       new.run
@@ -418,7 +415,7 @@ module Switchboard
       when "a"                 then add
       when "n"                 then create
       when "o", "\x0F"         then open_pr # open the PR in the browser (o / ^O)
-      when "d"                 then delete
+      when "d"                 then remove
       when "r"                 then rename
       when "e"                 then edit_config
       when "\f"                then reload_and_refresh # Ctrl-L (hook poke on switch)
@@ -596,6 +593,50 @@ module Switchboard
       Tmux.notify("switchboard: config not reloaded — #{e.message}")
     end
 
+    # d: remove the highlighted thing. On a project header that's
+    # remove_project (unregister + close its sessions); on a workspace it's
+    # delete (drop the worktree). The legend's `d` label tracks the row kind.
+    def remove
+      node = current
+      return unless node
+
+      node.kind == "proj" ? remove_project(node) : delete
+    end
+
+    # Remove a project from the registry and close its sessions (the keyboard
+    # path to what you'd otherwise do by hand-editing config.yml). Unregistering
+    # is pure config surgery — the repo and its worktrees on disk are untouched —
+    # but its sb/ sessions are torn down here: once the project is gone from the
+    # registry, prune (which reconciles only against registered projects) can
+    # never reach them, so they'd orphan for good.
+    #
+    # Removing the project you're standing in would kill the very session this
+    # sidebar runs in. Like workspace delete, fall back to home first; the home
+    # sidebar then drives. Home rebuilds from git, which won't show a config
+    # change, so poke it to re-read the now-smaller config — BEFORE the kill, or
+    # our own death aborts the poke.
+    def remove_project(node)
+      name = node.project
+      return unless @config.project(name)
+      return unless confirm("remove #{name}? (closes its sessions)")
+
+      # Unregister first and bail on failure — never kill sessions while the
+      # config still lists the project (a write error with the config stale
+      # would otherwise leave a registered project with no sessions). The guard
+      # above makes the error unreachable today, but it keeps the kill honest.
+      _, err = Registrar.unregister(@config, name)
+      return flash(err) if err
+
+      ejecting = Tmux.session_of.to_s.start_with?(Tmux.session_prefix(name))
+      Tmux.go_home if ejecting
+      Tmux.poke_sidebar_of(Tmux::HOME, reload_config: true) if ejecting
+      Tmux.kill_project_sessions(name)
+      return if ejecting
+
+      reload_config
+      reload
+    end
+
     # Delete a workspace: remove the worktree (force-confirm if dirty), drop the
     # branch if safely merged, and kill its tmux session.
     def delete
@@ -726,9 +767,32 @@ module Switchboard
       [40, 40]
     end
 
+    # The three-line key legend, context-sensitive to the highlighted row. A
+    # project row foregrounds registry management (`d remove`s the project); a
+    # workspace row adds the per-workspace keys (o PR, r rename; `d delete`s the
+    # worktree). A branch child row only lists what actually works on it (↵
+    # switches, o opens its PR) — d/r guard on `ws`, so advertising them there
+    # would be a no-op. Always three lines so the tree never reflows as the
+    # cursor moves between kinds — line 1 is the only one that swaps, to the home
+    # title or the kind-appropriate nav keys. The empty tree (the fresh-install
+    # home state) gets an inviting first-project hint.
+    def footer
+      title = @home ? HOME_TITLE : nil
+      case current&.kind
+      when "proj"
+        [title || NAV_PROJ, "a add · n new · e settings", "d remove · q quit"]
+      when "ws"
+        [title || NAV_WS, "a add · n new · o PR · r rename", "d delete · e settings · q quit"]
+      when "br"
+        [title || NAV_BR, "a add · n new · o PR", "e settings · q quit"]
+      else # empty tree
+        [title || NAV_WS, "a add project · e settings", "q quit"]
+      end
+    end
+
     def render
       rows, cols = winsize
-      foot = @home ? HOME_FOOTER : FOOTER
+      foot = footer
       height = rows - foot.size
       scroll(height)
 

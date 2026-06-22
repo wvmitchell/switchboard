@@ -261,6 +261,137 @@ module Switchboard
                       "off-focus, the cursor row renders like any other"
     end
 
+    # --- footer: context-sensitive legend ------------------------------------
+    # The legend adapts to the highlighted row's kind, but stays three lines so
+    # the tree never reflows as the cursor crosses the project/workspace boundary.
+
+    def test_footer_for_a_project_row_foregrounds_remove
+      sb = sidebar(nodes: [proj("app"), ws("a")], cursor: 0)
+      foot = sb.send(:footer)
+      assert_equal 3, foot.size, "always three lines — the tree must not reflow on cursor move"
+      assert_equal Sidebar::NAV_PROJ, foot[0]
+      assert foot.any? { |l| l.include?("d remove") }, "d removes the project"
+      refute foot.any? { |l| l.include?("o PR") },   "PR is workspace-only"
+      refute foot.any? { |l| l.include?("r rename") }, "rename is workspace-only"
+    end
+
+    def test_footer_for_a_workspace_row_shows_the_per_workspace_keys
+      sb = sidebar(nodes: [proj("app"), ws("a")], cursor: 1)
+      foot = sb.send(:footer)
+      assert_equal 3, foot.size
+      assert_equal Sidebar::NAV_WS, foot[0]
+      assert foot.any? { |l| l.include?("d delete") }, "d deletes the worktree"
+      assert foot.any? { |l| l.include?("o PR") }
+      assert foot.any? { |l| l.include?("r rename") }
+    end
+
+    # A branch child row only advertises keys that actually fire on it (↵ switch,
+    # o PR) — d/r guard on `ws`, so they'd be no-ops and are dropped.
+    def test_footer_for_a_branch_row_drops_the_workspace_only_keys
+      sb = sidebar(nodes: [proj("app"), ws("a"), br("feat")], cursor: 2)
+      foot = sb.send(:footer)
+      assert_equal 3, foot.size
+      assert_equal Sidebar::NAV_BR, foot[0]
+      assert foot.any? { |l| l.include?("o PR") }, "opening the branch's PR works"
+      refute foot.any? { |l| l.include?("d delete") }, "delete no-ops on a branch row"
+      refute foot.any? { |l| l.include?("r rename") }, "rename no-ops on a branch row"
+    end
+
+    def test_footer_in_home_keeps_the_title_but_adapts_the_actions
+      sb = sidebar(nodes: [proj("app"), ws("a")], cursor: 0)
+      sb.instance_variable_set(:@home, true)
+      assert_equal Sidebar::HOME_TITLE, sb.send(:footer)[0], "home keeps its title on a project row"
+      assert sb.send(:footer).any? { |l| l.include?("d remove") }, "...with project actions below"
+
+      sb.instance_variable_set(:@cursor, 1) # workspace row
+      assert_equal Sidebar::HOME_TITLE, sb.send(:footer)[0], "...and on a workspace row"
+      assert sb.send(:footer).any? { |l| l.include?("d delete") }, "...with workspace actions below"
+    end
+
+    def test_footer_on_an_empty_tree_still_invites_a_first_project
+      foot = sidebar(nodes: []).send(:footer)
+      assert_equal 3, foot.size
+      assert foot.any? { |l| l.include?("a add") }, "the fresh-install state still shows how to add"
+    end
+
+    # --- remove: d routes by row kind ----------------------------------------
+
+    def test_remove_routes_project_to_remove_project_and_workspace_to_delete
+      sb = sidebar(nodes: [proj("app"), ws("a")], cursor: 0)
+      routed = nil
+      sb.define_singleton_method(:remove_project) { |node| routed = [:project, node.project] }
+      sb.define_singleton_method(:delete) { routed = [:delete] }
+
+      sb.send(:remove)
+      assert_equal [:project, "app"], routed, "a project row removes the project"
+
+      sb.instance_variable_set(:@cursor, 1) # workspace row
+      sb.send(:remove)
+      assert_equal [:delete], routed, "a workspace row deletes the worktree"
+    end
+
+    # --- remove_project: confirm -> unregister + close sessions ----------------
+
+    def test_remove_project_unregisters_and_closes_sessions_when_confirmed
+      File.write(Config.path, YAML.dump("projects" => [{ "name" => "app", "path" => "/repos/app" }]))
+      sb = sidebar(nodes: [proj("app")], cursor: 0)
+      sb.instance_variable_set(:@config, Config.new)
+      killed = nil
+      reloaded = false
+      sb.define_singleton_method(:reload) { |**| reloaded = true }
+      stub_method(Tmux, :session_of, ->(*) { "sb/home" }) do            # not in the project: no eject
+        stub_method(Tmux, :kill_project_sessions, ->(name) { killed = name; [] }) do
+          stub_method(sb, :confirm, ->(*) { true }) do
+            sb.send(:remove_project, proj("app"))
+          end
+        end
+      end
+      assert_equal "app", killed, "closes the project's sessions"
+      assert reloaded, "refreshes the tree in-process"
+      refute Config.new.project("app"), "and unregisters it from the config"
+    end
+
+    def test_remove_project_is_a_noop_when_not_confirmed
+      File.write(Config.path, YAML.dump("projects" => [{ "name" => "app", "path" => "/repos/app" }]))
+      sb = sidebar(nodes: [proj("app")], cursor: 0)
+      sb.instance_variable_set(:@config, Config.new)
+      killed = false
+      stub_method(Tmux, :kill_project_sessions, ->(*) { killed = true; [] }) do
+        stub_method(sb, :confirm, ->(*) { false }) do
+          sb.send(:remove_project, proj("app"))
+        end
+      end
+      refute killed, "an unconfirmed remove closes nothing"
+      assert Config.new.project("app"), "...and keeps the project registered"
+    end
+
+    # Removing the project whose session we're in would kill this sidebar's own
+    # pane: fall back to home first, poke home to re-read the smaller config
+    # (its git reload won't show it), and DON'T reload in-process — home drives.
+    def test_remove_project_ejects_to_home_when_removing_the_session_were_in
+      File.write(Config.path, YAML.dump("projects" => [{ "name" => "app", "path" => "/repos/app" }]))
+      sb = sidebar(nodes: [proj("app")], cursor: 0)
+      sb.instance_variable_set(:@config, Config.new)
+      went_home = false
+      poked = nil
+      reloaded = false
+      sb.define_singleton_method(:reload) { |**| reloaded = true }
+      stub_method(Tmux, :session_of, ->(*) { "sb/app/feat" }) do        # we're inside the project
+        stub_method(Tmux, :go_home, ->(*) { went_home = true }) do
+          stub_method(Tmux, :poke_sidebar_of, ->(s, **kw) { poked = [s, kw] }) do
+            stub_method(Tmux, :kill_project_sessions, ->(*) { [] }) do
+              stub_method(sb, :confirm, ->(*) { true }) do
+                sb.send(:remove_project, proj("app"))
+              end
+            end
+          end
+        end
+      end
+      assert went_home, "removing the session we're in falls back to home first"
+      assert_equal [Tmux::HOME, { reload_config: true }], poked, "pokes home to re-read the smaller config"
+      refute reloaded, "the dying sidebar doesn't reload in-process"
+    end
+
     # --- reconcile_on_launch (issue #7) --------------------------------------
 
     def test_reconcile_on_launch_prunes_with_the_sidebar_config

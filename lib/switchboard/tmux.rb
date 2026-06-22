@@ -214,6 +214,27 @@ module Switchboard
       names
     end
 
+    # Kill every live session belonging to one project — its `sb/<project>/`
+    # prefix, one leaf deep (the same ownership test Reconcile.owned? uses, so a
+    # project whose name is a prefix of another's never over-kills). Used when a
+    # project is removed from the registry: its sessions would otherwise be
+    # orphaned for good (prune reconciles only against *registered* projects, so
+    # nothing left would ever reach them). The current session goes LAST, like
+    # kill_all, so removing a project from inside one of its own worktrees doesn't
+    # orphan its siblings. Returns the names it killed; [] when there's no server.
+    def kill_project_sessions(project)
+      live = sessions
+      return [] if live.nil? || live.empty?
+
+      prefix = session_prefix(project)
+      names = live.map { |s| s[:name] }
+                  .select { |n| n.start_with?(prefix) && !n[prefix.length..].include?("/") }
+      current = session_of
+      (names - [current]).each { |name| kill_session(name) }
+      kill_session(current) if current && names.include?(current)
+      names
+    end
+
     # Rename a worktree's session in place — keeps any running agent/shell (and
     # its conversation) alive. Used on workspace rename.
     def rename_session(old_name, new_name)

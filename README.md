@@ -51,13 +51,18 @@ a        add a project (register a local repo or clone a URL)
 n        create a new worktree in the highlighted project
 o        open the highlighted PR in the browser (gh pr view --web)
 r        rename a workspace
-d        delete a workspace
+d        remove the highlighted row — delete a workspace, or unregister a project (closing its sessions)
 e        edit config.yml ($EDITOR, full-size in the home session; returns you on quit)
 q        quit switchboard — tear down every sb/ session (asks to confirm first)
 ```
 
 Showing and hiding the sidebar is `prefix-s` — one verb, from any pane: hidden →
 summon it and drop you in the tree, visible → dismiss it (session-wide).
+
+The legend at the bottom of the pane is context-sensitive: it shows the keys
+that apply to the highlighted row, so a project header foregrounds `d remove`
+(unregister) while a workspace shows the per-workspace keys (`o` PR, `r` rename,
+`d` delete).
 
 ## Install
 
@@ -97,6 +102,7 @@ bin/switchboard init            # create an empty config (no projects yet)
 bin/switchboard home            # attach to the persistent home session (anchor + settings)
 bin/switchboard config          # edit config.yml in $EDITOR (per-project settings)
 bin/switchboard add N P [B]     # register an existing repo (name, path, base ref)
+bin/switchboard remove N        # unregister a project (its repo on disk stays; alias: rm)
 bin/switchboard clone U [N]     # clone a repo under projects_root, then register it
 bin/switchboard                 # start: attach home from a shell, or toggle the sidebar inside tmux (alias: sb)
 bin/switchboard refresh         # re-fetch PR badges from gh

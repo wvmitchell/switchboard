@@ -34,6 +34,17 @@ module Switchboard
       [Config.add_project(name, repo, base), nil]
     end
 
+    # Unregister a project by name — the inverse of register, and the keyboard
+    # path to removing a project without hand-editing config.yml. Pure registry
+    # surgery: the repo and its worktrees on disk are untouched (callers own any
+    # session teardown). Returns [entry, nil] on success or [nil, error_message]
+    # when no project by that name is registered.
+    def unregister(config, name)
+      return [nil, "no such project: #{name}"] unless config.project(name)
+
+      [Config.remove_project(name), nil]
+    end
+
     # Clone a URL under the projects root, then register the result. Returns
     # [entry, nil] on success or [nil, error_message].
     def clone(config, url, name: nil, base: nil)

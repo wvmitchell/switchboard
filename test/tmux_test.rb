@@ -123,6 +123,45 @@ module Switchboard
       assert_empty order, "nothing killed when tmux is unreachable"
     end
 
+    # --- kill_project_sessions: only one project's sessions, current LAST -----
+
+    def test_kill_project_sessions_kills_only_that_projects_sessions
+      live = [{ name: "sb/app/x", created: 1 }, { name: "sb/app/y", created: 2 },
+              { name: "sb/other/z", created: 3 }, { name: "sb/home", created: 4 }]
+      order = []
+      result = with_tmux_stubs(live, current: nil, recorder: ->(name) { order << name }) do
+        Tmux.kill_project_sessions("app")
+      end
+      assert_equal %w[sb/app/x sb/app/y], order, "leaves other projects and home alone"
+      assert_equal %w[sb/app/x sb/app/y], result
+    end
+
+    def test_kill_project_sessions_kills_current_last
+      live = [{ name: "sb/app/x", created: 1 }, { name: "sb/app/here", created: 2 }]
+      order = []
+      with_tmux_stubs(live, current: "sb/app/here", recorder: ->(name) { order << name }) do
+        Tmux.kill_project_sessions("app")
+      end
+      assert_equal %w[sb/app/x sb/app/here], order, "the session we're in dies last"
+    end
+
+    # The trailing-slash prefix means project "app" never claims "app2"'s sessions.
+    def test_kill_project_sessions_does_not_over_kill_a_prefix_sibling
+      live = [{ name: "sb/app/x", created: 1 }, { name: "sb/app2/y", created: 2 }]
+      order = []
+      with_tmux_stubs(live, current: nil, recorder: ->(name) { order << name }) do
+        Tmux.kill_project_sessions("app")
+      end
+      assert_equal %w[sb/app/x], order, "app2 is a different project, untouched"
+    end
+
+    def test_kill_project_sessions_is_empty_when_no_server
+      result = with_tmux_stubs(nil, current: nil, recorder: ->(_n) {}) do
+        Tmux.kill_project_sessions("app")
+      end
+      assert_empty result
+    end
+
     # --- toggle_sidebar: prefix-s is the one summon/dismiss verb --------------
 
     # Visible in the current window → dismiss session-wide: persist @sb_sidebar

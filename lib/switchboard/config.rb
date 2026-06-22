@@ -60,6 +60,32 @@ module Switchboard
       entry
     end
 
+    # Drop a project from the on-disk config by name, preserving the rest of the
+    # raw structure (other projects' unexpanded paths and per-project keys). The
+    # inverse of add_project, and the single config-write path behind the
+    # sidebar's `d`-on-a-project and the CLI `remove`, so the two never drift.
+    # Reads the file fresh (never a cached @data), so it's correct even when a
+    # long-lived sidebar's config is stale. Returns the removed raw entry, or nil
+    # when no project by that name is registered (or there's no config yet).
+    def self.remove_project(name)
+      file = path
+      return nil unless File.exist?(file)
+
+      data = YAML.safe_load_file(file) || {}
+      projects = data["projects"]
+      return nil unless projects.is_a?(Array)
+
+      # Match by index, not Array#delete(entry): delete removes every element
+      # equal to the found hash, so two hand-edited entries with identical
+      # content would both vanish on one removal. Drop exactly the first match.
+      idx = projects.find_index { |p| p.is_a?(Hash) && p["name"] == name }
+      return nil unless idx
+
+      removed = projects.delete_at(idx)
+      File.write(file, YAML.dump(data))
+      removed
+    end
+
     def initialize(file = self.class.path)
       @file = file
       @data = File.exist?(file) ? (YAML.safe_load_file(file) || {}) : {}

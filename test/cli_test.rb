@@ -284,6 +284,32 @@ module Switchboard
       end
     end
 
+    # --- remove (unregister a project; rm alias) ------------------------------
+
+    def test_remove_unregisters_a_project
+      File.write(Config.path, YAML.dump("projects" => [{ "name" => "app", "path" => "/repos/app" }]))
+      out = capture { CLI.run(["remove", "app"]) }
+      assert_includes out, "removed app"
+      refute Config.new.project("app"), "the project is gone from the config"
+    end
+
+    def test_remove_warns_on_unknown_project
+      Config.scaffold
+      err = capture_err { CLI.run(["remove", "ghost"]) }
+      assert_match(/no such project/, err)
+    end
+
+    def test_remove_requires_a_name
+      err = capture_err { CLI.run(["remove"]) }
+      assert_match(/usage: switchboard remove/, err)
+    end
+
+    def test_rm_is_an_alias_for_remove
+      File.write(Config.path, YAML.dump("projects" => [{ "name" => "app", "path" => "/repos/app" }]))
+      capture { CLI.run(["rm", "app"]) }
+      refute Config.new.project("app")
+    end
+
     # CLI memoizes its Config; clear it so each test reads its own sandbox config.
     def teardown
       CLI.instance_variable_set(:@config, nil)
