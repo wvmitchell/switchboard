@@ -221,6 +221,27 @@ module Switchboard
                       "off-focus, the cursor row renders like any other"
     end
 
+    # --- reconcile_on_launch (issue #7) --------------------------------------
+
+    def test_reconcile_on_launch_prunes_with_the_sidebar_config
+      sb = sidebar
+      cfg = sb.instance_variable_get(:@config)
+      got = :unset
+      stub_method(Reconcile, :prune, ->(c, **) { got = c; nil }) do
+        sb.send(:reconcile_on_launch)
+      end
+      assert_same cfg, got, "reconcile_on_launch passes the sidebar's @config to prune"
+    end
+
+    def test_reconcile_on_launch_swallows_errors
+      sb = sidebar
+      stub_method(Reconcile, :prune, ->(*) { raise "tmux exploded" }) do
+        assert_nil sb.send(:reconcile_on_launch), "a prune failure must never crash the sidebar"
+      end
+    end
+
+    # --- live-state icons (#23) ----------------------------------------------
+
     def test_plain_shows_live_state_glyph_for_workspaces
       sb = sidebar(agents: { "/wt/a" => :thinking }, pulse: 0)
       assert_equal "  #{Sidebar::SPIN_FRAMES[0]} a", sb.send(:plain, ws("a", path: "/wt/a")),

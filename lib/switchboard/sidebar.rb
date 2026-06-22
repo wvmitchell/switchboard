@@ -106,6 +106,7 @@ module Switchboard
       pin_width
       render  # clear + show the pane instantly (empty)
       reload  # rebuild + agents + locate "you are here"
+      reconcile_on_launch if @home && @config.prune_on_launch?
       @was_visible = true
       @last_scan = monotonic
       loop do
@@ -204,6 +205,18 @@ module Switchboard
       refresh_agents
       locate
       refresh_stale_prs
+    end
+
+    # Once, when the HOME sidebar starts (the relaunch anchor): prune orphaned
+    # sb/ sessions a deleted/moved/crashed worktree left behind, so they don't
+    # silently survive a relaunch. Home is always valid, so this can't kill our
+    # own pane; orphans don't affect the git-built tree, so no re-render needed.
+    # Best-effort and silent — we're mid-render, and a tmux/git hiccup must never
+    # stop the sidebar from drawing.
+    def reconcile_on_launch
+      Reconcile.prune(@config)
+    rescue StandardError
+      nil
     end
 
     # Which workspace is this sidebar's session in? Matched by the sidebar's

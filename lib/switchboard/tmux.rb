@@ -9,6 +9,11 @@ module Switchboard
     SIDEBAR_TITLE = "sb-sidebar"
     SIDEBAR_WIDTH = 40
     HOME = "sb/home" # the persistent anchor session (see go_home)
+    # tmux forbids "." and ":" in session names; whitespace would split our
+    # space-delimited parses. One regex, shared by session_name + session_prefix
+    # so the two can't drift (reconcile matches a session to its project by
+    # prefix, so identical sanitization is load-bearing).
+    SANITIZE = /[.:\s]/
 
     module_function
 
@@ -55,9 +60,39 @@ module Switchboard
       File.expand_path(ENV["HOME"] || Dir.pwd)
     end
 
-    # tmux forbids "." and ":" in session names.
     def session_name(worktree)
-      "sb/#{worktree.project}/#{worktree.leaf}".gsub(/[.:\s]/, "-")
+      "sb/#{worktree.project}/#{worktree.leaf}".gsub(SANITIZE, "-")
+    end
+
+    # The session-name prefix shared by all of a project's worktrees. Reconcile
+    # uses it to tell which live sessions belong to a project. Sanitized the same
+    # way as session_name (per-char), so session_name always starts with it; the
+    # trailing "/" keeps "app" from matching "app2".
+    def session_prefix(project)
+      "sb/#{project}/".gsub(SANITIZE, "-")
+    end
+
+    # Every live switchboard session as {name:, created:} (epoch seconds), or nil
+    # if tmux is unreachable (no server) — distinct from [] (server up, none ours)
+    # so callers can report honestly. The `-F` format is single-quoted with the
+    # interpolation escaped (#\{...}); a bare #{} would be Ruby string
+    # interpolation, not a tmux format, and silently yield junk.
+    def sessions
+      raw = `tmux list-sessions -F '#\{session_name}\t#\{session_created}' 2>/dev/null`
+      return nil unless $?.success?
+
+      sb_sessions(raw)
+    end
+
+    # Pure filter/parse over `tmux list-sessions` output: keep only sb/ sessions,
+    # parse the trailing epoch. Split out so it's unit-testable without a server.
+    def sb_sessions(raw)
+      raw.to_s.lines.filter_map do |line|
+        name, created = line.chomp.split("\t", 2)
+        next if name.nil? || !name.start_with?("sb/")
+
+        { name: name, created: created.to_i }
+      end
     end
 
     def ensure_session(name, dir, start = nil)
@@ -100,7 +135,29 @@ module Switchboard
 
     # Kill a worktree's session (if any) — used when deleting a workspace.
     def kill(worktree)
-      system("tmux", "kill-session", "-t", "=#{session_name(worktree)}", out: File::NULL, err: File::NULL)
+      kill_session(session_name(worktree))
+    end
+
+    # Kill a session by exact name. The "=" pins an exact match — a bare name is
+    # a tmux prefix match, which would over-kill. Array form (no shell) so the
+    # name can't inject. The single kill path for worktree delete, prune, and quit.
+    def kill_session(name)
+      system("tmux", "kill-session", "-t", "=#{name}", out: File::NULL, err: File::NULL)
+    end
+
+    # Tear down every switchboard session, the current one LAST so running this
+    # from inside a session doesn't orphan the rest (our own session dies, taking
+    # this process with it, only after the others are gone). Returns the names it
+    # killed; [] when there's no server. The tested form of the README snippet.
+    def kill_all
+      live = sessions
+      return [] if live.nil? || live.empty?
+
+      names = live.map { |s| s[:name] }
+      current = session_of
+      (names - [current]).each { |name| kill_session(name) }
+      kill_session(current) if current && names.include?(current)
+      names
     end
 
     # Rename a worktree's session in place — keeps any running agent/shell (and

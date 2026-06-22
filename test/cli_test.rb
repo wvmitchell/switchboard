@@ -63,6 +63,90 @@ module Switchboard
       assert_nil CLI.refresh("ghost")
     end
 
+    # --- prune / quit (Reconcile + Tmux stubbed so no real tmux is touched) ---
+
+    def report(reachable: true, sb_count: 0, orphans: [])
+      Reconcile::Report.new(reachable: reachable, sb_count: sb_count, orphans: orphans)
+    end
+
+    def test_prune_passes_dry_run_for_dry_run_and_n_flags
+      rep = report # hoist: inside the stub, self is Reconcile, not the test
+      [["--dry-run"], ["-n"]].each do |args|
+        captured = :unset
+        stub_method(Reconcile, :prune, ->(_cfg, dry_run: false, **) { captured = dry_run; rep }) do
+          capture { CLI.prune(args) }
+        end
+        assert_equal true, captured, "#{args.inspect} should request a dry run"
+      end
+    end
+
+    def test_prune_bare_is_not_a_dry_run
+      rep = report
+      captured = :unset
+      stub_method(Reconcile, :prune, ->(_cfg, dry_run: false, **) { captured = dry_run; rep }) do
+        capture { CLI.prune([]) }
+      end
+      assert_equal false, captured
+    end
+
+    def test_quit_reports_closed_count
+      stub_method(Tmux, :kill_all, -> { ["sb/a/x", "sb/home"] }) do
+        assert_includes capture { CLI.quit }, "closed 2 switchboard session(s)"
+      end
+    end
+
+    def test_quit_when_nothing_to_close
+      stub_method(Tmux, :kill_all, -> { [] }) do
+        assert_includes capture { CLI.quit }, "no switchboard sessions to close"
+      end
+    end
+
+    # --- prune_summary: honest reporting (F5) + dry-run next step (DX-2) ------
+
+    def test_prune_summary_distinguishes_unreachable_from_empty
+      assert_equal "no tmux server — nothing to reconcile", CLI.prune_summary(report(reachable: false), false)
+      assert_equal "no sb/ sessions found", CLI.prune_summary(report(sb_count: 0), false)
+      assert_equal "3 sb/ session(s), none orphaned", CLI.prune_summary(report(sb_count: 3), false)
+    end
+
+    def test_prune_summary_kill_lists_orphans_without_next_step
+      out = CLI.prune_summary(report(sb_count: 3, orphans: ["sb/app/gone"]), false)
+      assert_includes out, "killed 1 orphaned session(s):"
+      assert_includes out, "  sb/app/gone"
+      refute_includes out, "run `switchboard prune`"
+    end
+
+    def test_prune_summary_dry_run_appends_next_step
+      out = CLI.prune_summary(report(sb_count: 3, orphans: ["sb/app/gone"]), true)
+      assert_includes out, "would kill 1 orphaned session(s):"
+      assert_includes out, "run `switchboard prune` to remove these"
+    end
+
+    # --- doctor_sessions: actionable orphan line (DX-1), three branches --------
+
+    def test_doctor_sessions_is_silent_when_unreachable
+      rep = report(reachable: false)
+      stub_method(Reconcile, :prune, ->(_cfg, **) { rep }) do
+        assert_equal "", capture { CLI.send(:doctor_sessions) }.strip
+      end
+    end
+
+    def test_doctor_sessions_reports_clean_when_no_orphans
+      rep = report(reachable: true, sb_count: 3, orphans: [])
+      stub_method(Reconcile, :prune, ->(_cfg, **) { rep }) do
+        assert_includes capture { CLI.send(:doctor_sessions) }, "no orphaned sb/ sessions"
+      end
+    end
+
+    def test_doctor_sessions_flags_orphans_with_the_fix_command
+      rep = report(reachable: true, sb_count: 3, orphans: ["sb/app/gone"])
+      stub_method(Reconcile, :prune, ->(_cfg, **) { rep }) do
+        out = capture { CLI.send(:doctor_sessions) }
+        assert_includes out, "1 orphaned sb/ session(s)"
+        assert_includes out, "switchboard prune"
+      end
+    end
+
     # CLI memoizes its Config; clear it so each test reads its own sandbox config.
     def teardown
       CLI.instance_variable_set(:@config, nil)

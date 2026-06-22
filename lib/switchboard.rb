@@ -14,6 +14,7 @@ require_relative "switchboard/creator"
 require_relative "switchboard/registrar"
 require_relative "switchboard/installer"
 require_relative "switchboard/tmux"
+require_relative "switchboard/reconcile"
 require_relative "switchboard/sidebar"
 require_relative "switchboard/cli"
 

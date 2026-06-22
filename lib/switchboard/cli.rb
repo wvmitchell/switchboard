@@ -26,6 +26,8 @@ module Switchboard
       when "disable-hooks"     then disable_hooks(argv[1])
       when "sidebar"           then Sidebar.run
       when "poke-sidebar"      then Tmux.poke_current_sidebar
+      when "prune"             then prune(argv.drop(1))
+      when "quit"              then quit
       when "doctor"            then doctor
       when "version", "-v", "--version" then puts("switchboard #{VERSION}")
       when "help", "-h", "--help"       then help
@@ -98,6 +100,37 @@ module Switchboard
       elsif ENV["TMUX"]
         Tmux.poke_current_sidebar
       end
+    end
+
+    # Reconcile sb/ sessions against the worktrees git has, killing the orphans a
+    # deleted/moved/crashed worktree left behind. `--dry-run`/`-n` only reports.
+    # No tmux-guard: this talks to the tmux *server*, so cleaning stale sessions
+    # from a plain shell (the usual recovery context) must work.
+    def prune(args)
+      dry = args.include?("--dry-run") || args.include?("-n")
+      puts prune_summary(Reconcile.prune(config, dry_run: dry), dry)
+    end
+
+    # Format a reconcile report for a human. Distinguishes "couldn't reach tmux"
+    # from "nothing orphaned" so a failed shell-out never reads as success, and
+    # (dry run) ends with the next step. (doctor's orphan line reuses the same
+    # Reconcile.prune Report, but formats its own row — not this method.)
+    def prune_summary(report, dry)
+      return "no tmux server — nothing to reconcile" unless report.reachable
+      return "no sb/ sessions found" if report.sb_count.zero?
+      return "#{report.sb_count} sb/ session(s), none orphaned" if report.orphans.empty?
+
+      verb = dry ? "would kill" : "killed"
+      lines = ["#{verb} #{report.orphans.size} orphaned session(s):", *report.orphans.map { |n| "  #{n}" }]
+      lines << "run `switchboard prune` to remove these" if dry
+      lines.join("\n")
+    end
+
+    # Tear down switchboard: kill every sb/ session, the one you're in last (so
+    # it never orphans the others). Like prune, works outside tmux.
+    def quit
+      killed = Tmux.kill_all
+      puts(killed.empty? ? "no switchboard sessions to close" : "closed #{killed.size} switchboard session(s)")
     end
 
     # Create an empty config (no projects yet). Add your first project from the
@@ -181,6 +214,22 @@ module Switchboard
       puts row(exists, exists ? "config: #{Config.path}" : "no config — run `switchboard install`")
       doctor_install
       doctor_hooks
+      doctor_sessions
+    end
+
+    # Surface orphaned sessions where the problem is detected, with the fix
+    # inline (the sidebar tree is git-worktree-based, so orphan sessions never
+    # show there — doctor is the discovery surface). Silent outside tmux / with
+    # no server: nothing to assert.
+    def doctor_sessions
+      report = Reconcile.prune(config, dry_run: true)
+      return unless report.reachable
+
+      if report.orphans.empty?
+        puts row(true, "no orphaned sb/ sessions")
+      else
+        puts row(false, "#{report.orphans.size} orphaned sb/ session(s) — run `switchboard prune` (--dry-run to preview)")
+      end
     end
 
     # Report install wiring: PATH symlink, the tmux marker block, and a tmux new
@@ -226,6 +275,8 @@ module Switchboard
           switchboard refresh      re-fetch PR badges from gh (normally automatic)
           switchboard enable-hooks [P]   wire agent-state dots in a worktree (default: cwd)
           switchboard disable-hooks [P]  remove them from that worktree
+          switchboard prune        kill orphaned sb/ sessions (--dry-run / -n previews)
+          switchboard quit         close ALL switchboard sessions (full teardown — kills the one you're in too)
           switchboard doctor       check dependencies + config
           switchboard help         show this help
 

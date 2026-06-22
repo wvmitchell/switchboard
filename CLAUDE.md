@@ -25,6 +25,8 @@ bin/switchboard doctor     # check that tmux/git/gh + config + install wiring ex
 bin/switchboard init       # create ~/.config/switchboard/config.yml (empty; grown by the add-project flow)
 bin/switchboard config     # open config.yml in $EDITOR (sidebar `e` does the same)
 bin/switchboard sidebar    # run the persistent sidebar standalone (normally tmux-spawned)
+bin/switchboard prune      # kill orphaned sb/ sessions (reconcile vs git worktrees; --dry-run/-n previews)
+bin/switchboard quit       # close ALL sb/ sessions (full teardown; current session last)
 bin/test                   # run the stdlib-Minitest suite (offline; bin/test <file> for one)
 ```
 

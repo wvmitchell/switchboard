@@ -3,6 +3,30 @@
 Deferred work, captured so the reasoning isn't lost. Each item says what, why,
 and where to start.
 
+## Session lifecycle (issue #7) follow-ups
+
+- **Validate/normalize project names at `add` time.** At registration, reject or
+  de-dupe names that collapse to the same sanitized session prefix, and strip
+  path-traversal characters. *Why:* `Tmux.session_name`/`session_prefix` sanitize
+  `. : whitespace` to `-`, so `app.dev` and `app-dev` collide on the `sb/app-dev/`
+  prefix. `Reconcile.prune` diffs against the **union** of all *verified* projects'
+  valid names, so two live colliding projects protect each other — but a
+  *de-registered* project colliding with a live one is unresolvable at prune time
+  (you can't tell the two apart by name). Same root cause as the raw-name path
+  traversal in `Creator` (`switchboard add` passes the project name straight into
+  `File.join(worktree_root, project_name, name)`). One validation point closes
+  both. *Start in:* `Registrar.register` / `CLI#add_project`; decide the collision
+  policy (reject vs auto-suffix). Low priority — the collision needs unusual names
+  and `prune --dry-run` makes it visible before anything is killed.
+
+- **`doctor` warns on missing/moved project repo dirs.** A `switchboard doctor`
+  line listing config projects whose `path` no longer exists. *Why:* `prune`
+  deliberately leaves unverifiable projects' sessions alone (so a moved repo never
+  nukes live sessions), but that means a stale config pointer is invisible — doctor
+  is the read-only place to surface it before orphans accumulate. *Start in:*
+  `CLI#doctor` (a `Dir.exist?` loop over `config.projects`). Independent of the
+  above.
+
 ## PR-badge refresh (issue #19) follow-ups
 
 - **Trailing/coalescing debounce.** The per-project background refresh uses a

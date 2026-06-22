@@ -102,6 +102,12 @@ module Switchboard
       refute cfg("agent_state_hooks" => false).agent_state_hooks?
     end
 
+    def test_prune_on_launch_on_by_default_off_only_when_false
+      assert cfg({}).prune_on_launch?
+      assert cfg("prune_on_launch" => true).prune_on_launch?
+      refute cfg("prune_on_launch" => false).prune_on_launch?
+    end
+
     def test_session_command_global_is_nil_unless_set
       assert_nil cfg({}).session_command
       assert_nil cfg("session_command" => "").session_command

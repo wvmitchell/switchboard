@@ -137,8 +137,42 @@ bind-key S run-shell "/path/to/switchboard/bin/switchboard home"
 
 Every workspace switchboard touches is its own tmux session named
 `sb/<project>/<leaf>`. To you it feels like one app, but under the hood it's many
-sessions. To close them all in one go — handy before relaunching from a clean
-slate, or to clear a stray session that's confusing the sidebar:
+sessions. A worktree deleted, moved, or renamed *outside* switchboard (or a crash)
+leaves its session behind — a stray that can confuse the switcher on relaunch. Two
+commands keep sessions and worktrees in sync:
+
+```sh
+switchboard prune            # kill orphaned sb/ sessions (worktree is gone)
+switchboard prune --dry-run  # ...or just show what would be killed (-n works too)
+switchboard quit             # close ALL sb/ sessions (full teardown; current last)
+```
+
+`prune` reconciles against `git worktree list`. A dry run shows you the orphans
+and the next step:
+
+```
+$ switchboard prune --dry-run
+would kill 2 orphaned session(s):
+  sb/app/old-feature
+  sb/api/spike
+run `switchboard prune` to remove these
+```
+
+Both commands work **outside tmux** too (they talk to the tmux server), so you can
+clean up from a plain shell after a crash. `prune` only touches projects it can
+**verify** — it's in your config and git can read it — so a project whose repo you
+moved or unregistered is left alone (its sessions survive; use `quit` for a full
+teardown). `switchboard doctor` flags orphans and points you at `prune`.
+
+**Auto-reconcile (on by default).** Since 0.8.0, landing on the home session
+(`switchboard home`) prunes orphaned `sb/` sessions for you, so stray sessions
+don't pile up. To turn it off, set `prune_on_launch: false` in your config.
+
+> **Upgrading to 0.8.0:** auto-reconcile is **on by default** — the first time you
+> hit `switchboard home` after upgrading, orphaned sessions get cleaned
+> automatically. That's intentional; opt out with `prune_on_launch: false`.
+
+If switchboard isn't on your `PATH`, the raw equivalent of `quit`:
 
 ```sh
 # Kill every switchboard session. Others first, then the one you're in last, so

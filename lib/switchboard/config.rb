@@ -80,6 +80,13 @@ module Switchboard
       @data.fetch("agent_state_hooks", true) != false
     end
 
+    # Whether the home sidebar reconciles (prunes orphaned sb/ sessions) on
+    # launch, so a deleted/moved/crashed worktree's session doesn't silently
+    # survive a relaunch. On by default; set `prune_on_launch: false` to opt out.
+    def prune_on_launch?
+      @data.fetch("prune_on_launch", true) != false
+    end
+
     # Optional prefix for new branches, e.g. "wvmitchell" -> wvmitchell/<name>.
     def branch_prefix
       prefix = @data["branch_prefix"]
