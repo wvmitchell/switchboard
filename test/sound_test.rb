@@ -48,6 +48,17 @@ module Switchboard
       assert_equal Sound.asset_dir, File.dirname(path)
     end
 
+    def test_resolve_variant_builtin_materializes_versioned_wav
+      path = Sound.resolve("train_2")
+      assert path.end_with?("train_2.v#{Sound::ASSET_VERSION}.wav")
+      assert File.exist?(path)
+      assert_equal Sound.asset_dir, File.dirname(path)
+    end
+
+    def test_status_ok_for_variant_builtin
+      assert_equal :ok, Sound.status("chime_3")
+    end
+
     def test_resolve_expands_path_specs
       assert_equal File.expand_path("/tmp/horn.wav"), Sound.resolve("/tmp/horn.wav")
       assert_equal File.expand_path("~/horn.aiff"), Sound.resolve("~/horn.aiff")
@@ -99,13 +110,25 @@ module Switchboard
     end
 
     def test_synth_amplitude_is_gentle
-      # Normalized to PEAK (~0.5 full scale), so it can't clip or startle.
+      # Normalized to PEAK (~0.5 full scale), so it can't clip or startle. Every
+      # built-in (defaults + variants) shares the gentle ceiling.
       ceiling = (Sound::PEAK * 32_767).ceil + 1
-      %w[train chime].each do |name|
+      Sound::BUILTINS.each do |name|
         peak = parse_wav(Sound.synth(name))[:samples].map(&:abs).max
         assert peak <= ceiling, "#{name} peak #{peak} exceeds gentle ceiling #{ceiling}"
         assert peak.positive?, "#{name} is silent"
       end
+    end
+
+    def test_all_builtins_synthesize_to_valid_wavs
+      Sound::BUILTINS.each { |name| assert_valid_wav Sound.synth(name) }
+    end
+
+    def test_builtins_are_acoustically_distinct
+      # train, chime, and the six variants must each be a different sound — no
+      # variant silently aliasing another (the whole point of having them).
+      wavs = Sound::BUILTINS.map { |name| Sound.synth(name) }
+      assert_equal wavs.size, wavs.uniq.size, "every built-in should be distinct"
     end
 
     # --- ensure_builtin: materialize once, cache -----------------------------

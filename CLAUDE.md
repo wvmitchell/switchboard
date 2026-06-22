@@ -144,7 +144,8 @@ The two defaults are **synthesized** (16-bit PCM WAV via `Array#pack`) and
 materialized into the XDG data dir on first use (atomic temp+rename, so racing
 sidebar processes never read a half-written file) — same self-healing trick as
 `Hook.ensure_script`, no shipped binary assets. Config resolves a state to a
-built-in name (`train`/`chime`), a file path, or a bare macOS system-sound name,
+built-in name (`train`/`chime`, plus the variants `train_1..3` / `chime_1..3`), a
+file path, or a bare macOS system-sound name,
 via `Config#sound_for` (global default + per-project override, like
 `session_command_for`; mute only via `enabled: false`). Bump
 `Sound::ASSET_VERSION` to regenerate the cached WAVs.

@@ -201,7 +201,7 @@ agent_state_hooks: true                  # optional: auto-wire agent-state dots 
 session_command: claude                  # optional: run this when a worktree's session is first created
 sounds:                                  # optional: completion sounds (on by default — see below)
   enabled: true                          #   set false to mute everything
-  done: train                            #   built-in (train|chime), a file path, or a macOS sound name
+  done: train                            #   built-in (train/chime, or train_1..3 / chime_1..3), a file path, or a macOS sound name
   waiting: chime
 projects:
   - name: myapp
@@ -282,6 +282,9 @@ The audible twin of the dots: when a hooked agent finishes a turn or asks for
 input, switchboard plays a short sound — so you can switch away to another
 workspace and still hear when one is **done** (a two-blast train horn) or
 **waiting** on you (a soft two-note chime). On by default, gentle by default.
+Each theme also ships three numbered variations — `train_1`/`train_2`/`train_3`
+and `chime_1`/`chime_2`/`chime_3` — selectable per state or project when you want
+a different timbre (e.g. a distinct horn per repo).
 
 The sounds are *synthesized* in pure Ruby and cached under
 `~/.local/share/switchboard/sounds/` on first use — nothing is shipped or
@@ -294,7 +297,7 @@ Configure globally or per project — the same shape as `session_command`:
 ```yaml
 sounds:
   enabled: true        # false mutes everything
-  done: train          # built-in (train|chime), a file path (~/horn.wav), or a macOS system sound (Glass)
+  done: train          # built-in (train/chime, or train_1..3 / chime_1..3), a file path (~/horn.wav), or a macOS system sound (Glass)
   waiting: chime
 projects:
   - name: myapp

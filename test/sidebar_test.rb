@@ -367,8 +367,12 @@ module Switchboard
       assert_equal ["/a"], Sidebar.completion_edges({ "/a" => :thinking }, { "/a" => :waiting })
     end
 
-    def test_appearing_at_done_is_an_edge
-      assert_equal ["/a"], Sidebar.completion_edges({}, { "/a" => :done })
+    def test_first_appearance_at_done_is_not_an_edge
+      # A path absent from prev is the agent announcing presence (SessionStart on a
+      # freshly-created workspace reports :done) — it seeds the baseline, it does
+      # not ring the completion sound or spawn a PR refresh. (The post-seed
+      # completion sequence is covered by the on_agent_edges integration tests.)
+      assert_empty Sidebar.completion_edges({}, { "/a" => :done })
     end
 
     def test_steady_done_is_not_an_edge
@@ -459,6 +463,39 @@ module Switchboard
         sb.send(:on_agent_edges) # must not raise — play_sounds_for rescues
       end
       assert_equal({ "/wt/a" => :waiting }, sb.instance_variable_get(:@prev_hook_states))
+    end
+
+    def test_completion_fires_after_a_worktree_ages_out_and_returns
+      # A tool running longer than PRESENCE_TTL ages the :thinking report out of
+      # the live scan; then Stop reports :done. The sticky baseline keeps
+      # :thinking, so the completion still fires — not mistaken for a first
+      # appearance and swallowed.
+      sb = sidebar(nodes: [ws("a", project: "app", path: "/wt/a")])
+      sb.instance_variable_set(:@prev_hook_states, nil)
+      sb.define_singleton_method(:maybe_refresh_prs) { |_p| }
+      sounds = []
+      stub_method(Sound, :play, ->(spec, **) { sounds << spec }) do
+        set_hook_states(sb, { "/wt/a" => :thinking }); sb.send(:on_agent_edges) # seen thinking
+        set_hook_states(sb, {});                       sb.send(:on_agent_edges) # aged out of scan
+        set_hook_states(sb, { "/wt/a" => :done });     sb.send(:on_agent_edges) # completes
+      end
+      assert_equal ["train"], sounds
+    end
+
+    def test_restarted_session_after_aging_out_stays_silent
+      # First appearance at :done (SessionStart) is silent and seeds the baseline.
+      # After it ages out, a NEW session's SessionStart :done matches the
+      # remembered :done — a non-change, so no spurious sound.
+      sb = sidebar(nodes: [ws("a", project: "app", path: "/wt/a")])
+      sb.instance_variable_set(:@prev_hook_states, nil)
+      sb.define_singleton_method(:maybe_refresh_prs) { |_p| }
+      sounds = []
+      stub_method(Sound, :play, ->(spec, **) { sounds << spec }) do
+        set_hook_states(sb, { "/wt/a" => :done }); sb.send(:on_agent_edges) # SessionStart (first)
+        set_hook_states(sb, {});                   sb.send(:on_agent_edges) # aged out
+        set_hook_states(sb, { "/wt/a" => :done }); sb.send(:on_agent_edges) # SessionStart (restart)
+      end
+      assert_empty sounds
     end
 
     def test_play_sounds_for_one_sound_per_worktree_mapped_by_state

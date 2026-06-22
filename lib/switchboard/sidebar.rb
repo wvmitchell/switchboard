@@ -63,12 +63,21 @@ module Switchboard
     end
 
     # Paths whose agent state newly entered a resting state (:done/:waiting) since
-    # the previous scan — i.e. a hooked agent just finished a turn. Steady resting
-    # states and transitions back to :thinking don't count. Pure, so the edge
-    # logic is unit-testable. (Drives the PR-refresh trigger; issue #19.)
+    # the previous scan — i.e. a hooked agent just finished a turn. A path we've
+    # never seen before (prev has no key for it) is the agent *announcing
+    # presence*, not completing: SessionStart reports :done the instant a
+    # freshly-created workspace's Claude is ready, and that must NOT ring the
+    # completion sound (or spawn a PR refresh for a branch that has no PR yet). So
+    # a first appearance only seeds the baseline; the next real Stop is the edge.
+    # The caller keeps `prev` sticky across scans (on_agent_edges merges), so
+    # "first appearance" means truly never-seen this process — a worktree that
+    # merely aged out of the live scan keeps its baseline and still fires on
+    # completion. Steady resting states and transitions back to :thinking don't
+    # count either. Pure, so the edge logic is unit-testable. (Drives the sound +
+    # PR-refresh triggers; issue #19.)
     def self.completion_edges(prev, now)
       now.keys.select do |path|
-        %i[done waiting].include?(now[path]) && prev[path] != now[path]
+        %i[done waiting].include?(now[path]) && prev.key?(path) && prev[path] != now[path]
       end
     end
 
@@ -290,7 +299,15 @@ module Switchboard
         play_sounds_for(edges, now)
       end
     ensure
-      @prev_hook_states = now
+      # Merge, not replace: keep a STICKY baseline. A worktree whose hook report
+      # ages out of `now` (a span longer than PRESENCE_TTL with no hook event —
+      # e.g. one tool that runs longer than the TTL) must retain its last-known
+      # state, or its eventual completion would read as a brand-new first
+      # appearance (prev.key? false) and be silently swallowed. Stickiness also
+      # keeps a restarted session quiet: SessionStart's :done matches the
+      # remembered :done, so it's a non-change, not an edge. Bounded by worktrees
+      # seen this process — tiny; never pruned.
+      @prev_hook_states = (@prev_hook_states || {}).merge(now)
     end
 
     # Edge paths -> owning projects -> debounced PR refresh (deduped per project).

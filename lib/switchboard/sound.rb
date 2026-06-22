@@ -17,10 +17,12 @@ module Switchboard
   module Sound
     module_function
 
-    # Built-in (synthesized) sound names config may reference. Bump ASSET_VERSION
-    # when the synthesis changes so an upgrade regenerates the cached WAV — the
+    # Built-in (synthesized) sound names config may reference. `train`/`chime` are
+    # the defaults; the numbered names are alternate variations on each theme,
+    # selectable per state or project (e.g. `done: train_2`). Bump ASSET_VERSION
+    # when any synthesis changes so an upgrade regenerates the cached WAVs — the
     # version rides in the filename, so a stale file is simply never referenced.
-    BUILTINS = %w[train chime].freeze
+    BUILTINS = %w[train train_1 train_2 train_3 chime chime_1 chime_2 chime_3].freeze
     ASSET_VERSION = 1
     RATE = 22_050 # Hz, mono — ample for these blips, keeps the cached files tiny
     PEAK = 0.5    # baked-in amplitude: clearly audible, gentle enough for on-by-default
@@ -136,13 +138,22 @@ module Switchboard
 
     # --- synthesis -----------------------------------------------------------
 
-    # WAV bytes for a built-in. train = two horn blasts over a tense minor-ish
-    # cluster (the Conductor nod); chime = a soft ascending two-note bell.
+    # WAV bytes for a built-in, or nil for an unknown name. `train`/`chime` are the
+    # originals; the numbered names are variations on each theme (different chord,
+    # rhythm, or direction) so completions can sound distinct per project.
     def synth(name)
-      case name
-      when "train" then wav(train)
-      when "chime" then wav(chime)
-      end
+      buf =
+        case name
+        when "train"   then train
+        when "train_1" then train_1
+        when "train_2" then train_2
+        when "train_3" then train_3
+        when "chime"   then chime
+        when "chime_1" then chime_1
+        when "chime_2" then chime_2
+        when "chime_3" then chime_3
+        end
+      buf && wav(buf)
     end
 
     # Two short horn blasts. A diminished-7th-ish cluster with a few harmonics
@@ -152,10 +163,59 @@ module Switchboard
       normalize(blast(chord, 0.22) + silence(0.06) + blast(chord, 0.5))
     end
 
+    # train_1 — a warm A-dominant horn, short-short-long: a level-crossing signal.
+    def train_1
+      chord = [220.0, 277.18, 329.63] # A3 C#4 E4
+      horn([chord, 0.18], [chord, 0.18], [chord, 0.5])
+    end
+
+    # train_2 — a rising two-tone whistle: a low blast lifting to a higher one.
+    def train_2
+      low  = [277.18, 349.23, 440.0] # C#4 F4 A4
+      high = [349.23, 440.0, 554.37] # F4 A4 C#5
+      horn([low, 0.22], [high, 0.5])
+    end
+
+    # train_3 — a doppler pass: a bright blast dropping to a deeper, longer one.
+    def train_3
+      high = [415.30, 523.25, 622.25] # G#4 C5 D#5
+      low  = [261.63, 329.63, 392.0]  # C4 E4 G4
+      horn([high, 0.3], [low, 0.5])
+    end
+
     # Ascending two-note bell (G5 -> C6): a calm "your turn" that won't be
     # mistaken for the horn.
     def chime
       normalize(bell(783.99, 0.22) + bell(1046.5, 0.5))
+    end
+
+    # chime_1 — an ascending major triad (C5 E5 G5): a brighter three-note lift.
+    def chime_1
+      peal([523.25, 0.16], [659.25, 0.16], [783.99, 0.5])
+    end
+
+    # chime_2 — a descending two-note "ding-dong" (C6 -> G5).
+    def chime_2
+      peal([1046.5, 0.22], [783.99, 0.5])
+    end
+
+    # chime_3 — a gentle perfect-fifth lift up high (A5 -> E6).
+    def chime_3
+      peal([880.0, 0.22], [1318.51, 0.5])
+    end
+
+    # Join horn blasts (each [freqs, dur]) with a short gap, then normalize the
+    # whole — the shared shape of every train variant.
+    def horn(*blasts, gap: 0.05)
+      buf = blasts.map { |freqs, dur| blast(freqs, dur) }
+                  .inject { |acc, b| acc + silence(gap) + b }
+      normalize(buf)
+    end
+
+    # Strike a sequence of bells (each [freq, dur]) back-to-back, then normalize —
+    # the shared shape of every chime variant.
+    def peal(*notes)
+      normalize(notes.flat_map { |freq, dur| bell(freq, dur) })
     end
 
     # A sustained horn blast: each chord note plus its first harmonics, under a
