@@ -240,6 +240,43 @@ module Switchboard
       end
     end
 
+    # --- session-switch poke throttle (reload storm) -------------------------
+
+    def test_reload_due_initially_then_throttled_then_due_again
+      sb = sidebar
+      assert sb.send(:reload_due?), "first reload (no prior) is always due"
+      sb.instance_variable_set(:@last_reload, sb.send(:monotonic))
+      refute sb.send(:reload_due?), "a reload within POKE_TTL is throttled"
+      sb.instance_variable_set(:@last_reload, sb.send(:monotonic) - Sidebar::POKE_TTL - 1)
+      assert sb.send(:reload_due?), "after the window it's due again"
+    end
+
+    # Resuming several sessions at once pokes each sidebar in quick succession;
+    # the heavy git+capture-pane reload must fire at most once per POKE_TTL.
+    def test_rapid_switch_pokes_coalesce_into_one_reload
+      sb = sidebar(nodes: [proj("app"), ws("a", path: "/wt/a")])
+      reloads = 0
+      sb.define_singleton_method(:reload) { reloads += 1; @last_reload = monotonic }
+      sb.define_singleton_method(:locate) { nil }            # neutralize the tmux call
+      sb.define_singleton_method(:maybe_refresh_prs) { |*| nil }
+      sb.send(:reload_and_refresh) # due -> reloads
+      sb.send(:reload_and_refresh) # within POKE_TTL -> locate only, no reload
+      sb.send(:reload_and_refresh)
+      assert_equal 1, reloads, "rapid switch pokes coalesce into a single heavy reload"
+    end
+
+    def test_poke_reloads_again_once_the_window_passes
+      sb = sidebar(nodes: [proj("app"), ws("a", path: "/wt/a")])
+      reloads = 0
+      sb.define_singleton_method(:reload) { reloads += 1; @last_reload = monotonic }
+      sb.define_singleton_method(:locate) { nil }
+      sb.define_singleton_method(:maybe_refresh_prs) { |*| nil }
+      sb.send(:reload_and_refresh)                                    # reload #1
+      sb.instance_variable_set(:@last_reload, sb.send(:monotonic) - Sidebar::POKE_TTL - 1)
+      sb.send(:reload_and_refresh)                                    # window passed -> reload #2
+      assert_equal 2, reloads
+    end
+
     # --- live-state icons (#23) ----------------------------------------------
 
     def test_plain_shows_live_state_glyph_for_workspaces

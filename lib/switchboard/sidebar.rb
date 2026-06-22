@@ -14,6 +14,9 @@ module Switchboard
     REFRESH = 3    # seconds between agent re-scans
     TREE_TICKS = 5 # rebuild the whole tree every Nth tick (~15s) while visible
     PULSE = 0.12   # animation frame cadence while a dot is on screen (drives the spinner/blink)
+    POKE_TTL = 2   # min seconds between full reloads a session-switch poke triggers
+                   # (rapid switching used to fire a git+capture-pane scan per
+                   #  switch — a burst that froze the animation and hammered tmux)
 
     # Background PR-badge refresh (issue #19): event-driven, never blocks the UI.
     PR_DEBOUNCE = 5          # min seconds between background refreshes per project
@@ -88,6 +91,7 @@ module Switchboard
       @ticks = 0
       @pulse = 0           # animation frame counter (spinner cycle + blink phase)
       @last_scan = nil     # monotonic time of the last agent re-scan
+      @last_reload = nil   # monotonic of the last full reload (throttles switch pokes)
       @was_visible = false
       @focused = false     # is the sidebar the active pane? (cursor bar only then)
       @current_path = nil # worktree this sidebar's session is in (shown bold)
@@ -205,6 +209,16 @@ module Switchboard
       refresh_agents
       locate
       refresh_stale_prs
+      @last_reload = monotonic
+    end
+
+    # May a session-switch poke run a full (git + capture-pane) reload now? Only
+    # if we haven't within POKE_TTL — so resuming several sessions at once
+    # coalesces into one rescan instead of a per-switch shell-out storm. Any
+    # reload (run/tick/poke) stamps @last_reload, so a poke right after a tick
+    # rebuild is suppressed too.
+    def reload_due?
+      @last_reload.nil? || monotonic - @last_reload >= POKE_TTL
     end
 
     # Once, when the HOME sidebar starts (the relaunch anchor): prune orphaned
@@ -241,11 +255,16 @@ module Switchboard
     # funnel into maybe_refresh_prs, which debounces per project then detaches a
     # `switchboard refresh` child that rewrites the cache and pokes us to redraw.
 
-    # T2 — the session-change poke (\f): reload, then refresh the project we just
-    # landed in, but only if its badges are older than NAV_TTL so rapid j/k-driven
-    # reloads don't re-fetch. Catches PR changes no local agent made (a manual
-    # push, a teammate's merge, a PR opened with `o`).
+    # T2 — the session-change poke (\f). "You are here" stays correct on every
+    # switch (cheap locate), but the heavy git+agent rescan is throttled: rapid
+    # switching — resuming several sessions at once — used to fire a full reload
+    # per switch, a burst of git/capture-pane shell-outs that froze the animation
+    # and pounded the tmux server. The throttled switches just relocate; the next
+    # tick (<= REFRESH) brings the tree current. PR refresh only when reloaded and
+    # the cache is older than NAV_TTL, catching changes no local agent made.
     def reload_and_refresh
+      return locate unless reload_due?
+
       reload
       project = @current_path && project_for_path(@current_path)
       maybe_refresh_prs(project) if project && Pr.stale?(project, NAV_TTL)
