@@ -19,6 +19,14 @@ module Switchboard
       assert_nil CLI.flag_value(["--tmux-conf"], "--tmux-conf")
     end
 
+    # doctor's PR-badge freshness line compacts the cache age to its largest unit.
+    def test_humanize_age_compacts_to_the_largest_unit
+      assert_equal "45s", CLI.humanize_age(45)
+      assert_equal "2m",  CLI.humanize_age(150)
+      assert_equal "3h",  CLI.humanize_age((3 * 3600) + 5)
+      assert_equal "5d",  CLI.humanize_age((5 * 86_400) + 60)
+    end
+
     # Bare `switchboard` is the single launch command: from a plain shell (TMUX
     # unset, the sandbox default) it bootstraps + attaches home; inside tmux it
     # toggles the sidebar in the current window.
@@ -75,6 +83,15 @@ module Switchboard
         CLI.run(["sidebar-sync", "@7"])
       end
       assert_equal "@7", got
+    end
+
+    # The session-window-changed hook routes the now-active window's id through.
+    def test_poke_window_dispatch_forwards_the_window_id
+      got = :unset
+      stub_method(Tmux, :poke_window, ->(window) { got = window }) do
+        CLI.run(["poke-window", "@4"])
+      end
+      assert_equal "@4", got
     end
 
     def test_init_writes_an_empty_config_when_absent
@@ -155,7 +172,7 @@ module Switchboard
 
     def test_doctor_reports_player_and_sound_rows
       out = capture do
-        stub_method(Sound, :player_argv, -> { ["afplay"] }) { CLI.doctor }
+        stub_method(Sound, :player_argv, -> { ["afplay"] }) { run_doctor }
       end
       assert_includes out, "audio player: afplay"
       assert_includes out, "sound done: train"
@@ -166,7 +183,7 @@ module Switchboard
 
     def test_doctor_reports_both_symlink_rows
       capture { Installer.install(no_tmux: true) }
-      out = capture { CLI.doctor }
+      out = capture { run_doctor }
       assert_includes out, "PATH symlink: #{Installer.symlink_path}"
       assert_includes out, "PATH symlink: #{Installer.symlink_path('sb')}"
     end
@@ -176,7 +193,7 @@ module Switchboard
     def test_doctor_marks_missing_sb_as_optional_not_a_failure
       capture { Installer.install(no_tmux: true) }
       File.delete(Installer.symlink_path("sb")) # shorthand absent (collision / old install)
-      out = capture { CLI.doctor }
+      out = capture { run_doctor }
 
       sb_line = out.lines.find { |l| l.include?(Installer.symlink_path("sb")) }
       assert sb_line, "expected a doctor row for the sb shorthand"
@@ -192,7 +209,7 @@ module Switchboard
     def test_doctor_marks_missing_command_symlink_as_failure
       capture { Installer.install(no_tmux: true) }
       File.delete(Installer.symlink_path) # remove the required `switchboard` link
-      out = capture { CLI.doctor }
+      out = capture { run_doctor }
 
       sw_line = out.lines.find { |l| l.include?("PATH symlink: #{Installer.symlink_path}") }
       assert sw_line, "expected a doctor row for the switchboard command"
@@ -317,6 +334,12 @@ module Switchboard
     end
 
     private
+
+    # doctor probes `gh auth status` (a real, networked token check); stub that one
+    # seam so the doctor rows can be exercised offline like the rest of the suite.
+    def run_doctor(&blk)
+      stub_method(Pr, :authenticated?, -> { false }) { blk ? blk.call : CLI.doctor }
+    end
 
     def capture
       out = StringIO.new

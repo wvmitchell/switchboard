@@ -82,6 +82,37 @@ module Switchboard
       assert_equal "main", hist.first, "the most recent checkout target comes first"
     end
 
+    # The Sidebar passes a per-process cache so a reload that finds the reflog
+    # unchanged skips the rev-parse subprocess AND the re-parse. Prove the hit path
+    # by poisoning the cached parse: an unchanged reflog must return the poison,
+    # i.e. it didn't read the file again.
+    def test_branch_history_returns_the_cache_when_the_reflog_is_unchanged
+      repo = temp_git_repo
+      git(repo, "checkout", "-q", "-b", "feature")
+      git(repo, "checkout", "-q", "main")
+      cache = {}
+      Git.branch_history(repo, cache: cache) # populate
+      gitdir, mtime, limit, = cache[repo]
+      cache[repo] = [gitdir, mtime, limit, ["SENTINEL"]]
+      assert_equal ["SENTINEL"], Git.branch_history(repo, cache: cache),
+                   "an unchanged reflog returns the cached parse, not a fresh read"
+    end
+
+    # A new checkout appends to logs/HEAD, bumping its mtime — the cache key — so the
+    # entry invalidates and the history is re-parsed.
+    def test_branch_history_reparses_when_the_reflog_mtime_changes
+      repo = temp_git_repo
+      git(repo, "checkout", "-q", "-b", "feature")
+      git(repo, "checkout", "-q", "main")
+      cache = {}
+      Git.branch_history(repo, cache: cache)
+      gitdir, _mtime, limit, = cache[repo]
+      cache[repo] = [gitdir, Time.at(0), limit, ["STALE"]] # force a mtime mismatch
+      hist = Git.branch_history(repo, cache: cache)
+      assert_includes hist, "feature", "a changed reflog mtime invalidates the cache and re-parses"
+      refute_includes hist, "STALE"
+    end
+
     # A detached-HEAD checkout records the commit-ish (full or abbreviated SHA) in
     # the reflog `to` token; it must not surface as a branch row. Covers the #21
     # regression (abbreviated SHA) plus the 4-char and full-SHA cases — the latter

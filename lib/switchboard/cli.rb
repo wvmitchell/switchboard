@@ -31,6 +31,7 @@ module Switchboard
       when "poke-sidebar"      then Tmux.poke_current_sidebar
       when "reload-config"     then reload_config_poke(argv[1])
       when "sidebar-sync"      then Tmux.sidebar_sync(argv[1])
+      when "poke-window"       then Tmux.poke_window(argv[1])
       when "prune"             then prune(argv.drop(1))
       when "quit"              then quit
       when "doctor"            then doctor
@@ -272,8 +273,39 @@ module Switchboard
       puts row(exists, exists ? "config: #{Config.path}" : "no config — run `switchboard install`")
       doctor_install
       doctor_hooks
+      doctor_prs
       doctor_sounds
       doctor_sessions
+    end
+
+    # PR badges come from gh and are cached on disk; the sidebar degrades SILENTLY if
+    # that path breaks (gh auth lapses → badges just freeze, no error). doctor is
+    # where that surfaces: whether gh is authenticated, and how stale each project's
+    # cached badge set is — so "why are my badges old?" has an answer instead of a
+    # shrug. Skipped when gh isn't installed (already flagged above).
+    def doctor_prs
+      return if `command -v gh 2>/dev/null`.strip.empty?
+
+      authed = Pr.authenticated?
+      puts row(authed, authed ? "gh authenticated" : "gh not authenticated — PR badges silently stop updating; run `gh auth login`")
+      config.projects.each do |project|
+        age = Pr.cache_age(project["name"])
+        if age.nil?
+          puts "  \e[33m–\e[0m PR badges #{project['name']}: never fetched (auto-refreshes on switch/idle)"
+        else
+          puts row(true, "PR badges #{project['name']}: refreshed #{humanize_age(age)} ago")
+        end
+      end
+    end
+
+    # Compact age for a doctor line: 45s / 2m / 3h / 5d.
+    def humanize_age(seconds)
+      s = seconds.to_i
+      return "#{s}s" if s < 60
+      return "#{s / 60}m" if s < 3600
+      return "#{s / 3600}h" if s < 86_400
+
+      "#{s / 86_400}d"
     end
 
     # Report sound wiring: an audio player on PATH, and whether each state's
@@ -324,8 +356,40 @@ module Switchboard
     def doctor_install
       doctor_symlinks
       puts row(Installer.tmux_wired?, "tmux bindings wired (switchboard.tmux)")
+      doctor_binding_live
+      doctor_hooks_live
       v = Installer.tmux_version
       puts row(!v.nil? && v >= 3.0, v ? "tmux #{v} (>= 3.0 for the session-switch refresh)" : "tmux not found")
+    end
+
+    # Is prefix-s actually bound to toggle-sidebar in the running server? The sibling
+    # of doctor_hooks_live for the BINDING: an upgrade that hasn't re-sourced the
+    # fragment can leave prefix-s unbound (or on an ancient binding) while the config
+    # still looks wired — the "prefix-s stopped working after a pull" case. Skipped
+    # when there's no server to ask.
+    def doctor_binding_live
+      live = Installer.toggle_key_live?
+      return if live.nil?
+
+      puts row(live, live ? "prefix-s bound (toggle-sidebar)" : "prefix-s NOT bound — running tmux is stale; reload tmux or re-run `switchboard install`")
+    end
+
+    # tmux_wired? checks the config FRAGMENT is sourced; this checks the hooks are
+    # actually LIVE in the running server. They diverge right after a `git pull`
+    # upgrade: the new fragment is on disk but the running tmux still has the old
+    # hooks until it reloads its config — so a freshly-added hook (e.g. the
+    # window-switch poke) is silently inert until then. Surface that with the fix.
+    # nil = no server to ask (doctor from a plain shell, no tmux running): skip.
+    def doctor_hooks_live
+      live = Installer.live_hooks
+      return if live.nil?
+
+      missing = live.reject { |_slot, on| on }.keys
+      if missing.empty?
+        puts row(true, "tmux hooks live (#{live.size} slots)")
+      else
+        puts row(false, "tmux hooks not live: #{missing.join(', ')} — reload tmux or re-run `switchboard install`")
+      end
     end
 
     # The `switchboard` command symlink is required (✓/✗); the `sb` shorthand is

@@ -17,13 +17,13 @@ module Switchboard
 
     # Flat, ordered list of Nodes: project header, its workspaces, and a
     # workspace's branches (when it has more than one).
-    def nodes(model)
+    def nodes(model, branch_cache: nil)
       model.projects.flat_map do |project|
         list = [Node.new(kind: "proj", project: project.name, path: project.path)]
         project.worktrees.reject(&:primary).each do |wt|
           list << Node.new(kind: "ws", project: project.name, path: wt.path, branch: wt.branch,
                            name: wt.display_name, pr: wt.pr, dirty: wt.dirty)
-          branches = lineage(wt)
+          branches = lineage(wt, branch_cache)
           next unless branches.size > 1
 
           branches.each_with_index do |branch, i|
@@ -36,8 +36,8 @@ module Switchboard
       end
     end
 
-    def lineage(worktree)
-      (Git.branch_history(worktree.path, limit: MAX_BRANCHES) | [worktree.branch].compact)
+    def lineage(worktree, branch_cache = nil)
+      (Git.branch_history(worktree.path, limit: MAX_BRANCHES, cache: branch_cache) | [worktree.branch].compact)
     end
   end
 end

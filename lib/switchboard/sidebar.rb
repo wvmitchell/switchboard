@@ -12,9 +12,18 @@ module Switchboard
   # inline then drops you in; d removes the highlighted row — a workspace's
   # worktree, or a whole project from the registry. The legend tracks the row.
   class Sidebar
-    REFRESH = 3    # seconds between agent re-scans
+    REFRESH = 3    # seconds between agent re-scans (while visible)
+    IDLE = 8       # seconds between wakes while OFF screen — a backstop only: a
+                   # switch-in pokes us awake instantly (C-l), so this just bounds
+                   # the lag for the rare un-poked path (bare attach, a tmux server
+                   # that hasn't reloaded the new window-switch hook yet, a zoomed
+                   # pane). Long enough that a dormant pane costs ~one tmux call/8s,
+                   # short enough that an uncovered switch-in still self-heals fast.
     TREE_TICKS = 5 # rebuild the whole tree every Nth tick (~15s) while visible
     PULSE = 0.12   # animation frame cadence while a dot is on screen (drives the spinner/blink)
+    VIS_POLL = 2   # while pulsing, re-check visibility this often (s) so a pane that
+                   # went off-screen stops fast-spinning within ~VIS_POLL instead of
+                   # waiting the full REFRESH — see recheck_visibility.
     POKE_TTL = 2   # min seconds between full reloads a session-switch poke triggers
                    # (rapid switching used to fire a git+capture-pane scan per
                    #  switch — a burst that froze the animation and hammered tmux)
@@ -99,12 +108,18 @@ module Switchboard
       @pulse = 0           # animation frame counter (spinner cycle + blink phase)
       @last_scan = nil     # monotonic time of the last agent re-scan
       @last_reload = nil   # monotonic of the last full reload (throttles switch pokes)
-      @was_visible = false
+      @last_vis = nil      # monotonic of the last mid-pulse visibility re-check
+      @geom = nil          # winsize at the last successful width-pin (skip no-op pins)
+      @visible = false     # is this pane currently on screen? gates render + pulse;
+                           # the single source of truth, mutated only via set_visible
       @focused = false     # is the sidebar the active pane? (cursor bar only then)
       @current_path = nil # worktree this sidebar's session is in (shown bold)
       @home = false        # is this the persistent home session? (settings base)
       @pr_spawned = {}     # project => monotonic of its last background PR refresh
       @prev_hook_states = nil # last scan's hook states; nil until the first scan
+      @branch_cache = {}   # worktree path => [gitdir, logs/HEAD mtime, limit, branches],
+                           # so a reload skips the per-ws rev-parse when the reflog is
+                           # unchanged. Bounded by worktrees seen this process; never pruned.
     end
 
     def run
@@ -113,22 +128,33 @@ module Switchboard
       setup
       Tmux.enable_focus_events # so focus in/out reaches us for an instant dim
       @home = Tmux.session_of == Tmux::HOME # stable for this pane's lifetime
-      @focused = Tmux.focused?(ENV["TMUX_PANE"])
-      pin_width
-      render  # clear + show the pane instantly (empty)
-      reload  # rebuild + agents + locate "you are here"
+      pane = ENV["TMUX_PANE"]
+      # Sample visibility — don't assume on. A sidebar spawned with split-window -d
+      # (after-new-window sync, reconcile into a non-active window) lands OFF screen;
+      # warming + painting it then is exactly the off-screen work we're cutting. When
+      # it first comes on screen, the switch-in poke or the tick catch-up reloads it.
+      set_visible(Tmux.visible?(pane))
+      @focused = @visible && Tmux.focused?(pane)
+      if @visible
+        pin_if_resized # pins + seeds @geom so the first tick won't re-pin
+        render # clear + show the pane instantly (empty)
+        reload # rebuild + agents + locate "you are here"
+      end
       reconcile_on_launch if @home && @config.prune_on_launch?
-      @was_visible = true
       @last_scan = monotonic
       loop do
-        render
+        render if @visible # never paint a hidden pane
         # Wake often enough to animate the spinner/blink, but only while a dot is
-        # on screen; otherwise sit on the slow REFRESH interval. State scans stay
-        # gated to REFRESH (scan_due?) so the fast frames don't hammer tmux.
+        # on screen; otherwise sit on the slow REFRESH/IDLE interval. State scans
+        # stay gated to REFRESH (scan_due?) so the fast frames don't hammer tmux.
         if IO.select([$stdin], nil, nil, frame_timeout)
           break unless handle(read_key)
         else
           @pulse += 1
+          # While pulsing we wake ~8x/s; re-check visibility a little faster than a
+          # full scan so a pane that just went off-screen stops fast-spinning (and
+          # painting) promptly, rather than after the next REFRESH tick.
+          recheck_visibility if pulsing? && vis_poll_due?
           tick if scan_due?
         end
       end
@@ -137,47 +163,88 @@ module Switchboard
     end
 
     def frame_timeout
-      pulsing? ? PULSE : REFRESH
+      return PULSE if pulsing?
+
+      @visible ? REFRESH : IDLE # off screen: sleep long, a poke wakes us instantly
     end
 
     # A thinking/waiting dot is actually on screen and worth animating. Gated on
-    # the rendered slice (not all @agents) so a collapsed or scrolled-off agent
-    # never drives repaints; :done is steady and never pulses.
+    # @visible (off screen never animates) AND the rendered slice (not all @agents)
+    # so a collapsed or scrolled-off agent never drives repaints; :done is steady
+    # and never pulses.
     def pulsing?
-      return false unless @was_visible
+      return false unless @visible
 
       @visible_rows.any? { |n| %i[thinking waiting].include?(@agents[n.path]) }
     end
 
-    # True at most once per REFRESH seconds — throttles the actual agent scan
-    # even when the loop is spinning fast to drive the pulse.
-    def scan_due?
-      now = monotonic
-      return false if @last_scan && now - @last_scan < REFRESH
+    # Pure: has `window` seconds elapsed since `last` (nil = never)? The shared
+    # comparison behind the scan / reload / visibility throttles. (spawn_due? is the
+    # same idea with an explicit `now`, kept separate so it stays unit-testable.)
+    def elapsed?(last, window)
+      last.nil? || monotonic - last >= window
+    end
 
-      @last_scan = now
+    # True at most once per REFRESH seconds — throttles the actual agent scan
+    # even when the loop is spinning fast to drive the pulse. Stamps on a hit.
+    def scan_due?
+      return false unless elapsed?(@last_scan, REFRESH)
+
+      @last_scan = monotonic
       true
+    end
+
+    # True at most once per VIS_POLL seconds — throttles the mid-pulse visibility
+    # re-check so the fast frames don't fire a tmux call every 0.12s. Stamps on a hit.
+    def vis_poll_due?
+      return false unless elapsed?(@last_vis, VIS_POLL)
+
+      @last_vis = monotonic
+      true
+    end
+
+    # The single mutator for "am I on screen?" — every transition routes through
+    # here so no caller can forget it and strand a frozen spinner or a blank paint.
+    # Plain writer by design: the off->on CATCH-UP reload lives in tick (the poll
+    # path) and in reload_and_refresh (the poke path), each of which already knows
+    # whether it has reloaded — so set_visible never reloads and can't double-fire.
+    def set_visible(on)
+      @visible = on
+    end
+
+    # Mid-pulse visibility re-check (loop, while pulsing only): one tmux call/VIS_POLL
+    # so a pane that went off-screen flips @visible false within ~VIS_POLL — which
+    # makes pulsing? false (fast frames stop) and gates render off (no more painting
+    # a hidden pane), instead of waiting the full REFRESH for the next tick to notice.
+    def recheck_visibility
+      set_visible(Tmux.visible?(ENV["TMUX_PANE"]))
     end
 
     def monotonic
       Process.clock_gettime(Process::CLOCK_MONOTONIC)
     end
 
-    # Idle tick. When this sidebar comes back on screen (visibility false ->
-    # true, i.e. you navigated back) refresh the tree. While it stays on screen,
-    # keep agent dots live and rebuild every TREE_TICKS. Off screen: nothing.
+    # Idle tick. When this sidebar comes back on screen (off -> on, i.e. you
+    # navigated back) refresh the tree. While it stays on screen, keep agent dots
+    # live and rebuild every TREE_TICKS. Off screen: nothing but the visibility
+    # sample (one tmux call) — no focused? call, no scan, no paint.
     def tick
-      @focused = Tmux.focused?(ENV["TMUX_PANE"]) # authoritative if focus-events are off
       visible = Tmux.visible?(ENV["TMUX_PANE"])
-      if visible && !@was_visible
-        # Catch-up: this sidebar was off-screen (not scanning, baseline frozen) and
-        # just reappeared — a window/session switch-in. Re-baseline SILENTLY:
-        # completions that landed while it slept were already rung by whichever
-        # sidebar was on screen then, so replaying them here is the duplicate-sound
-        # bug. PR refresh and the baseline merge still ride; only the sound is held.
+      # Off screen we're never focused, so skip the focused? shell-out entirely —
+      # that's half the per-tick tmux cost of a dormant pane.
+      @focused = visible && Tmux.focused?(ENV["TMUX_PANE"]) # authoritative if focus-events are off
+      reappeared = visible && !@visible
+      set_visible(visible)
+      if reappeared
+        # Catch-up: off-screen -> on-screen via an UN-poked path (a same-session
+        # window switch the poke hooks don't cover). Re-baseline SILENTLY:
+        # completions that landed while we slept were already rung by whichever
+        # sidebar was on screen then, so replaying them is the duplicate-sound bug.
+        # A poke switch-in never reaches here — it already set @visible=true in
+        # reload_and_refresh, so `reappeared` is false and we don't reload twice.
         reload(announce_sounds: false)
       elsif visible
-        pin_width
+        pin_if_resized
         @ticks += 1
         if @ticks >= TREE_TICKS
           @ticks = 0
@@ -186,7 +253,6 @@ module Switchboard
           refresh_agents
         end
       end
-      @was_visible = visible
     end
 
     private
@@ -195,11 +261,23 @@ module Switchboard
       Tmux.pin(ENV["TMUX_PANE"])
     end
 
+    # Re-assert the fixed width only when the pane geometry actually changed. tmux
+    # reflows panes on a client resize; absent one the width is stable and the
+    # per-tick resize-pane was a pure no-op subprocess. winsize is a local ioctl
+    # (no subprocess), so gating on it is free. Cache the POST-pin size, and only on
+    # success: a failed pin (or one tmux can't satisfy) must NOT poison the cache,
+    # or we'd record the drifted size and never retry.
+    def pin_if_resized
+      return if winsize == @geom
+
+      @geom = winsize if pin_width
+    end
+
     # Structure + PR badges, NOT per-worktree dirty (16 git-status calls would
     # stall the paint). Fast.
     def rebuild
       @model = Model.new(@config, with_dirty: false)
-      @nodes = Tree.nodes(@model)
+      @nodes = Tree.nodes(@model, branch_cache: @branch_cache)
       recompute_rows
     end
 
@@ -225,7 +303,10 @@ module Switchboard
       refresh_agents(announce_sounds: announce_sounds)
       locate
       refresh_stale_prs
-      @last_reload = monotonic
+      # Stamp BOTH clocks: @last_reload throttles the next switch poke (reload_due?),
+      # and @last_scan stops the next loop timeout from firing a redundant agent scan
+      # right after this reload already scanned — the poke path runs outside scan_due?.
+      @last_reload = @last_scan = monotonic
     end
 
     # May a session-switch poke run a full (git + capture-pane) reload now? Only
@@ -234,7 +315,7 @@ module Switchboard
     # reload (run/tick/poke) stamps @last_reload, so a poke right after a tick
     # rebuild is suppressed too.
     def reload_due?
-      @last_reload.nil? || monotonic - @last_reload >= POKE_TTL
+      elapsed?(@last_reload, POKE_TTL)
     end
 
     # Once, when the HOME sidebar starts (the relaunch anchor): prune orphaned
@@ -279,11 +360,19 @@ module Switchboard
     # tick (<= REFRESH) brings the tree current. PR refresh only when reloaded and
     # the cache is older than NAV_TTL, catching changes no local agent made.
     def reload_and_refresh
-      return locate unless reload_due?
+      # C-l is overloaded: the session-switch hook pokes us (we're now ON screen),
+      # but a background PR-refresh child also pokes its explicit pane — which may be
+      # OFF screen, since that poke is built to survive us navigating away. So SAMPLE
+      # visibility; don't assume the poke means visible, or we'd re-wake a hidden pane
+      # (paint + reload) and reintroduce the off-screen work this change removes.
+      set_visible(Tmux.visible?(ENV["TMUX_PANE"]))
+      return locate unless @visible    # hidden background poke: badges are cached, nothing to paint
+      return locate unless reload_due? # coalesce a rapid switch storm into one heavy reload
 
-      # A switch-in is a catch-up: ring nothing for completions that finished
-      # before we arrived (the next genuine completion, scanned while we're here,
-      # still rings). PR refresh below is unaffected — debounced and idempotent.
+      # Marking @visible=true above also consumes the off->on edge: the next tick sees
+      # @visible already true, so its catch-up branch won't reload a second time.
+      # A switch-in is a catch-up: ring nothing for completions that finished before we
+      # arrived (the next genuine completion, scanned while we're here, still rings).
       reload(announce_sounds: false)
       project = @current_path && project_for_path(@current_path)
       maybe_refresh_prs(project) if project && Pr.stale?(project, NAV_TTL)
@@ -422,7 +511,7 @@ module Switchboard
       when RELOAD_CONFIG_BYTE  then reload_config_and_rebuild # Ctrl-R (post-edit reload)
       when "g"                 then @cursor = 0
       when "G"                 then @cursor = [@rows.size - 1, 0].max # clamp: empty tree → 0, not -1
-      when "\e[I"              then @focused = true  # tmux focus-in: light the cursor bar
+      when "\e[I"              then focus_in        # tmux focus-in: on screen + light cursor bar
       when "\e[O"              then @focused = false # tmux focus-out: drop it
       when "q"                 then return quit # q: tear down ALL switchboard sessions
       end
@@ -439,6 +528,20 @@ module Switchboard
 
       Tmux.kill_all
       false
+    end
+
+    # tmux focus-in: this pane is now the active one, so it's on screen. Light the
+    # cursor bar and mark visible. If we were HIDDEN, do the same silent catch-up
+    # reload tick would on an off->on edge — because marking @visible here consumes
+    # the edge tick detects (`visible && !@visible`), so without this an un-poked
+    # reappearance (bare attach, a stale window-switch hook) that lands focus on the
+    # sidebar would render a stale tree until the next TREE_TICKS reload. A real
+    # poked switch-in already set @visible=true, so reappeared is false — no double.
+    def focus_in
+      @focused = true
+      reappeared = !@visible
+      set_visible(true)
+      reload(announce_sounds: false) if reappeared
     end
 
     def move(delta)
@@ -588,6 +691,9 @@ module Switchboard
       # was off-screen with a frozen baseline while the (visible) home sidebar
       # rang any completions. Reload silently on the Ctrl-R return — else those
       # already-heard completions re-ring here, the same duplicate this fix kills.
+      # C-r is sent only after the client is switched back to us, so we're on screen:
+      # mark visible (consume the off->on edge so tick won't reload again, ungate paint).
+      set_visible(true)
       reload(announce_sounds: false)
     rescue StandardError => e
       Tmux.notify("switchboard: config not reloaded — #{e.message}")

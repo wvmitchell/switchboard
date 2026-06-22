@@ -430,9 +430,11 @@ module Switchboard
       sb.define_singleton_method(:reload) { |announce_sounds: true| reloads += 1; @last_reload = monotonic }
       sb.define_singleton_method(:locate) { nil }            # neutralize the tmux call
       sb.define_singleton_method(:maybe_refresh_prs) { |*| nil }
-      sb.send(:reload_and_refresh) # due -> reloads
-      sb.send(:reload_and_refresh) # within POKE_TTL -> locate only, no reload
-      sb.send(:reload_and_refresh)
+      stub_method(Tmux, :visible?, ->(*) { true }) do        # poked while on screen (session switch-in)
+        sb.send(:reload_and_refresh) # due -> reloads
+        sb.send(:reload_and_refresh) # within POKE_TTL -> locate only, no reload
+        sb.send(:reload_and_refresh)
+      end
       assert_equal 1, reloads, "rapid switch pokes coalesce into a single heavy reload"
     end
 
@@ -444,7 +446,9 @@ module Switchboard
       sb.define_singleton_method(:reload) { |announce_sounds: true| announced = announce_sounds; @last_reload = monotonic }
       sb.define_singleton_method(:locate) { nil }
       sb.define_singleton_method(:maybe_refresh_prs) { |*| nil }
-      sb.send(:reload_and_refresh)
+      stub_method(Tmux, :visible?, ->(*) { true }) do
+        sb.send(:reload_and_refresh)
+      end
       refute announced, "a switch-in re-baselines silently, not ringing prior completions"
     end
 
@@ -454,9 +458,11 @@ module Switchboard
       sb.define_singleton_method(:reload) { |announce_sounds: true| reloads += 1; @last_reload = monotonic }
       sb.define_singleton_method(:locate) { nil }
       sb.define_singleton_method(:maybe_refresh_prs) { |*| nil }
-      sb.send(:reload_and_refresh)                                    # reload #1
-      sb.instance_variable_set(:@last_reload, sb.send(:monotonic) - Sidebar::POKE_TTL - 1)
-      sb.send(:reload_and_refresh)                                    # window passed -> reload #2
+      stub_method(Tmux, :visible?, ->(*) { true }) do
+        sb.send(:reload_and_refresh)                                    # reload #1
+        sb.instance_variable_set(:@last_reload, sb.send(:monotonic) - Sidebar::POKE_TTL - 1)
+        sb.send(:reload_and_refresh)                                    # window passed -> reload #2
+      end
       assert_equal 2, reloads
     end
 
@@ -468,7 +474,7 @@ module Switchboard
 
     def test_tick_reappearing_from_offscreen_reloads_silently
       sb = sidebar(nodes: [proj("app"), ws("a", path: "/wt/a")])
-      sb.instance_variable_set(:@was_visible, false) # was off-screen, baseline frozen
+      sb.instance_variable_set(:@visible, false) # was off-screen, baseline frozen
       announced = :unset
       sb.define_singleton_method(:reload) { |announce_sounds: true| announced = announce_sounds }
       stub_method(Tmux, :focused?, ->(*) { false }) do
@@ -477,12 +483,12 @@ module Switchboard
         end
       end
       refute announced, "reappearing re-baselines silently — stale completions don't re-ring"
-      assert sb.instance_variable_get(:@was_visible), "tick records that we're now visible"
+      assert sb.instance_variable_get(:@visible), "tick records that we're now visible"
     end
 
     def test_tick_while_continuously_visible_keeps_ringing
       sb = sidebar(nodes: [proj("app"), ws("a", path: "/wt/a")])
-      sb.instance_variable_set(:@was_visible, true) # already on screen, never slept
+      sb.instance_variable_set(:@visible, true) # already on screen, never slept
       sb.instance_variable_set(:@ticks, 0)          # < TREE_TICKS -> refresh_agents path
       announce = :unset
       sb.define_singleton_method(:pin_width) { nil }
@@ -493,6 +499,145 @@ module Switchboard
         end
       end
       assert announce, "a live, continuously-visible scan still announces completions"
+    end
+
+    # --- visibility-aware loop (off-screen dormancy) --------------------------
+    # @visible is the single on-screen flag: it gates render + pulse, and the poke
+    # path re-samples it because C-l is overloaded (session switch-in vs background
+    # PR-refresh to a pane we may have navigated away from).
+
+    # The background PR-refresh poke can land on an OFF-screen pane (it's built to
+    # survive navigation). A hidden poke must not reload or mark the pane visible —
+    # that would reintroduce the off-screen work the whole change removes.
+    def test_reload_and_refresh_skips_a_hidden_pane
+      sb = sidebar(nodes: [proj("app"), ws("a", path: "/wt/a")])
+      reloads = 0
+      sb.define_singleton_method(:reload) { |announce_sounds: true| reloads += 1 }
+      sb.define_singleton_method(:locate) { nil }
+      stub_method(Tmux, :visible?, ->(*) { false }) do
+        sb.send(:reload_and_refresh)
+      end
+      assert_equal 0, reloads, "a poke to a hidden pane never reloads"
+      refute sb.instance_variable_get(:@visible), "...and never marks the hidden pane visible"
+    end
+
+    def test_reload_and_refresh_marks_a_visible_poke_on_screen
+      sb = sidebar(nodes: [proj("app"), ws("a", path: "/wt/a")])
+      sb.instance_variable_set(:@visible, false)
+      sb.define_singleton_method(:reload) { |announce_sounds: true| @last_reload = monotonic }
+      sb.define_singleton_method(:locate) { nil }
+      sb.define_singleton_method(:maybe_refresh_prs) { |*| nil }
+      stub_method(Tmux, :visible?, ->(*) { true }) do
+        sb.send(:reload_and_refresh)
+      end
+      assert sb.instance_variable_get(:@visible), "a session switch-in poke marks the pane visible"
+    end
+
+    # Dedup: a poke switch-in already set @visible=true and reloaded, so the next
+    # tick must NOT reload again. The off->on edge is consumed by the flag itself,
+    # not a POKE_TTL window (POKE_TTL < REFRESH, so a window-based guard was racy).
+    def test_tick_does_not_double_reload_after_a_poke
+      sb = sidebar(nodes: [proj("app"), ws("a", path: "/wt/a")])
+      sb.instance_variable_set(:@visible, true) # poke already marked us visible
+      sb.instance_variable_set(:@ticks, 0)
+      reloads = 0
+      sb.define_singleton_method(:reload) { |announce_sounds: true| reloads += 1 }
+      sb.define_singleton_method(:pin_if_resized) { nil }
+      sb.define_singleton_method(:refresh_agents) { |announce_sounds: true| nil }
+      stub_method(Tmux, :focused?, ->(*) { true }) do
+        stub_method(Tmux, :visible?, ->(*) { true }) do
+          sb.send(:tick)
+        end
+      end
+      assert_equal 0, reloads, "no catch-up reload when the poke already consumed the off->on edge"
+    end
+
+    # Off screen, tick must not spend a tmux call on focused? — that's half a dormant
+    # pane's per-tick cost. focused? is short-circuited behind the visibility sample.
+    def test_tick_skips_the_focused_shellout_when_offscreen
+      sb = sidebar(nodes: [proj("app")])
+      sb.instance_variable_set(:@visible, false)
+      called = false
+      stub_method(Tmux, :focused?, ->(*) { called = true; true }) do
+        stub_method(Tmux, :visible?, ->(*) { false }) do
+          sb.send(:tick)
+        end
+      end
+      refute called, "off screen, tick must not call focused?"
+      refute sb.instance_variable_get(:@focused), "off screen is never focused"
+    end
+
+    def test_frame_timeout_pulse_refresh_idle
+      sb = sidebar(nodes: [ws("a", path: "/wt/a")], agents: { "/wt/a" => :thinking })
+      sb.instance_variable_set(:@visible_rows, rows_of(sb))
+      sb.instance_variable_set(:@visible, false)
+      assert_equal Sidebar::IDLE, sb.send(:frame_timeout), "off screen sleeps on the long IDLE backstop"
+      sb.instance_variable_set(:@visible, true)
+      assert_equal Sidebar::PULSE, sb.send(:frame_timeout), "visible + a thinking dot pulses fast"
+      sb.instance_variable_set(:@agents, { "/wt/a" => :done })
+      assert_equal Sidebar::REFRESH, sb.send(:frame_timeout), "visible + a steady dot sits on REFRESH"
+    end
+
+    def test_recheck_visibility_samples_the_pane
+      sb = sidebar
+      sb.instance_variable_set(:@visible, true)
+      stub_method(Tmux, :visible?, ->(*) { false }) do
+        sb.send(:recheck_visibility)
+      end
+      refute sb.instance_variable_get(:@visible), "recheck flips @visible off when the pane left the screen"
+    end
+
+    def test_vis_poll_due_throttles
+      sb = sidebar
+      assert sb.send(:vis_poll_due?), "first visibility re-check is always due"
+      refute sb.send(:vis_poll_due?), "...then throttled within VIS_POLL"
+    end
+
+    def test_focus_in_marks_visible_focused_and_catches_up_when_reappearing
+      sb = sidebar(focused: false)
+      sb.instance_variable_set(:@visible, false)
+      reloads = 0
+      sb.define_singleton_method(:reload) { |announce_sounds: true| reloads += 1 }
+      sb.send(:dispatch, "\e[I")
+      assert sb.instance_variable_get(:@visible), "focus-in proves the pane is on screen"
+      assert sb.instance_variable_get(:@focused), "focus-in lights the cursor bar"
+      assert_equal 1, reloads, "focus-in on a hidden pane (un-poked reappearance) silently catches up"
+    end
+
+    # focus-in on an already-visible pane is just a cursor-bar change — it must NOT
+    # reload (the off->on edge isn't there), or every click into the tree would rescan.
+    def test_focus_in_when_already_visible_does_not_reload
+      sb = sidebar(focused: false)
+      sb.instance_variable_set(:@visible, true)
+      reloads = 0
+      sb.define_singleton_method(:reload) { |announce_sounds: true| reloads += 1 }
+      sb.send(:dispatch, "\e[I")
+      assert_equal 0, reloads, "no reload when the pane was already on screen"
+    end
+
+    def test_pin_if_resized_pins_only_when_geometry_changes
+      sb = sidebar
+      pins = 0
+      sb.define_singleton_method(:winsize) { [50, 40] }
+      sb.define_singleton_method(:pin_width) { pins += 1; true }
+      sb.send(:pin_if_resized) # @geom nil -> changed -> pin
+      sb.send(:pin_if_resized) # same size -> no pin
+      assert_equal 1, pins, "re-pins only when winsize differs from the cached geometry"
+      sb.define_singleton_method(:winsize) { [50, 60] } # client resized
+      sb.send(:pin_if_resized)
+      assert_equal 2, pins, "a real geometry change re-pins"
+    end
+
+    # A failed pin (resize-pane errored, or tmux can't satisfy the width) must NOT
+    # cache the drifted geometry, or we'd never retry.
+    def test_pin_if_resized_does_not_cache_on_failure
+      sb = sidebar
+      attempts = 0
+      sb.define_singleton_method(:winsize) { [50, 40] }
+      sb.define_singleton_method(:pin_width) { attempts += 1; false }
+      sb.send(:pin_if_resized)
+      sb.send(:pin_if_resized)
+      assert_equal 2, attempts, "a failed pin retries next tick instead of poisoning the cache"
     end
 
     # --- live-state icons (#23) ----------------------------------------------
@@ -522,7 +667,7 @@ module Switchboard
 
     def test_pulsing_wakes_for_thinking_or_waiting
       sb = sidebar(nodes: [proj("app"), ws("a", path: "/wt/a")], agents: { "/wt/a" => :thinking })
-      sb.instance_variable_set(:@was_visible, true)
+      sb.instance_variable_set(:@visible, true)
       sb.instance_variable_set(:@visible_rows, rows_of(sb))
       assert sb.send(:pulsing?), "a visible thinking dot pulses"
 
@@ -536,7 +681,7 @@ module Switchboard
     def test_pulsing_ignores_offscreen_agents
       sb = sidebar(nodes: [proj("app"), ws("a", path: "/wt/a"), ws("b", path: "/wt/b")],
                    agents: { "/wt/b" => :thinking })
-      sb.instance_variable_set(:@was_visible, true)
+      sb.instance_variable_set(:@visible, true)
       on_screen = ->(p) { rows_of(sb).select { |n| n.path == p } }
 
       sb.instance_variable_set(:@visible_rows, on_screen.call("/wt/a"))
@@ -549,7 +694,7 @@ module Switchboard
     def test_pulsing_is_false_when_pane_hidden
       sb = sidebar(nodes: [ws("a", path: "/wt/a")], agents: { "/wt/a" => :thinking })
       sb.instance_variable_set(:@visible_rows, rows_of(sb))
-      sb.instance_variable_set(:@was_visible, false)
+      sb.instance_variable_set(:@visible, false)
       refute sb.send(:pulsing?), "a hidden pane never pulses, even with a thinking dot"
     end
 

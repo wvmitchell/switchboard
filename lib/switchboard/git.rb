@@ -125,14 +125,34 @@ module Switchboard
     # Read from the worktree's own HEAD reflog — the signal neither GUI uses.
     # `limit` caps the result (dedicated worktrees are short-lived, but the
     # canonical checkout's reflog can be enormous).
-    def branch_history(worktree, limit: nil)
+    #
+    # `cache` (optional, a Hash owned by the caller — the Sidebar, which persists
+    # across reloads) memoizes per worktree so a reload that finds the reflog
+    # unchanged skips BOTH the rev-parse subprocess and the re-parse. Keyed on
+    # logs/HEAD mtime + limit: a new checkout appends to the reflog (bumping mtime)
+    # and invalidates the entry, while the git-dir is stable per worktree so it's
+    # remembered after the first lookup. cache nil ⇒ no memo (every call recomputes).
+    def branch_history(worktree, limit: nil, cache: nil)
+      entry = cache && cache[worktree]
       # --absolute-git-dir, not --git-dir: the latter returns a relative ".git",
       # which would resolve logs/HEAD against the process cwd (one worktree) for
-      # every row in the tree. Absolute makes it the worktree's own reflog.
-      gitdir = capture(worktree, "rev-parse", "--absolute-git-dir").strip
+      # every row in the tree. Absolute makes it the worktree's own reflog. Reused
+      # from the cache when present (it doesn't change for a given worktree).
+      gitdir = entry ? entry[0] : capture(worktree, "rev-parse", "--absolute-git-dir").strip
       head_log = File.join(gitdir, "logs", "HEAD")
       return [] unless File.exist?(head_log)
 
+      mtime = File.mtime(head_log)
+      return entry[3] if entry && entry[1] == mtime && entry[2] == limit
+
+      branches = parse_branch_history(head_log, limit)
+      cache[worktree] = [gitdir, mtime, limit, branches] if cache
+      branches
+    end
+
+    # The HEAD-reflog parse behind branch_history, split out so the cache wrapper
+    # above stays readable. Newest first, deduped, detached-HEAD checkouts dropped.
+    def parse_branch_history(head_log, limit)
       seen = {}
       File.readlines(head_log).reverse_each do |line|
         m = line.match(/checkout: moving from \S+ to (\S+)/)

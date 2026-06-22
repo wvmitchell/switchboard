@@ -32,7 +32,7 @@ module Switchboard
     end
 
     def no_history(&blk)
-      stub_method(Git, :branch_history, ->(_path, limit:) { [] }, &blk)
+      stub_method(Git, :branch_history, ->(_path, limit:, cache: nil) { [] }, &blk)
     end
 
     def test_nodes_list_project_then_workspaces_and_skip_primary
@@ -60,7 +60,7 @@ module Switchboard
 
     def test_multi_branch_workspace_expands_into_branch_rows
       model = FakeModel.new([project([wt(path: "/wt/a", branch: "feature")])])
-      stub_method(Git, :branch_history, ->(_path, limit:) { %w[feature main] }) do
+      stub_method(Git, :branch_history, ->(_path, limit:, cache: nil) { %w[feature main] }) do
         nodes = Tree.nodes(model)
         assert_equal %w[proj ws br br], nodes.map(&:kind)
         br = nodes.select { |n| n.kind == "br" }
@@ -75,7 +75,7 @@ module Switchboard
     def test_branch_rows_carry_pr_from_model
       model = FakeModel.new([project([wt(path: "/wt/a", branch: "feature")])],
                             "main" => { "identifier" => "#5" })
-      stub_method(Git, :branch_history, ->(_path, limit:) { %w[feature main] }) do
+      stub_method(Git, :branch_history, ->(_path, limit:, cache: nil) { %w[feature main] }) do
         main = Tree.nodes(model).find { |n| n.kind == "br" && n.branch == "main" }
         assert_equal({ "identifier" => "#5" }, main.pr)
       end
@@ -83,7 +83,7 @@ module Switchboard
 
     def test_lineage_caps_at_max_branches_and_appends_current
       seen_limit = nil
-      stub_method(Git, :branch_history, ->(_path, limit:) { seen_limit = limit; %w[x y] }) do
+      stub_method(Git, :branch_history, ->(_path, limit:, cache: nil) { seen_limit = limit; %w[x y] }) do
         line = Tree.lineage(wt(path: "/wt/a", branch: "z"))
         assert_equal Tree::MAX_BRANCHES, seen_limit
         assert_equal %w[x y z], line # current appended via dedup union

@@ -32,6 +32,47 @@ module Switchboard
       assert_includes frag, '#{window_id}' # literal; tmux expands it at fire time
     end
 
+    # The same-session window-switch poke (PR2). Like teardown_live's matching
+    # set-hook -gu, the live wiring is TMUX-gated and verified manually; the fragment
+    # content + the slot list are what we pin here.
+    def test_fragment_wires_the_session_window_changed_poke_hook
+      frag = File.read(Installer.fragment_path)
+      assert_includes frag, "session-window-changed[99]"
+      assert_includes frag, "poke-window"
+      assert_includes frag, '#{window_id}'
+    end
+
+    def test_hook_slots_lists_all_three_indexed_hooks
+      assert_equal 3, Installer::HOOK_SLOTS.size
+      assert_includes Installer::HOOK_SLOTS, "session-window-changed[99]"
+    end
+
+    # doctor reads this: which hooks are LIVE in the running server. After a `git
+    # pull` upgrade the new slot is absent until tmux reloads — it must read not-live.
+    def test_live_hooks_from_flags_present_and_missing_slots
+      raw = "client-session-changed[99] -> run-shell ...\nafter-new-window[99] -> run-shell ...\n"
+      live = Installer.live_hooks_from(raw)
+      assert live["client-session-changed[99]"], "a present slot reads live"
+      assert live["after-new-window[99]"]
+      refute live["session-window-changed[99]"], "an absent slot (pre-reload upgrade) reads not-live"
+    end
+
+    # doctor reads this too: is prefix-s actually bound to toggle-sidebar in the
+    # running server? A stale server (upgrade not re-sourced) leaves it unbound or on
+    # an ancient binding (the retired fzf-popup on prefix-S) — the broken-prefix-s case.
+    def test_toggle_key_live_from_detects_the_prefix_s_toggle_binding
+      live = %(bind-key  -T prefix s  run-shell "'/x/switchboard' toggle-sidebar"\n)
+      assert Installer.toggle_key_live_from?(live), "prefix-s -> toggle-sidebar reads live"
+
+      popup = %(bind-key  -T prefix S  display-popup -E /x/switchboard\n)
+      refute Installer.toggle_key_live_from?(popup), "the stale capital-S popup is not the toggle binding"
+
+      other = %(bind-key  -T prefix s  send-keys hi\n)
+      refute Installer.toggle_key_live_from?(other), "a foreign prefix-s binding isn't ours"
+
+      refute Installer.toggle_key_live_from?(""), "no binding reads not-live"
+    end
+
     def test_strip_block_is_inverse_of_with_block
       base = "# my conf\nbind-key x display-message hi\n"
       wired = Installer.with_block(base)

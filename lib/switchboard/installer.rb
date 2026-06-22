@@ -27,6 +27,17 @@ module Switchboard
     NOTE_MARK  = "# managed by `switchboard install` — edits between the markers are overwritten"
     END_MARK   = "# <<< switchboard install <<<"
 
+    # The indexed global hooks the switchboard.tmux fragment installs. Listed here
+    # so teardown clears exactly these slots and `doctor` can check they're LIVE in
+    # the running server (the fragment only re-applies them on a tmux config reload,
+    # so a `git pull` upgrade leaves them stale until then). Keep in sync with
+    # switchboard.tmux.
+    HOOK_SLOTS = [
+      "client-session-changed[99]", # poke the now-visible sidebar on a session switch
+      "after-new-window[99]",       # give a new window its own sidebar
+      "session-window-changed[99]"  # poke the sidebar on a same-session window switch
+    ].freeze
+
     # --- paths ---------------------------------------------------------------
 
     # Repo root from this file (lib/switchboard/installer.rb → ../..). Works
@@ -215,13 +226,51 @@ module Switchboard
     end
 
     # source-file re-runs the (now clean) config but doesn't drop a binding/hook
-    # already live in the server — undo those explicitly when we're inside tmux.
+    # already live in the server — undo those explicitly. These are server ops (no
+    # client needed), so DON'T gate on ENV["TMUX"]: uninstall from a plain shell is a
+    # real recovery path, and leaving the global session-window-changed hook live
+    # would keep firing poke-window at the now-removed install on every window switch.
+    # No server ⇒ the tmux calls no-op (errors swallowed), and they never start one.
     def teardown_live
-      return unless ENV["TMUX"]
-
       system("tmux", "unbind-key", "s", out: File::NULL, err: File::NULL)
-      system("tmux", "set-hook", "-gu", "client-session-changed[99]", out: File::NULL, err: File::NULL)
-      system("tmux", "set-hook", "-gu", "after-new-window[99]", out: File::NULL, err: File::NULL)
+      HOOK_SLOTS.each do |slot|
+        system("tmux", "set-hook", "-gu", slot, out: File::NULL, err: File::NULL)
+      end
+    end
+
+    # Which of switchboard's indexed hooks are actually LIVE in the running tmux
+    # server (slot => bool), or nil when there's no server to ask. tmux_wired?
+    # checks the config FRAGMENT is sourced; this checks the hooks took — they don't
+    # until tmux reloads its config, so after a `git pull` upgrade the new slot reads
+    # live: false here while tmux_wired? still says true. `doctor` surfaces the gap.
+    # A server op (show-hooks -g), so it works from a plain shell too, no client needed.
+    def live_hooks
+      raw = `tmux show-hooks -g 2>/dev/null`
+      $?.success? ? live_hooks_from(raw) : nil
+    end
+
+    # Pure: which slots appear in `tmux show-hooks -g` output. Split out so the
+    # parse is unit-testable without a tmux server.
+    def live_hooks_from(raw)
+      HOOK_SLOTS.to_h { |slot| [slot, raw.to_s.include?(slot)] }
+    end
+
+    # Is prefix-s actually bound to toggle-sidebar in the RUNNING server? Pairs with
+    # live_hooks: an upgrade that hasn't re-sourced the fragment can leave prefix-s
+    # unbound — or carrying an ancient binding (e.g. the retired fzf-popup on
+    # prefix-S) — while tmux_wired? still reads true off the config. That's the
+    # "prefix-s stopped working after a git pull" case, invisible until you press it.
+    # nil = no server to ask (a server op via list-keys; no client needed).
+    def toggle_key_live?
+      raw = `tmux list-keys -T prefix 2>/dev/null`
+      $?.success? ? toggle_key_live_from?(raw) : nil
+    end
+
+    # Pure: does `tmux list-keys -T prefix` show key `s` bound to toggle-sidebar?
+    # Whitespace-bounded `s` so a multi-char key (Space) never matches; the command
+    # must mention toggle-sidebar so a foreign `s` binding doesn't read as ours.
+    def toggle_key_live_from?(raw)
+      raw.to_s.lines.any? { |l| l.match?(/-T prefix\s+s\s/) && l.include?("toggle-sidebar") }
     end
 
     # --- doctor support (read-only predicates; cli renders the rows) ----------

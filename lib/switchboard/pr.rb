@@ -99,5 +99,25 @@ module Switchboard
     rescue SystemCallError
       true
     end
+
+    # Is gh authenticated? `gh auth status` exits non-zero when not. A seam (not an
+    # inline shell-out in doctor) so the suite can stub it and stay offline — the
+    # real call validates the token against the API.
+    def authenticated?
+      system("gh", "auth", "status", out: File::NULL, err: File::NULL)
+    end
+
+    # Seconds since a project's PR cache was last successfully written (its mtime
+    # marks the last good fetch), or nil if it's never been fetched. `doctor` reads
+    # this so a silently-frozen badge set (e.g. gh auth lapsed) is visible — the
+    # honest counterpart to the UI degrading quietly.
+    def cache_age(name)
+      file = cache_file(name)
+      return nil unless File.exist?(file)
+
+      Time.now - File.mtime(file)
+    rescue SystemCallError
+      nil
+    end
   end
 end

@@ -421,6 +421,19 @@ module Switchboard
       `tmux display-message -p -t #{Shellwords.escape(window)} '#\{session_name}' 2>/dev/null`.strip
     end
 
+    # Poke the sidebar of a specific window — bound to the session-window-changed
+    # hook, which fires on a same-session window switch (client-session-changed only
+    # covers session switches, so without this the newly-active window's sidebar,
+    # asleep on its idle backstop, lags before refreshing). Gated to sb/ sessions so
+    # the global hook is a cheap no-op on unrelated windows: one display-message, then
+    # return. Reuses the C-l reload poke; no-op if that window has no sidebar.
+    def poke_window(window)
+      return if window.to_s.empty?
+      return unless session_of_window(window).start_with?("sb/")
+
+      poke(window_sidebar_pane(window))
+    end
+
     # The session the invoking client is currently in ("" outside tmux). Resolves
     # against the current client, like poke_current_sidebar — fine for the single
     # attached client that prefix-s comes from.

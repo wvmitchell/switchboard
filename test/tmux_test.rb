@@ -197,6 +197,40 @@ module Switchboard
       assert focused, "summon drops focus into the tree"
     end
 
+    # --- poke_window: the same-session window-switch poke (gated to sb/) --------
+
+    def test_poke_window_pokes_an_sb_windows_sidebar
+      poked = :unset
+      stub_method(Tmux, :session_of_window, ->(_w) { "sb/app/x" }) do
+        stub_method(Tmux, :window_sidebar_pane, ->(_w) { "%9" }) do
+          stub_method(Tmux, :poke, ->(pane) { poked = pane }) do
+            Tmux.poke_window("@3")
+          end
+        end
+      end
+      assert_equal "%9", poked, "an sb/ window's sidebar gets the C-l reload poke"
+    end
+
+    # The hook is global — it fires on EVERY window switch in EVERY session. It must
+    # do ~nothing on unrelated windows: one session lookup, then bail before any poke.
+    def test_poke_window_is_a_noop_for_a_non_sb_session
+      poked = false
+      stub_method(Tmux, :session_of_window, ->(_w) { "work" }) do
+        stub_method(Tmux, :poke, ->(*) { poked = true }) do
+          Tmux.poke_window("@3")
+        end
+      end
+      refute poked, "the global hook never pokes a non-sb/ window"
+    end
+
+    def test_poke_window_is_a_noop_on_a_blank_window
+      poked = false
+      stub_method(Tmux, :poke, ->(*) { poked = true }) do
+        Tmux.poke_window("")
+      end
+      refute poked
+    end
+
     private
 
     # Stub the seams toggle_sidebar drives: the session it reads, whether the

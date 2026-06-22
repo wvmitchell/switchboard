@@ -3,7 +3,7 @@
 # runs this via `run-shell` (the `switchboard install` marker block adds that
 # one line); it re-runs on every config reload, so it's written to apply safely
 # and repeatedly. Switchboard owns these bindings — `switchboard uninstall`
-# removes the marker line and clears the hook slot below.
+# removes the marker line and clears the hook slots below.
 DIR="$(cd "$(dirname "$0")" && pwd)"
 BIN="$DIR/bin/switchboard"
 
@@ -23,6 +23,14 @@ tmux set-hook -g 'client-session-changed[99]' "run-shell \"'$BIN' poke-sidebar\"
 # (split-window — how the sidebar is spawned — fires after-split-window, not this
 # hook, so there's no spawn loop.) Indexed slot [99]; uninstall clears it.
 tmux set-hook -g 'after-new-window[99]' "run-shell \"'$BIN' sidebar-sync #{window_id}\""
+
+# Poke the sidebar on a same-session window switch. Moving BETWEEN windows of one
+# session is not a client-session-changed, so the newly-active window's sidebar —
+# which sleeps on a long idle backstop while off screen — would otherwise lag before
+# it refreshes. tmux hands the now-active window's id; poke-window gates to sb/
+# sessions, so this global hook is a cheap no-op on unrelated windows. Indexed slot
+# [99]; uninstall clears it.
+tmux set-hook -g 'session-window-changed[99]' "run-shell \"'$BIN' poke-window #{window_id}\""
 
 # Optional: one-key jump to the home/anchor session. Not bound by default —
 # prefix-h is a common pane-nav key. Uncomment on a key that's free for you

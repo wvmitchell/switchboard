@@ -62,3 +62,32 @@ and where to start.
   pass the remaining buffer into the prompt helpers, or clear `$stdin` after a prompt
   returns. Low priority — needs buffered/pasted input to trigger and nothing destructive
   results.
+
+## Sidebar off-screen-work (architecture-review) follow-ups
+
+- **Tighten off-screen detection (zoom + bare-attach).** After the visibility-aware
+  sidebar work, two paths still leave a hidden/stale sidebar to the idle backstop
+  (`IDLE`, ~8s): (1) `Tmux.visible?` checks `window_active` + `session_attached` but
+  **not** pane zoom, so a sidebar hidden behind a `prefix-z` zoomed work pane reads as
+  visible and keeps scanning/painting; (2) a bare `tmux attach -t sb/...` (not the
+  sidebar-driven `switch-client`) may fire neither `client-session-changed` nor
+  `session-window-changed`, so that session's sidebar isn't poked and only refreshes on
+  the ~8s backstop. *Why deferred:* the conservative `IDLE` makes both self-heal within
+  ~8s, so they're low-severity; closing them is extra tmux surface (a `window_zoomed_flag`
+  check + a third global hook). *Start in:* `Tmux.visible?` (consult
+  `#{window_zoomed_flag}` and whether our pane is the zoomed one); add a
+  `client-attached[99]` poke in `switchboard.tmux` + clear it in
+  `Installer.teardown_live`. Low priority — measure whether either is felt in practice
+  first.
+
+## Community / contributor hygiene (devex-review) follow-ups
+
+- **Add CONTRIBUTING.md once there's contributor interest.** A short guide: run the
+  suite with `bin/test` (stdlib Minitest, offline), the hard **zero-gem stdlib-only**
+  constraint, and the module-vs-class conventions (stateless helpers are
+  `module_function` modules; only `Model`/`Config`/`Sidebar`/`AgentState` are classes —
+  see CLAUDE.md). *Why deferred:* the DX review added a `LICENSE` now (the actual
+  adoption blocker — an unlicensed public repo is legally all-rights-reserved), but a
+  CONTRIBUTING guide only pays off when outside contributors actually show up. *Start
+  in:* a new `CONTRIBUTING.md` referencing the conventions already documented in
+  `CLAUDE.md`. Low priority — add when the first external PR/issue lands.

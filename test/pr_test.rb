@@ -55,6 +55,19 @@ module Switchboard
       assert Pr.stale?("proj", 60)
     end
 
+    # --- cache_age (doctor freshness) ---
+
+    def test_cache_age_is_nil_when_never_fetched
+      assert_nil Pr.cache_age("nope")
+    end
+
+    def test_cache_age_reflects_the_cache_mtime
+      file = seed("proj", { "main" => {} })
+      backdate(file, 120)
+      assert_in_delta 120, Pr.cache_age("proj"), 5,
+                      "age is seconds since the last successful fetch (the cache mtime)"
+    end
+
     # --- for_project ---
 
     def test_for_project_reads_the_overridden_dir

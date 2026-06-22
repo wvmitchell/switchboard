@@ -36,12 +36,17 @@ Setup is one command: `git clone && bin/switchboard install` (`Installer`,
 installs), adds a
 marker-delimited line to the tmux.conf tmux actually loads (found via
 `#{config_files}`) that sources the self-locating `switchboard.tmux` fragment,
-and scaffolds an empty config. The fragment binds `prefix-s` (toggle) and two
-indexed hooks: `client-session-changed[99]` (poke the sidebar to reload) and
-`after-new-window[99]` (give a new window its own sidebar when the session is
-showing one — see per-session visibility below); `home` is intentionally not
-bound (configurable keys are issue #15). All steps are idempotent and reversed
-by `uninstall` (which clears both hook slots).
+and scaffolds an empty config. The fragment binds `prefix-s` (toggle) and three
+indexed hooks: `client-session-changed[99]` (poke the now-visible sidebar to
+reload on a session switch), `after-new-window[99]` (give a new window its own
+sidebar when the session is showing one — see per-session visibility below), and
+`session-window-changed[99]` (poke the sidebar on a same-session *window* switch,
+which isn't a session change — `poke-window`, gated to `sb/` sessions so the
+global hook no-ops elsewhere); `home` is intentionally not bound (configurable
+keys are issue #15). All steps are idempotent and reversed by `uninstall` (which
+clears all three hook slots — `Installer::HOOK_SLOTS`). `doctor` reports whether
+those hooks are **live** in the running server, not just present in config (they
+go stale after a `git pull` until tmux reloads).
 
 Ruby **>= 3.0** is required (`Config` uses `YAML.safe_load_file`, added in Psych
 3.3 / Ruby 3.0). `bin/switchboard` re-execs itself under a modern ruby if launched
@@ -112,6 +117,22 @@ windows are covered by the `after-new-window[99]` hook → `sidebar-sync <window
 which spawns one iff the session opts in. No spawn recursion: the sidebar is a
 `split-window`, which fires `after-split-window`, not the hooked `after-new-window`.
 
+**A *shown* sidebar still goes dormant while off screen.** Every window keeps its
+own sidebar process, so at any moment most of them are on inactive windows. Each
+caches whether it's currently on screen in `@visible` (the single flag, mutated
+only via `set_visible`); `render` and the spinner/blink (`pulsing?`) are gated on
+it, and `frame_timeout` drops an off-screen sidebar from the `REFRESH` cadence to
+a long `IDLE` backstop. So an off-screen sidebar does essentially nothing — no
+paint, no agent scan, just one cheap visibility check per `IDLE` — until a poke
+wakes it: a session switch (`client-session-changed` → C-l) or a same-session
+window switch (`session-window-changed` → `poke-window` → C-l). The C-l handler
+`reload_and_refresh` **re-samples** `Tmux.visible?` rather than assuming the poke
+means on-screen, because the same C-l is also sent by background PR-refresh
+children (`maybe_refresh_prs --poke`) to a pane you may have navigated away from —
+marking that hidden pane visible would re-wake it. An un-poked reappearance (a
+window switch on a tmux too old for the hook, a bare `tmux attach`) is caught by
+the off→on `reappeared` branch in `tick` within `IDLE`.
+
 ### Agent-state dots (the subtle part)
 
 The dot beside each workspace shows whether an agent (Claude/Codex/Aider) is
@@ -150,8 +171,8 @@ Each window's sidebar is its own process with its own `@prev_hook_states`, froze
 while off-screen — so a naive scan on switch-in would re-ring every completion
 that finished while that sidebar slept (already heard from the sidebar on screen
 then), spraying duplicates as you move between sessions. Catch-up scans (the
-switch poke `reload_and_refresh`, and the `visible && !@was_visible` reappear in
-`tick`) therefore reload with `announce_sounds: false`: they re-baseline and still
+switch poke `reload_and_refresh`, and the off→on `reappeared` branch in `tick`)
+therefore reload with `announce_sounds: false`: they re-baseline and still
 refresh PRs, but ring nothing. Only continuous while-visible scans announce — so a
 completion is heard once, from wherever you're watching when it lands.
 

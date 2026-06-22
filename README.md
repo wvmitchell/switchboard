@@ -89,9 +89,28 @@ up to `.bak` before the first edit. Flags: `--no-tmux` (skip the tmux edit),
 a specific file). `switchboard uninstall` reverses all of it; your config and
 agent state are left untouched. `switchboard doctor` reports what's wired.
 
-Then add your first project: press `a` in the sidebar (`n` only creates
-worktrees inside a project that already exists), so switchboard stands up on a
-fresh machine, off emdash, entirely from the keyboard.
+Then start it: run `switchboard` (or `sb`) from any shell — it bootstraps and
+drops you straight into the sidebar (the home session). Add your first project
+there by pressing `a` (`n` only creates worktrees inside a project that already
+exists), so switchboard stands up on a fresh machine, off emdash, entirely from
+the keyboard.
+
+## Upgrading
+
+Pull the latest and re-run install:
+
+```sh
+cd switchboard && git pull && bin/switchboard install
+```
+
+The command itself updates the moment you `git pull` (the PATH symlink points
+into the repo), but a running tmux server keeps the **old** bindings and hooks
+until its config reloads — so the `install` re-run (idempotent; it repoints the
+symlinks and re-sources the `switchboard.tmux` fragment in place) is what
+activates any new tmux wiring. A bare `tmux source-file <your conf>` does the
+same. `switchboard doctor` flags hooks that are wired in config but not yet live
+in the server, so you can tell when a reload is needed. See `CHANGELOG.md` for
+what changed between versions.
 
 ## Usage
 
