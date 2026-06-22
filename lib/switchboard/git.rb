@@ -67,8 +67,37 @@ module Switchboard
     end
 
     # Rename a worktree by moving its directory (keeps the branch/PR intact).
-    def move_worktree(repo, old_path, new_path)
-      system("git", "-C", repo, "worktree", "move", old_path, new_path, out: File::NULL, err: File::NULL)
+    # With bridge:, leave a symlink behind at old_path -> new_path. A Claude
+    # session that was already running freezes its project dir
+    # (CLAUDE_PROJECT_DIR) at the OLD path and chdir's there for every hook; once
+    # the real dir moves out from under it those hooks land on a now-dead path
+    # and the process falls back to $HOME — silencing the agent-state dots. The
+    # bridge keeps the old path resolvable, so the hooks resolve through to the
+    # new dir and `pwd -P` reports it, matching the worktree again. It's invisible
+    # to git (not a registered worktree) and reaped once it dangles
+    # (Reconcile.reap_bridges).
+    def move_worktree(repo, old_path, new_path, bridge: false)
+      clear_bridge(new_path) # a stale bridge squatting the target must not block the move
+      moved = system("git", "-C", repo, "worktree", "move", old_path, new_path, out: File::NULL, err: File::NULL)
+      leave_bridge(old_path, new_path) if moved && bridge
+      moved
+    end
+
+    # Best-effort: a bridge hiccup must never fail an otherwise-good rename.
+    def leave_bridge(old_path, new_path)
+      File.symlink(new_path, old_path) unless File.exist?(old_path)
+    rescue StandardError
+      nil
+    end
+
+    # Drop a bridge symlink (only ever a symlink, never a real worktree) so its
+    # name can be reused. Rescued: a delete race (a concurrent prune reap) or a
+    # permission error must degrade, not crash the caller — same rule as the rest
+    # of the shell-outs here.
+    def clear_bridge(path)
+      File.delete(path) if File.symlink?(path)
+    rescue StandardError
+      nil
     end
 
     # Remove a worktree. Without force, git refuses if it's dirty (returns false

@@ -19,6 +19,7 @@ module Switchboard
       # traversal (`switchboard add ../x …`), and File.join would otherwise let it
       # escape the worktree root just like an unsanitized workspace name would.
       dest = File.join(config.worktree_root, sanitize(project_name), name)
+      Git.clear_bridge(dest) # reclaim a stale rename bridge squatting the name
       return warn("already exists: #{dest}") if File.exist?(dest)
 
       branch = [config.branch_prefix, name].compact.join("/")

@@ -27,6 +27,44 @@ module Switchboard
       assert_equal "main", Git.current_branch(temp_git_repo)
     end
 
+    def test_move_worktree_moves_the_directory
+      repo = temp_git_repo("app")
+      git(repo, "worktree", "add", "-q", path("old"), "-b", "feature")
+      assert Git.move_worktree(repo, path("old"), path("new"))
+      refute File.exist?(path("old"))
+      assert File.directory?(path("new"))
+    end
+
+    # A live agent freezes its project dir at the OLD path; bridge: leaves a
+    # symlink there pointing at the new dir so its hooks keep resolving.
+    def test_move_worktree_with_bridge_leaves_a_symlink_behind
+      repo = temp_git_repo("app")
+      git(repo, "worktree", "add", "-q", path("old"), "-b", "feature")
+      assert Git.move_worktree(repo, path("old"), path("new"), bridge: true)
+      assert File.symlink?(path("old")), "old path is a symlink, not gone"
+      assert_equal File.realpath(path("new")), File.realpath(path("old")), "bridge resolves to the new dir"
+    end
+
+    def test_move_worktree_without_bridge_leaves_nothing_behind
+      repo = temp_git_repo("app")
+      git(repo, "worktree", "add", "-q", path("old"), "-b", "feature")
+      assert Git.move_worktree(repo, path("old"), path("new"))
+      refute File.symlink?(path("old"))
+      refute File.exist?(path("old"))
+    end
+
+    # Reusing a name a prior rename bridged: the stale symlink at the target must
+    # not block the move (git refuses a move onto an existing path).
+    def test_move_worktree_clears_a_stale_bridge_at_the_target
+      repo = temp_git_repo("app")
+      git(repo, "worktree", "add", "-q", path("a"), "-b", "fa")
+      git(repo, "worktree", "add", "-q", path("b"), "-b", "fb")
+      File.symlink(path("b"), path("dest")) # a leftover bridge squatting the target name
+      assert Git.move_worktree(repo, path("a"), path("dest")), "stale symlink at dest is cleared first"
+      refute File.symlink?(path("dest"))
+      assert File.directory?(path("dest"))
+    end
+
     def test_dirty_is_false_when_clean_true_with_changes
       repo = temp_git_repo
       refute Git.dirty?(repo)

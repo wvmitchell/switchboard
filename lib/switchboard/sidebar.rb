@@ -688,7 +688,9 @@ module Switchboard
       return reload if newname.nil? || newname.strip.empty?
 
       dest = File.join(File.dirname(node.path), Creator.sanitize(newname))
-      return reload unless Git.move_worktree(project["path"], node.path, dest)
+      # bridge: leave a symlink at the old path so a running agent's frozen
+      # project dir keeps resolving and its hooks keep reporting (see move_worktree).
+      return reload unless Git.move_worktree(project["path"], node.path, dest, bridge: true)
 
       # Rename the session in place (don't kill it) so a running agent and its
       # conversation survive. The moved dir keeps its inode, so cwd follows.

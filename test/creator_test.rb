@@ -63,6 +63,20 @@ module Switchboard
       capture_io { assert_nil Creator.create(config, "proj", "dup") }
     end
 
+    # A stale rename bridge (a symlink) squatting the target name must be reclaimed,
+    # not read as "already exists" — create clears it, then makes the worktree.
+    def test_create_reclaims_a_stale_bridge_squatting_the_name
+      config = config_for(temp_git_repo("proj", origin: true))
+      dest = File.join(config.worktree_root, "proj", "reused")
+      FileUtils.mkdir_p(File.dirname(dest))
+      File.symlink(path("target-long-gone"), dest) # dangling bridge at the target name
+      out = Creator.create(config, "proj", "reused")
+      assert_equal dest, out
+      refute File.symlink?(dest), "the stale bridge is cleared"
+      assert File.directory?(dest)
+      assert_equal "reused", Git.current_branch(dest)
+    end
+
     def test_create_unknown_project_is_nil
       config = config_for(temp_git_repo("proj", origin: true))
       capture_io { assert_nil Creator.create(config, "nope", "x") }

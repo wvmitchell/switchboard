@@ -61,17 +61,54 @@ module Switchboard
 
       prefixes = []
       valid = []
+      parents = []
       Model.new(config, with_dirty: false).projects.each do |project|
         names = project.worktrees.map { |w| Tmux.session_name(w) }
         next if names.empty?
 
         prefixes << Tmux.session_prefix(project.name)
         valid.concat(names)
+        # Collect parent dirs of DEDICATED worktrees only. The primary checkout's
+        # parent is the dir holding the main repo — switchboard doesn't own it and
+        # must not sweep it. Compare by realpath, not the w.primary flag (which is
+        # a raw-string match and misses a symlinked path, e.g. /var vs /private/var).
+        repo = real(project.path)
+        project.worktrees.each do |w|
+          wt = real(w.path)
+          parents << File.dirname(wt) unless wt == repo
+        end
       end
+
+      reap_bridges(parents) unless dry_run
 
       orphaned = orphans(live, valid, prefixes, current: Tmux.session_of, now: now)
       orphaned.each { |name| Tmux.kill_session(name) } unless dry_run
       Report.new(reachable: true, sb_count: live.size, orphans: orphaned)
+    end
+
+    # Remove rename bridges (the old -> new symlinks Git.move_worktree leaves) once
+    # they dangle — i.e. the renamed worktree they pointed at is itself gone.
+    # Scoped to dedicated-worktree parent dirs (never the main repo's parent), and
+    # only ever deletes a symlink whose target no longer exists, so it can't touch
+    # a real worktree or a live bridge that a moved-but-still-running agent needs.
+    def reap_bridges(parent_dirs)
+      parent_dirs.uniq.each do |dir|
+        Dir.children(dir).each do |name|
+          path = File.join(dir, name)
+          File.delete(path) if File.symlink?(path) && !File.exist?(path)
+        end
+      rescue StandardError
+        next
+      end
+    rescue StandardError
+      nil
+    end
+
+    # Canonicalize for comparison; raw path on failure (a vanished worktree).
+    def real(path)
+      File.realpath(path)
+    rescue StandardError
+      path
     end
   end
 end

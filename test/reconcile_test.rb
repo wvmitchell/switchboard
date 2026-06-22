@@ -135,6 +135,45 @@ module Switchboard
       assert_empty killed
     end
 
+    # --- reap_bridges (rename-bridge GC) -------------------------------------
+
+    def test_reap_bridges_removes_only_dangling_symlinks
+      dir = path("worktrees", "app")
+      FileUtils.mkdir_p(File.join(dir, "real"))                      # a real worktree dir
+      File.symlink(File.join(dir, "real"), File.join(dir, "live"))  # bridge to a live target
+      File.symlink(path("gone"), File.join(dir, "dead"))            # bridge whose target is gone
+
+      Reconcile.reap_bridges([dir])
+
+      refute File.symlink?(File.join(dir, "dead")), "a dangling bridge is reaped"
+      assert File.symlink?(File.join(dir, "live")), "a bridge to a live worktree is kept"
+      assert File.directory?(File.join(dir, "real")), "a real worktree is untouched"
+    end
+
+    def test_reap_bridges_tolerates_a_missing_dir
+      Reconcile.reap_bridges([path("nope")]) # absent dir must degrade, not raise
+    end
+
+    # The wiring: prune scans the parent dirs of git's worktrees and reaps the
+    # dangling bridges a rename left there.
+    def test_prune_reaps_a_dangling_rename_bridge
+      setup_app_project
+      bridge = path("worktrees", "app", "old-name")
+      File.symlink(path("worktrees", "app", "gone"), bridge) # dangling, in the worktree's parent dir
+      run_prune([sess("sb/app/app"), sess("sb/app/feat")])
+      refute File.symlink?(bridge), "prune reaps the dangling bridge"
+    end
+
+    # The primary checkout's parent is the dir holding the main repo — switchboard
+    # doesn't own it. A dangling symlink there (never a bridge) must survive prune.
+    def test_prune_does_not_sweep_the_main_repos_parent_dir
+      setup_app_project # repo at path("app"); its parent is the sandbox root
+      outside = path("unrelated-link")
+      File.symlink(path("nowhere"), outside) # dangling, but not in a worktree container
+      run_prune([sess("sb/app/app"), sess("sb/app/feat")])
+      assert File.symlink?(outside), "prune must not reap symlinks in the main repo's parent dir"
+    end
+
     private
 
     # A verified project "app" with the primary checkout + one real worktree

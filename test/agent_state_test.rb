@@ -63,6 +63,18 @@ module Switchboard
       no_processes { assert_equal :thinking, AgentState.new.scan([wt])[wt] }
     end
 
+    # A rename leaves a bridge symlink (old -> new), so a running agent's stale
+    # pre-move file (keyed by the old path, still resolvable through the symlink)
+    # and its fresh post-move file both alias onto the new worktree. They collapse
+    # to one entry, freshest kept — the stale state can't freeze the dot.
+    def test_bridged_alias_reports_the_freshest_state
+      wt = worktree("new")
+      File.symlink(wt, path("old")) # the rename bridge
+      write_hook("done", path("old"), epoch: Time.now.to_i - 300, name: "stale") # pre-move, via symlink
+      write_hook("thinking", wt, epoch: Time.now.to_i, name: "fresh")            # post-move, direct
+      no_processes { assert_equal :thinking, AgentState.new.scan([wt])[wt] }
+    end
+
     def test_a_dead_worktrees_hook_file_is_garbage_collected
       write_hook("thinking", path("dead"), name: "ghost") # cwd never created
       file = File.join(dir, "ghost")

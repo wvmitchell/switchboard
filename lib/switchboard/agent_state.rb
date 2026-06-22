@@ -62,19 +62,29 @@ module Switchboard
       )
     end
 
-    # Hook files: one line "<state>\t<cwd>\t<epoch>", keyed by cwd as [state, age].
-    # A fully-formed line whose worktree no longer exists is garbage-collected so
-    # the dir can't grow without bound. Requiring all three fields keeps a torn
-    # mid-write read from ever deleting a live worktree's file — it just gets
-    # skipped for this cycle. One file per worktree (cksum key), so the dir size
-    # is bounded by live worktree count regardless of age.
+    # Hook files: one line "<state>\t<cwd>\t<epoch>", keyed by the canonicalized
+    # cwd as [state, age]. A fully-formed line whose worktree no longer exists is
+    # garbage-collected so the dir can't grow without bound. Requiring all three
+    # fields keeps a torn mid-write read from ever deleting a live worktree's file
+    # — it just gets skipped for this cycle. Keying by realpath (not the raw cwd)
+    # collapses two reports that resolve to the same dir into one entry, freshest
+    # kept: a rename leaves a bridge symlink (old -> new) so a running agent's
+    # frozen project dir keeps resolving, which aliases its stale pre-move file
+    # and its fresh post-move file onto the same worktree.
     def read_hooks
       now = Time.now.to_i
       Dir.glob(File.join(state_dir, "*")).each_with_object({}) do |file, h|
         state, cwd, epoch = File.read(file).chomp.split("\t", 3)
         next unless state && cwd && epoch && STATES.include?(state)
 
-        Dir.exist?(cwd) ? h[cwd] = [state.to_sym, now - epoch.to_i] : File.delete(file)
+        unless Dir.exist?(cwd)
+          File.delete(file)
+          next
+        end
+
+        key = real(cwd)
+        age = now - epoch.to_i
+        h[key] = [state.to_sym, age] if !h.key?(key) || age < h[key][1]
       rescue StandardError
         next
       end
@@ -83,11 +93,12 @@ module Switchboard
     end
 
     # Deepest hook cwd at or under the worktree wins (agent launched in a subdir),
-    # but only if its report is still fresh. Both sides are canonicalized so a
-    # symlinked worktree root still matches the hook's physical `pwd -P`.
+    # but only if its report is still fresh. Keys are already canonicalized
+    # (read_hooks), so we only canonicalize the worktree — a symlinked worktree
+    # root still matches the hook's physical `pwd -P`.
     def fresh_hook(worktree, hooks)
       wt = real(worktree)
-      cwd = hooks.keys.select { |c| under?(real(c), wt) }.max_by(&:length)
+      cwd = hooks.keys.select { |c| under?(c, wt) }.max_by(&:length)
       return nil unless cwd
 
       state, age = hooks[cwd]
