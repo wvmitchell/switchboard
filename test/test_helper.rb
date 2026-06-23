@@ -24,6 +24,16 @@ class Minitest::Test
   ensure
     receiver.define_singleton_method(name, original)
   end
+
+  # Swap $stdin for the block (restored after) so a test can drive the sidebar's
+  # raw-mode read_key against a controllable IO — e.g. a closed pipe to hit EOF.
+  def with_stdin(io)
+    original = $stdin
+    $stdin = io
+    yield
+  ensure
+    $stdin = original
+  end
 end
 
 module Switchboard

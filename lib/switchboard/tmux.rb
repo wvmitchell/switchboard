@@ -485,6 +485,19 @@ module Switchboard
       active == "1" && attached.to_i.positive?
     end
 
+    # The pane's pseudo-terminal (e.g. /dev/ttys007) — tmux's stable per-pane
+    # identity, fixed for the pane's whole life. nil if the pane is gone (a
+    # dead/unresolved -t target prints empty). %ids, by contrast, get RECYCLED onto
+    # new panes, so the sidebar captures its pty once at startup and compares: when
+    # the pane its id now names reports a different tty, that id was handed to
+    # someone else and this process is an orphan (owns_pane?).
+    def pane_tty(pane)
+      return nil unless pane
+
+      tty = `tmux display-message -p -t #{Shellwords.escape(pane)} '#\{pane_tty}' 2>/dev/null`.strip
+      tty.empty? ? nil : tty
+    end
+
     # Is this pane the one the user is actually driving — the active pane, on the
     # active window, of an attached session? (Stronger than visible?: a sidebar
     # split is visible while you type in the editor beside it, but not focused.)

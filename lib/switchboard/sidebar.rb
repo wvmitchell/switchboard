@@ -113,6 +113,8 @@ module Switchboard
       @geom = nil          # winsize at the last successful width-pin (skip no-op pins)
       @visible = false     # is this pane currently on screen? gates render + pulse;
                            # the single source of truth, mutated only via set_visible
+      @pane_tty = nil      # our pane's pty, captured at startup — the durable pane
+                           # identity (tmux recycles %ids); owns_pane? exits if it drifts
       @focused = false     # is the sidebar the active pane? (cursor bar only then)
       @current_path = nil # worktree this sidebar's session is in (shown bold)
       @home = false        # is this the persistent home session? (settings base)
@@ -130,6 +132,7 @@ module Switchboard
       Tmux.enable_focus_events # so focus in/out reaches us for an instant dim
       @home = Tmux.session_of == Tmux::HOME # stable for this pane's lifetime
       pane = ENV["TMUX_PANE"]
+      @pane_tty = Tmux.pane_tty(pane) # capture our pty now — the pane identity owns_pane? guards
       # Sample visibility — don't assume on. A sidebar spawned with split-window -d
       # (after-new-window sync, reconcile into a non-active window) lands OFF screen;
       # warming + painting it then is exactly the off-screen work we're cutting. When
@@ -149,14 +152,16 @@ module Switchboard
         # on screen; otherwise sit on the slow REFRESH/IDLE interval. State scans
         # stay gated to REFRESH (scan_due?) so the fast frames don't hammer tmux.
         if IO.select([$stdin], nil, nil, frame_timeout)
-          break unless handle(read_key)
+          key = read_key
+          break if key == :eof # our pane's pty hit EOF (closed) — exit, don't spin as an orphan
+          break unless handle(key)
         else
           @pulse += 1
           # While pulsing we wake ~8x/s; re-check visibility a little faster than a
           # full scan so a pane that just went off-screen stops fast-spinning (and
           # painting) promptly, rather than after the next REFRESH tick.
           recheck_visibility if pulsing? && vis_poll_due?
-          tick if scan_due?
+          break if scan_due? && !tick # tick returns false once we no longer own our pane
         end
       end
     ensure
@@ -228,8 +233,11 @@ module Switchboard
     # Idle tick. When this sidebar comes back on screen (off -> on, i.e. you
     # navigated back) refresh the tree. While it stays on screen, keep agent dots
     # live and rebuild every TREE_TICKS. Off screen: nothing but the visibility
-    # sample (one tmux call) — no focused? call, no scan, no paint.
+    # sample (one tmux call) — no focused? call, no scan, no paint. Returns false
+    # to ask the loop to exit (we no longer own our pane), true otherwise.
     def tick
+      return false unless owns_pane? # disowned -> stop ticking; the loop exits us
+
       visible = Tmux.visible?(ENV["TMUX_PANE"])
       # Off screen we're never focused, so skip the focused? shell-out entirely —
       # that's half the per-tick tmux cost of a dormant pane.
@@ -254,6 +262,28 @@ module Switchboard
           refresh_agents
         end
       end
+      true
+    end
+
+    # True while this process still owns its tmux pane. tmux gives each pane a stable
+    # pty for its whole life but RECYCLES %ids, so when a pane is closed our
+    # ENV["TMUX_PANE"] can later name a brand-new pane owned by another sidebar.
+    # Left running, such an orphan would read THAT pane's visibility and ring its
+    # completion sounds in parallel with the real owner — the duplicate-sound bug.
+    # The pty captured at startup is the durable identity, and we disown ONLY on a
+    # CONFIRMED recycle: a non-empty tty that differs from ours. A nil reply is NOT
+    # proof — it means the pane is gone OR a `display-message` transiently failed
+    # (EINTR, busy server), indistinguishable here — so we keep running rather than
+    # self-terminate a healthy sidebar on a flaky shell-out (every other tmux call
+    # in this file degrades, not acts, on a transient miss). A genuinely dead pane
+    # reads visible?=false (so it's silent, never rings) and gets reaped the instant
+    # its id is recycled onto a live pane — exactly when it could turn harmful. No
+    # startup tty (run outside tmux / in tests) ⇒ never self-exit.
+    def owns_pane?
+      return true unless @pane_tty
+
+      now = Tmux.pane_tty(ENV["TMUX_PANE"])
+      now.nil? || now == @pane_tty
     end
 
     private
@@ -505,9 +535,14 @@ module Switchboard
 
     # --- input ---------------------------------------------------------------
 
+    # :eof when our pane closed (read past end-of-stream) so the loop can exit
+    # cleanly instead of busy-spinning forever on a dead pty; nil when select woke
+    # us spuriously with nothing to read (treated as no key).
     def read_key
       $stdin.read_nonblock(8)
-    rescue IO::WaitReadable, EOFError
+    rescue EOFError
+      :eof
+    rescue IO::WaitReadable
       nil
     end
 

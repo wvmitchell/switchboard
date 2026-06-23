@@ -7,6 +7,26 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.17.3] — exit orphaned sidebars so they stop ringing duplicate sounds (2026-06-23)
+
+### Fixed
+- **A workspace completion no longer rings twice (or more).** When a sidebar's
+  tmux pane closed, the process kept looping instead of exiting — `read_key`
+  swallowed the stdin `EOFError`, and nothing checked the pane still existed.
+  Because tmux **recycles `%pane-id`s**, the orphan's frozen `TMUX_PANE` would
+  later name a *different, live* pane; when that pane was on the attached/active
+  window the orphan read it as visible and rang completion sounds in parallel
+  with the real sidebar — duplicate (sometimes triple) sounds, intermittent by
+  which recycled id happened to map to the visible pane. The sidebar now exits
+  when its pane goes away: `read_key` returns `:eof` (the loop exits on it) for a
+  clean close, and `owns_pane?` compares the pane's current `#{pane_tty}` against
+  the pty captured at startup — a **confirmed** different tty means our id was
+  recycled onto someone else's pane, so `tick` returns false and the loop exits
+  within one `IDLE` cycle, before it can ring. A `nil` reply (pane gone *or* a
+  transient tmux hiccup) is not treated as disownership, so a flaky shell-out
+  never self-terminates a healthy sidebar; a dead pane reads as not-visible
+  (silent) and is reaped the moment its id is recycled onto a live pane.
+
 ## [0.17.2] — keep a symlinked tmux.conf intact on install (2026-06-22)
 
 ### Fixed

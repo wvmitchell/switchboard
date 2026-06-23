@@ -177,6 +177,29 @@ therefore reload with `announce_sounds: false`: they re-baseline and still
 refresh PRs, but ring nothing. Only continuous while-visible scans announce — so a
 completion is heard once, from wherever you're watching when it lands.
 
+That "one visible sidebar at a time" guarantee assumes a dead sidebar process
+actually exits — and one almost didn't. A sidebar whose pane closed used to keep
+looping: `read_key` swallowed the stdin `EOFError`, and nothing checked that the
+pane still existed. Because tmux **recycles `%pane-id`s**, the orphan's frozen
+`ENV["TMUX_PANE"]` would later name a *different, live* pane; when that pane was
+on the attached/active window the orphan's `Tmux.visible?` read true, so it ran
+announcing scans and rang completions **in parallel with the real owner** —
+duplicate (sometimes triple) sounds, intermittent because it depended on which
+recycled id currently mapped to the visible pane. Two guards close it:
+`read_key` now returns `:eof` (the run loop exits on it) for the clean
+pane-close, and `owns_pane?` compares the pane's current `#{pane_tty}`
+(`Tmux.pane_tty`) against the pty captured at startup — tmux keeps a pane's pty
+stable for its whole life but recycles ids, so a **confirmed** different tty
+means our id was handed to another pane, and `tick` returns false to exit. A
+`nil` reply is deliberately *not* treated as disownership: it can't be told
+apart from a transient `display-message` failure, and self-terminating a healthy
+sidebar on a flaky shell-out is worse than the leak it would prevent — every
+other tmux call here degrades rather than acts on a transient miss. A genuinely
+dead pane reads `visible?`=false (silent, never rings) and is reaped the instant
+its id is recycled onto a live pane — exactly when it could otherwise turn
+harmful. So the recycled-id orphan, the one that rings duplicates, stops within
+one `IDLE` tick before it can ring.
+
 The two defaults are **synthesized** (16-bit PCM WAV via `Array#pack`) and
 materialized into the XDG data dir on first use (atomic temp+rename, so racing
 sidebar processes never read a half-written file) — same self-healing trick as

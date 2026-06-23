@@ -704,6 +704,92 @@ module Switchboard
       assert_equal 2, attempts, "a failed pin retries next tick instead of poisoning the cache"
     end
 
+    # --- pane ownership: exit an orphaned sidebar (duplicate-sound fix) --------
+    # tmux recycles %ids, so a sidebar that outlives its pane (the loop never died)
+    # can have ENV["TMUX_PANE"] come to name a DIFFERENT, live pane. Left running it
+    # reads that pane's visibility and rings completions in parallel with the real
+    # owner — duplicate sounds. owns_pane? compares the pane's current pty against the
+    # one captured at startup; tick returns false (→ loop exits) once they diverge.
+
+    def test_tick_exits_when_pane_id_was_recycled_onto_another_pane
+      sb = sidebar(nodes: [proj("app"), ws("a", path: "/wt/a")])
+      sb.instance_variable_set(:@pane_tty, "/dev/ttys007") # the pty we started on
+      announced = false
+      sb.define_singleton_method(:refresh_agents) { |announce_sounds: true| announced = true }
+      # tmux now reports a different tty for our %id — it was handed to a new pane
+      stub_method(Tmux, :pane_tty, ->(*) { "/dev/ttys099" }) do
+        refute sb.send(:tick), "a recycled-id orphan asks the loop to exit"
+      end
+      refute announced, "...and never runs an announcing scan (no duplicate ring)"
+    end
+
+    # A nil pane_tty is ambiguous — pane gone OR a transient display-message failure —
+    # so owns_pane? must NOT exit on it (that would self-terminate a healthy sidebar
+    # whenever a tmux shell-out flakes). A dead-but-not-recycled pane reads visible?
+    # false (silent), and gets reaped on a CONFIRMED tty mismatch once its id recycles.
+    def test_tick_does_not_exit_on_a_nil_pane_tty
+      sb = sidebar(nodes: [proj("app"), ws("a", path: "/wt/a")])
+      sb.instance_variable_set(:@pane_tty, "/dev/ttys007")
+      sb.instance_variable_set(:@visible, false)
+      stub_method(Tmux, :pane_tty, ->(*) { nil }) do # transient miss / pane gone, not recycled
+        stub_method(Tmux, :focused?, ->(*) { false }) do
+          stub_method(Tmux, :visible?, ->(*) { false }) do
+            assert sb.send(:tick), "nil pane_tty is not proof of disownership — keep running"
+          end
+        end
+      end
+    end
+
+    def test_tick_keeps_running_while_it_still_owns_its_pane
+      sb = sidebar(nodes: [proj("app"), ws("a", path: "/wt/a")])
+      sb.instance_variable_set(:@pane_tty, "/dev/ttys007")
+      sb.instance_variable_set(:@visible, true)
+      sb.instance_variable_set(:@ticks, 0)
+      sb.define_singleton_method(:pin_if_resized) { nil }
+      sb.define_singleton_method(:refresh_agents) { |announce_sounds: true| nil }
+      stub_method(Tmux, :pane_tty, ->(*) { "/dev/ttys007" }) do # still our pty
+        stub_method(Tmux, :focused?, ->(*) { true }) do
+          stub_method(Tmux, :visible?, ->(*) { true }) do
+            assert sb.send(:tick), "the real owner keeps ticking"
+          end
+        end
+      end
+    end
+
+    # No startup tty (launched outside tmux, or a unit test) ⇒ ownership is a no-op
+    # and we never shell out to tmux to second-guess it.
+    def test_tick_without_a_captured_pane_tty_never_self_exits
+      sb = sidebar(nodes: [proj("app")])
+      sb.instance_variable_set(:@visible, false)
+      called = false
+      stub_method(Tmux, :pane_tty, ->(*) { called = true; nil }) do
+        stub_method(Tmux, :visible?, ->(*) { false }) do
+          assert sb.send(:tick), "no captured pty -> tick never asks to exit"
+        end
+      end
+      refute called, "owns_pane? short-circuits without a tmux call when @pane_tty is nil"
+    end
+
+    # read_key separates a closed pane (EOF) from a spurious wakeup (nothing ready):
+    # the run loop turns :eof into a clean exit so a dead pane can't busy-spin forever.
+    def test_read_key_signals_eof_when_the_stream_is_closed
+      sb = Sidebar.new
+      r, w = IO.pipe
+      w.close # reader is now at end-of-stream
+      with_stdin(r) { assert_equal :eof, sb.send(:read_key) }
+    ensure
+      r.close
+    end
+
+    def test_read_key_is_nil_when_nothing_is_ready
+      sb = Sidebar.new
+      r, w = IO.pipe # open + empty -> read_nonblock raises WaitReadable
+      with_stdin(r) { assert_nil sb.send(:read_key) }
+    ensure
+      r.close
+      w.close
+    end
+
     # --- live-state icons (#23) ----------------------------------------------
 
     def test_plain_shows_live_state_glyph_for_workspaces
