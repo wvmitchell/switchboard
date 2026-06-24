@@ -7,6 +7,30 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.21.0] — remap the sidebar toggle: configurable tmux keys (2026-06-24)
+
+### Added
+- **`tmux_keys` config: remap the sidebar toggle (and an optional home jump).**
+  `prefix-s` collided with tmux's default `choose-tree`; now `tmux_keys.toggle`
+  rebinds it to any key (a char, a named key like `Space`/`F1`, or a `C-`/`M-`
+  combo), and `tmux_keys.home` optionally binds a one-key jump to the home
+  session (unbound by default). Editing the key with `switchboard config` (or
+  `e`) takes effect on save — switchboard rebinds it immediately and flashes a
+  confirmation — instead of waiting for a tmux reload.
+- **`doctor` reports your key wiring.** New rows show the configured toggle key,
+  flag an unusable value (and the fallback it used), a `home`/`toggle`
+  collision, a config that failed to parse, and a key that displaced a prior
+  non-switchboard binding.
+
+### Changed
+- **The install fragment now binds via `switchboard tmux-bind`** instead of a
+  hardcoded `prefix-s`. It tracks the key it bound last in tmux options
+  (`@switchboard-*-key`) and cleans up exactly that on a rebind, so changing the
+  key never leaves the old one live and never clobbers your own bindings.
+- **A malformed `config.yml` no longer crashes anything.** It degrades to
+  defaults (the sidebar keeps its last-good config; `doctor` reports the parse
+  error) rather than raising.
+
 ## [0.20.0] — fresher signals: faster PR refresh + quit clears stale dots (2026-06-24)
 
 ### Added

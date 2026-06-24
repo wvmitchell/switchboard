@@ -761,9 +761,14 @@ module Switchboard
     end
 
     # Re-read config from disk so a freshly added project shows on the next
-    # rebuild (@config is otherwise cached for the session).
+    # rebuild (@config is otherwise cached for the session). Config.new no longer
+    # raises on malformed YAML (it degrades to empty + records load_error), so keep
+    # the last good @config on a parse error and return the error for the caller to
+    # surface; nil on a clean reload.
     def reload_config
-      @config = Config.new
+      fresh = Config.new
+      @config = fresh unless fresh.load_error
+      fresh.load_error
     end
 
     # e: edit config.yml in its own pane beside the home sidebar, then return to
@@ -786,11 +791,14 @@ module Switchboard
     # Re-read the (possibly hand-edited) config and rebuild — driven by the
     # dedicated post-edit poke (Ctrl-R) after `e`'s editor exits. Guard the parse:
     # the whole point of `e` is editing raw YAML, so a syntax slip is expected.
-    # Keep the last good config (Config.new raises *before* the @config assignment
-    # completes) and surface the error on tmux's status line — visible even when
-    # focus isn't on the tree — rather than tear the sidebar down.
+    # reload_config keeps the last good @config on a parse error and hands back the
+    # message; surface it on tmux's status line — visible even when focus isn't on
+    # the tree — rather than tear the sidebar down.
     def reload_config_and_rebuild
-      reload_config
+      if (err = reload_config)
+        return Tmux.notify("switchboard: config not reloaded — #{err}")
+      end
+
       # Also a catch-up: `e` switches the client to home to edit, so this sidebar
       # was off-screen with a frozen baseline while the (visible) home sidebar
       # rang any completions. Reload silently on the Ctrl-R return — else those

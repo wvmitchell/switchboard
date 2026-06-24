@@ -73,6 +73,178 @@ module Switchboard
       refute Installer.toggle_key_live_from?(""), "no binding reads not-live"
     end
 
+    # Configurable keys (issue #15): the check is parametrized by the chosen key, so
+    # a remapped toggle reads live on ITS key, not the hardcoded `s`.
+    def test_toggle_key_live_from_honors_a_configured_key
+      live = %(bind-key  -T prefix b  run-shell "'/x/switchboard' toggle-sidebar"\n)
+      assert Installer.toggle_key_live_from?(live, "b"), "prefix-b -> toggle-sidebar reads live for key b"
+      refute Installer.toggle_key_live_from?(live, "s"), "the default s is not bound here"
+      # whitespace boundary: a multi-char key never matches a single-char prefix of it
+      live2 = %(bind-key  -T prefix BSpace  run-shell "'/x/switchboard' toggle-sidebar"\n)
+      assert Installer.toggle_key_live_from?(live2, "BSpace")
+    end
+
+    # --- rebind_ops: the pure command sequence (issue #15) --------------------
+
+    def test_rebind_ops_binds_first_then_cleans_recorded_then_records
+      ops = Installer.rebind_ops("toggle", "b", recorded: "s")
+      assert_equal :bind, ops[0][0], "bind comes FIRST so a failed bind never strands the user"
+      assert_equal [:bind, "toggle", "b"], ops[0]
+      assert_includes ops, [:unbind, "s"], "cleans the previously-recorded key"
+      assert_includes ops, [:set_key, "toggle", "b"], "records what we bound"
+      assert_operator ops.index([:bind, "toggle", "b"]), :<, ops.index([:unbind, "s"]), "bind precedes unbind"
+    end
+
+    def test_rebind_ops_no_unbind_when_key_unchanged
+      ops = Installer.rebind_ops("toggle", "b", recorded: "b")
+      refute(ops.any? { |o| o[0] == :unbind }, "nothing to clean when the recorded key already matches")
+      assert_includes ops, [:bind, "toggle", "b"]
+    end
+
+    def test_rebind_ops_legacy_s_cleanup_only_when_unrecorded
+      # Upgrade from the old hardcoded fragment: option unset, `s` live, new key b.
+      ops = Installer.rebind_ops("toggle", "b", recorded: nil, legacy_toggle: true)
+      assert_includes ops, [:unbind, "s"], "cleans the legacy hardcoded s"
+      # Already recorded (post-@option): no legacy cleanup, no spurious unbind of s.
+      ops2 = Installer.rebind_ops("toggle", "b", recorded: "g", legacy_toggle: false)
+      refute_includes ops2, [:unbind, "s"]
+      # Default-key install: don't unbind the very key we're (re)binding.
+      ops3 = Installer.rebind_ops("toggle", "s", recorded: nil, legacy_toggle: true)
+      refute_includes ops3, [:unbind, "s"]
+    end
+
+    def test_rebind_ops_home_unset_cleans_recorded_and_forgets
+      ops = Installer.rebind_ops("home", nil, recorded: "H")
+      assert_includes ops, [:unbind, "H"], "unbinds the home key we'd recorded"
+      assert_includes ops, [:clear_key, "home"], "forgets the option"
+      assert_includes ops, [:clear_clobber, "home"]
+      refute(ops.any? { |o| o[0] == :bind }, "nothing to bind when home is unset")
+    end
+
+    def test_rebind_ops_clobber_capture_and_clear
+      with = Installer.rebind_ops("toggle", "b", recorded: nil, clobbered: "send-keys hi")
+      assert_includes with, [:set_clobber, "toggle", "send-keys hi"], "records the clobbered foreign binding"
+      without = Installer.rebind_ops("toggle", "b", recorded: nil, clobbered: nil)
+      assert_includes without, [:clear_clobber, "toggle"], "clears it when nothing was clobbered"
+    end
+
+    # --- tmux_argv: symbolic op -> tmux command -------------------------------
+
+    def test_tmux_argv_translates_each_op
+      assert_equal ["bind-key", "b", "run-shell", "'#{Installer.bin_path}' toggle-sidebar"],
+                   Installer.tmux_argv([:bind, "toggle", "b"])
+      assert_equal ["bind-key", "H", "run-shell", "'#{Installer.bin_path}' home"],
+                   Installer.tmux_argv([:bind, "home", "H"])
+      assert_equal ["unbind-key", "s"], Installer.tmux_argv([:unbind, "s"])
+      assert_equal ["set-option", "-g", "@switchboard-toggle-key", "b"], Installer.tmux_argv([:set_key, "toggle", "b"])
+      assert_equal ["set-option", "-gu", "@switchboard-home-key"], Installer.tmux_argv([:clear_key, "home"])
+      assert_equal ["set-option", "-g", "@switchboard-toggle-clobbered", "x"], Installer.tmux_argv([:set_clobber, "toggle", "x"])
+    end
+
+    # --- run_rebind: bind-first + bind-failure fallback (via the run_tmux seam) -
+
+    def test_run_rebind_executes_full_sequence_on_success
+      cmds = []
+      stub_method(Installer, :run_tmux, ->(*argv) { cmds << argv; true }) do
+        result = Installer.run_rebind("toggle", "b", recorded: "s", legacy_toggle: false, clobbered: nil)
+        assert_equal "b", result
+      end
+      assert_equal ["bind-key", "b", "run-shell", "'#{Installer.bin_path}' toggle-sidebar"], cmds.first
+      assert_includes cmds, ["unbind-key", "s"]
+      assert_includes cmds, ["set-option", "-g", "@switchboard-toggle-key", "b"]
+    end
+
+    def test_run_rebind_falls_back_to_default_when_bind_rejected
+      cmds = []
+      bad = ["bind-key", "Frobnicate", "run-shell", "'#{Installer.bin_path}' toggle-sidebar"]
+      # Only the bind of the bad key fails; the recovery bind of `s` succeeds.
+      stub_method(Installer, :run_tmux, ->(*argv) { cmds << argv; argv != bad }) do
+        result = Installer.run_rebind("toggle", "Frobnicate", recorded: "g", legacy_toggle: false, clobbered: nil)
+        assert_equal "s", result, "recovers to the default toggle so a working key survives"
+      end
+      assert_equal bad, cmds[0], "tried the configured key first"
+      assert_includes cmds, ["bind-key", "s", "run-shell", "'#{Installer.bin_path}' toggle-sidebar"], "bound the default"
+      assert_includes cmds, ["unbind-key", "g"], "cleaned the previously-recorded key (no stale binding lingers)"
+      assert_includes cmds, ["set-option", "-g", "@switchboard-toggle-key", "s"], "recorded the fallback so future cleanup can find it"
+    end
+
+    def test_run_rebind_no_infinite_recurse_when_default_itself_fails
+      cmds = []
+      stub_method(Installer, :run_tmux, ->(*argv) { cmds << argv; false }) do # every bind fails
+        assert_nil Installer.run_rebind("toggle", "s", recorded: nil, legacy_toggle: false, clobbered: nil)
+      end
+      assert_equal 1, cmds.size, "default == desired: don't recurse when the default can't bind either"
+    end
+
+    def test_run_rebind_home_failure_recovers_to_unbound_and_clears_option
+      cmds = []
+      home_bind = ["bind-key", "Bogus", "run-shell", "'#{Installer.bin_path}' home"]
+      stub_method(Installer, :run_tmux, ->(*argv) { cmds << argv; argv != home_bind }) do # home bind fails; cleanup succeeds
+        assert_nil Installer.run_rebind("home", "Bogus", recorded: "H", legacy_toggle: false, clobbered: nil)
+      end
+      assert_includes cmds, ["unbind-key", "H"], "a rejected home key still cleans the old home binding"
+      assert_includes cmds, ["set-option", "-gu", "@switchboard-home-key"], "forgets the home option"
+      refute(cmds.any? { |c| c == ["bind-key", "s", "run-shell", "'#{Installer.bin_path}' home"] }, "no default fallback for home")
+    end
+
+    # --- apply_keybindings: ties config + recorded options + the seam together --
+
+    def test_apply_keybindings_binds_configured_toggle_and_home
+      File.write(Config.path, YAML.dump("tmux_keys" => { "toggle" => "b", "home" => "H" }))
+      cmds = []
+      stub_method(Installer, :list_prefix_keys, -> { "" }) do
+        stub_method(Installer, :tmux_option, ->(_name) { nil }) do
+          stub_method(Installer, :run_tmux, ->(*argv) { cmds << argv; true }) do
+            Installer.apply_keybindings(config: Config.new)
+          end
+        end
+      end
+      assert_includes cmds, ["bind-key", "b", "run-shell", "'#{Installer.bin_path}' toggle-sidebar"]
+      assert_includes cmds, ["bind-key", "H", "run-shell", "'#{Installer.bin_path}' home"]
+      assert_includes cmds, ["set-option", "-g", "@switchboard-toggle-key", "b"]
+    end
+
+    def test_apply_keybindings_announces_only_when_asked
+      File.write(Config.path, YAML.dump("tmux_keys" => { "toggle" => "b" }))
+      # silent path (fragment)
+      silent = []
+      stub_method(Installer, :list_prefix_keys, -> { "" }) do
+        stub_method(Installer, :tmux_option, ->(_n) { nil }) do
+          stub_method(Installer, :run_tmux, ->(*a) { silent << a if a.first == "display-message"; true }) do
+            Installer.apply_keybindings(config: Config.new)
+          end
+        end
+      end
+      assert_empty silent, "the fragment path stays silent (no display-message)"
+      # announce path (interactive reload)
+      announced = []
+      stub_method(Installer, :list_prefix_keys, -> { "" }) do
+        stub_method(Installer, :tmux_option, ->(_n) { nil }) do
+          stub_method(Installer, :run_tmux, ->(*a) { announced << a if a.first == "display-message"; true }) do
+            Installer.apply_keybindings(announce: true, config: Config.new)
+          end
+        end
+      end
+      assert_equal 1, announced.size, "announce: true flashes one confirmation"
+      assert_match(/prefix-b toggles the sidebar/, announced.first.last)
+    end
+
+    # --- foreign_binding: clobber detection -----------------------------------
+
+    def test_foreign_binding_flags_a_non_switchboard_binding
+      raw = %(bind-key  -T prefix b  send-keys hello\n)
+      assert_equal "send-keys hello", Installer.foreign_binding(raw, "b", "toggle-sidebar")
+    end
+
+    def test_foreign_binding_ignores_our_own_binding
+      raw = %(bind-key  -T prefix b  run-shell "'#{Installer.bin_path}' toggle-sidebar"\n)
+      assert_nil Installer.foreign_binding(raw, "b", "toggle-sidebar"), "our own binding isn't a clobber"
+    end
+
+    def test_foreign_binding_nil_when_key_unbound
+      assert_nil Installer.foreign_binding("", "b", "toggle-sidebar")
+    end
+
     def test_strip_block_is_inverse_of_with_block
       base = "# my conf\nbind-key x display-message hi\n"
       wired = Installer.with_block(base)

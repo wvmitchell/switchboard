@@ -110,6 +110,35 @@ module Switchboard
       assert_equal "@4", got
     end
 
+    # The fragment's `tmux-bind` line routes through to Installer.apply_keybindings.
+    def test_tmux_bind_dispatch_applies_keybindings
+      called = false
+      stub_method(Installer, :apply_keybindings, ->(**_) { called = true }) do
+        CLI.run(["tmux-bind"])
+      end
+      assert called, "tmux-bind dispatches to Installer.apply_keybindings"
+    end
+
+    # DX1/DX2: the config-edit reload re-applies the keybindings (so a changed
+    # tmux_keys takes effect on save) and announces the result.
+    def test_reload_config_poke_reapplies_and_announces_keybindings
+      announced = :unset
+      orig = ENV["TMUX"]
+      ENV["TMUX"] = "/tmp/fake-tmux,1,0"
+      stub_method(Tmux, :session_of, -> { "sb/home" }) do
+        stub_method(Tmux, :switch, ->(*) {}) do
+          stub_method(Tmux, :poke_sidebar_of, ->(*, **) { true }) do
+            stub_method(Installer, :apply_keybindings, ->(announce: false, **) { announced = announce }) do
+              CLI.send(:reload_config_poke, "")
+            end
+          end
+        end
+      end
+      assert_equal true, announced, "reload re-applies (DX1) and announces (DX2)"
+    ensure
+      ENV["TMUX"] = orig
+    end
+
     def test_init_writes_an_empty_config_when_absent
       out = capture { CLI.init }
       assert Config.exist?
@@ -355,6 +384,42 @@ module Switchboard
       refute Config.new.project("app")
     end
 
+    # --- doctor: tmux_keys rows (issue #15) -----------------------------------
+
+    def test_doctor_shows_the_configured_toggle_key
+      File.write(Config.path, YAML.dump("tmux_keys" => { "toggle" => "b" }))
+      out = with_key_stubs(live: true) { capture { CLI.send(:doctor_binding_live) } }
+      assert_includes out, "prefix-b bound (toggle-sidebar)"
+    end
+
+    def test_doctor_flags_an_invalid_key_value
+      File.write(Config.path, YAML.dump("tmux_keys" => { "toggle" => "a b" }))
+      out = with_key_stubs(live: true) { capture { CLI.send(:doctor_binding_live) } }
+      assert_includes out, "tmux_keys.toggle"
+      assert_includes out, "isn't a usable key"
+      assert_includes out, "prefix-s bound", "still reports the fallback key as bound"
+    end
+
+    def test_doctor_flags_a_home_toggle_collision
+      File.write(Config.path, YAML.dump("tmux_keys" => { "toggle" => "b", "home" => "b" }))
+      out = with_key_stubs(live: true) { capture { CLI.send(:doctor_binding_live) } }
+      assert_includes out, "collides with the toggle key"
+    end
+
+    def test_doctor_reports_a_config_parse_error
+      File.write(Config.path, "}{ not yaml")
+      out = with_key_stubs(live: true) { capture { CLI.send(:doctor_binding_live) } }
+      assert_includes out, "config failed to parse"
+    end
+
+    def test_doctor_warns_about_a_clobbered_binding
+      File.write(Config.path, YAML.dump("tmux_keys" => { "toggle" => "b" }))
+      out = with_key_stubs(live: true, options: { "@switchboard-toggle-clobbered" => "send-keys hi" }) do
+        capture { CLI.send(:doctor_binding_live) }
+      end
+      assert_includes out, "replaced a prior binding: send-keys hi"
+    end
+
     # CLI memoizes its Config; clear it so each test reads its own sandbox config.
     def teardown
       CLI.instance_variable_set(:@config, nil)
@@ -367,6 +432,14 @@ module Switchboard
     # seam so the doctor rows can be exercised offline like the rest of the suite.
     def run_doctor(&blk)
       stub_method(Pr, :authenticated?, -> { false }) { blk ? blk.call : CLI.doctor }
+    end
+
+    # Stub the two tmux shell-outs doctor_binding_live makes: the live-binding probe
+    # and the @option reads (clobber markers). Keeps the doctor rows offline.
+    def with_key_stubs(live:, options: {}, &blk)
+      stub_method(Installer, :toggle_key_live?, -> { live }) do
+        stub_method(Installer, :tmux_option, ->(name) { options[name] }, &blk)
+      end
     end
 
     def capture

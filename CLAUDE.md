@@ -36,21 +36,40 @@ Setup is one command: `git clone && bin/switchboard install` (`Installer`,
 installs), adds a
 marker-delimited line to the tmux.conf tmux actually loads (found via
 `#{config_files}`) that sources the self-locating `switchboard.tmux` fragment,
-and scaffolds an empty config. The fragment binds `prefix-s` (toggle) and three
-indexed hooks: `client-session-changed[99]` (poke the now-visible sidebar to
-reload on a session switch), `after-new-window[99]` (give a new window its own
-sidebar when the session is showing one — see per-session visibility below), and
-`session-window-changed[99]` (poke the sidebar on a same-session *window* switch,
-which isn't a session change — `poke-window`, gated to `sb/` sessions so the
-global hook no-ops elsewhere); `home` is intentionally not bound (configurable
-keys are issue #15). All steps are idempotent and reversed by `uninstall` (which
-clears all three hook slots — `Installer::HOOK_SLOTS`). `doctor` reports whether
+and scaffolds an empty config. The fragment runs `switchboard tmux-bind` (which
+binds the configured keys — see keybindings below) and sets three indexed hooks:
+`client-session-changed[99]` (poke the now-visible sidebar to reload on a session
+switch), `after-new-window[99]` (give a new window its own sidebar when the session
+is showing one — see per-session visibility below), and `session-window-changed[99]`
+(poke the sidebar on a same-session *window* switch, which isn't a session change —
+`poke-window`, gated to `sb/` sessions so the global hook no-ops elsewhere). All
+steps are idempotent and reversed by `uninstall` (which clears all three hook slots
+— `Installer::HOOK_SLOTS` — plus the bound keys and `@switchboard-*` options). `doctor` reports whether
 those hooks are **live** in the running server, not just present in config (they
 go stale after a `git pull` until tmux reloads). `doctor` also flags **orphaned
 sidebar processes** — a `switchboard sidebar` that outlived its pane — by diffing
 the running-process count (`pgrep`) against the sidebar-pane count
 (`Tmux.sidebar_pane_count`); a straggler matters because tmux recycles pane ids,
 so it can end up reading a different live pane and double-fire completion sounds.
+
+**Configurable keybindings (issue #15).** The fragment delegates binding to
+`switchboard tmux-bind` (`Installer.apply_keybindings`), which reads `tmux_keys:`
+from config (`Config#tmux_key` — global, resolve-with-default like `sound_for`;
+`toggle` defaults to `s`, `home` is unbound). Cleanup tracks the key it bound last
+in tmux options (`@switchboard-toggle-key` / `@switchboard-home-key`) and unbinds
+exactly that — never a scan of `list-keys`, so it can't clobber a user's own
+`switchboard` binding and survives a repo move (tmux key bindings and `@options`
+share a lifetime: both die on server restart). It binds before it unbinds, so a
+key tmux rejects falls back to the default without stranding the recovery key, and
+records a displaced foreign binding in `@switchboard-*-clobbered` for `doctor` to
+warn about. The decision is the pure `Installer.rebind_ops` (unit-tested via the
+`run_tmux` seam); validation is a **minimal denylist** (`Config#valid_tmux_key?`) —
+tmux is the authority on real keys. Editing `tmux_keys` via `e`/`switchboard config`
+re-applies immediately (`reload_config_poke` / `edit_config` call `apply_keybindings`,
+`announce: true` flashing the result); a from-scratch `install` still needs a tmux
+reload. A malformed config no longer crashes anything — `Config#initialize` rescues
+the parse error to `{}` + `load_error` (the sidebar keeps its last-good config; the
+`tmux-bind` path falls back to defaults; `doctor` reports it).
 
 Ruby **>= 3.0** is required (`Config` uses `YAML.safe_load_file`, added in Psych
 3.3 / Ruby 3.0). `bin/switchboard` re-execs itself under a modern ruby if launched

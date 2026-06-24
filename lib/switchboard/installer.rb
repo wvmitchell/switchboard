@@ -108,7 +108,8 @@ module Switchboard
       step_init
       warn_path
       warn_tmux_version
-      puts "\nDone — run `switchboard` (or `sb`) from any shell to start; press prefix-s to toggle the sidebar inside tmux."
+      key = Config.new.tmux_key("toggle")
+      puts "\nDone — run `switchboard` (or `sb`) from any shell to start; press prefix-#{key} to toggle the sidebar inside tmux."
       puts "(If the key doesn't respond yet, reload tmux: `tmux source-file <your conf>`.)"
     end
 
@@ -164,14 +165,15 @@ module Switchboard
 
     def step_tmux(conf_override)
       conf = tmux_conf(conf_override)
-      prev = prefix_binding("s")
+      key = Config.new.tmux_key("toggle")
+      prev = prefix_binding(key)
       body = File.exist?(conf) ? File.read(conf) : ""
       backup(conf) if File.exist?(conf)
       atomic_write(conf, with_block(strip_block(body)))
       reload(conf)
       dest = real_target(conf)
       ok(dest == conf ? "tmux: wired in #{conf}" : "tmux: wired in #{conf} → #{dest}")
-      note "prefix-s now toggles the sidebar (was: #{prev})" if prev && !prev.include?("switchboard")
+      note "prefix-#{key} now toggles the sidebar (was: #{prev})" if prev && !prev.include?("switchboard")
     rescue StandardError => e
       bad "tmux: #{e.message}"
     end
@@ -233,10 +235,138 @@ module Switchboard
     # would keep firing poke-window at the now-removed install on every window switch.
     # No server ⇒ the tmux calls no-op (errors swallowed), and they never start one.
     def teardown_live
-      system("tmux", "unbind-key", "s", out: File::NULL, err: File::NULL)
-      HOOK_SLOTS.each do |slot|
-        system("tmux", "set-hook", "-gu", slot, out: File::NULL, err: File::NULL)
+      %w[toggle home].each do |role|
+        recorded = tmux_option("@switchboard-#{role}-key")
+        run_tmux("unbind-key", recorded) if recorded
+        run_tmux("set-option", "-gu", "@switchboard-#{role}-key")
+        run_tmux("set-option", "-gu", "@switchboard-#{role}-clobbered")
       end
+      run_tmux("unbind-key", "s") # legacy default — covers installs predating the @option record
+      HOOK_SLOTS.each { |slot| run_tmux("set-hook", "-gu", slot) }
+    end
+
+    # --- keybindings (the `tmux-bind` entry point) ---------------------------
+
+    # Per-role tmux subcommand the bound key runs. Roles match Config's tmux_keys.
+    ROLE_SUBCOMMANDS = { "toggle" => "toggle-sidebar", "home" => "home" }.freeze
+
+    # Bind the configured toggle/home keys and clean up the ones we previously bound.
+    # Run by switchboard.tmux on every tmux reload AND by the interactive config-edit
+    # reload (announce: true → it reports the result, DX2). The cleanup tracks the
+    # last key WE bound in tmux @options rather than scanning list-keys, so it never
+    # clobbers a user's own switchboard binding and survives a repo move. Server ops,
+    # no TMUX gate; every call degrades on failure.
+    #
+    #   per role: bind desired FIRST → unbind the key we recorded last → record the
+    #   new key → capture/clear a clobbered foreign binding (for doctor). A rejected
+    #   bind falls back (toggle → s) WITHOUT cleaning, so the recovery key is safe.
+    def apply_keybindings(announce: false, config: Config.new)
+      raw = list_prefix_keys
+      legacy = tmux_option("@switchboard-toggle-key").nil? && toggle_key_live_from?(raw, "s")
+      bound = ROLE_SUBCOMMANDS.keys.to_h do |role|
+        desired = config.tmux_key(role)
+        recorded = tmux_option("@switchboard-#{role}-key")
+        clobbered = desired && desired != recorded ? foreign_binding(raw, desired, ROLE_SUBCOMMANDS[role]) : nil
+        [role, run_rebind(role, desired, recorded: recorded, legacy_toggle: legacy, clobbered: clobbered)]
+      end
+      announce_bindings(bound) if announce
+    end
+
+    # Pure: the ordered tmux ops to converge `role` onto `desired`. Symbolic tuples
+    # (translated by tmux_argv), bind FIRST so a failed bind never strands the user.
+    # nil desired ⇒ clean the role up (unbind what we recorded, forget it).
+    def rebind_ops(role, desired, recorded:, legacy_toggle: false, clobbered: nil)
+      ops = []
+      if desired.nil?
+        ops << [:unbind, recorded] if recorded
+        ops << [:clear_key, role]
+        ops << [:clear_clobber, role]
+        return ops
+      end
+      ops << [:bind, role, desired]
+      ops << [:unbind, recorded] if recorded && recorded != desired
+      ops << [:unbind, "s"] if role == "toggle" && legacy_toggle && desired != "s" && recorded != "s"
+      ops << [:set_key, role, desired]
+      ops << (clobbered ? [:set_clobber, role, clobbered] : [:clear_clobber, role])
+      ops
+    end
+
+    # Translate a symbolic rebind op to a tmux argv array (no shell). The bind mirrors
+    # the fragment's quoting — '<bin>' in single quotes so a path with spaces survives
+    # the /bin/sh that run-shell hands the command to.
+    def tmux_argv(op)
+      case op[0]
+      when :bind          then ["bind-key", op[2], "run-shell", "'#{bin_path}' #{ROLE_SUBCOMMANDS[op[1]]}"]
+      when :unbind        then ["unbind-key", op[1]]
+      when :set_key       then ["set-option", "-g", "@switchboard-#{op[1]}-key", op[2]]
+      when :clear_key     then ["set-option", "-gu", "@switchboard-#{op[1]}-key"]
+      when :set_clobber   then ["set-option", "-g", "@switchboard-#{op[1]}-clobbered", op[2]]
+      when :clear_clobber then ["set-option", "-gu", "@switchboard-#{op[1]}-clobbered"]
+      end
+    end
+
+    # Execute one role's ops, bind-first. If tmux rejects the key (denylist let it
+    # through but it's not a real key), keep a working toggle by binding the default
+    # and bail WITHOUT cleaning or recording; leave home unbound. Returns the key
+    # actually bound to our command, or nil.
+    def run_rebind(role, desired, recorded:, legacy_toggle:, clobbered:)
+      ops = rebind_ops(role, desired, recorded: recorded, legacy_toggle: legacy_toggle, clobbered: clobbered)
+      if desired.nil?
+        ops.each { |op| run_tmux(*tmux_argv(op)) }
+        return nil
+      end
+
+      bind_op, *rest = ops
+      unless run_tmux(*tmux_argv(bind_op))
+        # tmux rejected the key (the denylist passed, but it's not a real key).
+        # Recover THROUGH rebind so the rejected attempt AND any previously-recorded
+        # key get cleaned and the @option reflects what's actually bound — else a
+        # stale binding lingers across a later config change. Toggle recovers to the
+        # default (a working key survives); home recovers to unbound. Guard the
+        # toggle's self-recursion if the default itself can't bind.
+        recovery = role == "toggle" ? Config::TMUX_KEY_DEFAULTS["toggle"] : nil
+        return nil if recovery == desired
+
+        return run_rebind(role, recovery, recorded: recorded, legacy_toggle: legacy_toggle, clobbered: nil)
+      end
+      rest.each { |op| run_tmux(*tmux_argv(op)) }
+      desired
+    end
+
+    # One tmux command (argv, no shell), output swallowed; returns success. The single
+    # seam every binding side-effect goes through, so tests assert the exact command
+    # sequence without a tmux server.
+    def run_tmux(*argv)
+      system("tmux", *argv, out: File::NULL, err: File::NULL)
+    end
+
+    # Raw `tmux list-keys -T prefix` output (a stubbable seam; offline tests fake it).
+    def list_prefix_keys
+      `tmux list-keys -T prefix 2>/dev/null`
+    end
+
+    # A global tmux user option's value, or nil when unset / no server.
+    def tmux_option(name)
+      v = `tmux show-options -gqv #{Shellwords.escape(name)} 2>/dev/null`.strip
+      $?.success? && !v.empty? ? v : nil
+    end
+
+    # The foreign command `key` is currently bound to (NOT one of ours), or nil — so
+    # doctor can warn before tmux-bind clobbers it. Ours = a switchboard run-shell
+    # for this role.
+    def foreign_binding(raw, key, subcommand)
+      binding = prefix_binding_from(raw, key)
+      return nil if binding.nil? || (binding.include?("'#{bin_path}'") && binding.include?(subcommand))
+
+      binding
+    end
+
+    # DX2: after an interactive rebind, show what's bound so the user sees it took
+    # effect instead of having to test the key. `bound` is role => bound-key-or-nil.
+    def announce_bindings(bound)
+      desc = { "toggle" => "toggles the sidebar", "home" => "jumps home" }
+      parts = bound.filter_map { |role, key| "prefix-#{key} #{desc[role]}" if key }
+      run_tmux("display-message", "switchboard: #{parts.join(', ')}") unless parts.empty?
     end
 
     # Which of switchboard's indexed hooks are actually LIVE in the running tmux
@@ -264,14 +394,15 @@ module Switchboard
     # nil = no server to ask (a server op via list-keys; no client needed).
     def toggle_key_live?
       raw = `tmux list-keys -T prefix 2>/dev/null`
-      $?.success? ? toggle_key_live_from?(raw) : nil
+      $?.success? ? toggle_key_live_from?(raw, Config.new.tmux_key("toggle")) : nil
     end
 
-    # Pure: does `tmux list-keys -T prefix` show key `s` bound to toggle-sidebar?
-    # Whitespace-bounded `s` so a multi-char key (Space) never matches; the command
-    # must mention toggle-sidebar so a foreign `s` binding doesn't read as ours.
-    def toggle_key_live_from?(raw)
-      raw.to_s.lines.any? { |l| l.match?(/-T prefix\s+s\s/) && l.include?("toggle-sidebar") }
+    # Pure: does `tmux list-keys -T prefix` show `key` bound to toggle-sidebar?
+    # Whitespace-bounded so a multi-char key never matches a prefix of itself; the
+    # command must mention toggle-sidebar so a foreign binding doesn't read as ours.
+    # Defaults to `s` (the historical key) so legacy-detection callers read clean.
+    def toggle_key_live_from?(raw, key = "s")
+      raw.to_s.lines.any? { |l| l.match?(/-T prefix\s+#{Regexp.escape(key)}\s/) && l.include?("toggle-sidebar") }
     end
 
     # --- doctor support (read-only predicates; cli renders the rows) ----------
@@ -389,8 +520,14 @@ module Switchboard
     def prefix_binding(key)
       return nil unless ENV["TMUX"]
 
-      `tmux list-keys -T prefix 2>/dev/null`.lines.each do |line|
-        m = line.match(/-T\s+prefix\s+(\S+)\s+(.*)\z/)
+      prefix_binding_from(`tmux list-keys -T prefix 2>/dev/null`, key)
+    end
+
+    # Pure: the command `key` is bound to in `tmux list-keys -T prefix` output, or
+    # nil. Split from the shell-out so the clobber/"was:" lookups are unit-testable.
+    def prefix_binding_from(raw, key)
+      raw.to_s.lines.each do |line|
+        m = line.match(/-T\s+prefix\s+(\S+)\s+(.*)$/)
         return m[2].strip if m && m[1] == key
       end
       nil

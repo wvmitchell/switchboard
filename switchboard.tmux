@@ -7,10 +7,12 @@
 DIR="$(cd "$(dirname "$0")" && pwd)"
 BIN="$DIR/bin/switchboard"
 
-# prefix-s shows/hides the sidebar — switchboard's one navigator. The single
-# quotes survive into the /bin/sh tmux hands the command to, so a clone path
-# with spaces still resolves.
-tmux bind-key s run-shell "'$BIN' toggle-sidebar"
+# Bind switchboard's keys from config (`tmux_keys:` — toggle, default prefix-s;
+# optional home). tmux-bind reads config.yml, binds the configured keys, and cleans
+# up the ones IT bound last (tracked in @switchboard-*-key options), so remapping a
+# key in config takes effect on the next reload without leaving the old key bound.
+# It does all the tmux calls itself (same nested-run-shell pattern the hooks use).
+"$BIN" tmux-bind
 
 # Refresh the sidebar tree on every session switch. Indexed slot [99] overwrites
 # itself on each reload (no stacking) and coexists with any other
@@ -32,7 +34,5 @@ tmux set-hook -g 'after-new-window[99]' "run-shell \"'$BIN' sidebar-sync #{windo
 # [99]; uninstall clears it.
 tmux set-hook -g 'session-window-changed[99]' "run-shell \"'$BIN' poke-window #{window_id}\""
 
-# Optional: one-key jump to the home/anchor session. Not bound by default —
-# prefix-h is a common pane-nav key. Uncomment on a key that's free for you
-# (prefix-S is freed by switchboard):
-#   tmux bind-key S run-shell "'$BIN' home"
+# One-key jump to the home/anchor session is configurable too: set `tmux_keys:
+#   home: S` in config.yml and tmux-bind (above) binds it. Unset by default.

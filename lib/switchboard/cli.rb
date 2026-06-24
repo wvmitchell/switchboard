@@ -32,6 +32,7 @@ module Switchboard
       when "reload-config"     then reload_config_poke(argv[1])
       when "sidebar-sync"      then Tmux.sidebar_sync(argv[1])
       when "poke-window"       then Tmux.poke_window(argv[1])
+      when "tmux-bind"         then Installer.apply_keybindings
       when "prune"             then prune(argv.drop(1))
       when "quit"              then quit
       when "doctor"            then doctor
@@ -170,6 +171,8 @@ module Switchboard
     def edit_config
       Config.scaffold
       warn("could not launch editor: #{Editor.command}") unless system("#{Editor.command} #{Shellwords.escape(Config.path)}")
+      # DX1: if we're inside tmux, a changed tmux_keys takes effect right away.
+      Installer.apply_keybindings(announce: true) if ENV["TMUX"]
     end
 
     # Run from `e`'s throwaway editor pane after :q (see Sidebar#edit_config):
@@ -184,6 +187,9 @@ module Switchboard
       Tmux.switch(target) if target != Tmux.session_of
       Tmux.poke_sidebar_of(target, reload_config: true) ||
         Tmux.poke_sidebar_of(Tmux::HOME, reload_config: true)
+      # DX1/DX2: re-apply tmux_keys so a changed toggle/home takes effect on save
+      # (like every other knob), and announce the result so the user sees it.
+      Installer.apply_keybindings(announce: true)
     end
 
     def add_project(name, path, base = nil)
@@ -400,10 +406,42 @@ module Switchboard
     # still looks wired — the "prefix-s stopped working after a pull" case. Skipped
     # when there's no server to ask.
     def doctor_binding_live
+      doctor_key_config
       live = Installer.toggle_key_live?
-      return if live.nil?
+      unless live.nil?
+        key = config.tmux_key("toggle")
+        puts row(live, live ? "prefix-#{key} bound (toggle-sidebar)" : "prefix-#{key} NOT bound — running tmux is stale; reload tmux or re-run `switchboard install`")
+      end
+      doctor_clobber
+    end
 
-      puts row(live, live ? "prefix-s bound (toggle-sidebar)" : "prefix-s NOT bound — running tmux is stale; reload tmux or re-run `switchboard install`")
+    # Surface a bad `tmux_keys` config so it isn't silently ignored: a config that
+    # failed to parse (fell back to defaults), a value that isn't a usable key, and a
+    # home key that collides with the toggle (so home was left unbound).
+    def doctor_key_config
+      puts row(false, "config failed to parse (#{config.load_error}) — using defaults; fix #{Config.path}") if config.load_error
+      %w[toggle home].each do |role|
+        raw = config.raw_tmux_key(role)
+        next if raw.nil? || config.valid_tmux_key?(raw)
+
+        puts "  \e[33m–\e[0m tmux_keys.#{role} #{raw.inspect} isn't a usable key — using #{config.tmux_key(role) || 'unbound'}"
+      end
+      home_raw = config.raw_tmux_key("home")
+      return unless config.valid_tmux_key?(home_raw) && config.tmux_key("home").nil?
+
+      puts "  \e[33m–\e[0m tmux_keys.home #{home_raw.inspect} collides with the toggle key — home left unbound"
+    end
+
+    # If tmux-bind clobbered a prior non-switchboard binding on the chosen key (it
+    # records the displaced binding in @switchboard-<role>-clobbered), say so — the
+    # interactive install prints a "was:" note, but a live reload is otherwise silent.
+    def doctor_clobber
+      %w[toggle home].each do |role|
+        prev = Installer.tmux_option("@switchboard-#{role}-clobbered")
+        next unless prev
+
+        puts "  \e[33m–\e[0m prefix-#{config.tmux_key(role)} (#{role}) replaced a prior binding: #{prev}"
+      end
     end
 
     # tmux_wired? checks the config FRAGMENT is sourced; this checks the hooks are

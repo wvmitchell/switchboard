@@ -163,12 +163,8 @@ reasons:
 
 Home is created lazily the moment it's needed, so there's nothing to set up.
 `install` deliberately doesn't bind it (one less key taken). If you want one-key
-access, add a bind on a key that's free in your config — `prefix-S` is freed by
-switchboard, while `prefix-h` is a common pane-nav key, so pick what fits:
-
-```tmux
-bind-key S run-shell "/path/to/switchboard/bin/switchboard home"
-```
+access, set `tmux_keys.home` in your config (see [Keybindings](#keybindings-tmux_keys)
+below) — e.g. `home: S` binds `prefix-S` (freed by switchboard) to jump home.
 
 ## Housekeeping
 
@@ -239,6 +235,9 @@ sounds:                                  # optional: completion sounds (on by de
   enabled: true                          #   set false to mute everything
   done: train                            #   built-in (train/chime, or train_1..3 / chime_1..3), a file path, or a macOS sound name
   waiting: chime
+tmux_keys:                               # optional: which prefix keys switchboard binds (see below)
+  toggle: s                              #   show/hide the sidebar (default s; e.g. set to b for prefix-b)
+  home: S                                #   EXAMPLE — one-key jump to home; omit the line entirely to leave it unbound
 projects:
   - name: myapp
     path: ~/code/myapp
@@ -253,6 +252,22 @@ takes effect on the next switch.
 `n` cuts a new branch from `base` (fetching its remote first, e.g. `origin`
 for `origin/main`). `base` defaults to `origin/main`; set it globally or per
 project. The branch is named `<name>` (or `<branch_prefix>/<name>`).
+
+### Keybindings (`tmux_keys`)
+
+`prefix-s` (toggle the sidebar) collides with tmux's default `choose-tree`, so it's
+remappable. `tmux_keys.toggle` is the key the sidebar toggle binds to; `tmux_keys.home`
+is an optional one-key jump to the home session (unbound unless you set it). Use any
+tmux key token — a single char, a named key (`Space`, `F1`, `BSpace`), or a modifier
+combo (`C-s`, `M-x`). An unusable value falls back to the default; `switchboard doctor`
+flags it (and a `home`/`toggle` collision, and a key that displaced a prior binding).
+
+Editing `tmux_keys` with `switchboard config` (or `e`) takes effect on save like every
+other knob — switchboard rebinds the key right away and flashes a confirmation. The one
+exception is the very first `install` (or a key changed by hand-editing the file outside
+switchboard, then reloading tmux): there, tmux only picks the key up when it re-sources
+its config (`tmux source-file <your conf>`). Switchboard cleans up the key it bound last,
+so changing the key never leaves the old one live.
 
 ### Per-project settings
 

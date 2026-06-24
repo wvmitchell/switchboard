@@ -238,5 +238,91 @@ module Switchboard
       assert_equal "train", c.sound_for("app", :done)
       refute c.sounds_enabled?(nil) # global still muted
     end
+
+    # --- tmux_keys: configurable toggle/home keys (issue #15) ------------------
+
+    def test_tmux_key_defaults_when_unset
+      assert_equal "s", cfg({}).tmux_key("toggle")
+      assert_nil cfg({}).tmux_key("home"), "home is unbound by default"
+    end
+
+    def test_tmux_key_uses_configured_values
+      c = cfg("tmux_keys" => { "toggle" => "b", "home" => "H" })
+      assert_equal "b", c.tmux_key("toggle")
+      assert_equal "H", c.tmux_key("home")
+    end
+
+    def test_tmux_key_trims_and_accepts_modifier_and_named_keys
+      assert_equal "C-Space", cfg("tmux_keys" => { "toggle" => "C-Space" }).tmux_key("toggle")
+      assert_equal "F1", cfg("tmux_keys" => { "toggle" => " F1 " }).tmux_key("toggle"), "trims whitespace"
+    end
+
+    def test_tmux_key_falls_back_on_empty_or_whitespace
+      assert_equal "s", cfg("tmux_keys" => { "toggle" => "" }).tmux_key("toggle")
+      assert_equal "s", cfg("tmux_keys" => { "toggle" => "   " }).tmux_key("toggle")
+    end
+
+    def test_tmux_key_falls_back_on_invalid_token
+      assert_equal "s", cfg("tmux_keys" => { "toggle" => "a b" }).tmux_key("toggle"), "internal space rejected"
+      assert_equal "s", cfg("tmux_keys" => { "toggle" => "x\"y" }).tmux_key("toggle"), "quote rejected"
+      assert_nil cfg("tmux_keys" => { "home" => "a b" }).tmux_key("home"), "invalid home -> unbound"
+    end
+
+    def test_tmux_key_rejects_non_string_yaml_types
+      # YAML can hand us ints/bools/arrays/hashes; only strings are valid keys.
+      assert_equal "s", cfg("tmux_keys" => { "toggle" => 1 }).tmux_key("toggle")
+      assert_equal "s", cfg("tmux_keys" => { "toggle" => true }).tmux_key("toggle")
+      assert_equal "s", cfg("tmux_keys" => { "toggle" => %w[a b] }).tmux_key("toggle")
+    end
+
+    def test_tmux_key_falls_back_when_tmux_keys_not_a_hash
+      assert_equal "s", cfg("tmux_keys" => "nonsense").tmux_key("toggle")
+      assert_nil cfg("tmux_keys" => "nonsense").tmux_key("home")
+    end
+
+    def test_tmux_key_drops_home_colliding_with_toggle
+      c = cfg("tmux_keys" => { "toggle" => "b", "home" => "b" })
+      assert_equal "b", c.tmux_key("toggle")
+      assert_nil c.tmux_key("home"), "one key can't carry two actions; toggle wins"
+    end
+
+    def test_tmux_key_drops_home_colliding_with_default_toggle
+      # home == the *default* toggle (s) should still collide.
+      c = cfg("tmux_keys" => { "home" => "s" })
+      assert_equal "s", c.tmux_key("toggle")
+      assert_nil c.tmux_key("home")
+    end
+
+    def test_raw_tmux_key_returns_unvalidated_value
+      c = cfg("tmux_keys" => { "toggle" => "a b" })
+      assert_equal "a b", c.raw_tmux_key("toggle"), "raw value for doctor to show"
+      assert_nil cfg({}).raw_tmux_key("toggle")
+    end
+
+    def test_valid_tmux_key_predicate
+      c = cfg({})
+      assert c.valid_tmux_key?("s")
+      assert c.valid_tmux_key?("C-x")
+      assert c.valid_tmux_key?("NPage")
+      refute c.valid_tmux_key?(""), "empty"
+      refute c.valid_tmux_key?("a b"), "whitespace"
+      refute c.valid_tmux_key?("a'b"), "single quote"
+      refute c.valid_tmux_key?(1), "non-string"
+      refute c.valid_tmux_key?(nil), "nil"
+    end
+
+    # --- malformed config degrades instead of crashing (decision #5) -----------
+
+    def test_malformed_config_degrades_to_empty_with_load_error
+      File.write(Config.path, "}{ definitely not yaml")
+      c = Config.new
+      assert c.load_error, "records why it failed to parse"
+      assert_equal "s", c.tmux_key("toggle"), "still resolves defaults"
+      assert_equal [], c.projects, "every consumer degrades, none crash"
+    end
+
+    def test_valid_config_has_no_load_error
+      assert_nil cfg("worktree_root" => "/x").load_error
+    end
   end
 end

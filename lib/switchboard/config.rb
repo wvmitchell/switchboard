@@ -17,6 +17,11 @@ module Switchboard
     # these. Overridable globally or per project via a `sounds:` map.
     DEFAULT_SOUNDS = { "done" => "train", "waiting" => "chime" }.freeze
 
+    # Default tmux key per configurable role (`tmux_keys:` map). The toggle defaults
+    # to `s` (switchboard's historical binding); home is unbound by default (nil) —
+    # an optional one-key jump the user opts into. nil ⇒ "don't bind this role".
+    TMUX_KEY_DEFAULTS = { "toggle" => "s", "home" => nil }.freeze
+
     def self.path
       ENV["SWITCHBOARD_CONFIG"] || DEFAULT_PATH
     end
@@ -88,7 +93,22 @@ module Switchboard
 
     def initialize(file = self.class.path)
       @file = file
-      @data = File.exist?(file) ? (YAML.safe_load_file(file) || {}) : {}
+      @data = load_data(file)
+    end
+
+    # Why this exists rather than the old inline read raising: a malformed
+    # config.yml would otherwise crash every consumer (the sidebar, `doctor`, and
+    # now the `tmux-bind` keybinding path). Degrade to an empty config and remember
+    # the parse error so `doctor` can report it; a valid file is unaffected.
+    attr_reader :load_error
+
+    def load_data(file)
+      return {} unless File.exist?(file)
+
+      YAML.safe_load_file(file) || {}
+    rescue StandardError => e
+      @load_error = e.message
+      {}
     end
 
     # Where `switchboard` puts worktrees it creates: <root>/<project>/<name>.
@@ -138,6 +158,39 @@ module Switchboard
     def session_command
       cmd = @data["session_command"]
       cmd.to_s.empty? ? nil : cmd
+    end
+
+    # Resolved tmux key for a role ("toggle"/"home"): the configured value when it's
+    # a usable key token, else the role default (toggle ⇒ "s", home ⇒ nil/unbound).
+    # A `home` that resolves equal to the toggle is dropped — one key can't carry two
+    # actions, and the toggle wins (doctor surfaces the collision). nil ⇒ leave the
+    # role unbound. What `tmux-bind` binds.
+    def tmux_key(role)
+      raw = raw_tmux_key(role)
+      key = valid_tmux_key?(raw) ? raw.strip : TMUX_KEY_DEFAULTS[role]
+      return nil if role == "home" && key == tmux_key("toggle")
+
+      key
+    end
+
+    # The raw configured value for a role (unvalidated), or nil. doctor uses this to
+    # show "you set X, fell back to Y" when a value doesn't validate.
+    def raw_tmux_key(role)
+      keys = @data["tmux_keys"]
+      keys.is_a?(Hash) ? keys[role] : nil
+    end
+
+    # A usable tmux key token: a non-empty String with no whitespace, quotes, or
+    # control chars. Non-String YAML scalars (an int/bool/array/hash) are rejected.
+    # Deliberately permissive otherwise — the rebind uses an argv array (no shell, so
+    # no injection to guard), and tmux itself is the authority on whether a token is a
+    # real key. An over-strict allowlist would wrongly reject valid keys (NPage, IC,
+    # KP*, Unicode); a token tmux ultimately rejects is caught at bind time instead.
+    def valid_tmux_key?(value)
+      return false unless value.is_a?(String)
+
+      s = value.strip
+      !s.empty? && !s.match?(/['"\s\x00-\x1f]/)
     end
 
     def projects
