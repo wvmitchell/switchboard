@@ -179,6 +179,43 @@ module Switchboard
       assert_equal "/wt/b", sb.instance_variable_get(:@current_path)
     end
 
+    # --- cursor follows "you are here" ---------------------------------------
+    # Returning to the sidebar selects the workspace the session is in, not
+    # wherever the cursor last sat (cursor_to_current). Edge-triggered on
+    # focus-in / first paint, so it never fights j/k while you navigate.
+
+    def test_cursor_to_current_lands_on_the_current_workspace
+      sb = sidebar(nodes: [proj("app"), ws("a", path: "/wt/a"), ws("b", path: "/wt/b")],
+                   cursor: 0, current_path: "/wt/b")
+      sb.send(:cursor_to_current)
+      assert_equal 2, cursor_of(sb), "the cursor snaps to the workspace we're in"
+    end
+
+    def test_cursor_to_current_is_a_noop_at_home
+      sb = sidebar(nodes: [proj("app"), ws("a", path: "/wt/a")], cursor: 1, current_path: nil)
+      sb.send(:cursor_to_current)
+      assert_equal 1, cursor_of(sb), "no current workspace (home) -> leave the cursor put"
+    end
+
+    # A collapsed project hides its workspace rows, so there's no row to select —
+    # leave the cursor where it is rather than jumping it somewhere arbitrary.
+    def test_cursor_to_current_leaves_the_cursor_when_the_row_is_hidden
+      sb = sidebar(nodes: [proj("app"), ws("a", path: "/wt/a")], collapsed: ["app"],
+                   cursor: 0, current_path: "/wt/a")
+      sb.send(:cursor_to_current)
+      assert_equal 0, cursor_of(sb), "a hidden (collapsed) workspace row can't be selected"
+    end
+
+    # The headline behavior: refocusing the sidebar selects "here". @visible is
+    # already true so focus_in won't reload — just the cursor snap is exercised.
+    def test_focus_in_selects_the_current_workspace
+      sb = sidebar(nodes: [proj("app"), ws("a", path: "/wt/a"), ws("b", path: "/wt/b")],
+                   cursor: 1, current_path: "/wt/b", focused: false)
+      sb.instance_variable_set(:@visible, true)
+      sb.send(:dispatch, "\e[I")
+      assert_equal 2, cursor_of(sb), "going back to the sidebar lands on the workspace we're in"
+    end
+
     # --- bold until viewed (attention markers) -------------------------------
     # A completion edge bolds the workspace until you switch into it. The markers
     # are real files in the sandbox, so the canonicalization runs for real.

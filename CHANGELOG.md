@@ -7,6 +7,17 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.19.0] — the sidebar cursor follows the workspace you're in (2026-06-24)
+
+### Changed
+- **Returning to the sidebar now selects the workspace you're in.** Switching
+  into a workspace still drops you in its pane (the conversation or active
+  field, as before); when you move focus back to the sidebar, the selection bar
+  now lands on *that* workspace instead of wherever the cursor last sat. It's
+  edge-triggered on focus-in (and on the first paint of a freshly summoned
+  sidebar), so it never fights `j`/`k` while you navigate — and it's a no-op at
+  home, or when the workspace's row is hidden under a collapsed project.
+
 ## [0.18.0] — doctor reports orphaned sidebar processes (2026-06-23)
 
 ### Added

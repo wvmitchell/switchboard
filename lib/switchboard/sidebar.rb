@@ -143,6 +143,7 @@ module Switchboard
         pin_if_resized # pins + seeds @geom so the first tick won't re-pin
         render # clear + show the pane instantly (empty)
         reload # rebuild + agents + locate "you are here"
+        cursor_to_current # a freshly summoned sidebar starts on the workspace it's in
       end
       reconcile_on_launch if @home && @config.prune_on_launch?
       @last_scan = monotonic
@@ -380,6 +381,19 @@ module Switchboard
       @attention.delete(@current_path)
     end
 
+    # Land the selection bar on the workspace this session is in, so summoning or
+    # refocusing the sidebar starts on "here" rather than wherever the cursor last
+    # sat. Edge-triggered (focus-in / first paint), NOT on every reload — running
+    # it in locate would yank the cursor back every TREE_TICKS while you navigate.
+    # No-op at home (@current_path nil) or when the row is hidden (collapsed
+    # project) / absent, leaving the cursor untouched rather than jumping it away.
+    def cursor_to_current
+      return unless @current_path
+
+      i = @rows.index { |n| n.kind == "ws" && n.path == @current_path }
+      @cursor = i if i
+    end
+
     def current
       @rows[@cursor]
     end
@@ -608,6 +622,7 @@ module Switchboard
       reappeared = !@visible
       set_visible(true)
       reload(announce_sounds: false) if reappeared
+      cursor_to_current # going back to the sidebar selects the workspace you're in
     end
 
     def move(delta)
