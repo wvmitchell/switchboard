@@ -7,6 +7,20 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.21.2] — sidebar shows every branch a worktree has held (2026-06-24)
+
+### Fixed
+- **A worktree that cut more than one branch in place now lists them all.** The
+  sidebar reads each worktree's branch history from its HEAD reflog, but only
+  captured the branch each `checkout` moved *to* — so a branch you only ever
+  moved *away* from (including the one the worktree was born on) was dropped, and
+  the workspace collapsed to a single row. It now captures both ends of each
+  checkout, so all of a worktree's branches expand as inline rows again.
+- **An expanded workspace no longer shows its PR badge twice.** When a workspace
+  fans out into per-branch rows, the current branch's PR (`#number`) now shows
+  only on its branch row, not also on the workspace row above it. A single-branch
+  workspace still shows the badge on its row, where it's the only place for it.
+
 ## [0.21.1] — a self-documenting starter config (2026-06-24)
 
 ### Changed

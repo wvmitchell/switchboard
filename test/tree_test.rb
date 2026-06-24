@@ -81,6 +81,30 @@ module Switchboard
       end
     end
 
+    # An expanded workspace must not show the current branch's PR twice — the branch
+    # row owns it, so the workspace row drops it. (Single-branch case keeps it; see below.)
+    def test_expanded_workspace_drops_pr_from_ws_row
+      pr = { "identifier" => "#7" }
+      model = FakeModel.new([project([wt(path: "/wt/a", branch: "feature", pr: pr)])],
+                            "feature" => pr)
+      stub_method(Git, :branch_history, ->(_path, limit:, cache: nil) { %w[feature main] }) do
+        nodes = Tree.nodes(model)
+        ws = nodes.find { |n| n.kind == "ws" }
+        feature_br = nodes.find { |n| n.kind == "br" && n.branch == "feature" }
+        assert_nil ws.pr, "expanded workspace row drops the PR (the branch row owns it)"
+        assert_equal pr, feature_br.pr, "the current branch's row still carries its PR"
+      end
+    end
+
+    def test_single_branch_workspace_keeps_pr_on_ws_row
+      pr = { "identifier" => "#9" }
+      model = FakeModel.new([project([wt(path: "/wt/a", branch: "solo", pr: pr)])])
+      no_history do
+        ws = Tree.nodes(model).find { |n| n.kind == "ws" }
+        assert_equal pr, ws.pr, "a single-branch workspace shows the PR on its row — the only place for it"
+      end
+    end
+
     def test_lineage_caps_at_max_branches_and_appends_current
       seen_limit = nil
       stub_method(Git, :branch_history, ->(_path, limit:, cache: nil) { seen_limit = limit; %w[x y] }) do

@@ -155,23 +155,37 @@ module Switchboard
     def parse_branch_history(head_log, limit)
       seen = {}
       File.readlines(head_log).reverse_each do |line|
-        m = line.match(/checkout: moving from \S+ to (\S+)/)
+        m = line.match(/checkout: moving from (\S+) to (\S+)/)
         next unless m
 
-        ref = m[1]
-        # Drop detached-HEAD checkouts. The reflog line's 2nd field is the full
-        # new OID; a detached checkout records the commit-ish you typed (full or
-        # abbreviated SHA), always a hex prefix of that OID. A real branch name —
-        # even all-hex like "deadbeef" — won't prefix the commit it points to
-        # except by astronomical coincidence. >=4 is git's minimum abbreviation;
-        # below it a token is a branch name. Downcase: git OIDs are lowercase but
-        # a user-typed abbrev could be uppercase.
-        new_oid = line.split[1].to_s
-        next if ref.match?(/\A[0-9a-f]{4,}\z/i) && new_oid.downcase.start_with?(ref.downcase)
-        seen[ref] = true unless seen.key?(ref)
+        # Each checkout names two branches used in THIS worktree: the one moved TO
+        # (newer) and the one moved FROM (older). Capturing the "from" matters: the
+        # branch a worktree was born on — or any branch you `checkout -b`'d AWAY
+        # from — has no "moving to" line of its own, so to-only parsing dropped it
+        # (the multiple-branches-on-one-worktree case this whole feature exists for).
+        # Add to-then-from so the result stays newest-first.
+        #
+        # Drop a detached-HEAD endpoint: its token is the commit-ish you typed (a
+        # full/abbrev SHA), always a hex prefix of the OID on THAT side of the move —
+        # the new OID (2nd field) for "to", the old OID (1st field) for "from". A real
+        # branch name, even all-hex like "deadbeef", won't prefix its own commit
+        # except by astronomical coincidence. >=4 is git's min abbreviation; below it
+        # a token is a branch name. Downcase: OIDs are lowercase, a typed abbrev may not be.
+        old_oid, new_oid = line.split[0].to_s, line.split[1].to_s
+        [[m[2], new_oid], [m[1], old_oid]].each do |ref, oid|
+          # A ref-navigation spelling git records by name when you detach onto it
+          # (HEAD~1, HEAD@{2}, main^) is not a local branch — drop tokens carrying a
+          # character git forbids in a branch name. Tags / remote-refs (v1.0,
+          # origin/main) are valid branch spellings, so they're indistinguishable
+          # here and still slip through; switching to one just detaches, harmless.
+          next if ref.match?(%r{[~^:?*\[\\]|@\{|\.\.}) || ref == "@"
+          next if ref.match?(/\A[0-9a-f]{4,}\z/i) && oid.downcase.start_with?(ref.downcase)
+
+          seen[ref] = true unless seen.key?(ref)
+        end
         break if limit && seen.size >= limit
       end
-      seen.keys
+      limit ? seen.keys.first(limit) : seen.keys
     end
 
     def diffstat(worktree, base)

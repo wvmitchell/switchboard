@@ -161,6 +161,47 @@ module Switchboard
       refute_includes Git.branch_history(repo), short, "sha256 abbreviated detached checkout is not a branch"
     end
 
+    # The bug this whole feature exists to avoid: a branch you only ever moved AWAY
+    # from — including the one a worktree was BORN on (which has no "moving to" line
+    # of its own) — must still appear. To-only parsing dropped it, so a worktree that
+    # cut a second branch in place showed only the new branch, never the first.
+    def test_branch_history_includes_a_branch_only_ever_moved_from
+      repo = temp_git_repo # born on main
+      git(repo, "checkout", "-q", "-b", "feature") # main -> feature; main is only a "from"
+      hist = Git.branch_history(repo)
+      assert_includes hist, "feature"
+      assert_includes hist, "main", "the born-on branch (only ever a 'from') still appears"
+      assert_equal "feature", hist.first, "the branch moved TO is still newest-first"
+    end
+
+    # The mirror of the detached-`to` filter: a detached SHA in the `from` position
+    # (you moved away from a detached HEAD) is filtered against the OLD oid, not the new.
+    def test_branch_history_excludes_a_detached_sha_in_the_from_position
+      repo = temp_git_repo
+      short = git(repo, "rev-parse", "--short=7", "HEAD").strip
+      git(repo, "checkout", "-q", short)           # detach at SHA
+      git(repo, "checkout", "-q", "-b", "feature") # short -> feature; 'short' is now the "from"
+      hist = Git.branch_history(repo)
+      refute_includes hist, short, "a detached SHA moved-from is not a branch"
+      assert_includes hist, "feature"
+      assert_includes hist, "main"
+    end
+
+    # A HEAD-relative detached spelling (HEAD~1, HEAD@{2}, main^) is recorded by name
+    # in the reflog `to` token but is not a local branch — the branch-name-illegal
+    # character guard drops it. (Tags / remote-refs are valid branch spellings and
+    # still slip through; that's a known, accepted limitation.)
+    def test_branch_history_excludes_head_relative_detached_checkouts
+      repo = temp_git_repo
+      git(repo, "commit", "--allow-empty", "-q", "-m", "c2") # need a parent for HEAD~1
+      git(repo, "checkout", "-q", "HEAD~1")        # detach onto HEAD~1 by name
+      git(repo, "checkout", "-q", "-b", "feature")
+      hist = Git.branch_history(repo)
+      refute_includes hist, "HEAD~1", "a HEAD-relative detached spelling is not a branch"
+      assert_includes hist, "feature"
+      assert_includes hist, "main"
+    end
+
     # The guard path: a repo with no checkout reflog (a fresh init has no
     # logs/HEAD at all) yields no branches instead of raising.
     def test_branch_history_empty_without_checkout_reflog

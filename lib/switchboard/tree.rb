@@ -21,10 +21,15 @@ module Switchboard
       model.projects.flat_map do |project|
         list = [Node.new(kind: "proj", project: project.name, path: project.path)]
         project.worktrees.reject(&:primary).each do |wt|
-          list << Node.new(kind: "ws", project: project.name, path: wt.path, branch: wt.branch,
-                           name: wt.display_name, pr: wt.pr, dirty: wt.dirty)
           branches = lineage(wt, branch_cache)
-          next unless branches.size > 1
+          expanded = branches.size > 1
+          # When a workspace expands into per-branch rows, the PR badge belongs on the
+          # branch row that owns it. The current branch's PR is wt.pr, so showing it on
+          # the workspace row too would render the same #number twice. A single-branch
+          # workspace keeps the badge on its row — the only place it can show.
+          list << Node.new(kind: "ws", project: project.name, path: wt.path, branch: wt.branch,
+                           name: wt.display_name, pr: expanded ? nil : wt.pr, dirty: wt.dirty)
+          next unless expanded
 
           branches.each_with_index do |branch, i|
             list << Node.new(kind: "br", project: project.name, path: wt.path, branch: branch,
