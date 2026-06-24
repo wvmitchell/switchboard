@@ -7,6 +7,29 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.20.0] — fresher signals: faster PR refresh + quit clears stale dots (2026-06-24)
+
+### Added
+- **`R` refreshes PR badges on demand.** A PR you merge or close *on GitHub*
+  fires no local signal, so the badge could lag behind the real state. Press
+  `R` in the sidebar to force a refresh of every project's badges now; the
+  detached `gh` children repaint the tree as they return. The status line
+  confirms the keypress (and stays quiet when there's no wrapper to spawn a
+  refresh, so it never claims work it can't do).
+
+### Changed
+- **PR badges refresh faster on their own.** Lowered the idle backstop
+  (`BACKSTOP_TTL`) from 10 minutes to 2, so an externally merged/closed PR
+  reflects within ~2 minutes while the sidebar is on screen, without anyone
+  pressing `R`.
+- **`quit` now clears agent state.** Tearing down every session (the sidebar's
+  `q` or `switchboard quit`) kills every agent at once, leaving their last hook
+  state stale — a lingering `:thinking` would otherwise show as a live, working
+  agent for up to 15 minutes, even though you'd have to `/resume` it. Quit now
+  wipes those states so a torn-down agent doesn't come back looking busy. The
+  "bold until viewed" markers are deliberately left intact (an unviewed
+  completion is still unviewed after a quit).
+
 ## [0.19.0] — the sidebar cursor follows the workspace you're in (2026-06-24)
 
 ### Changed

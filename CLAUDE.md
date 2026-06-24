@@ -26,7 +26,7 @@ bin/switchboard init       # create ~/.config/switchboard/config.yml (empty; gro
 bin/switchboard config     # open config.yml in $EDITOR (sidebar `e` does the same)
 bin/switchboard sidebar    # run the persistent sidebar standalone (normally tmux-spawned)
 bin/switchboard prune      # kill orphaned sb/ sessions (reconcile vs git worktrees; --dry-run/-n previews)
-bin/switchboard quit       # close ALL sb/ sessions (full teardown; current session last)
+bin/switchboard quit       # close ALL sb/ sessions (full teardown; current session last; clears agent state)
 bin/test                   # run the stdlib-Minitest suite (offline; bin/test <file> for one)
 ```
 
@@ -147,6 +147,11 @@ presence signals** per worktree:
 1. **Hook state (exact).** Claude Code reports state by running a tiny POSIX-sh
    reporter that writes `<state>\t<cwd>\t<epoch>` files into the state dir. A
    fresh file (within `PRESENCE_TTL`) *is* presence — no process check needed.
+   The flip side: because a fresh file is trusted without a liveness check, a
+   `quit` that kills every agent leaves their last states stale (a lingering
+   `:thinking` would read as a live, working agent for up to the TTL). So both
+   quit paths (`Sidebar#quit`, `CLI#quit`) call `AgentState.clear_all` to wipe
+   the state dir before tearing down; a restarted agent re-reports on SessionStart.
 2. **Process/activity (coarse fallback).** For hook-less agents, `Agents.active`
    finds agent CLIs via tmux panes + `pgrep`/`lsof`, and busy-vs-idle is inferred
    by hashing `tmux capture-pane` between scans. This can't distinguish

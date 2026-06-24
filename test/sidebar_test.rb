@@ -141,6 +141,25 @@ module Switchboard
       end
     end
 
+    # A confirmed q wipes agent state before tearing down — killing every agent
+    # at once leaves their last hook states stale, and a lingering :thinking would
+    # otherwise read as a live, working agent on the next launch. An unconfirmed q
+    # touches nothing.
+    def test_q_clears_agent_state_before_teardown_only_when_confirmed
+      sb = sidebar(nodes: [proj("app")])
+      cleared = false
+      stub_method(AgentState, :clear_all, -> { cleared = true }) do
+        stub_method(Tmux, :kill_all, ->(*) { [] }) do
+          stub_method(sb, :confirm, ->(*) { true }) { sb.send(:dispatch, "q") }
+          assert cleared, "a confirmed q clears stale agent state"
+
+          cleared = false
+          stub_method(sb, :confirm, ->(*) { false }) { sb.send(:dispatch, "q") }
+          refute cleared, "an unconfirmed q clears nothing"
+        end
+      end
+    end
+
     def test_handle_processes_every_token_in_a_key_repeat_buffer
       sb = sidebar(nodes: [proj("app"), ws("a"), ws("b")])
       sb.send(:handle, "jj") # a held 'j' arrives as one multi-byte read
@@ -413,6 +432,20 @@ module Switchboard
       foot = sidebar(nodes: []).send(:footer)
       assert_equal 3, foot.size
       assert foot.any? { |l| l.include?("a add") }, "the fresh-install state still shows how to add"
+    end
+
+    # R (manual PR-badge refresh) is global, so its hint rides every row kind —
+    # and every legend line must still fit the pinned pane width uncut, or the
+    # trailing key (q quit) would be truncated away.
+    def test_footer_advertises_R_on_every_kind_within_the_pin_width
+      [[proj("app")], [proj("app"), ws("a")], [proj("app"), ws("a"), br("f")], []].each do |nodes|
+        sb = sidebar(nodes: nodes, cursor: nodes.size - 1)
+        foot = sb.send(:footer)
+        assert foot.any? { |l| l.include?("R sync") }, "R sync hint present for #{nodes.map(&:kind)}"
+        foot.each do |line|
+          assert line.length <= Tmux::SIDEBAR_WIDTH, "legend line #{line.inspect} fits the #{Tmux::SIDEBAR_WIDTH}-col pane"
+        end
+      end
     end
 
     # --- remove: d routes by row kind ----------------------------------------
@@ -937,6 +970,43 @@ module Switchboard
 
     def test_spawn_due_exactly_at_window
       assert Sidebar.spawn_due?(100.0, 105.0, 5)
+    end
+
+    # --- R: force a PR refresh now (T4 manual trigger) -----------------------
+    # A PR merged/closed on GitHub fires no local trigger, so R fans a refresh
+    # across every registered project (bypassing the staleness gates) and notifies
+    # so the keypress is felt even when nothing changed.
+    def test_R_refreshes_every_registered_project_and_notifies
+      ENV["SWITCHBOARD_BIN"] = "/opt/sb" # the wrapper is what lets a refresh spawn
+      File.write(Config.path, YAML.dump("projects" => [{ "name" => "app", "path" => "/x" },
+                                                        { "name" => "lib", "path" => "/y" }]))
+      sb = sidebar(nodes: [proj("app")])
+      sb.instance_variable_set(:@config, Config.new)
+      refreshed = []
+      sb.define_singleton_method(:maybe_refresh_prs) { |p| refreshed << p }
+      notified = nil
+      stub_method(Tmux, :notify, ->(msg) { notified = msg }) do
+        sb.send(:dispatch, "R")
+      end
+      assert_equal %w[app lib], refreshed, "R refreshes every project, not just the highlighted one"
+      assert_match(/refreshing PRs/, notified.to_s, "R confirms the keypress on the status line")
+    end
+
+    # Without the wrapper, maybe_refresh_prs can't spawn — so R must not claim a
+    # refresh on the status line either.
+    def test_R_is_silent_without_the_wrapper
+      ENV.delete("SWITCHBOARD_BIN")
+      File.write(Config.path, YAML.dump("projects" => [{ "name" => "app", "path" => "/x" }]))
+      sb = sidebar(nodes: [proj("app")])
+      sb.instance_variable_set(:@config, Config.new)
+      refreshed = []
+      sb.define_singleton_method(:maybe_refresh_prs) { |p| refreshed << p }
+      notified = false
+      stub_method(Tmux, :notify, ->(_msg) { notified = true }) do
+        sb.send(:dispatch, "R")
+      end
+      assert_empty refreshed, "no wrapper ⇒ nothing spawns"
+      refute notified, "...and no misleading 'refreshing' notify"
     end
 
     # --- on_agent_edges: PR refresh + sound ride the same edge ----------------

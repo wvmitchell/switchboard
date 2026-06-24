@@ -145,6 +145,7 @@ module Switchboard
     # Tear down switchboard: kill every sb/ session, the one you're in last (so
     # it never orphans the others). Like prune, works outside tmux.
     def quit
+      AgentState.clear_all # killing every agent makes their last hook state stale — drop it now
       killed = Tmux.kill_all
       puts(killed.empty? ? "no switchboard sessions to close" : "closed #{killed.size} switchboard session(s)")
     end
@@ -487,6 +488,7 @@ module Switchboard
           a        add a project (register a local repo or clone a URL)
           n        create a new worktree in the highlighted project
           o        open the highlighted PR in the browser (gh pr view --web)
+          R        refresh PR badges now (catch a PR merged/closed on GitHub)
           r        rename a workspace
           d        remove the highlighted row — delete a workspace, or unregister a project (+ close its sessions)
           e        edit config (opens beside the home tree, returns you on quit)

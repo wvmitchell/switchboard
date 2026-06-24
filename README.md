@@ -21,8 +21,9 @@ Switchboard is the same overview, driven entirely from the keyboard.
   sync.
 - **PR badges come from `gh`,** cached on disk so the sidebar never blocks on
   the network. The cache refreshes itself in the background — when an agent
-  finishes a turn, when you switch in, and on an idle timer — so badges stay
-  fresh without anyone running `switchboard refresh`.
+  finishes a turn, when you switch in, and on a short idle timer — so badges stay
+  fresh without anyone running `switchboard refresh`. A PR you merge or close
+  *on GitHub* fires no local signal, so press `R` to refresh on demand.
 - **Each worktree maps to a tmux session.** Selecting one (↵) creates the
   session (if needed) and switches to it. `n` creates a brand-new worktree +
   branch under `worktree_root` and drops you in.
@@ -50,6 +51,7 @@ j/k ↑↓   move (projects, workspaces, and a workspace's branches)
 a        add a project (register a local repo or clone a URL)
 n        create a new worktree in the highlighted project
 o        open the highlighted PR in the browser (gh pr view --web)
+R        refresh PR badges now (catch a PR merged/closed on GitHub)
 r        rename a workspace
 d        remove the highlighted row — delete a workspace, or unregister a project (closing its sessions)
 e        edit config.yml ($EDITOR, full-size in the home session; returns you on quit)
@@ -316,6 +318,11 @@ reporter script switchboard materializes into its own data dir
 `brew upgrade`, so the wiring doesn't rot. The script only writes a state file;
 switchboard never launches or wraps your agent. Set `agent_state_hooks: false`
 in the config to stop auto-enabling on create.
+
+A hooked agent's last reported state lingers briefly so a finished turn stays
+visible, but `switchboard quit` (and the sidebar's `q`) tears down every session
+*and* clears those states — so a torn-down agent doesn't come back showing as
+still "working" when it would actually need a `/resume`.
 
 ## Sound effects
 

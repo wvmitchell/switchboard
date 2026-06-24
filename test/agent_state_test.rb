@@ -98,5 +98,36 @@ module Switchboard
         end
       end
     end
+
+    # clear_all wipes the state dir on quit — a fresh file is trusted as presence
+    # without a liveness check, so tearing down every agent must drop their now-
+    # stale states or a :thinking would read as a live, working agent for the TTL.
+    def test_clear_all_wipes_every_hook_file
+      a = worktree("a")
+      b = worktree("b")
+      write_hook("thinking", a, name: "one")
+      write_hook("done", b, name: "two")
+      AgentState.clear_all
+      assert_empty Dir.glob(File.join(dir, "*")), "every state file is gone after quit"
+      no_processes { assert_empty AgentState.new.scan([a, b]), "and the next scan shows no dots" }
+    end
+
+    def test_clear_all_is_a_noop_when_the_state_dir_is_missing
+      refute Dir.exist?(dir), "no state dir written yet"
+      AgentState.clear_all # must not raise
+      refute Dir.exist?(dir)
+    end
+
+    # The `File.file?` guard skips a stray subdir (clear_all only deletes the flat
+    # reporter files), and the per-file rescue means one undeletable entry can't
+    # abort the sweep — so the rest still get wiped.
+    def test_clear_all_skips_subdirs_and_isolates_per_file
+      wt = worktree("a")
+      write_hook("thinking", wt, name: "keep-not")
+      FileUtils.mkdir_p(File.join(dir, "subdir")) # a directory entry, not a reporter file
+      AgentState.clear_all
+      refute File.exist?(File.join(dir, "keep-not")), "the flat reporter file is wiped"
+      assert Dir.exist?(File.join(dir, "subdir")), "a subdir is skipped, not deleted"
+    end
   end
 end

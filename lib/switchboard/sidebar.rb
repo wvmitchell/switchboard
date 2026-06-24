@@ -31,7 +31,10 @@ module Switchboard
     # Background PR-badge refresh (issue #19): event-driven, never blocks the UI.
     PR_DEBOUNCE = 5          # min seconds between background refreshes per project
     NAV_TTL = 45             # refresh-on-switch only if the cache is older than this
-    BACKSTOP_TTL = 600       # idle fallback: refresh a project staler than this
+    BACKSTOP_TTL = 120       # idle fallback: refresh a project staler than this. Kept
+                             # short (2 min) because a PR merged/closed *on GitHub* fires
+                             # no local trigger — this backstop, riding the ~15s visible
+                             # reloads, is what eventually catches it (R forces it now).
     MAX_SPAWN_PER_RELOAD = 3 # cap backstop spawns per reload (cold-home fan-out)
 
     # Agent-state icons. Idle (no agent) draws a blank slot, so the column only
@@ -508,15 +511,33 @@ module Switchboard
     end
 
     # T3 — idle backstop: refresh any project whose badges have gone stale past
-    # BACKSTOP_TTL, the safety net that stops the cache rotting for days when
-    # nothing else fires. Capped at MAX_SPAWN_PER_RELOAD so opening home on a cold
-    # cache doesn't launch one gh per project at once; the rest catch up later.
+    # BACKSTOP_TTL — the ~2-min net that catches a PR merged/closed on GitHub
+    # (which fires no local trigger) when nothing else does. Capped at
+    # MAX_SPAWN_PER_RELOAD so opening home on a cold cache doesn't launch one gh
+    # per project at once; the rest catch up on later reloads.
     def refresh_stale_prs
       @config.projects
              .map { |p| p["name"] }
              .select { |name| Pr.stale?(name, BACKSTOP_TTL) }
              .first(MAX_SPAWN_PER_RELOAD)
              .each { |name| maybe_refresh_prs(name) }
+    rescue StandardError
+      nil
+    end
+
+    # T4 — manual (R): force a refresh of every registered project's badges,
+    # bypassing the staleness gates the automatic triggers use. A PR merged or
+    # closed on GitHub fires no local signal, so this is the "I just did that, show
+    # it now" escape hatch; the detached children poke us to redraw as gh returns.
+    # Still debounced per project (maybe_refresh_prs), so a mashed R can't storm gh.
+    # No wrapper (SWITCHBOARD_BIN unset) ⇒ maybe_refresh_prs can't spawn, so bail
+    # before the notify rather than claim a refresh that can't happen. (A refresh
+    # already in flight from a prior press still notifies — it's honest, one's running.)
+    def refresh_prs_now
+      return unless ENV["SWITCHBOARD_BIN"]
+
+      @config.projects.map { |p| p["name"] }.each { |name| maybe_refresh_prs(name) }
+      Tmux.notify("switchboard: refreshing PRs…")
     rescue StandardError
       nil
     end
@@ -584,6 +605,7 @@ module Switchboard
       when "a"                 then add
       when "n"                 then create
       when "o", "\x0F"         then open_pr # open the PR in the browser (o / ^O)
+      when "R"                 then refresh_prs_now # force a PR-badge refresh (external merge/close)
       when "d"                 then remove
       when "r"                 then rename
       when "e"                 then edit_config
@@ -606,6 +628,7 @@ module Switchboard
     def quit
       return true unless confirm("quit all switchboard sessions?")
 
+      AgentState.clear_all # killing every agent makes their last hook state stale — drop it now
       Tmux.kill_all
       false
     end
@@ -961,21 +984,23 @@ module Switchboard
     # workspace row adds the per-workspace keys (o PR, r rename; `d delete`s the
     # worktree). A branch child row only lists what actually works on it (↵
     # switches, o opens its PR) — d/r guard on `ws`, so advertising them there
-    # would be a no-op. Always three lines so the tree never reflows as the
-    # cursor moves between kinds — line 1 is the only one that swaps, to the home
-    # title or the kind-appropriate nav keys. The empty tree (the fresh-install
-    # home state) gets an inviting first-project hint.
+    # would be a no-op. `R sync` (force a PR-badge refresh) is global, so it rides
+    # every kind — terse label because the ws line is otherwise full at the pin
+    # width. Always three lines so the tree never reflows as the cursor moves
+    # between kinds — line 1 is the only one that swaps, to the home title or the
+    # kind-appropriate nav keys. The empty tree (the fresh-install home state)
+    # gets an inviting first-project hint.
     def footer
       title = @home ? HOME_TITLE : nil
       case current&.kind
       when "proj"
-        [title || NAV_PROJ, "a add · n new · e settings", "d remove · q quit"]
+        [title || NAV_PROJ, "a add · n new · e settings", "d remove · R sync · q quit"]
       when "ws"
-        [title || NAV_WS, "a add · n new · o PR · r rename", "d delete · e settings · q quit"]
+        [title || NAV_WS, "a add · n new · o PR · r rename", "d delete · e settings · R sync · q quit"]
       when "br"
-        [title || NAV_BR, "a add · n new · o PR", "e settings · q quit"]
+        [title || NAV_BR, "a add · n new · o PR · R sync", "e settings · q quit"]
       else # empty tree
-        [title || NAV_WS, "a add project · e settings", "q quit"]
+        [title || NAV_WS, "a add project · e settings", "R sync · q quit"]
       end
     end
 

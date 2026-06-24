@@ -271,6 +271,18 @@ module Switchboard
       end
     end
 
+    # `switchboard quit` clears stale agent state too (the CLI twin of the sidebar
+    # `q`), so a torn-down agent doesn't relaunch showing as still "working".
+    def test_quit_clears_agent_state
+      cleared = false
+      stub_method(AgentState, :clear_all, -> { cleared = true }) do
+        stub_method(Tmux, :kill_all, -> { [] }) do
+          capture { CLI.quit }
+        end
+      end
+      assert cleared, "quit wipes the stale hook states before teardown"
+    end
+
     # --- prune_summary: honest reporting (F5) + dry-run next step (DX-2) ------
 
     def test_prune_summary_distinguishes_unreachable_from_empty

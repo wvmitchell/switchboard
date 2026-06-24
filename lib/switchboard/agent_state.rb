@@ -31,6 +31,33 @@ module Switchboard
       @last_hook_states = {}
     end
 
+    # Where the reporter drops <state>\t<cwd>\t<epoch> files. Resolved from ENV on
+    # every read (not frozen at load) so tests can redirect it per-example, and so
+    # it tracks the exact precedence the hook sh-script uses: SWITCHBOARD_STATE_DIR,
+    # else XDG_STATE_HOME, else ~/.local/state.
+    def self.state_dir
+      File.expand_path(
+        ENV["SWITCHBOARD_STATE_DIR"] ||
+          File.join(ENV["XDG_STATE_HOME"] || "~/.local/state", "switchboard", "agents")
+      )
+    end
+
+    # Wipe every hook-state file. Called on `quit`: tearing down all sb/ sessions
+    # kills every agent at once, so their last-reported states are now stale — a
+    # lingering :thinking would otherwise read as a live, working agent for up to
+    # PRESENCE_TTL after the process is gone (you'd have to /resume to clear it).
+    # Per-file isolated and fully rescued; a restarted agent re-reports its state
+    # on SessionStart, so an over-eager wipe self-heals.
+    def self.clear_all
+      Dir.glob(File.join(state_dir, "*")).each do |file|
+        File.delete(file) if File.file?(file)
+      rescue StandardError
+        next
+      end
+    rescue StandardError
+      nil
+    end
+
     # worktree_paths -> Hash<path, state>. Only worktrees with an agent appear.
     def scan(worktree_paths)
       hooks = read_hooks
@@ -51,15 +78,10 @@ module Switchboard
 
     private
 
-    # Where the reporter drops <state>\t<cwd>\t<epoch> files. Resolved from ENV on
-    # every scan (not frozen at load) so tests can redirect it per-example, and so
-    # it tracks the exact precedence the hook sh-script uses: SWITCHBOARD_STATE_DIR,
-    # else XDG_STATE_HOME, else ~/.local/state.
+    # Per-scan access to the resolved state dir — delegates to ::state_dir so the
+    # read path and the teardown wipe (clear_all) always agree on the location.
     def state_dir
-      File.expand_path(
-        ENV["SWITCHBOARD_STATE_DIR"] ||
-          File.join(ENV["XDG_STATE_HOME"] || "~/.local/state", "switchboard", "agents")
-      )
+      self.class.state_dir
     end
 
     # Hook files: one line "<state>\t<cwd>\t<epoch>", keyed by the canonicalized
