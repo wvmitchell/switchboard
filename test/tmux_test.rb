@@ -32,6 +32,24 @@ module Switchboard
       assert_empty Tmux.sb_sessions("")
     end
 
+    # --- count_sidebar_panes: the pure pane-title tally (drives doctor's orphan
+    # check). Counts only panes titled exactly SIDEBAR_TITLE across `list-panes -a`.
+
+    def test_count_sidebar_panes_counts_only_exact_sidebar_titles
+      raw = "#{Tmux::SIDEBAR_TITLE}\n✳ Claude Code\n#{Tmux::SIDEBAR_TITLE}\nmy-host\n"
+      assert_equal 2, Tmux.count_sidebar_panes(raw)
+    end
+
+    def test_count_sidebar_panes_ignores_titles_that_merely_contain_the_marker
+      # An exact match only — a work pane whose title embeds the marker can't inflate it.
+      raw = "#{Tmux::SIDEBAR_TITLE}-stale\nnot-#{Tmux::SIDEBAR_TITLE}\n"
+      assert_equal 0, Tmux.count_sidebar_panes(raw)
+    end
+
+    def test_count_sidebar_panes_empty_input
+      assert_equal 0, Tmux.count_sidebar_panes("")
+    end
+
     # --- work_dir: the pure pane-cwd pick (drives the sidebar's -c) -----------
     # spawn_sidebar pins the sidebar pane's cwd to the worktree by reading the
     # window's work-pane path; if it picked the client's path instead the "you

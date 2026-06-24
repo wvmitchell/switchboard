@@ -46,7 +46,11 @@ global hook no-ops elsewhere); `home` is intentionally not bound (configurable
 keys are issue #15). All steps are idempotent and reversed by `uninstall` (which
 clears all three hook slots — `Installer::HOOK_SLOTS`). `doctor` reports whether
 those hooks are **live** in the running server, not just present in config (they
-go stale after a `git pull` until tmux reloads).
+go stale after a `git pull` until tmux reloads). `doctor` also flags **orphaned
+sidebar processes** — a `switchboard sidebar` that outlived its pane — by diffing
+the running-process count (`pgrep`) against the sidebar-pane count
+(`Tmux.sidebar_pane_count`); a straggler matters because tmux recycles pane ids,
+so it can end up reading a different live pane and double-fire completion sounds.
 
 Ruby **>= 3.0** is required (`Config` uses `YAML.safe_load_file`, added in Psych
 3.3 / Ruby 3.0). `bin/switchboard` re-execs itself under a modern ruby if launched

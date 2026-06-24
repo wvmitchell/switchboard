@@ -276,6 +276,7 @@ module Switchboard
       doctor_prs
       doctor_sounds
       doctor_sessions
+      doctor_orphan_sidebars
     end
 
     # PR badges come from gh and are cached on disk; the sidebar degrades SILENTLY if
@@ -349,6 +350,36 @@ module Switchboard
       else
         puts row(false, "#{report.orphans.size} orphaned sb/ session(s) — run `switchboard prune` (--dry-run to preview)")
       end
+    end
+
+    # Surface orphaned sidebar *processes* — a `switchboard sidebar` that outlived
+    # its pane (tmux closed the pane but the process didn't exit). They're harmless
+    # to the UI but, because tmux recycles pane ids, a straggler can end up reading
+    # a different live pane and double-fire completion sounds — so it's worth
+    # seeing. Detection is a count diff: how many sidebar processes are running vs
+    # how many sidebar panes tmux actually has. Skipped silently when pgrep is
+    # absent or tmux is unreachable (no count to compare).
+    def doctor_orphan_sidebars
+      return if `command -v pgrep 2>/dev/null`.strip.empty?
+
+      panes = Tmux.sidebar_pane_count
+      return if panes.nil?
+
+      procs = `pgrep -f 'switchboard sidebar' 2>/dev/null`.lines.size
+      orphans = orphan_sidebar_count(procs, panes)
+      if orphans.zero?
+        puts row(true, "no orphaned sidebars (#{procs} process(es), #{panes} pane(s))")
+      else
+        puts row(false, "#{orphans} orphaned sidebar process(es) (#{procs} running vs #{panes} pane(s)) — " \
+                        "stale sidebars whose pane is gone; a recycled pane id can make one double-ring")
+      end
+    end
+
+    # Pure: how many sidebar processes have no pane. Clamped at 0 — more panes than
+    # processes is a transient (a pane mid-spawn, or a dead-but-displayed pane), not
+    # an orphan. Split out so the arithmetic is unit-testable without pgrep/tmux.
+    def orphan_sidebar_count(procs, panes)
+      [procs - panes, 0].max
     end
 
     # Report install wiring: PATH symlink, the tmux marker block, and a tmux new

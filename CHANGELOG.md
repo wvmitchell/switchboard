@@ -7,6 +7,18 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.18.0] — doctor reports orphaned sidebar processes (2026-06-23)
+
+### Added
+- **`switchboard doctor` now reports orphaned sidebar processes.** A
+  `switchboard sidebar` that outlived its tmux pane (the pane closed but the
+  process didn't exit) is invisible until it misbehaves — and because tmux
+  recycles pane ids, a straggler can end up reading a *different* live pane and
+  double-fire completion sounds. doctor now diffs the count of running sidebar
+  processes against the number of sidebar panes tmux actually has and flags the
+  difference. The line is silent-skipped when `pgrep` is absent or tmux is
+  unreachable (no count to compare).
+
 ## [0.17.3] — exit orphaned sidebars so they stop ringing duplicate sounds (2026-06-23)
 
 ### Fixed

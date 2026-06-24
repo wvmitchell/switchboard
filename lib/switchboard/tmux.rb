@@ -144,6 +144,25 @@ module Switchboard
       end
     end
 
+    # How many sidebar panes are live across every window of every session on the
+    # running server. This is the count of `switchboard sidebar` processes that
+    # SHOULD exist — doctor diffs it against the actual process count to surface
+    # orphans (a sidebar that outlived its pane). nil if tmux is unreachable (no
+    # server) — distinct from 0 (server up, no sidebars), so doctor stays honest.
+    def sidebar_pane_count
+      raw = `tmux list-panes -a -F '#\{pane_title}' 2>/dev/null`
+      return nil unless $?.success?
+
+      count_sidebar_panes(raw)
+    end
+
+    # Pure: count lines whose pane title is exactly SIDEBAR_TITLE. Split out so the
+    # count logic is unit-testable without a server. Exact match (not include?) so a
+    # work pane whose title merely contains the marker can't inflate the count.
+    def count_sidebar_panes(raw)
+      raw.to_s.lines.count { |line| line.strip == SIDEBAR_TITLE }
+    end
+
     def ensure_session(name, dir, start = nil)
       return if has_session?(name)
 

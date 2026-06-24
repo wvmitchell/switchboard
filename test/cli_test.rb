@@ -19,6 +19,22 @@ module Switchboard
       assert_nil CLI.flag_value(["--tmux-conf"], "--tmux-conf")
     end
 
+    # --- orphan_sidebar_count: doctor's process-vs-pane diff ------------------
+    # Surfaces sidebar processes that outlived their pane (procs > panes).
+
+    def test_orphan_sidebar_count_is_the_excess_of_processes_over_panes
+      assert_equal 7, CLI.orphan_sidebar_count(18, 11)
+    end
+
+    def test_orphan_sidebar_count_is_zero_when_balanced
+      assert_equal 0, CLI.orphan_sidebar_count(11, 11)
+    end
+
+    def test_orphan_sidebar_count_clamps_when_more_panes_than_processes
+      # A pane mid-spawn (or a dead-but-displayed pane) is not an orphan — never negative.
+      assert_equal 0, CLI.orphan_sidebar_count(10, 11)
+    end
+
     # doctor's PR-badge freshness line compacts the cache age to its largest unit.
     def test_humanize_age_compacts_to_the_largest_unit
       assert_equal "45s", CLI.humanize_age(45)
