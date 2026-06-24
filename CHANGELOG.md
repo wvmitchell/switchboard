@@ -7,6 +7,18 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.21.1] — a self-documenting starter config (2026-06-24)
+
+### Changed
+- **A fresh `install`/`init` now writes an annotated config**, not two bare
+  lines. Every optional knob (`session_command`, `sounds`, `tmux_keys`, `base`,
+  `branch_prefix`, `agent_state_hooks`, `prune_on_launch`, `projects_root`) is
+  shown commented out at its default, so the options are discoverable in the
+  file itself instead of only in the README. Only `worktree_root` + `projects`
+  are active, so the effective config (and behavior) is unchanged. Existing
+  configs are left untouched — `install` never overwrites. (The comments are
+  stripped the first time you add a project, by which point you've seen them.)
+
 ## [0.21.0] — remap the sidebar toggle: configurable tmux keys (2026-06-24)
 
 ### Added

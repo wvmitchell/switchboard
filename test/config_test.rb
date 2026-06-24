@@ -22,6 +22,28 @@ module Switchboard
       assert_equal Config.default_data, YAML.safe_load_file(Config.path)
     end
 
+    # The scaffold is an annotated template so a fresh install discovers the optional
+    # knobs in the file itself. The invariant: only worktree_root + projects are
+    # active, so it parses to exactly default_data (commented knobs change nothing).
+    def test_scaffold_template_parses_to_default_data
+      assert_equal Config.default_data, YAML.safe_load(Config::SCAFFOLD_TEMPLATE),
+                   "commented knobs must not change the effective config"
+    end
+
+    def test_scaffold_template_advertises_the_optional_knobs
+      %w[tmux_keys sounds session_command base prune_on_launch projects_root].each do |knob|
+        assert_includes Config::SCAFFOLD_TEMPLATE, knob, "a fresh config should advertise #{knob}"
+      end
+    end
+
+    def test_scaffold_writes_the_annotated_template_but_parses_to_defaults
+      Config.scaffold
+      body = File.read(Config.path)
+      assert_includes body, "tmux_keys", "the written file shows the keybinding knob"
+      assert_includes body, "# switchboard config", "and the header pointer to the README"
+      assert_equal Config.default_data, YAML.safe_load_file(Config.path), "but still parses to the defaults"
+    end
+
     def test_scaffold_returns_the_path
       assert_equal Config.path, Config.scaffold
     end

@@ -30,22 +30,57 @@ module Switchboard
       File.exist?(path)
     end
 
-    # One source of truth for "what an empty switchboard config looks like" —
-    # shared by scaffold, the CLI `init`/`config`, and `add_project`'s default,
-    # so a fresh file written by any of them is byte-identical. Fresh hash each
-    # call (never a shared mutable constant).
+    # The effective shape of an empty switchboard config — the source of truth that
+    # `scaffold`'s template must parse to, and `add_project`'s fresh-file fallback.
+    # Fresh hash each call (never a shared mutable constant).
     def self.default_data
       { "worktree_root" => DEFAULT_ROOT, "projects" => [] }
     end
 
-    # Write the default config if none exists yet; return the path either way.
-    # Never clobbers an existing file (even a malformed/empty one) — callers that
+    # The annotated config `scaffold` writes for a fresh install, so the optional
+    # knobs are discoverable in the file itself, not just the README. ONLY
+    # worktree_root + projects are uncommented, so it parses to exactly default_data
+    # (config_test pins this) and the effective config is unchanged; every other knob
+    # is a commented example at its default. The comments are stripped the first time
+    # add_project rewrites the file via YAML.dump — by then the new user has read them
+    # (preserving them would need a comment-aware emitter; out of scope for stdlib).
+    SCAFFOLD_TEMPLATE = <<~YAML
+      # switchboard config — see the README "Config" section for the full reference.
+      # Uncommented keys are active; the commented ones below show every optional knob
+      # at its default. Uncomment and edit what you want, then save.
+
+      worktree_root: "#{DEFAULT_ROOT}"   # where `n` puts new worktrees
+      # projects_root: "#{DEFAULT_PROJECTS_ROOT}"        # where `a` / clone drop fetched repos
+      # base: origin/main                          # default ref new worktrees branch from
+      # branch_prefix: ""                          # new branches become <prefix>/<name>
+      # session_command: ""                        # run on a worktree's first session (e.g. claude --dangerously-skip-permissions)
+      # agent_state_hooks: true                    # auto-wire the agent-state dots on worktree create
+      # prune_on_launch: true                      # prune orphaned sb/ sessions when landing on home
+
+      # Completion sounds (on by default): a built-in (train / chime, or train_1..3 /
+      # chime_1..3), a file path, or a macOS system-sound name. enabled: false mutes all.
+      # sounds:
+      #   enabled: true
+      #   done: train
+      #   waiting: chime
+
+      # Prefix keys switchboard binds. toggle defaults to s; home is unbound unless set.
+      # A key is a char, a named key (Space, F1, BSpace), or a C-/M- combo.
+      # tmux_keys:
+      #   toggle: s
+      #   home: S
+
+      projects: []   # grown by `a` in the sidebar or `switchboard add <name> <path>`
+    YAML
+
+    # Write the annotated default config if none exists yet; return the path either
+    # way. Never clobbers an existing file (even a malformed/empty one) — callers that
     # want to read or seed it open the real file. Idempotent.
     def self.scaffold
       file = path
       unless File.exist?(file)
         FileUtils.mkdir_p(File.dirname(file))
-        File.write(file, YAML.dump(default_data))
+        File.write(file, SCAFFOLD_TEMPLATE)
       end
       file
     end

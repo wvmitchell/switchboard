@@ -83,7 +83,9 @@ cd switchboard && bin/switchboard install
    tmux.conf that sources the shipped `switchboard.tmux` fragment. The fragment
    is self-locating, so the binding keeps working wherever the repo lives, and
    it binds `prefix-s` to toggle the sidebar plus a session-switch refresh hook.
-3. **Creates an empty config** if you don't have one yet.
+3. **Creates a starter config** if you don't have one yet — effectively empty
+   (just `worktree_root` + `projects`), but annotated with every optional knob
+   commented out so you can see what's configurable without leaving the file.
 
 It finds the tmux.conf tmux actually loads (via `#{config_files}`) and backs it
 up to `.bak` before the first edit. Flags: `--no-tmux` (skip the tmux edit),

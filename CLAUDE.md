@@ -36,7 +36,11 @@ Setup is one command: `git clone && bin/switchboard install` (`Installer`,
 installs), adds a
 marker-delimited line to the tmux.conf tmux actually loads (found via
 `#{config_files}`) that sources the self-locating `switchboard.tmux` fragment,
-and scaffolds an empty config. The fragment runs `switchboard tmux-bind` (which
+and scaffolds a config (an **annotated template** — `Config::SCAFFOLD_TEMPLATE`,
+whose only uncommented keys are `worktree_root` + `projects`, so it parses to
+`default_data` while showing every optional knob commented out; comments are
+stripped on the first `add_project` YAML.dump rewrite, after the new user has read
+them). The fragment runs `switchboard tmux-bind` (which
 binds the configured keys — see keybindings below) and sets three indexed hooks:
 `client-session-changed[99]` (poke the now-visible sidebar to reload on a session
 switch), `after-new-window[99]` (give a new window its own sidebar when the session
