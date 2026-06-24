@@ -7,6 +7,20 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.22.0] — shared project collapse across every sidebar (2026-06-24)
+
+### Added
+- **Folding a project header is now shared across every window's sidebar, and
+  survives a respawn.** Collapse state used to live in each sidebar process's
+  memory, so a project you folded in one session came back expanded everywhere
+  else — and any sidebar respawn (toggle off/on, a new window, a reconcile) lost
+  the fold entirely. It now lives on disk (one file per collapsed project), the
+  same shared-state trick behind the agent dots and the bold "needs attention"
+  markers: every sidebar hydrates the fold on reload, and a toggle writes through
+  so the others pick it up on their next switch-in. Unlike the attention markers
+  it is a durable view preference — a folded project stays folded across restarts
+  (it is deliberately *not* cleared on `quit`).
+
 ## [0.21.2] — sidebar shows every branch a worktree has held (2026-06-24)
 
 ### Fixed

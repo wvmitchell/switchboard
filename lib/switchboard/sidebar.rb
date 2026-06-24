@@ -107,7 +107,9 @@ module Switchboard
       @agents = {}         # worktree path => :thinking | :done | :waiting
       @attention = Set.new # worktree paths with an unviewed completion (rendered bold)
       @agent_state = AgentState.new
-      @collapsed = Set.new # project names that are collapsed
+      @collapsed = Set.new # collapsed project names; hydrated from the shared
+                           # on-disk store (Collapse) on every rebuild, so all
+                           # windows' sidebars fold the same and a respawn keeps it
       @ticks = 0
       @pulse = 0           # animation frame counter (spinner cycle + blink phase)
       @last_scan = nil     # monotonic time of the last agent re-scan
@@ -313,6 +315,11 @@ module Switchboard
     def rebuild
       @model = Model.new(@config, with_dirty: false)
       @nodes = Tree.nodes(@model, branch_cache: @branch_cache)
+      # Hydrate folds from the shared on-disk store so every window's sidebar
+      # agrees and a respawned pane keeps them. GC against the configured project
+      # names (the stable registry, not the git-built tree, so a project that
+      # momentarily fails to build doesn't lose its fold).
+      @collapsed = Collapse.collapsed(@config.projects.map { |p| p["name"] })
       recompute_rows
     end
 
@@ -662,8 +669,17 @@ module Switchboard
       node.kind == "proj" ? toggle_collapse(node.project) : switch(node)
     end
 
+    # Flip a project's fold, writing through to the shared store so every other
+    # window's sidebar picks it up on its next reload (a switch-in poke, or a
+    # while-visible scan). The in-memory set is updated too for same-frame feedback.
     def toggle_collapse(project)
-      @collapsed.include?(project) ? @collapsed.delete(project) : @collapsed.add(project)
+      if @collapsed.include?(project)
+        @collapsed.delete(project)
+        Collapse.expand(project)
+      else
+        @collapsed.add(project)
+        Collapse.collapse(project)
+      end
       recompute_rows
     end
 

@@ -260,6 +260,25 @@ marked (`viewing?` skips it on the edge, and `locate` clears the marker the
 instant you switch in — bold gone on view, no input required). To keep that
 clearing correct, `reload` runs `locate` **before** `refresh_agents`.
 
+### Shared project collapse (the same multi-process trick)
+
+Folding a project header (▸/▾ on ↵) hides its workspace rows. `Collapse`
+(`collapse.rb`) keeps that fold **on disk, not in a sidebar ivar**, for the exact
+reason the dots and bold do: every window's sidebar is its own process, so a fold
+held in one process's `@collapsed` would leave every other pane — and every
+respawn (toggle off/on, a new window, a reconcile) — showing the project expanded.
+One file per collapsed project (name digest → name, `SWITCHBOARD_COLLAPSE_DIR` /
+`XDG_STATE_HOME`), so a toggle is a single atomic create/delete (`collapse` /
+`expand`) with no read-modify-write race, mirroring `Attention`. `rebuild`
+**hydrates** `@collapsed` from the store every reload (so a fold made in one window
+lands in the others on their next switch-in poke or while-visible scan);
+`toggle_collapse` writes through *and* updates the in-memory set for same-frame
+feedback. Unlike the attention markers it is a **durable view preference** — NOT
+cleared on `quit`; a folded project stays folded across restarts. `collapsed`
+GCs a fold whose project is no longer configured, but only when handed a
+non-empty project list (the key is a name, not a checkable path, so a transient
+empty/failed config can't wipe a user's folds).
+
 ### Conventions
 
 - Every file starts with `# frozen_string_literal: true`.

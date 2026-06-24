@@ -78,6 +78,30 @@ module Switchboard
       assert_includes sb.instance_variable_get(:@collapsed), "app"
     end
 
+    # The fold is shared, not per-process: toggling writes through to the on-disk
+    # store so every other window's sidebar reflects it on its next reload.
+    def test_toggle_collapse_writes_through_to_the_shared_store
+      sb = sidebar(nodes: [proj("app"), ws("a")])
+      sb.send(:toggle_collapse, "app")
+      assert_includes Collapse.collapsed, "app", "collapse persists to the shared store"
+      sb.send(:toggle_collapse, "app")
+      refute_includes Collapse.collapsed, "app", "expand clears it from the shared store"
+    end
+
+    # The other half: a fresh sidebar hydrates its folds from the shared store on
+    # rebuild — so a project you collapsed in one window comes up collapsed here.
+    def test_rebuild_hydrates_folds_from_the_shared_store
+      repo = temp_git_repo("app")
+      File.write(Config.path, YAML.dump("projects" => [{ "name" => "app", "path" => repo }]))
+      Collapse.collapse("app") # as if folded by another window's sidebar
+
+      sb = sidebar(nodes: [])
+      sb.instance_variable_set(:@config, Config.new)
+      sb.send(:rebuild)
+      assert_includes sb.instance_variable_get(:@collapsed), "app",
+                      "rebuild picks up a fold another sidebar wrote"
+    end
+
     def test_enter_on_a_workspace_switches_to_it_threading_the_session_command
       # Pin that switch() threads the project's resolved session_command into
       # Tmux.go(start:), not just the worktree.
