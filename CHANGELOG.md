@@ -7,6 +7,15 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.22.2] — doc fix: worktrees hold multiple branches (2026-06-24)
+
+### Changed
+- **Corrected the "manage projects" how-to's definition of a worktree.** It
+  called a worktree "a branch checkout," which conflated worktree with branch and
+  contradicted the multiple-branches-per-workspace model the rest of the docs
+  describe. A worktree is a separate git working directory that can hold several
+  branches over its life (the inline branch rows). Docs only.
+
 ## [0.22.1] — a full documentation set (2026-06-24)
 
 ### Added

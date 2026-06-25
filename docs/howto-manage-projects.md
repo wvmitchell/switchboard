@@ -2,8 +2,10 @@
 
 Add projects, clone new ones, create and rename worktrees, and remove what you're
 done with — from the sidebar or the command line. A *project* is a registered
-repo; a *worktree* (or workspace) is a branch checkout under it that you switch
-between.
+repo; a *worktree* (or workspace) is a separate git working directory under it,
+created with its own branch — though one worktree can hold several branches over
+its life (you `git checkout -b` in place), which is why a workspace can expand
+into multiple branch rows. You switch between worktrees from the tree.
 
 ## Prerequisites
 
