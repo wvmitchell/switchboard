@@ -201,6 +201,26 @@ module Switchboard
       capture(worktree, "diff", "--shortstat", range(base)).strip
     end
 
+    # [additions, deletions] of ref vs base (the branch's own committed work,
+    # base...ref). --numstat, not --shortstat: the shortstat summary line is
+    # gettext-localized, so a non-English git would slip past a word regex; the
+    # numstat columns are never translated. ref defaults to HEAD (the worktree's
+    # current branch). Blank base => [0, 0]; any git failure degrades to [0, 0].
+    def diff_counts(worktree, base, ref = "HEAD")
+      return [0, 0] if blank?(base)
+
+      sum_numstat(capture(worktree, "diff", "--numstat", range(base, ref)))
+    end
+
+    # Sum the added/deleted columns of --numstat output. A binary file's columns
+    # are "-\t-"; "-".to_i is 0, so they fall out of the sum without a special case.
+    def sum_numstat(text)
+      text.each_line.reduce([0, 0]) do |(adds, dels), line|
+        a, d, = line.split("\t")
+        [adds + a.to_i, dels + d.to_i]
+      end
+    end
+
     # [ahead, behind] of HEAD relative to base.
     def ahead_behind(worktree, base)
       return [0, 0] if blank?(base)
@@ -210,8 +230,8 @@ module Switchboard
       [ahead || 0, behind || 0]
     end
 
-    def range(base)
-      blank?(base) ? "HEAD" : "#{base}...HEAD"
+    def range(base, ref = "HEAD")
+      blank?(base) ? ref : "#{base}...#{ref}"
     end
 
     def blank?(str)

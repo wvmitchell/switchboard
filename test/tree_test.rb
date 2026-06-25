@@ -22,9 +22,9 @@ module Switchboard
       end
     end
 
-    def wt(path:, branch:, primary: false, dirty: false, pr: nil)
+    def wt(path:, branch:, primary: false, dirty: false, pr: nil, base: nil)
       Worktree.new(project: "app", path: path, branch: branch, dirty: dirty, pr: pr,
-                   base: nil, primary: primary)
+                   base: base, primary: primary)
     end
 
     def project(worktrees)
@@ -78,6 +78,18 @@ module Switchboard
       stub_method(Git, :branch_history, ->(_path, limit:, cache: nil) { %w[feature main] }) do
         main = Tree.nodes(model).find { |n| n.kind == "br" && n.branch == "main" }
         assert_equal({ "identifier" => "#5" }, main.pr)
+      end
+    end
+
+    # Both the workspace row and its inline branch rows carry the worktree's base
+    # ref, so refresh_diffs can compute base...<branch> per row (issue #79).
+    def test_ws_and_branch_rows_carry_the_base_ref
+      model = FakeModel.new([project([wt(path: "/wt/a", branch: "feature", base: "origin/main")])])
+      stub_method(Git, :branch_history, ->(_path, limit:, cache: nil) { %w[feature main] }) do
+        nodes = Tree.nodes(model)
+        assert_equal "origin/main", nodes.find { |n| n.kind == "ws" }.base
+        brs = nodes.select { |n| n.kind == "br" }
+        assert(brs.all? { |b| b.base == "origin/main" }, "branch rows inherit the worktree base")
       end
     end
 

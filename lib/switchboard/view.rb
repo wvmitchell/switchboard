@@ -28,7 +28,50 @@ module Switchboard
     end
 
     def pr_state(pr)
+      return "" unless pr.is_a?(Hash)
+
       pr["is_draft"].to_i == 1 ? "DRAFT" : pr["status"].to_s.upcase
+    end
+
+    # Diff-count badge (issue #79). Additions green, deletions red — the universal
+    # convention, and already switchboard's palette (green = done/open, red =
+    # closed); the +/− signs keep it distinct from those meanings.
+    DIFF_COLORS = { add: 32, del: 31 }.freeze
+
+    # The plain "+22 −333" badge (for width math), or "" when there's nothing to
+    # show — no counts, or a clean 0/0 branch. Counts ≥ 1000 abbreviate (1.5k /
+    # 12k) so a huge diff can't swallow the name in the narrow pane.
+    def diff_label(counts)
+      diff_parts(counts).compact.join(" ")
+    end
+
+    # The same badge, colored. "" exactly when diff_label is "".
+    def diff_tag(counts)
+      adds, dels = diff_parts(counts)
+      [colorize(adds, DIFF_COLORS[:add]), colorize(dels, DIFF_COLORS[:del])].compact.join(" ")
+    end
+
+    # ["+22", "−333"], each nil when that side is zero. Guards on Array so a
+    # malformed cache entry can't raise in the paint loop.
+    def diff_parts(counts)
+      return [nil, nil] unless counts.is_a?(Array)
+
+      adds, dels = counts
+      [("+#{abbrev(adds)}" if adds.to_i.positive?), ("−#{abbrev(dels)}" if dels.to_i.positive?)]
+    end
+
+    # Compact a count for the narrow pane: exact below 1000, else "1.5k" (one
+    # decimal under 10k) or "12k" (whole thereafter).
+    def abbrev(num)
+      num = num.to_i
+      return num.to_s if num < 1000
+
+      thousands = num / 1000.0
+      thousands >= 10 ? "#{thousands.round}k" : "#{num / 100 / 10.0}k".sub(".0k", "k")
+    end
+
+    def colorize(part, color)
+      part && "\e[#{color}m#{part}\e[0m"
     end
   end
 end

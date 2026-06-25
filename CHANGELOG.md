@@ -7,6 +7,28 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.30.0] — show the git diff count on workspace rows (2026-06-25)
+
+### Added
+- **A `+adds −dels` diff count on each workspace/branch row**, flush-right just
+  before the PR badge (issue #79). It's the branch's **committed** work versus its
+  base (`base...HEAD`), green/red, abbreviated past 1000 (`+1.5k`) so a big diff
+  can't crowd out the name, and hidden entirely on a clean branch. The footer
+  reads `+/− vs base` while a workspace/branch row is highlighted, so the count's
+  meaning is clear in place — it is NOT your uncommitted working tree, which every
+  other tool's `+/−` means.
+- `Git.diff_counts` (a `git diff --numstat` parse — locale-proof, unlike the
+  gettext-translated `--shortstat` summary) and the `View.diff_label`/`diff_tag`
+  badge helpers, mirroring the existing PR-badge pair.
+
+### Changed
+- **`R` now refreshes diff counts too** (alongside PR badges) — the manual
+  "show it now" for the rare case a just-merged branch's count is briefly stale.
+- The counts are computed **off the paint loop and cached** (keyed on each
+  worktree's `logs/HEAD` mtime, like the PR badges and agent dots), so the per-
+  worktree `git diff` never stalls a repaint. A row recomputes only when its
+  reflog moves or its PR newly flips merged/closed (once), staying bounded.
+
 ## [0.28.0] — resize the sidebar pane with ←/→ (2026-06-25)
 
 ### Added

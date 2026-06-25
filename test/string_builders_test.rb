@@ -139,6 +139,32 @@ module Switchboard
       assert_includes draft_tag, "\e[33m" # DRAFT -> yellow
     end
 
+    # --- View diff-count badge (issue #79) -----------------------------------
+
+    def test_diff_label_formats_and_hides_zero
+      assert_equal "+22 −333", View.diff_label([22, 333])
+      assert_equal "+5", View.diff_label([5, 0])      # one-sided
+      assert_equal "−9", View.diff_label([0, 9])
+      assert_equal "", View.diff_label([0, 0])        # clean branch -> nothing
+      assert_equal "", View.diff_label(nil)           # no count yet -> nothing
+      assert_equal "", View.diff_label("garbage")     # corrupt entry -> no raise
+    end
+
+    def test_diff_label_abbreviates_large_counts
+      assert_equal "+999", View.diff_label([999, 0])
+      assert_equal "+1k", View.diff_label([1000, 0])    # 1.0k collapses to 1k
+      assert_equal "+1.5k", View.diff_label([1500, 0])
+      assert_equal "+12k −68k", View.diff_label([12_345, 67_890])
+    end
+
+    def test_diff_tag_colors_additions_green_and_deletions_red
+      tag = View.diff_tag([22, 333])
+      assert_includes tag, "\e[32m+22\e[0m"   # additions green
+      assert_includes tag, "\e[31m−333\e[0m"  # deletions red
+      assert_equal "", View.diff_tag([0, 0])  # nothing to color when clean
+      assert_equal "", View.diff_tag(nil)
+    end
+
     # --- Editor.command ($VISUAL > $EDITOR > vi; empty is unset) -------------
 
     def test_editor_command_prefers_visual_then_editor

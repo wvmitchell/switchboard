@@ -39,9 +39,13 @@ more than one branch (derived from the worktree's HEAD reflog) expands into
 otherwise lives only in your head and on GitHub.
 
 Each row carries its signals inline: an agent-state dot (whether Claude is
-thinking / done / waiting), the active branch marked with a dot, and the PR as a
-color-coded `#number` flush right — green open, yellow draft, magenta merged,
-red closed.
+thinking / done / waiting), the active branch marked with a dot, a `+adds −dels`
+diff count (green/red, just left of the badge), and the PR as a color-coded
+`#number` flush right — green open, yellow draft, magenta merged, red closed.
+The diff count is the branch's **committed** work versus its base (`base...HEAD`),
+not your uncommitted working tree — the footer hint reads `+/− vs base` while a
+workspace or branch row is highlighted. A clean branch (nothing ahead of base)
+shows no count.
 
 Keys (in the sidebar):
 
@@ -54,7 +58,7 @@ a        add a project (register a local repo or clone a URL)
 n        create a new worktree in the highlighted project
 o        open the highlighted PR in the browser (gh pr view --web)
 O        open the highlighted row's repo in the browser (gh browse; works on every row kind)
-R        refresh PR badges now (catch a PR merged/closed on GitHub)
+R        refresh PR badges + diff counts now (catch a PR merged/closed on GitHub)
 H        toggle the full header (greeting + console) on every session, not just home
 r        rename a workspace
 d        remove the highlighted row — delete a workspace, or unregister a project (closing its sessions)

@@ -615,6 +615,191 @@ module Switchboard
                       "off-focus, the cursor row renders like any other"
     end
 
+    # --- line: the diff-count badge (issue #79) ------------------------------
+
+    def strip_ansi(str) = str.gsub(/\e\[[0-9;]*m/, "")
+
+    def test_line_renders_the_diff_count_before_the_pr_badge
+      node = ws("feature", pr: { "identifier" => "#12", "status" => "open" })
+      sb = sidebar(nodes: [proj("app"), node], focused: false)
+      sb.instance_variable_set(:@diffs, { [node.path, node.branch, node.kind] => [nil, false, 22, 333] })
+      out = sb.send(:line, node, false, 40)
+      assert_includes out, "\e[32m+22\e[0m",  "additions green"
+      assert_includes out, "\e[31m−333\e[0m", "deletions red"
+      assert_includes out, "#12"
+      assert out.index("+22") < out.index("#12"), "diff count sits left of the PR badge"
+    end
+
+    # The regression guard: a row with no @diffs entry renders byte-identical to before.
+    def test_line_without_a_diff_count_is_unchanged
+      node = ws("plain")
+      sb = sidebar(nodes: [proj("app"), node], focused: false)
+      before = sb.send(:line, node, false, 40)
+      sb.instance_variable_set(:@diffs, { ["/somewhere/else", "x", "ws"] => [nil, false, 9, 9] })
+      assert_equal before, sb.send(:line, node, false, 40)
+    end
+
+    def test_line_keeps_the_diff_and_badge_within_the_column_budget
+      node = ws("a-very-long-workspace-name", pr: { "identifier" => "#7", "status" => "open" })
+      sb = sidebar(nodes: [proj("app"), node], focused: false)
+      sb.instance_variable_set(:@diffs, { [node.path, node.branch, node.kind] => [nil, false, 999, 999] })
+      out = sb.send(:line, node, false, 30)
+      assert_includes out, "+999"
+      assert_includes out, "#7"
+      assert_operator strip_ansi(out).length, :<=, 30, "name truncates; nothing overruns the pane"
+    end
+
+    # The narrow-pane backstop: when name + diff + badge can't fit, the diff yields
+    # first (the badge is the essential signal) and the row never overruns the pane.
+    def test_line_drops_the_diff_badge_when_the_pane_is_too_narrow
+      node = ws("nm", pr: { "identifier" => "#123456", "status" => "open" })
+      sb = sidebar(nodes: [proj("app"), node], focused: false)
+      sb.instance_variable_set(:@diffs, { [node.path, node.branch, node.kind] => [nil, false, 9999, 9999] })
+      out = sb.send(:line, node, false, 20)
+      assert_includes out, "#123456", "the PR badge survives — the essential signal"
+      refute_includes out, "+9", "the diff badge is dropped when there's no room for all three"
+      assert_operator strip_ansi(out).length, :<=, 20, "the row never overruns the pane"
+    end
+
+    def test_focused_bar_carries_the_plain_diff_count
+      node = ws("feature")
+      sb = sidebar(nodes: [proj("app"), node], focused: true)
+      sb.instance_variable_set(:@diffs, { [node.path, node.branch, node.kind] => [nil, false, 4, 0] })
+      out = sb.send(:line, node, true, 40)
+      assert_includes out, "\e[7m",   "reverse-video cursor bar"
+      assert_includes out, "+4",      "the count rides the bar, plain"
+      refute_includes out, "\e[32m+4", "...uncolored under the bar, where color is stripped"
+    end
+
+    # --- refresh_diffs: the off-paint diff cache (issue #79) ------------------
+
+    # A real <gitdir>/logs/HEAD so refresh_diffs can stat a fresh mtime; returns gitdir.
+    def head_log_gitdir(name = "gd")
+      gitdir = path(name)
+      FileUtils.mkdir_p(File.join(gitdir, "logs"))
+      File.write(File.join(gitdir, "logs", "HEAD"), "x\n")
+      gitdir
+    end
+
+    def diff_ws(path: "/wt/a", branch: "feat", base: "origin/main", pr: nil)
+      Tree::Node.new(kind: "ws", project: "app", path: path, branch: branch, base: base, pr: pr)
+    end
+
+    def test_refresh_diffs_skips_the_shell_out_when_the_reflog_is_unchanged
+      node = diff_ws
+      sb = sidebar(nodes: [node])
+      gd = head_log_gitdir
+      sb.instance_variable_set(:@branch_cache, { node.path => [gd, nil, nil, []] })
+      calls = 0
+      stub_method(Git, :diff_counts, ->(*) { calls += 1; [2, 1] }) do
+        sb.send(:refresh_diffs) # computes
+        sb.send(:refresh_diffs) # mtime unchanged -> skips
+      end
+      assert_equal 1, calls, "an unchanged logs/HEAD mtime must not re-run git diff"
+      assert_equal [2, 1], sb.send(:diff_for, node)
+    end
+
+    def test_refresh_diffs_recomputes_when_the_reflog_advances
+      node = diff_ws
+      sb = sidebar(nodes: [node])
+      gd = head_log_gitdir
+      log = File.join(gd, "logs", "HEAD")
+      sb.instance_variable_set(:@branch_cache, { node.path => [gd, nil, nil, []] })
+      calls = 0
+      stub_method(Git, :diff_counts, ->(*) { calls += 1; [calls, 0] }) do
+        File.utime(Time.at(1000), Time.at(1000), log)
+        sb.send(:refresh_diffs)
+        File.utime(Time.at(2000), Time.at(2000), log) # a commit bumped the reflog
+        sb.send(:refresh_diffs)
+      end
+      assert_equal 2, calls, "a fresh reflog mtime re-runs the diff (the agent-edge case)"
+      assert_equal [2, 0], sb.send(:diff_for, node)
+    end
+
+    # A cached gitdir whose logs/HEAD is gone reads mtime nil; it must still compute
+    # once and then gate (entry presence), never re-run git diff every reload.
+    def test_refresh_diffs_with_a_missing_reflog_computes_once_not_every_reload
+      node = diff_ws
+      sb = sidebar(nodes: [node])
+      bare = path("bare-gitdir") # exists, but has no logs/HEAD
+      FileUtils.mkdir_p(bare)
+      sb.instance_variable_set(:@branch_cache, { node.path => [bare, nil, nil, []] })
+      calls = 0
+      stub_method(Git, :diff_counts, ->(*) { calls += 1; [3, 0] }) do
+        sb.send(:refresh_diffs)
+        sb.send(:refresh_diffs)
+      end
+      assert_equal 1, calls, "nil mtime computes once, then the entry-presence gate holds"
+      assert_equal [3, 0], sb.send(:diff_for, node)
+    end
+
+    def test_refresh_diffs_clears_a_stale_count_when_it_cannot_recompute
+      node = diff_ws
+      sb = sidebar(nodes: [node])
+      gd = head_log_gitdir
+      sb.instance_variable_set(:@branch_cache, { node.path => [gd, nil, nil, []] })
+      stub_method(Git, :diff_counts, ->(*) { [9, 9] }) { sb.send(:refresh_diffs) }
+      assert_equal [9, 9], sb.send(:diff_for, node)
+      sb.instance_variable_set(:@branch_cache, {}) # worktree's cache slot vanished
+      sb.send(:refresh_diffs)
+      assert_nil sb.send(:diff_for, node), "no ghost count when the row can no longer be diffed"
+    end
+
+    # The merge heal recomputes ONCE on the flip to MERGED/CLOSED (origin may have
+    # fast-forwarded past the branch), then the gate holds — it must NOT re-run a
+    # synchronous git diff every reload, which would reintroduce the per-worktree
+    # cost with_dirty:false avoids.
+    def test_refresh_diffs_recomputes_a_resting_row_once_on_the_transition
+      node = diff_ws(pr: { "identifier" => "#3", "status" => "open" })
+      sb = sidebar(nodes: [node])
+      gd = head_log_gitdir
+      sb.instance_variable_set(:@branch_cache, { node.path => [gd, nil, nil, []] })
+      calls = 0
+      stub_method(Git, :diff_counts, ->(*) { calls += 1; [0, 0] }) do
+        sb.send(:refresh_diffs)                          # open: computes (1)
+        sb.send(:refresh_diffs)                          # open, unchanged: skips (1)
+        node.pr = { "identifier" => "#3", "status" => "merged" } # PR flips merged
+        sb.send(:refresh_diffs)                          # transition: recomputes once (2)
+        sb.send(:refresh_diffs)                          # still merged, unchanged: skips (2)
+      end
+      assert_equal 2, calls, "recompute fires once on the resting flip, then the gate holds"
+    end
+
+    def test_refresh_diffs_counts_each_branch_row_by_its_own_ref
+      ws_node = diff_ws(path: "/wt/a", branch: "feat")
+      br_node = Tree::Node.new(kind: "br", project: "app", path: "/wt/a", branch: "old",
+                               base: "origin/main")
+      sb = sidebar(nodes: [ws_node, br_node])
+      gd = head_log_gitdir
+      sb.instance_variable_set(:@branch_cache, { "/wt/a" => [gd, nil, nil, []] })
+      stub_method(Git, :diff_counts, ->(_p, _base, ref) { ref == "feat" ? [1, 0] : [2, 0] }) do
+        sb.send(:refresh_diffs)
+      end
+      assert_equal [1, 0], sb.send(:diff_for, ws_node)
+      assert_equal [2, 0], sb.send(:diff_for, br_node), "branch rows diff their own ref vs base"
+    end
+
+    # An expanded workspace emits a ws row (pr dropped → resting false) AND an active
+    # br row for the SAME branch carrying the real (merged) pr. They share [path,
+    # branch]; keying on kind too keeps their disagreeing resting flags from
+    # ping-ponging one entry into an unbounded per-reload recompute.
+    def test_refresh_diffs_does_not_pingpong_when_ws_and_active_br_share_a_branch
+      ws_node = Tree::Node.new(kind: "ws", project: "app", path: "/wt/a", branch: "feat",
+                               base: "origin/main", pr: nil)
+      br_node = Tree::Node.new(kind: "br", project: "app", path: "/wt/a", branch: "feat",
+                               base: "origin/main", pr: { "identifier" => "#9", "status" => "merged" })
+      sb = sidebar(nodes: [ws_node, br_node])
+      gd = head_log_gitdir
+      sb.instance_variable_set(:@branch_cache, { "/wt/a" => [gd, nil, nil, []] })
+      calls = 0
+      stub_method(Git, :diff_counts, ->(*) { calls += 1; [1, 0] }) do
+        sb.send(:refresh_diffs) # ws computes (1) + br computes-once-on-merge (2)
+        sb.send(:refresh_diffs) # both gated now
+        sb.send(:refresh_diffs) # still gated
+      end
+      assert_equal 2, calls, "kind-keyed entries never ping-pong into a per-reload recompute"
+    end
+
     # --- footer: context-sensitive legend ------------------------------------
     # The legend adapts to the highlighted row's kind, but stays three lines so
     # the tree never reflows as the cursor crosses the project/workspace boundary.
@@ -635,7 +820,8 @@ module Switchboard
       foot = sb.send(:footer)
       assert_equal 3, foot.size
       assert foot[0].start_with?(Sidebar::NAV_WS), "line 1 leads with the workspace nav keys"
-      assert_includes foot[0], "/ filter"
+      assert_includes foot[0], "+/− vs base", "ws rows explain the diff-count column in place of / filter (#79)"
+      refute_includes foot[0], "/ filter", "the filter hint yields to the diff-count hint on ws/br rows"
       assert foot.any? { |l| l.include?("d delete") }, "d deletes the worktree"
       assert foot.any? { |l| l.include?("o PR") }
       assert foot.any? { |l| l.include?("r rename") }
@@ -648,7 +834,7 @@ module Switchboard
       foot = sb.send(:footer)
       assert_equal 3, foot.size
       assert foot[0].start_with?(Sidebar::NAV_BR), "line 1 leads with the branch nav keys"
-      assert_includes foot[0], "/ filter"
+      assert_includes foot[0], "+/− vs base", "branch rows carry the diff-count hint too (#79)"
       assert foot.any? { |l| l.include?("o PR") }, "opening the branch's PR works"
       refute foot.any? { |l| l.include?("d delete") }, "delete no-ops on a branch row"
       refute foot.any? { |l| l.include?("r rename") }, "rename no-ops on a branch row"

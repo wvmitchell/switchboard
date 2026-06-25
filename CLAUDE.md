@@ -336,6 +336,33 @@ self-heals on the next `pin_if_resized` (it pins to the same `@width`, never
 fighting the resize). In `/` filter mode `←`/`→` are inert (the escapes aren't
 printable, so `filter_key` ignores them) — movement-free there like `j`/`k`.
 
+### Workspace diff counts (off-paint, per-process, mtime-gated)
+
+Each ws/br row shows `+adds −dels` of its branch vs base (`base...HEAD`, committed
+— not the working tree) just left of the PR badge (issue #79). Like the per-worktree
+`git status` the model skips (`with_dirty: false`), a `git diff` per worktree can't
+ride the synchronous paint, so it gets the **agent-dot / PR-badge treatment**: a
+per-process `@diffs` cache (`[path, branch] => [logs/HEAD mtime, adds, dels]`)
+refreshed by `Sidebar#refresh_diffs` off the paint loop. NOT shared on disk (a count
+isn't a view preference) and NOT on the every-3s scan — it rides exactly the issue's
+triggers: `reload` (switch-in / idle / tree-tick) and `on_agent_edges` (a finished
+turn likely just committed). `Git.diff_counts` uses `--numstat` (the localized
+`--shortstat` summary would slip past a word regex on a non-English git) and
+`Git.range(base, ref)` so an inline branch row diffs its *own* ref, not HEAD.
+
+The cache key is the worktree's `logs/HEAD` mtime, **stat'd fresh** in `refresh_diffs`
+— NOT reused from `@branch_cache[path][1]`, which only refreshes on `rebuild`; the
+`on_agent_edges` caller has no rebuild, so a cached mtime would compare stale-to-stale
+and skip the just-landed commit. Only the gitdir (`@branch_cache[path][0]`, stable +
+already absolute — the relative-`.git` bug that once blanked the tree) is reused.
+`refresh_diffs` computes **value-or-nil** and `delete`s on nil, so a row that loses
+its cache slot, base, or diffability clears instead of painting a ghost count. A
+**MERGED/CLOSED** PR row bypasses the mtime gate: origin fast-forwarding past a merged
+branch zeroes `base...HEAD` without moving `logs/HEAD` (the PR badge's blind spot),
+and `R` (`refresh_prs_now`) clears `@diffs` as the manual catch-all. `View.diff_label`
+(plain, for width math) / `diff_tag` (green adds / red dels) mirror the `pr_*` pair and
+abbreviate counts ≥1000 (`1.5k`) so a huge diff can't swallow the name in the pane.
+
 ### Type-to-filter (the deliberately un-shared one)
 
 `/` enters an in-sidebar incremental filter (issue #60) — fzf-style, but NOT the

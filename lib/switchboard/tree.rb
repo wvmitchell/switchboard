@@ -12,7 +12,7 @@ module Switchboard
     MAX_BRANCHES = 8
 
     # Structured tree node — what the rendered sidebar draws.
-    Node = Struct.new(:kind, :project, :path, :branch, :name, :pr, :dirty, :active, :last,
+    Node = Struct.new(:kind, :project, :path, :branch, :name, :pr, :dirty, :base, :active, :last,
                       keyword_init: true)
 
     # Flat, ordered list of Nodes: project header, its workspaces, and a
@@ -28,12 +28,13 @@ module Switchboard
           # the workspace row too would render the same #number twice. A single-branch
           # workspace keeps the badge on its row — the only place it can show.
           list << Node.new(kind: "ws", project: project.name, path: wt.path, branch: wt.branch,
-                           name: wt.display_name, pr: expanded ? nil : wt.pr, dirty: wt.dirty)
+                           name: wt.display_name, pr: expanded ? nil : wt.pr, dirty: wt.dirty,
+                           base: wt.base)
           next unless expanded
 
           branches.each_with_index do |branch, i|
             list << Node.new(kind: "br", project: project.name, path: wt.path, branch: branch,
-                             pr: model.pr_for(branch), active: branch == wt.branch,
+                             pr: model.pr_for(branch), base: wt.base, active: branch == wt.branch,
                              last: i == branches.size - 1)
           end
         end

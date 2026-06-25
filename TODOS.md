@@ -113,3 +113,21 @@ and where to start.
   module-vs-class conventions, and the release process) as part of the full
   `docs/` Diataxis set. The conventions also live human-readable in
   `docs/explanation-architecture.md`.
+
+## Sidebar diff count (issue #79) follow-ups
+
+- **Working-tree (uncommitted) diff count as a config knob.** The row diff count
+  (`+22 −333`) shows **committed** branch-vs-base work (`git diff --numstat
+  base...HEAD`). Add a per-project/global option — resolved like `sound_for` /
+  `session_command_for` — to switch a project to the **uncommitted** working-tree
+  view (`git diff --numstat HEAD`) instead. *Why:* `+22 −333` reads like "current
+  git diff" to many users, but we deliberately show committed-only (it's the
+  PR-shaped number and it's cache-friendly); some users will want the dirty-tree
+  view. *The catch (the real design work):* working-tree mode **can't** ride the
+  `logs/HEAD` mtime gate the committed count uses — editing files never touches the
+  reflog, so an edit wouldn't invalidate the cache. It needs a different
+  invalidation (index + working-tree mtimes, or accept a per-scan shell-out cost —
+  the exact thing `with_dirty: false` avoids). *Start in:* `Config` (a `diff_source_for`
+  resolver) + `Sidebar#refresh_diffs` (a mode branch + its own invalidation). Low
+  priority — the committed default is the right one for the PR-workflow case; only
+  worth it if the dirty-tree view is asked for.

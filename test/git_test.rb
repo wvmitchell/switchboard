@@ -223,6 +223,42 @@ module Switchboard
       assert_equal [1, 0], Git.ahead_behind(repo, "origin/main")
     end
 
+    # --- diff counts (issue #79) ---------------------------------------------
+
+    def test_diff_counts_sums_additions_and_deletions_vs_base
+      repo = temp_git_repo("app", origin: true) # seed: README.md = "seed\n"
+      assert_equal [0, 0], Git.diff_counts(repo, "origin/main"), "nothing ahead of base"
+      File.write(File.join(repo, "README.md"), "one\ntwo\nthree\n") # -1 seed, +3 lines
+      File.write(File.join(repo, "new.txt"), "x\n")                 # +1
+      git(repo, "add", "-A")
+      git(repo, "commit", "-q", "-m", "work")
+      assert_equal [4, 1], Git.diff_counts(repo, "origin/main")
+    end
+
+    def test_diff_counts_blank_base_is_zero
+      assert_equal [0, 0], Git.diff_counts(temp_git_repo, nil)
+      assert_equal [0, 0], Git.diff_counts(temp_git_repo("empty"), "")
+    end
+
+    # The branch-row case: count an arbitrary branch (not HEAD) vs base, from any checkout.
+    def test_diff_counts_for_an_arbitrary_ref
+      repo = temp_git_repo("app", origin: true)
+      git(repo, "checkout", "-q", "-b", "feat")
+      File.write(File.join(repo, "g.txt"), "x\ny\n")
+      git(repo, "add", "-A")
+      git(repo, "commit", "-q", "-m", "feat")
+      git(repo, "checkout", "-q", "main")
+      assert_equal [2, 0], Git.diff_counts(repo, "origin/main", "feat")
+    end
+
+    def test_sum_numstat_parses_columns_and_skips_binary
+      assert_equal [711, 34], Git.sum_numstat("700\t30\ta.rb\n11\t4\tb.rb\n")
+      assert_equal [5, 0], Git.sum_numstat("5\t0\tonly_adds.rb\n")
+      assert_equal [0, 9], Git.sum_numstat("0\t9\tonly_dels.rb\n")
+      assert_equal [0, 0], Git.sum_numstat("-\t-\timage.png\n"), "binary rows fall out via to_i"
+      assert_equal [0, 0], Git.sum_numstat(""), "empty diff"
+    end
+
     # Pr.repo_slug is a git-shelling helper, so it lives with the other real-repo
     # tests. No network — we only set the remote URL.
     def test_repo_slug_from_origin_url

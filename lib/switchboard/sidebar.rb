@@ -76,6 +76,8 @@ module Switchboard
     BRANCH_FG = "\e[90m"         # branch rows: bright-black, a theme-relative dim (#23)
     RELOAD_CONFIG_BYTE = "\x12"  # C-r: the dedicated post-edit "re-read config" poke (Tmux.poke_sidebar_of)
     WIDTH_STEP = 2               # cols per ←/→ press; bounds live in Width (issue #78)
+    MIN_NAME_COLS = 3            # below this many cols left for the name, drop the diff
+                                 # badge so a row never overruns the pane (issue #79)
 
     # Key-hint legend, built by `footer` (below) and kept within the pin width.
     # Reload isn't shown — it's automatic; Ctrl-L triggers it internally (the
@@ -186,6 +188,11 @@ module Switchboard
       @branch_cache = {}   # worktree path => [gitdir, logs/HEAD mtime, limit, branches],
                            # so a reload skips the per-ws rev-parse when the reflog is
                            # unchanged. Bounded by worktrees seen this process; never pruned.
+      @diffs = {}          # [path, branch, kind] => [logs/HEAD mtime, resting?, adds, dels]:
+                           # the row's branch-vs-base diff count (issue #79), refreshed off the
+                           # paint loop and gated on the worktree's reflog mtime (+ the PR
+                           # resting flag, so a merged row recomputes once). Like
+                           # @branch_cache, bounded by rows seen this process; never pruned.
       @operator = false    # home greeting's first name; resolved lazily on the first
                            # home render (git shell-out) so non-home sidebars never pay
     end
@@ -498,6 +505,69 @@ module Switchboard
       @agents = {}
     end
 
+    # Per-worktree diff counts (issue #79): "+adds −dels" of each row's branch vs
+    # its base, cached off the paint loop like the agent dots and PR badges — a git
+    # diff per worktree is the same cost as the git status the model skips with
+    # with_dirty:false, so it can't ride the synchronous paint. Keyed [path, branch]
+    # so a workspace's inline branch rows each carry their own count.
+    #
+    # The gate is the worktree's logs/HEAD mtime — read FRESH here, not from
+    # @branch_cache[path][1], because that cached mtime only refreshes on rebuild;
+    # the on_agent_edges caller runs WITHOUT a rebuild, so a just-landed commit would
+    # otherwise compare stale-to-stale and skip. Only the gitdir ([0], stable and
+    # already absolute) is safe to reuse from @branch_cache. A MERGED/CLOSED PR row
+    # bypasses the gate: origin fast-forwarding past the branch zeros the base...HEAD
+    # diff without moving logs/HEAD (the same blind spot the PR badge has, healed by
+    # R). Compute value-or-nil; nil DELETES the entry, so a row that loses its cache
+    # slot, base, or diffability clears instead of painting a ghost count. Fully
+    # rescued — a diff fault never disturbs the dots or the paint.
+    def refresh_diffs
+      @nodes.each do |n|
+        next unless %w[ws br].include?(n.kind)
+
+        # Key on kind too: an expanded workspace emits a ws row AND a br row for the
+        # SAME current branch — they'd share [path, branch] but carry different prs
+        # (the ws drops its badge when expanded, so pr nil ⇒ resting false; the br
+        # keeps it), and the disagreeing resting flag would ping-pong the one entry
+        # and recompute forever. Separate keys, separate (identical) entries.
+        key = [n.path, n.branch, n.kind]
+        gitdir = @branch_cache.dig(n.path, 0)
+        head_log = gitdir && File.join(gitdir, "logs", "HEAD")
+        mtime = head_log && File.exist?(head_log) ? File.mtime(head_log) : nil
+        # Recompute when the reflog moved (fresh mtime) OR the PR just entered/left a
+        # resting state (MERGED/CLOSED) — that flip is when origin may have
+        # fast-forwarded past the branch and zeroed base...HEAD without touching
+        # logs/HEAD. The resting flag is stored, so a merged row recomputes ONCE on
+        # the transition, not every reload (which would re-run a synchronous git diff
+        # forever — the cost with_dirty:false exists to avoid). R clears @diffs for
+        # the rare lag where the fetch trails the badge flip.
+        # Gate on (mtime, resting) — and skip on entry presence alone, NOT `mtime &&`:
+        # a worktree with a cached gitdir but a vanished logs/HEAD reads mtime nil, and
+        # requiring a non-nil mtime to skip would recompute it every reload. With this,
+        # a nil-mtime row computes ONCE (nil == nil holds next pass) and self-heals to
+        # the normal gate the moment logs/HEAD returns (its real mtime != the stored nil).
+        resting = %w[MERGED CLOSED].include?(View.pr_state(n.pr))
+        entry = @diffs[key]
+        next if entry && entry[0] == mtime && entry[1] == resting
+
+        counts = (Git.diff_counts(n.path, n.base, n.branch) if gitdir && n.base)
+        if counts
+          @diffs[key] = [mtime, resting, *counts]
+        else
+          @diffs.delete(key)
+        end
+      end
+    rescue StandardError
+      nil
+    end
+
+    # The cached [adds, dels] for a row, or nil. Drops the leading [mtime, resting?]
+    # the gate keys on. ws/br only — projects never have a diff.
+    def diff_for(node)
+      entry = @diffs[[node.path, node.branch, node.kind]]
+      entry && entry.drop(2)
+    end
+
     # announce_sounds: false on a catch-up scan (a sidebar waking from off-screen,
     # or the session-switch poke) — re-baseline + refresh PRs without ringing for
     # completions another sidebar already announced. Defaults true: continuous
@@ -506,6 +576,7 @@ module Switchboard
       rebuild
       locate # before refresh_agents: marks below skip the workspace you're in, and viewing it clears its bold
       refresh_agents(announce_sounds: announce_sounds)
+      refresh_diffs # branch-vs-base counts, gated on each worktree's reflog mtime
       refresh_stale_prs
       # Stamp BOTH clocks: @last_reload throttles the next switch poke (reload_due?),
       # and @last_scan stops the next loop timeout from firing a redundant agent scan
@@ -629,6 +700,7 @@ module Switchboard
         edges = self.class.completion_edges(@prev_hook_states, now)
         mark_attention_for(edges)
         refresh_prs_for(edges)
+        refresh_diffs if edges.any? # a finished turn likely just committed — repaint its count
         if announce_sounds
           play_sounds_for(edges, now)
           sparkle_for(edges, now)
@@ -720,10 +792,15 @@ module Switchboard
     # before the notify rather than claim a refresh that can't happen. (A refresh
     # already in flight from a prior press still notifies — it's honest, one's running.)
     def refresh_prs_now
+      # Diff counts are local, so heal them here too (R is the manual "show it now"
+      # for the merged/base-moved staleness the mtime gate can't see) — independent
+      # of the wrapper the PR refresh needs. Clear + recompute against the cached tree.
+      @diffs.clear
+      refresh_diffs
       return unless ENV["SWITCHBOARD_BIN"]
 
       @config.projects.map { |p| p["name"] }.each { |name| maybe_refresh_prs(name) }
-      Tmux.notify("switchboard: refreshing PRs…")
+      Tmux.notify("switchboard: refreshing PRs + diffs…")
     rescue StandardError
       nil
     end
@@ -1404,12 +1481,15 @@ module Switchboard
                   else # empty tree
                     [NAV_WS, ["a add project · e settings", "R sync · q quit"]]
                   end
-      # The / filter hint rides line 1 (the title/nav line) — the only line with
-      # room across every kind, since the ws action lines are full at the pin
-      # width. At home it trails the title, where a long list most wants searching.
-      # (←/→ resize is intentionally NOT advertised here: the proj nav line is
-      # already near the pin width, and discoverability lives in the #62 help overlay.)
-      ["#{@home ? HOME_TITLE : nav} · / filter", *rest]
+      # Line 1 carries one context hint after the title/nav — the only line with
+      # room across every kind, since the ws action lines are full at the pin width.
+      # On a workspace/branch row it explains the diff-count column in place ("+/−
+      # vs base" — the count is committed branch-vs-base, NOT the working tree, which
+      # every other tool's +/− means; issue #79); elsewhere it advertises / filter,
+      # which a long project list most wants. (←/→ resize stays out — the proj nav
+      # line is already near the pin width; discoverability lives in the #62 overlay.)
+      hint = %w[ws br].include?(current&.kind) ? "+/− vs base" : "/ filter"
+      ["#{@home ? HOME_TITLE : nav} · #{hint}", *rest]
     end
 
     # The filter-mode legend: the live query, then the in-mode keys. j/k are query
@@ -1521,28 +1601,41 @@ module Switchboard
     end
 
     def line(node, active, cols)
-      # PR identifier ("#12") rendered flush right; reserve its width (plus a
-      # gap) so the name truncates to fit rather than overrunning the badge.
-      # Projects carry no PR, so they get the full width.
+      # The flush-right block is the diff count then the PR identifier ("+22 −333
+      # #12"); reserve its plain width (plus a gap) so the name truncates to fit
+      # rather than overrunning. Projects carry neither, so they get the full width.
       id = node.kind == "proj" ? "" : View.pr_identifier(node.pr)
-      left_cols = id.empty? ? cols : [cols - id.length - 1, 1].max
+      counts = %w[ws br].include?(node.kind) ? diff_for(node) : nil
+      diff = View.diff_label(counts)
+      right = [diff, id].reject(&:empty?).join("  ") # plain, for width math
+      # Too narrow to seat name + diff + badge? Drop the diff first (the badge is the
+      # more essential signal) so the row never overruns — reachable only on a
+      # hand-narrowed pane with a huge diff AND a long PR number.
+      if !diff.empty? && cols - right.length - 1 < MIN_NAME_COLS
+        diff = ""
+        right = id
+      end
+      left_cols = right.empty? ? cols : [cols - right.length - 1, 1].max
       text = trunc(plain(node), left_cols)
 
       # The reverse-video cursor bar only when the sidebar is the focused pane;
       # off-focus the cursor row renders like any other, so the bright bar never
-      # tugs at your eye while you're working in the pane beside it. The badge
-      # goes plain here so it reads under the inverted bar.
+      # tugs at your eye while you're working in the pane beside it. The diff/badge
+      # go plain here so they read under the inverted bar.
       if active && @focused
-        bar = id.empty? ? text : "#{text.ljust(left_cols)} #{id}"
+        bar = right.empty? ? text : "#{text.ljust(left_cols)} #{right}"
         return "\e[7m#{bar.ljust(cols)}\e[0m"
       end
 
       body = colored(node, text, current: node.kind == "ws" && node.path == @current_path)
-      return body if id.empty?
+      return body if right.empty?
 
-      # `colored` preserves `text`'s visible width, so pad off the plain length.
-      pad = [cols - text.length - id.length, 1].max
-      "#{body}#{' ' * pad}#{View.pr_tag(node.pr)}"
+      # `colored` preserves `text`'s visible width, so pad off the plain length. The
+      # diff_tag rides `diff` (dropped above when the pane's too narrow), the pr_tag id.
+      right_colored = [diff.empty? ? "" : View.diff_tag(counts), View.pr_tag(node.pr)]
+                      .reject(&:empty?).join("  ")
+      pad = [cols - text.length - right.length, 1].max
+      "#{body}#{' ' * pad}#{right_colored}"
     end
 
     # Plain (no color) — used for the highlighted row and as the base text. The
