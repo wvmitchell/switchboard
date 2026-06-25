@@ -150,6 +150,9 @@ module Switchboard
                            # string. Pure per-process UI state — not shared on disk
                            # like @collapsed, because a search is a transient act, not
                            # a view preference (issue #60).
+      @full_header = false # H: seat the full home-style header on EVERY session.
+                           # Hydrated from the shared on-disk store (FullHeader) on
+                           # every rebuild, so all windows agree and a respawn keeps it
       @ticks = 0
       @pulse = 0           # animation frame counter (spinner cycle + blink phase)
       @sparkles = {}       # worktree path => @pulse deadline of an active completion
@@ -377,6 +380,7 @@ module Switchboard
       # names (the stable registry, not the git-built tree, so a project that
       # momentarily fails to build doesn't lose its fold).
       @collapsed = Collapse.collapsed(@config.projects.map { |p| p["name"] })
+      @full_header = FullHeader.enabled? # shared toggle: full header on every session
       recompute_rows
     end
 
@@ -737,6 +741,7 @@ module Switchboard
       when "n"                 then create
       when "o", "\x0F"         then open_pr # open the PR in the browser (o / ^O)
       when "O"                 then open_repo # open the row's repo (branch if it has an open PR, else default)
+      when "H"                 then toggle_full_header # seat the full header on every session (shared toggle)
       when "R"                 then refresh_prs_now # force a PR-badge refresh (external merge/close)
       when "d"                 then remove
       when "r"                 then rename
@@ -806,6 +811,16 @@ module Switchboard
         Collapse.collapse(project)
       end
       recompute_rows
+    end
+
+    # H: flip the full header on/off for EVERY session. Like the project fold it
+    # writes through to the shared store (FullHeader), so every other window's
+    # sidebar picks it up on its next reload (a switch-in poke or a while-visible
+    # scan); the in-memory flag flips too for same-frame feedback in this pane (the
+    # next render reads it). No recompute — only the header lines change, not @rows.
+    def toggle_full_header
+      @full_header = !@full_header
+      @full_header ? FullHeader.enable : FullHeader.disable
     end
 
     def switch(node)
@@ -1295,11 +1310,13 @@ module Switchboard
     # name has presence beyond the footer in any pane — a minimal one-liner on a
     # focused worktree session. The HOME sidebar (switchboard's anchor, where the
     # tree is short and base-camp framing fits) additionally seats a time-of-day
-    # greeting, a one-line console of what the board is handling, and a rule. Each
-    # line carries its own ANSI and is fit to `cols`; only the wordmark wears the accent.
+    # greeting, a one-line console of what the board is handling, and a rule — and
+    # the `H` toggle (@full_header, shared on disk) extends that same full header to
+    # every other session. Each line carries its own ANSI and is fit to `cols`; only
+    # the wordmark wears the accent.
     def header(cols)
       wordmark = "#{BRAND}#{trunc(WORDMARK, cols)}\e[0m"
-      return [wordmark] unless @home
+      return [wordmark] unless @home || @full_header
 
       [
         wordmark,

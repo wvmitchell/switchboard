@@ -104,6 +104,20 @@ module Switchboard
                       "rebuild picks up a fold another sidebar wrote"
     end
 
+    # Same store-hydration contract for the full-header toggle: a flip in one
+    # window is picked up by every other sidebar on its next rebuild.
+    def test_rebuild_hydrates_the_full_header_flag_from_the_shared_store
+      repo = temp_git_repo("app")
+      File.write(Config.path, YAML.dump("projects" => [{ "name" => "app", "path" => repo }]))
+      FullHeader.enable # as if another window's sidebar pressed H
+
+      sb = sidebar(nodes: [])
+      sb.instance_variable_set(:@config, Config.new)
+      sb.send(:rebuild)
+      assert sb.instance_variable_get(:@full_header),
+             "rebuild picks up the full-header flag another sidebar wrote"
+    end
+
     def test_enter_on_a_workspace_switches_to_it_threading_the_session_command
       # Pin that switch() threads the project's resolved session_command into
       # Tmux.go(start:), not just the worktree.
@@ -529,6 +543,29 @@ module Switchboard
       assert head[0].include?(Sidebar::WORDMARK), "the name gets presence beyond the footer"
       assert head[0].include?(Sidebar::BRAND),    "the wordmark wears the brand accent"
       assert_equal "─" * Tmux::SIDEBAR_WIDTH, head[3].gsub(/\e\[[0-9;]*m/, ""), "a rule seats the tree below"
+    end
+
+    # The H toggle (@full_header, shared on disk) seats the home-style full header
+    # on a NON-home session too — the same four lines, not just the wordmark.
+    def test_full_header_toggle_seats_the_full_header_off_home
+      sb = sidebar(nodes: [proj("app"), ws("a")])
+      sb.instance_variable_set(:@full_header, true)
+      head = sb.send(:header, Tmux::SIDEBAR_WIDTH)
+      assert_equal 4, head.size, "wordmark, greeting, console, rule — even off home"
+      assert head.any? { |l| l.include?("good ") }, "the full header carries the greeting"
+    end
+
+    # toggle_full_header flips the in-memory flag AND writes through to the shared
+    # store, so every other window's sidebar picks it up on its next rebuild.
+    def test_toggle_full_header_writes_through_to_the_shared_store
+      sb = sidebar(nodes: [proj("app"), ws("a")])
+      sb.send(:toggle_full_header)
+      assert sb.instance_variable_get(:@full_header), "the in-memory flag flips for same-frame feedback"
+      assert FullHeader.enabled?, "and the shared marker is set so peers see it"
+
+      sb.send(:toggle_full_header)
+      refute sb.instance_variable_get(:@full_header)
+      refute FullHeader.enabled?, "toggling off clears the shared marker"
     end
 
     def test_greeting_addresses_the_operator_by_name_when_known
@@ -1455,6 +1492,13 @@ module Switchboard
       sb.define_singleton_method(:open_repo) { called = true }
       sb.send(:dispatch, "O")
       assert called, "O routes to open_repo"
+    end
+
+    def test_dispatch_H_toggles_the_full_header
+      sb = sidebar(nodes: [proj("app")])
+      sb.send(:dispatch, "H")
+      assert sb.instance_variable_get(:@full_header), "H routes to toggle_full_header"
+      assert FullHeader.enabled?, "and writes through to the shared store"
     end
 
     # open_repo wires browse_args into the detached gh spawn, chdir'd to the row.

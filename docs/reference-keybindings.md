@@ -47,6 +47,7 @@ it shows the keys that apply to the current row.
 | `o` / `Ctrl-O` | Open the highlighted PR in the browser (`gh pr view --web`). |
 | `O` | Open the highlighted row's repo in the browser (`gh browse`). Works on every row kind, including the project header. Opens the repo at the row's branch when it has an open PR, otherwise the repo home (default branch). |
 | `R` | Refresh PR badges now (catch a PR merged/closed *on GitHub*). |
+| `H` | Toggle the full header (wordmark + greeting + console + rule) on **every** session, not just home. A shared on-disk view preference, so all sessions follow and it survives restarts. |
 | `r` | Rename the highlighted workspace (moves the worktree dir, keeps branch + PR). |
 | `d` | Remove the highlighted row — delete a workspace, or unregister a project (and close its sessions). Confirms first. |
 | `e` | Edit `config.yml` in `$EDITOR` (opens beside the home tree, returns you on quit). |

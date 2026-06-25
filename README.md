@@ -54,6 +54,7 @@ n        create a new worktree in the highlighted project
 o        open the highlighted PR in the browser (gh pr view --web)
 O        open the highlighted row's repo in the browser (gh browse; works on every row kind)
 R        refresh PR badges now (catch a PR merged/closed on GitHub)
+H        toggle the full header (greeting + console) on every session, not just home
 r        rename a workspace
 d        remove the highlighted row — delete a workspace, or unregister a project (closing its sessions)
 e        edit config.yml ($EDITOR, full-size in the home session; returns you on quit)

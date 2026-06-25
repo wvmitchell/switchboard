@@ -284,6 +284,23 @@ GCs a fold whose project is no longer configured, but only when handed a
 non-empty project list (the key is a name, not a checkable path, so a transient
 empty/failed config can't wipe a user's folds).
 
+### Full header on every session (the same trick, one global flag)
+
+The home sidebar always seats the full brand header — wordmark + greeting +
+console + rule (`Sidebar#header`); every other session shows just the wordmark.
+`H` toggles that full header onto **all** sessions. `FullHeader` (`full_header.rb`)
+keeps the flag **on disk, not in a sidebar ivar**, for the same multi-process
+reason as `Collapse`/`Attention`/the dots: only a shared flag renders the same
+header in every window's pane (and survives a respawn). It's a **single** marker
+file whose mere existence is the flag (`SWITCHBOARD_FULL_HEADER_FILE` /
+`XDG_STATE_HOME`), so a toggle is one idempotent create/delete — and because only
+existence is read (never the contents), no temp+rename dance is needed (unlike
+`Collapse`, which reads names). `rebuild` **hydrates** `@full_header` every reload
+(so a flip in one window lands in the others on their next poke/scan);
+`toggle_full_header` writes through *and* flips the in-memory flag for same-frame
+feedback. Like the folds it is a **durable view preference** — NOT cleared on
+`quit`.
+
 ### Type-to-filter (the deliberately un-shared one)
 
 `/` enters an in-sidebar incremental filter (issue #60) — fzf-style, but NOT the

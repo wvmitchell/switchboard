@@ -7,6 +7,17 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.26.0] — toggle the full header on every session (2026-06-25)
+
+### Added
+- **`H` seats the full header on every session.** The home sidebar always leads
+  with the full brand header (the `◖═◗ Switchboard` wordmark plus a greeting, a
+  one-line console of what the board is handling, and a rule); every other session
+  shows just the wordmark. Pressing `H` in any sidebar flips a shared toggle so the
+  full header renders on *all* sessions, not just home. It's a durable view
+  preference — shared across every window's pane (like a project fold) and kept
+  across restarts.
+
 ## [0.25.2] — linger the completion sparkle to three seconds (2026-06-25)
 
 ### Changed
