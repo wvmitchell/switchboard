@@ -78,7 +78,7 @@ header — the canonical trunk is never shown as a switch target.)
 
 ## Step 4: Create a new worktree
 
-Highlight your project header with `j`/`k`, then press **`n`**. Type a name for
+Highlight your project header with the arrow keys, then press **`n`**. Type a name for
 the new workspace — say `try-switchboard` — and press Enter.
 
 Switchboard cuts a new branch from your base ref (`origin/main` by default,
@@ -86,7 +86,9 @@ fetching it first so it's current), creates a git worktree under
 `~/switchboard/worktrees/<project>/try-switchboard`, and **switches you into a
 fresh tmux session** for it. You're now sitting in the new worktree's shell.
 
-That's the core loop: `n` makes work, `↵` switches between it.
+That's the core loop: `n` makes work, `↵` switches between it. (Once you've got a
+pile of workspaces, press `/` and type a few letters of a name to jump straight to
+one — `↵` switches, `Esc` cancels.)
 
 ## Step 5: See the status dot
 

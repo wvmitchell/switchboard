@@ -46,7 +46,8 @@ red closed.
 Keys (in the sidebar):
 
 ```
-j/k ↑↓   move (projects, workspaces, and a workspace's branches)
+↑↓ ^N/^P move (projects, workspaces, and a workspace's branches)
+/        filter — type to jump straight to a workspace by name (Esc cancels)
 ↵        switch to the workspace's tmux session (or collapse a project header)
 a        add a project (register a local repo or clone a URL)
 n        create a new worktree in the highlighted project
@@ -66,6 +67,14 @@ The legend at the bottom of the pane is context-sensitive: it shows the keys
 that apply to the highlighted row, so a project header foregrounds `d remove`
 (unregister) while a workspace shows the per-workspace keys (`o` PR, `O` repo,
 `r` rename, `d` delete).
+
+Once the list gets long, `/` filters it — fzf-style, but **in the sidebar** (no
+popup, no second tool). Type to narrow the rows to fuzzy matches on the project
+and workspace/branch name (it reaches into collapsed projects too, and keeps
+matches grouped under their project header). `↵` on a workspace switches to it; on
+a project header it creates a new workspace there. `Esc` (or backspacing past the
+start) restores the full tree. Like fzf, the printable keys are query input, so
+navigate with `↑`/`↓` (or `Ctrl-N`/`Ctrl-P`).
 
 ## Documentation
 

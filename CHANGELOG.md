@@ -7,6 +7,24 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.24.0] — type-to-filter the sidebar (2026-06-24)
+
+### Added
+- **`/` filters the sidebar** — an in-sidebar, fzf-style incremental filter (not
+  the removed external `fzf` popup). Type to narrow the tree to fuzzy
+  (subsequence, case-insensitive) matches on the project + workspace name, kept
+  grouped under their project headers and reaching into collapsed projects too.
+  `↵` on a workspace switches to it; `↵` on a project header creates a new
+  workspace there. `Esc` (or backspacing past an empty query) restores the full
+  tree. A project also matches on its name alone, so one with no workspaces yet
+  still appears — that's how you reach it to create its first.
+
+### Changed
+- **Movement keys are now arrows + `Ctrl-N`/`Ctrl-P` everywhere; `j`/`k` are no
+  longer movers.** They were vi-style down/up before; now they do nothing in the
+  normal tree and type into the query while filtering, so any name is reachable
+  by typing (and the binding is identical in both modes).
+
 ## [0.23.0] — open a workspace's repo from the sidebar (2026-06-24)
 
 ### Added

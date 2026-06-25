@@ -521,7 +521,8 @@ module Switchboard
           switchboard help         show this help
 
         in the sidebar
-          j/k ↑↓   move (projects, workspaces, and a workspace's branches)
+          ↑↓ ^N/^P move (projects, workspaces, and a workspace's branches)
+          /        filter — type to jump to a workspace by name (↵ open, esc cancel)
           ↵        switch to the workspace's tmux session (or collapse a project)
           a        add a project (register a local repo or clone a URL)
           n        create a new worktree in the highlighted project

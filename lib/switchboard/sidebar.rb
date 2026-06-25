@@ -7,10 +7,13 @@ require "shellwords"
 module Switchboard
   # The persistent, rendered tree sidebar (no fzf). Lives in a narrow tmux
   # pane, repaints on a short interval to keep agent-activity dots live, and
-  # navigates with j/k. ↵ switches to a workspace (or collapses a project);
-  # a adds a project (register a local repo, or clone one); n creates a worktree
-  # inline then drops you in; d removes the highlighted row — a workspace's
-  # worktree, or a whole project from the registry. The legend tracks the row.
+  # navigates with ↑/↓ (or ^N/^P — j/k are NOT movers, so they're free to type
+  # into the filter). ↵ switches to a workspace (or collapses a project);
+  # / filters the tree by name for a direct jump (in-sidebar, not the old fzf
+  # popup — see "/ filter mode" below); a adds a project (register a local repo,
+  # or clone one); n creates a worktree inline then drops you in; d removes the
+  # highlighted row — a workspace's worktree, or a whole project from the
+  # registry. The legend tracks the row.
   class Sidebar
     REFRESH = 3    # seconds between agent re-scans (while visible)
     IDLE = 8       # seconds between wakes while OFF screen — a backstop only: a
@@ -63,9 +66,9 @@ module Switchboard
     # session it's the "you are at the base" title (HOME_TITLE), otherwise the
     # navigation keys, which differ by row kind (a project opens/collapses).
     HOME_TITLE = "switchboard · home"
-    NAV_PROJ   = "j/k move · ↵ open/collapse"
-    NAV_WS     = "j/k move · ↵ open"
-    NAV_BR     = "j/k move · ↵ switch"
+    NAV_PROJ   = "↑↓ move · ↵ open/collapse"
+    NAV_WS     = "↑↓ move · ↵ open"
+    NAV_BR     = "↑↓ move · ↵ switch"
 
     def self.run
       new.run
@@ -97,6 +100,22 @@ module Switchboard
       last.nil? || now - last >= window
     end
 
+    # The / filter match: a case-insensitive subsequence (fzf-style fuzzy) — every
+    # character of `query` appears in `text` in order, not necessarily adjacent, so
+    # "afb" finds "app-feat-branch". An empty query matches everything, so entering
+    # filter mode shows the full switch-target list before you type. Pure, so the
+    # match logic is unit-testable without a tree (issue #60).
+    def self.fuzzy_match?(text, query)
+      text = text.downcase
+      i = 0
+      query.downcase.each_char do |c|
+        return false unless (i = text.index(c, i))
+
+        i += 1
+      end
+      true
+    end
+
     def initialize
       @config = Config.new
       @cursor = 0
@@ -110,6 +129,10 @@ module Switchboard
       @collapsed = Set.new # collapsed project names; hydrated from the shared
                            # on-disk store (Collapse) on every rebuild, so all
                            # windows' sidebars fold the same and a respawn keeps it
+      @filter = nil        # / filter mode: nil = off, else a (possibly empty) query
+                           # string. Pure per-process UI state — not shared on disk
+                           # like @collapsed, because a search is a transient act, not
+                           # a view preference (issue #60).
       @ticks = 0
       @pulse = 0           # animation frame counter (spinner cycle + blink phase)
       @last_scan = nil     # monotonic time of the last agent re-scan
@@ -323,10 +346,55 @@ module Switchboard
       recompute_rows
     end
 
-    # Visible rows = all nodes, minus the children of collapsed projects.
+    # Visible rows. Normally: all nodes, minus the children of collapsed projects.
+    # In / filter mode: each project's matching workspaces, kept UNDER their
+    # project header so the grouping stays visible. Collapse is ignored (the point
+    # is reaching any workspace fast, even a folded one). Headers ARE selectable
+    # here — ↵ on a header creates a new workspace in that project, ↵ on a workspace
+    # switches to it (see switch_to_filtered).
     def recompute_rows
-      @rows = @nodes.reject { |n| n.kind != "proj" && @collapsed.include?(n.project) }
+      @rows = @filter ? filtered_rows : @nodes.reject { |n| n.kind != "proj" && @collapsed.include?(n.project) }
       @cursor = @cursor.clamp(0, [@rows.size - 1, 0].max)
+    end
+
+    # Filter rows: walk the tree and, per project, emit its header plus its matching
+    # workspaces. A header shows when its OWN name matches — so a project with no
+    # (matching) workspaces still appears, and you can ↵ to create its first one — OR
+    # when it has matching workspaces (grouping context). Neither ⇒ dropped. Branch-
+    # history rows are deliberately skipped: switching to one is identical to
+    # switching to its workspace, so a lone branch match would just orphan under a
+    # header with no workspace above it.
+    def filtered_rows
+      rows = []
+      header = nil
+      keep_header = false
+      matches = []
+      @nodes.each do |n|
+        if n.kind == "proj"
+          rows.push(header, *matches) if header && (keep_header || matches.any?)
+          header = n
+          keep_header = self.class.fuzzy_match?(n.project, @filter)
+          matches = []
+        elsif n.kind == "ws" && self.class.fuzzy_match?(filter_text(n), @filter)
+          matches << n
+        end
+      end
+      rows.push(header, *matches) if header && (keep_header || matches.any?)
+      rows
+    end
+
+    # Where the cursor lands when entering filter mode or after a keystroke: the
+    # first workspace match (so type-then-↵ jumps), not the leading project header.
+    # You can still arrow up onto a header to create. 0 when there's no match.
+    def first_selectable
+      @rows.index { |n| n.kind != "proj" } || 0
+    end
+
+    # The text a workspace is matched against in filter mode: project + its name +
+    # its current branch, so typing a project name narrows to its workspaces and
+    # typing a workspace (or current-branch) name jumps straight to it.
+    def filter_text(node)
+      [node.project, node.name, node.branch].compact.join(" ")
     end
 
     def refresh_agents(announce_sounds: true)
@@ -605,9 +673,12 @@ module Switchboard
     end
 
     def dispatch(key)
+      return filter_key(key) if @filter # / filter mode swallows the normal bindings
+
       case key
-      when "j", "\e[B", "\x0E" then move(1)   # down (j / ↓ / ^N)
-      when "k", "\e[A", "\x10" then move(-1)  # up   (k / ↑ / ^P)
+      when "\e[B", "\x0E"      then move(1)   # down (↓ / ^N) — j/k are intentionally not movers
+      when "\e[A", "\x10"      then move(-1)  # up   (↑ / ^P)
+      when "/"                 then start_filter # type-to-filter the tree (issue #60)
       when "\r", "\n"          then enter
       when "a"                 then add
       when "n"                 then create
@@ -690,6 +761,86 @@ module Switchboard
               start: @config.session_command_for(node.project))
     end
 
+    # --- / filter mode (issue #60) -------------------------------------------
+    #
+    # An in-sidebar, fzf-style incremental filter — NOT the removed external fzf
+    # popup. `/` enters; printable keys extend a query that narrows the rows to
+    # matching switch targets; ↵ jumps to the highlighted match; Esc restores the
+    # full tree. Like fzf, j/k are query input here (not motion) — movement is the
+    # arrows / ^N / ^P — so any name is reachable by typing, and no destructive
+    # key (d, q) can fire mid-search.
+
+    # Key handling while filtering. Always returns true: filter mode never quits
+    # the loop — a typed 'q' is just a query character, not a teardown.
+    def filter_key(key)
+      case key
+      when "\e"           then end_filter            # Esc: cancel, restore the full tree
+      when "\r", "\n"     then switch_to_filtered    # ↵: open the highlighted match
+      when "\e[B", "\x0E" then move(1)               # ↓ / ^N within the matches
+      when "\e[A", "\x10" then move(-1)              # ↑ / ^P
+      when "\x7F", "\b"   then backspace_filter       # Backspace (DEL / ^H): trim the query
+      else append_filter(key) if printable?(key) # any printable ASCII char -> query
+      end
+      true
+    end
+
+    # A single printable ASCII byte (the only thing that extends the query). Tested
+    # at the BYTE level — read_nonblock hands us ASCII-8BIT, so a stray high byte
+    # from a non-ASCII keypress is one out-of-range byte we ignore, never a decode
+    # that raises. UTF-8 in workspace names isn't typeable into the query (yet).
+    def printable?(key)
+      key.bytesize == 1 && key.getbyte(0).between?(0x20, 0x7E)
+    end
+
+    # /: enter filter mode with an empty query (matches everything, so the full
+    # tree shows) and the cursor on the first workspace, not the leading header.
+    def start_filter
+      @filter = +""
+      recompute_rows
+      @cursor = first_selectable
+    end
+
+    # Esc: leave filter mode, restore the full collapse-aware tree, and land back
+    # on the workspace this session is in (cursor_to_current) rather than wherever
+    # the filtered cursor sat.
+    def end_filter
+      @filter = nil
+      @cursor = 0
+      recompute_rows
+      cursor_to_current
+    end
+
+    # A printable char extends the query; re-select the top workspace match
+    # (fzf-style), so the best result is always one ↵ away as you type.
+    def append_filter(ch)
+      @filter += ch
+      recompute_rows
+      @cursor = first_selectable
+    end
+
+    # Backspace trims the query; backspacing past the start exits filter mode —
+    # erasing your way back through the `/` is the same gesture as Esc.
+    def backspace_filter
+      return end_filter if @filter.empty?
+
+      @filter = @filter[0..-2]
+      recompute_rows
+      @cursor = first_selectable
+    end
+
+    # ↵ in filter mode is context-sensitive, like the normal tree's ↵ but repurposed
+    # for search: on a workspace it switches (open the existing one); on a project
+    # header it CREATES a new workspace there (collapse is meaningless while
+    # filtering, so ↵-on-project becomes the project-level action). Grab the row
+    # before end_filter rebuilds @rows; both paths then act on the normal tree.
+    def switch_to_filtered
+      node = current
+      return unless node
+
+      end_filter
+      node.kind == "proj" ? create(node) : switch(node)
+    end
+
     # Fire-and-forget a `gh` command that may hit the network, off the paint loop.
     # Detached, not `system`: gh resolves the PR/repo against the API before opening
     # the browser, so a slow network would otherwise freeze the loop. spawn raises
@@ -744,9 +895,9 @@ module Switchboard
       spawn_gh(*args, chdir: node.path)
     end
 
-    # Prompt inline, create the worktree (quiet), then drop into it.
-    def create
-      node = current
+    # Prompt inline, create the worktree (quiet), then drop into it. Defaults to the
+    # highlighted row (the `n` key); filter-mode ↵-on-a-project passes that header in.
+    def create(node = current)
       return unless node
 
       rows, = winsize
@@ -1054,17 +1205,36 @@ module Switchboard
     # the kind-appropriate nav keys. The empty tree (the fresh-install home state)
     # gets an inviting first-project hint.
     def footer
-      title = @home ? HOME_TITLE : nil
-      case current&.kind
-      when "proj"
-        [title || NAV_PROJ, "a add · n new · e settings · O repo", "d remove · R sync · q quit"]
-      when "ws"
-        [title || NAV_WS, "a add · n new · o PR · O repo · r rename", "d delete · e settings · R sync · q quit"]
-      when "br"
-        [title || NAV_BR, "a add · n new · o PR · O repo · R sync", "e settings · q quit"]
-      else # empty tree
-        [title || NAV_WS, "a add project · e settings", "R sync · q quit"]
-      end
+      return filter_footer if @filter
+
+      nav, rest = case current&.kind
+                  when "proj"
+                    [NAV_PROJ, ["a add · n new · e settings · O repo", "d remove · R sync · q quit"]]
+                  when "ws"
+                    [NAV_WS, ["a add · n new · o PR · O repo · r rename", "d delete · e settings · R sync · q quit"]]
+                  when "br"
+                    [NAV_BR, ["a add · n new · o PR · O repo · R sync", "e settings · q quit"]]
+                  else # empty tree
+                    [NAV_WS, ["a add project · e settings", "R sync · q quit"]]
+                  end
+      # The / filter hint rides line 1 (the title/nav line) — the only line with
+      # room across every kind, since the ws action lines are full at the pin
+      # width. At home it trails the title, where a long list most wants searching.
+      ["#{@home ? HOME_TITLE : nav} · / filter", *rest]
+    end
+
+    # The filter-mode legend: the live query, then the in-mode keys. j/k are query
+    # input here (as everywhere — they're never movers), so movement is the arrows
+    # / ^N^P. ↵ is context-sensitive — opens a highlighted workspace, or creates a
+    # new one on a highlighted project header — so the label tracks the row. The
+    # count is workspaces only (headers don't count) — it reassures you the query is
+    # biting (and a 0-match query isn't a frozen pane). Always three lines, like the
+    # normal footer, so the tree doesn't reflow when you enter or leave the mode.
+    def filter_footer
+      n = @rows.count { |node| node.kind != "proj" }
+      count = n == 1 ? "1 match" : "#{n} matches"
+      action = current&.kind == "proj" ? "↵ new workspace" : "↵ open"
+      ["/#{@filter}", "#{action} · esc cancel", "↑↓ ^n/^p move · #{count}"]
     end
 
     def render
@@ -1127,7 +1297,11 @@ module Switchboard
     # still shows what its agent is doing.
     def plain(node)
       case node.kind
-      when "proj" then "#{@collapsed.include?(node.project) ? '▸' : '▾'} #{node.project}"
+      when "proj"
+        # In filter mode the children show regardless of fold, so the header always
+        # reads expanded (▾); the ▸ collapsed glyph only applies to the normal tree.
+        folded = @filter.nil? && @collapsed.include?(node.project)
+        "#{folded ? '▸' : '▾'} #{node.project}"
       when "ws"   then "  #{glyph_for(@agents[node.path])} #{node.name}"
       else             "     #{node.last ? '└' : '├'}#{node.active ? '●' : ' '}#{node.branch}"
       end

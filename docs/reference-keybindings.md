@@ -38,8 +38,9 @@ it shows the keys that apply to the current row.
 
 | Key | Action |
 |-----|--------|
-| `j` / `k` / `↑` / `↓` / `Ctrl-N` / `Ctrl-P` | Move the highlight down/up (across projects, workspaces, and a workspace's branch rows). vi, arrow, and emacs spellings all work. |
+| `↑` / `↓` / `Ctrl-N` / `Ctrl-P` | Move the highlight down/up (across projects, workspaces, and a workspace's branch rows). Arrow and emacs spellings both work. `j`/`k` are **not** movers — they're free to type into the filter. |
 | `g` / `G` | Jump to the top / bottom of the tree. |
+| `/` | Filter the tree — type to jump straight to a workspace by name. See [Filter mode](#filter-mode) below. |
 | `↵` (Enter) | On a workspace/branch row: switch to its tmux session (creating it if needed). On a project header: collapse/expand it. |
 | `a` | Add a project — register a local repo or clone a URL (a small prompt). |
 | `n` | Create a new worktree + branch in the highlighted project, and drop you in. |
@@ -52,23 +53,61 @@ it shows the keys that apply to the current row.
 | `q` | Quit switchboard — tear down every `sb/` session. Confirms first. |
 
 The footer legend shows only the common keys for the highlighted row; `g`/`G` and
-the `Ctrl-` movement aliases are unshown power-user shortcuts.
+the `Ctrl-N`/`Ctrl-P` movement aliases are unshown power-user shortcuts.
 
 `↵` on a workspace **creates the session on first switch** and runs the project's
 `session_command` then (only then — never on a re-switch into a live session). A
 workspace that has held more than one branch expands into inline branch rows
-(read from its HEAD reflog) you move between with the same `j`/`k`. Those rows are
+(read from its HEAD reflog) you move between with the same `↑`/`↓`. Those rows are
 history with their PR badges — `↵` on any of them switches to that one worktree's
 session (they all share it); switchboard doesn't check the branch out for you.
 
 The canonical trunk checkout (the project's primary worktree) is never shown as a
 switch target.
 
+### Filter mode
+
+`/` turns the sidebar into an incremental filter — fzf-style, but **in the
+sidebar** (no popup, no external `fzf`; it's plain string matching). Useful once
+you have enough workspaces that scrolling to one is slow.
+
+| Key | Action while filtering |
+|-----|------------------------|
+| _(any printable key)_ | Append to the query. The rows narrow to fuzzy matches. |
+| `Backspace` | Delete the last query character — and backspacing past an empty query exits filter mode (same as `Esc`). |
+| `↑` / `↓` / `Ctrl-N` / `Ctrl-P` | Move the highlight (over matching workspaces *and* their project headers). |
+| `↵` (Enter) | On a **workspace**: switch to it. On a **project header**: create a new workspace there (a name prompt). Either way, leave filter mode. |
+| `Esc` | Cancel — restore the full tree, no switch. |
+
+What it matches:
+
+- **Fuzzy (subsequence), case-insensitive** — `afb` finds `app-feat-branch`.
+- Against the **project name + each workspace's name** (and its current branch),
+  so typing a project name narrows to its workspaces and typing a workspace name
+  jumps straight to it. A project also matches on its name *alone*, so one with no
+  workspaces yet still appears — that's how you reach it to create its first.
+  (A workspace's older branch-history rows aren't separate matches — you reach the
+  workspace, and its branches are there in the full tree.)
+- Across the **whole tree, collapsed projects included** — the point is reaching
+  *any* workspace fast, even one folded away. Matches stay grouped **under their
+  project header** so you can see which project each belongs to. You enter on the
+  first workspace match, but the headers are selectable too: arrow up onto one and
+  `↵` creates a new workspace in that project (the project-level action, since
+  collapsing makes no sense while filtering).
+
+The footer swaps to the filter legend (`↵ open · esc cancel`) and echoes your
+live query plus a match count. Every printable key feeds the query (just like
+fzf), so `j`/`k` type rather than move — which is fine, because `j`/`k` aren't
+movers anywhere in the sidebar; navigation is always the arrows or
+`Ctrl-N`/`Ctrl-P`. A welcome side effect: no destructive key (`d`, `q`) can fire
+by accident mid-search. The query is per-pane and transient — it isn't shared
+across windows or remembered after you switch.
+
 ### How keys reach the sidebar
 
 The sidebar reads keys in raw mode, one keypress at a time. Arrow keys arrive as
-escape sequences and are mapped to `j`/`k`. Two control bytes are sent *to* the
-sidebar by tmux, not pressed by you:
+escape sequences (`Ctrl-N`/`Ctrl-P` are the single-byte equivalents). Two control
+bytes are sent *to* the sidebar by tmux, not pressed by you:
 
 - `C-l` — a "poke" to reload and redraw (sent on a session or window switch, and
   by background PR refreshes).

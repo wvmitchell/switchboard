@@ -46,6 +46,8 @@ module Switchboard
     def cursor_of(sb)  = sb.instance_variable_get(:@cursor)
     def rows_of(sb)    = sb.instance_variable_get(:@rows)
     def offset_of(sb)  = sb.instance_variable_get(:@offset)
+    def ws_names(sb)   = rows_of(sb).select { |n| n.kind == "ws" }.map(&:name)
+    def current_node(sb) = rows_of(sb)[cursor_of(sb)]
 
     # --- navigation ----------------------------------------------------------
 
@@ -120,14 +122,29 @@ module Switchboard
 
     def test_dispatch_routes_movement_and_jump_keys
       sb = sidebar(nodes: [proj("app"), ws("a"), ws("b")])
-      sb.send(:dispatch, "j")
+      sb.send(:dispatch, "\e[B") # ↓
       assert_equal 1, cursor_of(sb)
-      sb.send(:dispatch, "k")
+      sb.send(:dispatch, "\x0E") # ^N
+      assert_equal 2, cursor_of(sb)
+      sb.send(:dispatch, "\e[A") # ↑
+      assert_equal 1, cursor_of(sb)
+      sb.send(:dispatch, "\x10") # ^P
       assert_equal 0, cursor_of(sb)
       sb.send(:dispatch, "G")
       assert_equal 2, cursor_of(sb)
       sb.send(:dispatch, "g")
       assert_equal 0, cursor_of(sb)
+    end
+
+    # j/k were vi movers before #60; now they're nothing in normal mode (and query
+    # input while filtering), so motion is one consistent set: arrows / ^N / ^P.
+    def test_j_and_k_do_not_move_in_normal_mode
+      sb = sidebar(nodes: [proj("app"), ws("a"), ws("b")])
+      sb.send(:dispatch, "j")
+      assert_equal 0, cursor_of(sb), "j is not a mover"
+      sb.send(:dispatch, "G")
+      sb.send(:dispatch, "k")
+      assert_equal 2, cursor_of(sb), "k is not a mover"
     end
 
     def test_jump_keys_stay_in_bounds_on_an_empty_tree
@@ -186,7 +203,7 @@ module Switchboard
 
     def test_handle_processes_every_token_in_a_key_repeat_buffer
       sb = sidebar(nodes: [proj("app"), ws("a"), ws("b")])
-      sb.send(:handle, "jj") # a held 'j' arrives as one multi-byte read
+      sb.send(:handle, "\x0E\x0E") # a held ^N arrives as one multi-byte read
       assert_equal 2, cursor_of(sb)
     end
 
@@ -392,6 +409,14 @@ module Switchboard
       assert_equal "▸ app", sb.send(:plain, proj("app"))
     end
 
+    # In filter mode a header's children show regardless of fold, so it reads ▾
+    # even for a project that's collapsed in the normal tree.
+    def test_plain_shows_expanded_glyph_for_a_collapsed_project_while_filtering
+      sb = sidebar(collapsed: ["app"])
+      sb.instance_variable_set(:@filter, "a")
+      assert_equal "▾ app", sb.send(:plain, proj("app"))
+    end
+
     def test_colored_project_is_bold
       sb = sidebar
       assert_equal "\e[1m▾ app\e[0m", sb.send(:colored, proj("app"), "▾ app")
@@ -413,7 +438,8 @@ module Switchboard
       sb = sidebar(nodes: [proj("app"), ws("a")], cursor: 0)
       foot = sb.send(:footer)
       assert_equal 3, foot.size, "always three lines — the tree must not reflow on cursor move"
-      assert_equal Sidebar::NAV_PROJ, foot[0]
+      assert foot[0].start_with?(Sidebar::NAV_PROJ), "line 1 leads with the project nav keys"
+      assert_includes foot[0], "/ filter", "the filter hint rides the nav line"
       assert foot.any? { |l| l.include?("d remove") }, "d removes the project"
       refute foot.any? { |l| l.include?("o PR") },   "PR is workspace-only"
       refute foot.any? { |l| l.include?("r rename") }, "rename is workspace-only"
@@ -423,7 +449,8 @@ module Switchboard
       sb = sidebar(nodes: [proj("app"), ws("a")], cursor: 1)
       foot = sb.send(:footer)
       assert_equal 3, foot.size
-      assert_equal Sidebar::NAV_WS, foot[0]
+      assert foot[0].start_with?(Sidebar::NAV_WS), "line 1 leads with the workspace nav keys"
+      assert_includes foot[0], "/ filter"
       assert foot.any? { |l| l.include?("d delete") }, "d deletes the worktree"
       assert foot.any? { |l| l.include?("o PR") }
       assert foot.any? { |l| l.include?("r rename") }
@@ -435,7 +462,8 @@ module Switchboard
       sb = sidebar(nodes: [proj("app"), ws("a"), br("feat")], cursor: 2)
       foot = sb.send(:footer)
       assert_equal 3, foot.size
-      assert_equal Sidebar::NAV_BR, foot[0]
+      assert foot[0].start_with?(Sidebar::NAV_BR), "line 1 leads with the branch nav keys"
+      assert_includes foot[0], "/ filter"
       assert foot.any? { |l| l.include?("o PR") }, "opening the branch's PR works"
       refute foot.any? { |l| l.include?("d delete") }, "delete no-ops on a branch row"
       refute foot.any? { |l| l.include?("r rename") }, "rename no-ops on a branch row"
@@ -444,11 +472,12 @@ module Switchboard
     def test_footer_in_home_keeps_the_title_but_adapts_the_actions
       sb = sidebar(nodes: [proj("app"), ws("a")], cursor: 0)
       sb.instance_variable_set(:@home, true)
-      assert_equal Sidebar::HOME_TITLE, sb.send(:footer)[0], "home keeps its title on a project row"
-      assert sb.send(:footer).any? { |l| l.include?("d remove") }, "...with project actions below"
+      assert sb.send(:footer)[0].start_with?(Sidebar::HOME_TITLE), "home keeps its title on a project row"
+      assert_includes sb.send(:footer)[0], "/ filter", "...with the filter hint trailing it"
+      assert sb.send(:footer).any? { |l| l.include?("d remove") }, "...and project actions below"
 
       sb.instance_variable_set(:@cursor, 1) # workspace row
-      assert_equal Sidebar::HOME_TITLE, sb.send(:footer)[0], "...and on a workspace row"
+      assert sb.send(:footer)[0].start_with?(Sidebar::HOME_TITLE), "...and on a workspace row"
       assert sb.send(:footer).any? { |l| l.include?("d delete") }, "...with workspace actions below"
     end
 
@@ -470,6 +499,244 @@ module Switchboard
           assert line.length <= Tmux::SIDEBAR_WIDTH, "legend line #{line.inspect} fits the #{Tmux::SIDEBAR_WIDTH}-col pane"
         end
       end
+    end
+
+    # --- / filter mode (issue #60) -------------------------------------------
+
+    # fzf-style fuzzy: a case-insensitive subsequence, order-sensitive, with an
+    # empty query matching everything (so the bare-/ list is the full tree).
+    def test_fuzzy_match_is_a_case_insensitive_subsequence
+      assert Sidebar.fuzzy_match?("app-feat-branch", "afb"), "non-adjacent subsequence matches"
+      assert Sidebar.fuzzy_match?("App-Feat", "af"), "case-insensitive"
+      assert Sidebar.fuzzy_match?("anything", ""), "empty query matches everything"
+      refute Sidebar.fuzzy_match?("app", "pa"), "order matters — not mere membership"
+      refute Sidebar.fuzzy_match?("app", "appp"), "every query char must be consumed"
+    end
+
+    # / enters the mode with an empty query (matches everything), keeping the tree
+    # grouped: project headers stay, and the cursor lands on a workspace.
+    def test_slash_enters_filter_mode_showing_the_grouped_tree
+      sb = sidebar(nodes: [proj("app"), ws("alpha"), ws("beta"), proj("api"), ws("gamma", project: "api")])
+      sb.send(:dispatch, "/")
+      assert_equal "", sb.instance_variable_get(:@filter), "/ enters filter mode with an empty query"
+      assert_equal %w[proj ws ws proj ws], rows_of(sb).map(&:kind), "headers stay, grouping the matches"
+      refute_equal "proj", current_node(sb).kind, "the cursor lands on a workspace, not a header"
+      assert_includes sb.send(:footer)[2], "3 matches", "the count pluralizes and excludes headers"
+    end
+
+    def test_typing_narrows_to_subsequence_matches_on_project_and_name
+      sb = sidebar(nodes: [proj("app"), ws("alpha"), ws("beta"), proj("api"), ws("gamma", project: "api")])
+      sb.send(:handle, "/alp")
+      assert_equal %w[alpha], ws_names(sb), "the query narrows to matching workspaces"
+    end
+
+    # Matches stay under their own project header; a project with no match is dropped.
+    def test_filter_keeps_matches_grouped_under_their_project_header
+      sb = sidebar(nodes: [proj("app"), ws("alpha"), ws("beta"),
+                           proj("api"), ws("alpha2", project: "api"), ws("zebra", project: "api")])
+      sb.send(:handle, "/alpha")
+      assert_equal %w[proj ws proj ws], rows_of(sb).map(&:kind), "each match sits under its header"
+      assert_equal %w[app api], rows_of(sb).select { |n| n.kind == "proj" }.map(&:project)
+      assert_equal %w[alpha alpha2], ws_names(sb), "only the matching workspaces show"
+    end
+
+    def test_filter_drops_a_project_when_neither_its_name_nor_workspaces_match
+      sb = sidebar(nodes: [proj("app"), ws("alpha"), proj("api"), ws("zebra", project: "api")])
+      sb.send(:handle, "/alpha")
+      assert_equal %w[app], rows_of(sb).select { |n| n.kind == "proj" }.map(&:project),
+                   "api's name doesn't match and neither does zebra, so it's dropped"
+    end
+
+    # A project whose NAME matches shows even with no matching workspaces (or none
+    # at all) — that's how you reach an empty project to create its first workspace.
+    def test_filter_keeps_a_name_matching_project_with_no_workspaces
+      sb = sidebar(nodes: [proj("app"), ws("alpha"), proj("api")]) # api has no workspaces
+      sb.send(:handle, "/api")
+      assert_equal %w[api], rows_of(sb).select { |n| n.kind == "proj" }.map(&:project),
+                   "api matches by name and shows, even with nothing under it"
+      assert_empty ws_names(sb), "no workspace rows — just the header"
+      assert_equal "proj", current_node(sb).kind, "cursor lands on the header (nothing else to select)"
+    end
+
+    # Branch-history rows aren't separate filter targets — switching to one is
+    # identical to switching to its workspace, and a lone branch would orphan under
+    # a header. So a query that matches only a branch yields nothing.
+    def test_filter_excludes_branch_history_rows
+      sb = sidebar(nodes: [proj("app"), ws("feat"), br("feature-y", last: true)])
+      sb.send(:handle, "/feature-y") # matches only the branch row's text, not the ws
+      refute(rows_of(sb).any? { |n| n.kind == "br" }, "branch rows never appear as filter matches")
+      assert_empty rows_of(sb), "nothing else matched, so the result is empty"
+    end
+
+    # A zero-match query is empty and inert: 0-count footer, and ↵ opens nothing and
+    # stays in filter mode (no crash, no clamp to a phantom row).
+    def test_filter_with_no_matches_is_empty_and_inert
+      sb = sidebar(nodes: [proj("app"), ws("alpha")])
+      sb.send(:handle, "/zzz")
+      assert_empty rows_of(sb)
+      assert_includes sb.send(:footer)[2], "0 matches"
+      stub_method(Tmux, :go, ->(*, **) { flunk "nothing to open on a zero-match query" }) do
+        assert sb.send(:dispatch, "\r"), "↵ keeps the loop alive"
+      end
+      refute_nil sb.instance_variable_get(:@filter), "...and stays in filter mode"
+    end
+
+    # The cursor finds the first workspace match even when it's in a later project
+    # (earlier projects dropped entirely or kept header-only).
+    def test_filter_lands_on_the_first_match_in_a_later_project
+      sb = sidebar(nodes: [proj("app"), ws("alpha"), proj("api"), ws("gamma", project: "api")])
+      sb.send(:handle, "/gam")
+      assert_equal "gamma", current_node(sb).name, "cursor jumps to the match in the second project"
+    end
+
+    # Esc restores the cursor to the workspace this session is in (cursor_to_current),
+    # not wherever the filtered cursor sat.
+    def test_esc_restores_the_cursor_to_the_current_workspace
+      sb = sidebar(nodes: [proj("app"), ws("alpha", path: "/wt/alpha"), ws("beta", path: "/wt/beta")],
+                   current_path: "/wt/beta")
+      sb.send(:dispatch, "/") # cursor lands on alpha (first match)
+      assert_equal "alpha", current_node(sb).name
+      sb.send(:dispatch, "\e")
+      assert_nil sb.instance_variable_get(:@filter)
+      assert_equal "beta", current_node(sb).name, "Esc lands back on the session's current workspace"
+    end
+
+    # The filter spans the whole tree, folds included — the whole point is reaching
+    # any workspace fast, even one tucked inside a collapsed project.
+    def test_filter_searches_across_collapsed_projects
+      sb = sidebar(nodes: [proj("app"), ws("alpha"), ws("beta")], collapsed: ["app"])
+      assert_equal 1, rows_of(sb).size, "collapsed: only the header shows in the normal tree"
+      sb.send(:handle, "/beta")
+      assert_equal %w[beta], ws_names(sb), "filter reaches into the folded project"
+    end
+
+    def test_esc_cancels_filter_and_restores_the_full_tree
+      sb = sidebar(nodes: [proj("app"), ws("alpha"), ws("beta")])
+      sb.send(:handle, "/be")
+      assert_equal %w[beta], ws_names(sb)
+      sb.send(:dispatch, "\e")
+      assert_nil sb.instance_variable_get(:@filter), "Esc leaves filter mode"
+      assert_equal 3, rows_of(sb).size, "the full collapse-aware tree is back"
+    end
+
+    def test_backspace_past_the_start_exits_filter_mode
+      sb = sidebar(nodes: [proj("app"), ws("alpha"), ws("beta")])
+      sb.send(:handle, "/be")
+      sb.send(:dispatch, "\x7F")
+      assert_equal "b", sb.instance_variable_get(:@filter), "backspace drops the last char"
+      sb.send(:dispatch, "\x7F")
+      assert_equal "", sb.instance_variable_get(:@filter), "...down to an empty query, still filtering"
+      sb.send(:dispatch, "\x7F") # backspace past the start
+      assert_nil sb.instance_variable_get(:@filter), "...and one more exits, like erasing the /"
+      assert_equal 3, rows_of(sb).size, "the full tree is restored"
+    end
+
+    def test_enter_switches_to_the_match_and_leaves_filter_mode
+      File.write(Config.path, YAML.dump("projects" => [{ "name" => "app", "path" => "/x" }]))
+      sb = sidebar(nodes: [proj("app"), ws("alpha", path: "/wt/alpha"), ws("beta", path: "/wt/beta")])
+      sb.instance_variable_set(:@config, Config.new)
+      sb.send(:handle, "/beta")
+      target = nil
+      stub_method(Tmux, :go, ->(wt, start:) { target = wt }) { sb.send(:dispatch, "\r") }
+      assert_equal "/wt/beta", target.path, "↵ switches to the highlighted match"
+      assert_nil sb.instance_variable_get(:@filter), "...and drops back out of filter mode"
+    end
+
+    # The crux of the fzf-standard choice (#60): printable keys — j and k included —
+    # are query input, so any name is reachable by typing. Motion is the arrows/^N^P.
+    def test_j_and_k_are_query_input_not_motion_while_filtering
+      sb = sidebar(nodes: [proj("app"), ws("jkl"), ws("beta")])
+      sb.send(:dispatch, "/")
+      sb.send(:dispatch, "j")
+      assert_equal "j", sb.instance_variable_get(:@filter), "j extends the query rather than moving"
+      assert_equal "jkl", current_node(sb).name, "and it narrowed to the jkl workspace"
+    end
+
+    # Only printable bytes extend the query — a stray control byte (e.g. a \f poke
+    # that lands while you're filtering) is ignored, never appended or a crash.
+    def test_filter_ignores_non_printable_bytes
+      sb = sidebar(nodes: [proj("app"), ws("alpha")])
+      sb.send(:dispatch, "/")
+      sb.send(:dispatch, "a")
+      sb.send(:dispatch, "\f")   # Ctrl-L poke byte
+      sb.send(:dispatch, "\x01") # Ctrl-A
+      sb.send(:dispatch, " ")    # space — the lower printable boundary (0x20), DOES append
+      assert_equal "a ", sb.instance_variable_get(:@filter), "control bytes are ignored, space is kept"
+    end
+
+    def test_arrows_and_ctrl_np_move_within_the_filtered_set
+      sb = sidebar(nodes: [proj("app"), ws("alpha"), ws("beta")])
+      sb.send(:dispatch, "/") # empty query: header + both workspaces
+      assert_equal "alpha", current_node(sb).name, "starts on the first workspace, not the header"
+      sb.send(:dispatch, "\e[B")
+      assert_equal "beta", current_node(sb).name, "↓ moves to the next workspace"
+      sb.send(:dispatch, "\x0E")
+      assert_equal "beta", current_node(sb).name, "^N clamps at the last workspace"
+      sb.send(:dispatch, "\e[A")
+      assert_equal "alpha", current_node(sb).name, "↑ moves back up"
+    end
+
+    # Entry lands on the first workspace (fast type-then-↵ jump), but headers ARE
+    # selectable — arrow up onto one to take a project-level action.
+    def test_filter_enters_on_a_workspace_but_headers_are_selectable
+      sb = sidebar(nodes: [proj("app"), ws("a1"), ws("a2")])
+      sb.send(:dispatch, "/")
+      assert_equal "a1", current_node(sb).name, "lands on the first workspace, not the header"
+      sb.send(:dispatch, "\e[A") # up onto the project header
+      assert_equal "proj", current_node(sb).kind, "↑ can land on the project header"
+      assert_equal "app", current_node(sb).project
+    end
+
+    # ↵ on a workspace switches; ↵ on a project header creates a new workspace there
+    # (the project-level action) and leaves filter mode.
+    def test_enter_on_a_project_header_in_filter_creates_a_workspace
+      sb = sidebar(nodes: [proj("app"), ws("alpha")])
+      sb.send(:dispatch, "/")
+      sb.send(:dispatch, "\e[A") # up onto the app header
+      assert_equal "proj", current_node(sb).kind, "cursor is on the project header"
+      created_for = nil
+      sb.define_singleton_method(:create) { |node = nil| created_for = node&.project }
+      stub_method(Tmux, :go, ->(*, **) { flunk "should create, not switch" }) do
+        sb.send(:dispatch, "\r")
+      end
+      assert_equal "app", created_for, "↵ on a project creates a new workspace there"
+      assert_nil sb.instance_variable_get(:@filter), "...and leaves filter mode"
+    end
+
+    # No destructive key fires mid-search: q is just a query char, not a teardown.
+    def test_q_does_not_quit_while_filtering
+      sb = sidebar(nodes: [proj("app"), ws("alpha")])
+      sb.send(:dispatch, "/")
+      killed = false
+      stub_method(Tmux, :kill_all, ->(*) { killed = true; [] }) do
+        assert sb.send(:dispatch, "q"), "q keeps the loop alive in filter mode"
+      end
+      refute killed, "q types a query char rather than tearing down"
+      assert_equal "q", sb.instance_variable_get(:@filter)
+    end
+
+    def test_filter_footer_echoes_the_query_and_the_in_mode_legend
+      sb = sidebar(nodes: [proj("app"), ws("alpha"), ws("beta")])
+      sb.send(:handle, "/be")
+      foot = sb.send(:footer)
+      assert_equal 3, foot.size, "three lines, like the normal footer — no reflow entering the mode"
+      assert_equal "/be", foot[0], "line 1 echoes the live query"
+      assert_includes foot[1], "↵ open", "on a workspace, ↵ opens"
+      assert_includes foot[1], "esc cancel"
+      assert_includes foot[2], "1 match", "the count is workspaces only (header excluded), unpluralized at 1"
+      foot.each { |l| assert l.length <= Tmux::SIDEBAR_WIDTH, "#{l.inspect} fits the #{Tmux::SIDEBAR_WIDTH}-col pane" }
+
+      sb.send(:dispatch, "\e[A") # up onto the project header
+      assert_includes sb.send(:footer)[1], "↵ new workspace", "on a project, ↵ creates"
+    end
+
+    # A background reload (tick/poke) rebuilds @nodes then recomputes — the active
+    # filter must re-apply, not silently drop you back to the full tree.
+    def test_a_rebuild_reapplies_the_active_filter
+      sb = sidebar(nodes: [proj("app"), ws("alpha"), ws("beta")])
+      sb.send(:handle, "/be")
+      sb.send(:recompute_rows) # as a reload would, after rebuilding @nodes
+      assert_equal %w[beta], ws_names(sb), "the filter still applies after a reload recompute"
     end
 
     # --- remove: d routes by row kind ----------------------------------------

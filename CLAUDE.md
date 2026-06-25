@@ -284,6 +284,36 @@ GCs a fold whose project is no longer configured, but only when handed a
 non-empty project list (the key is a name, not a checkable path, so a transient
 empty/failed config can't wipe a user's folds).
 
+### Type-to-filter (the deliberately un-shared one)
+
+`/` enters an in-sidebar incremental filter (issue #60) — fzf-style, but NOT the
+removed external `fzf` popup: it's the same single navigator, just searchable.
+`@filter` is `nil` (off) or a query string; `recompute_rows` branches on it to
+`filtered_rows`, which keeps each project's matching ws/br rows **under their
+header** (the grouping you navigate by stays visible) — a header with no match is
+dropped. Matching is the pure `Sidebar.fuzzy_match?` (case-insensitive
+subsequence) over `filter_text` (project + name/branch). Filtering spans the
+**whole tree, collapse ignored** — the point is reaching any workspace fast, even
+a folded one. Entry/keystrokes snap the cursor to the first workspace match (so
+type-then-`↵` jumps), but headers ARE selectable — `↵` (`switch_to_filtered`) is
+context-sensitive: a workspace switches, a **project header creates a new
+workspace there** (`create(node)`; collapse is meaningless mid-filter, so
+`↵`-on-project becomes the project-level action). Backspacing past an empty query
+exits, like Esc. `dispatch` routes every key to `filter_key` while `@filter` is
+set: printables extend the query, `↵`/`Esc` open-or-create/cancel, and crucially
+no destructive key (`d`/`q`) can fire mid-search. `footer` swaps to
+`filter_footer` (live query + a `↵`-label that tracks the row + a workspace-only
+match count); a `/ filter` hint rides the nav line otherwise.
+
+Movement is **arrows / `^N`/`^P` everywhere** — `j`/`k` are deliberately NOT
+movers (so they're free to type into the filter, and the binding is identical in
+both modes; see #60). That's the one behavior `/`-filter changed outside itself.
+
+Unlike `Collapse`/`Attention`/the dots, this is **deliberately NOT shared on
+disk** — a search is a transient act, not a view preference, so it's a plain
+per-process ivar. A background reload re-applies it (recompute is filter-aware),
+but it's never persisted, GC'd, or seen by another window's pane.
+
 ### Conventions
 
 - Every file starts with `# frozen_string_literal: true`.
