@@ -1033,6 +1033,122 @@ module Switchboard
       refute notified, "...and no misleading 'refreshing' notify"
     end
 
+    # --- O / open_repo: open the row's repo in the browser (issue #63) ---------
+    # browse_args is the pure decision behind O: the `gh browse` sub-args, with
+    # --branch only when the row has an OPEN PR. An open (or draft) PR guarantees
+    # its head branch is still on the remote (GitHub closes a PR the instant its
+    # branch is deleted), so /tree/<branch> resolves; a merged/closed PR keeps its
+    # badge after the branch is gone, so it must NOT deep-link (it would 404).
+
+    def tree_node(kind:, path: "/wt/x", branch: nil, pr: nil)
+      Tree::Node.new(kind: kind, project: "app", path: path, branch: branch, pr: pr)
+    end
+
+    def test_browse_args_project_header_opens_repo_home
+      assert_equal ["browse"], Sidebar.browse_args(tree_node(kind: "proj", path: "/repos/app"))
+    end
+
+    def test_browse_args_open_pr_deep_links_the_branch
+      n = tree_node(kind: "ws", branch: "feat", pr: { "identifier" => "#7", "status" => "OPEN", "is_draft" => 0 })
+      assert_equal ["browse", "--branch", "feat"], Sidebar.browse_args(n)
+    end
+
+    # A draft PR is OPEN (is_draft just flags the badge color), so its branch is on
+    # the remote — deep-link it too.
+    def test_browse_args_draft_pr_still_deep_links
+      n = tree_node(kind: "ws", branch: "feat", pr: { "identifier" => "#8", "status" => "OPEN", "is_draft" => 1 })
+      assert_equal ["browse", "--branch", "feat"], Sidebar.browse_args(n)
+    end
+
+    # The load-bearing correctness case: a merged PR's branch is often deleted, so
+    # --branch would 404. Fall back to the repo home.
+    def test_browse_args_merged_pr_falls_back_to_repo_home
+      n = tree_node(kind: "br", branch: "feat", pr: { "identifier" => "#9", "status" => "MERGED", "is_draft" => 0 })
+      assert_equal ["browse"], Sidebar.browse_args(n)
+    end
+
+    # A fresh, unpushed branch has no PR badge — repo home, never a 404.
+    def test_browse_args_no_pr_falls_back_to_repo_home
+      assert_equal ["browse"], Sidebar.browse_args(tree_node(kind: "ws", branch: "feat", pr: nil))
+    end
+
+    # Defensive: an OPEN PR with an empty branch (e.g. a detached-HEAD worktree)
+    # must not emit `--branch ""` — fall back to repo home.
+    def test_browse_args_open_pr_but_empty_branch_falls_back
+      assert_equal ["browse"], Sidebar.browse_args(tree_node(kind: "ws", branch: "", pr: { "status" => "OPEN" }))
+    end
+
+    def test_browse_args_nil_or_pathless_returns_nil
+      assert_nil Sidebar.browse_args(nil)
+      assert_nil Sidebar.browse_args(tree_node(kind: "ws", path: nil, branch: "feat",
+                                               pr: { "status" => "OPEN" }))
+    end
+
+    def test_dispatch_O_opens_the_repo
+      sb = sidebar(nodes: [proj("app")])
+      called = false
+      sb.define_singleton_method(:open_repo) { called = true }
+      sb.send(:dispatch, "O")
+      assert called, "O routes to open_repo"
+    end
+
+    # open_repo wires browse_args into the detached gh spawn, chdir'd to the row.
+    def test_open_repo_spawns_gh_browse_in_the_rows_dir
+      sb = sidebar(nodes: [proj("app")]) # proj path "/repos/app" → repo home
+      captured = nil
+      stub_method(Process, :spawn, ->(*a, **k) { captured = [a, k]; 4242 }) do
+        stub_method(Process, :detach, ->(pid) { pid }) do
+          sb.send(:open_repo)
+        end
+      end
+      assert_equal ["gh", "browse"], captured[0]
+      assert_equal "/repos/app", captured[1][:chdir]
+    end
+
+    # The UI-never-crashes guarantee: a missing dir / no `gh` raises SystemCallError
+    # from spawn, which spawn_gh swallows — open_repo returns nil, never raises.
+    def test_open_repo_survives_a_missing_dir_or_gh
+      sb = sidebar(nodes: [proj("app")])
+      stub_method(Process, :spawn, ->(*_a, **_k) { raise Errno::ENOENT }) do
+        assert_nil sb.send(:open_repo)
+      end
+    end
+
+    # O on the empty-tree home (no row → current nil → browse_args nil) must do
+    # nothing — never spawn gh. Pins the open_repo early-return contract.
+    def test_open_repo_on_empty_tree_does_not_spawn
+      sb = sidebar(nodes: [])
+      spawned = false
+      stub_method(Process, :spawn, ->(*_a, **_k) { spawned = true; 0 }) do
+        assert_nil sb.send(:open_repo)
+      end
+      refute spawned, "O on an empty tree must not spawn gh"
+    end
+
+    # Regression: open_pr now routes through the shared spawn_gh helper. It had no
+    # test before; pin that the refactor preserves its exact gh invocation.
+    def test_open_pr_still_spawns_gh_pr_view
+      sb = sidebar(nodes: [proj("app"), tree_node(kind: "ws", path: "/wt/feat", branch: "feat")], cursor: 1)
+      captured = nil
+      stub_method(Process, :spawn, ->(*a, **k) { captured = [a, k]; 7 }) do
+        stub_method(Process, :detach, ->(pid) { pid }) do
+          sb.send(:open_pr)
+        end
+      end
+      assert_equal ["gh", "pr", "view", "feat", "--web"], captured[0]
+      assert_equal "/wt/feat", captured[1][:chdir]
+    end
+
+    # O (open the row's repo) needs no branch, so its hint rides EVERY row kind —
+    # including the project header, unlike o/PR. (The empty tree has no row to open.)
+    def test_footer_advertises_O_repo_on_every_row_kind
+      [[proj("app")], [proj("app"), ws("a")], [proj("app"), ws("a"), br("f")]].each do |nodes|
+        sb = sidebar(nodes: nodes, cursor: nodes.size - 1)
+        assert sb.send(:footer).any? { |l| l.include?("O repo") },
+               "O repo present for #{nodes.map(&:kind)}"
+      end
+    end
+
     # --- on_agent_edges: PR refresh + sound ride the same edge ----------------
     #
     # The refactor that folded the sound trigger in must not break the existing

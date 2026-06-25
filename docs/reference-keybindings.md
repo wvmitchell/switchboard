@@ -44,6 +44,7 @@ it shows the keys that apply to the current row.
 | `a` | Add a project — register a local repo or clone a URL (a small prompt). |
 | `n` | Create a new worktree + branch in the highlighted project, and drop you in. |
 | `o` / `Ctrl-O` | Open the highlighted PR in the browser (`gh pr view --web`). |
+| `O` | Open the highlighted row's repo in the browser (`gh browse`). Works on every row kind, including the project header. Opens the repo at the row's branch when it has an open PR, otherwise the repo home (default branch). |
 | `R` | Refresh PR badges now (catch a PR merged/closed *on GitHub*). |
 | `r` | Rename the highlighted workspace (moves the worktree dir, keeps branch + PR). |
 | `d` | Remove the highlighted row — delete a workspace, or unregister a project (and close its sessions). Confirms first. |

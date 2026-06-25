@@ -612,6 +612,7 @@ module Switchboard
       when "a"                 then add
       when "n"                 then create
       when "o", "\x0F"         then open_pr # open the PR in the browser (o / ^O)
+      when "O"                 then open_repo # open the row's repo (branch if it has an open PR, else default)
       when "R"                 then refresh_prs_now # force a PR-badge refresh (external merge/close)
       when "d"                 then remove
       when "r"                 then rename
@@ -689,12 +690,20 @@ module Switchboard
               start: @config.session_command_for(node.project))
     end
 
+    # Fire-and-forget a `gh` command that may hit the network, off the paint loop.
+    # Detached, not `system`: gh resolves the PR/repo against the API before opening
+    # the browser, so a slow network would otherwise freeze the loop. spawn raises
+    # (unlike system) if the dir or `gh` is missing, so swallow that to keep the UI
+    # alive — nothing opens on failure. Shared by open_pr and open_repo.
+    def spawn_gh(*args, chdir:)
+      Process.detach(Process.spawn("gh", *args, chdir: chdir, out: File::NULL, err: File::NULL))
+    rescue SystemCallError
+      nil
+    end
+
     # o: open the highlighted workspace/branch's PR in the browser. Runs in the
-    # worktree dir so `gh` infers the repo. Detached, not `system`: `gh pr view
-    # --web` hits the API to resolve the PR before opening the browser, so a slow
-    # network would otherwise freeze the paint loop. spawn raises (unlike system)
-    # if the dir or `gh` is missing, so swallow that to keep the UI alive. No PR
-    # for the branch ⇒ gh exits quietly and nothing opens.
+    # worktree dir so `gh` infers the repo. No PR for the branch ⇒ gh exits quietly
+    # and nothing opens.
     def open_pr
       node = current
       return unless node && node.kind != "proj"
@@ -702,10 +711,37 @@ module Switchboard
       branch = node.branch.to_s
       return if branch.empty? || branch.start_with?("-") # never hand a dash-led name to gh as a flag
 
-      pid = Process.spawn("gh", "pr", "view", branch, "--web", chdir: node.path, out: File::NULL, err: File::NULL)
-      Process.detach(pid)
-    rescue SystemCallError
-      nil
+      spawn_gh("pr", "view", branch, "--web", chdir: node.path)
+    end
+
+    # `gh browse` sub-args for a row, or nil if it has no openable path. Deep-link the
+    # repo AT the row's branch (--branch) only when the row has an OPEN PR: GitHub
+    # closes a PR the instant its head branch is deleted, so an open (or draft —
+    # status is still "OPEN") PR guarantees the branch is on the remote and
+    # /tree/<branch> resolves rather than 404s. A merged/closed PR keeps its badge
+    # (Pr.fetch lists --state all) after the branch is gone, so it is NOT a deep-link
+    # signal. No open PR — and the project header, which has neither pr nor branch —
+    # opens the repo home / default branch. node.pr is already loaded for the badge,
+    # so this costs no extra I/O; an open PR also implies a valid pushed branch name,
+    # so no dash-led guard is needed.
+    def self.browse_args(node)
+      return nil unless node && node.path
+
+      args = ["browse"]
+      branch = node.branch.to_s
+      args += ["--branch", branch] if node.pr.is_a?(Hash) && node.pr["status"].to_s.upcase == "OPEN" && !branch.empty?
+      args
+    end
+
+    # O: open the highlighted row's repo in the browser (sibling to o/PR). Unlike o
+    # this rides every kind — every worktree resolves to the same repo — so it works
+    # on the project header too. browse_args picks repo-home vs the row's branch.
+    def open_repo
+      node = current
+      args = self.class.browse_args(node)
+      return unless args
+
+      spawn_gh(*args, chdir: node.path)
     end
 
     # Prompt inline, create the worktree (quiet), then drop into it.
@@ -1008,21 +1044,24 @@ module Switchboard
     # workspace row adds the per-workspace keys (o PR, r rename; `d delete`s the
     # worktree). A branch child row only lists what actually works on it (↵
     # switches, o opens its PR) — d/r guard on `ws`, so advertising them there
-    # would be a no-op. `R sync` (force a PR-badge refresh) is global, so it rides
-    # every kind — terse label because the ws line is otherwise full at the pin
-    # width. Always three lines so the tree never reflows as the cursor moves
-    # between kinds — line 1 is the only one that swaps, to the home title or the
-    # kind-appropriate nav keys. The empty tree (the fresh-install home state)
+    # would be a no-op. `O repo` (open the row's repo) rides EVERY kind — unlike o
+    # it needs no branch, so even the project header gets it. `R sync` (force a
+    # PR-badge refresh) is global too — terse labels because the lines run tight at
+    # the pin width: the `ws` line lands at exactly SIDEBAR_WIDTH cols, so don't
+    # add to it without dropping a key (the #62 help overlay is the real home for
+    # discoverability). Always three lines so the tree never reflows as the cursor
+    # moves between kinds — line 1 is the only one that swaps, to the home title or
+    # the kind-appropriate nav keys. The empty tree (the fresh-install home state)
     # gets an inviting first-project hint.
     def footer
       title = @home ? HOME_TITLE : nil
       case current&.kind
       when "proj"
-        [title || NAV_PROJ, "a add · n new · e settings", "d remove · R sync · q quit"]
+        [title || NAV_PROJ, "a add · n new · e settings · O repo", "d remove · R sync · q quit"]
       when "ws"
-        [title || NAV_WS, "a add · n new · o PR · r rename", "d delete · e settings · R sync · q quit"]
+        [title || NAV_WS, "a add · n new · o PR · O repo · r rename", "d delete · e settings · R sync · q quit"]
       when "br"
-        [title || NAV_BR, "a add · n new · o PR · R sync", "e settings · q quit"]
+        [title || NAV_BR, "a add · n new · o PR · O repo · R sync", "e settings · q quit"]
       else # empty tree
         [title || NAV_WS, "a add project · e settings", "R sync · q quit"]
       end

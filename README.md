@@ -51,6 +51,7 @@ j/k ↑↓   move (projects, workspaces, and a workspace's branches)
 a        add a project (register a local repo or clone a URL)
 n        create a new worktree in the highlighted project
 o        open the highlighted PR in the browser (gh pr view --web)
+O        open the highlighted row's repo in the browser (gh browse; works on every row kind)
 R        refresh PR badges now (catch a PR merged/closed on GitHub)
 r        rename a workspace
 d        remove the highlighted row — delete a workspace, or unregister a project (closing its sessions)
@@ -63,8 +64,8 @@ summon it and drop you in the tree, visible → dismiss it (session-wide).
 
 The legend at the bottom of the pane is context-sensitive: it shows the keys
 that apply to the highlighted row, so a project header foregrounds `d remove`
-(unregister) while a workspace shows the per-workspace keys (`o` PR, `r` rename,
-`d` delete).
+(unregister) while a workspace shows the per-workspace keys (`o` PR, `O` repo,
+`r` rename, `d` delete).
 
 ## Documentation
 
@@ -403,7 +404,7 @@ or run `switchboard enable-hooks` in an existing one.
 
 ## Dependencies
 
-`ruby` `tmux` `git` `gh` (`gh` powers the PR badges and the `o` open action)
+`ruby` `tmux` `git` `gh` (`gh` powers the PR badges and the `o`/`O` open actions)
 
 ```sh
 brew install gh

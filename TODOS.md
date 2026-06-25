@@ -80,6 +80,32 @@ and where to start.
   `Installer.teardown_live`. Low priority — measure whether either is felt in practice
   first.
 
+## Sidebar `O` open-repo (issue #63) follow-ups
+
+- **Deep-link branches that are pushed but have no *open* PR.** `O` (open the
+  highlighted row's repo) deep-links to `/tree/<branch>` only when the row has an
+  OPEN PR — the one signal that proves, without a keypress network call, that the
+  branch is still on the remote (GitHub closes a PR the moment its head branch is
+  deleted, so an open PR ⇒ live branch). A branch that's pushed but has a
+  merged/closed PR, or no PR yet, falls back to the repo home / default branch.
+  *Why deferred:* covering it needs either a keypress network call (`git ls-remote`
+  — rejected; `O` detaches precisely to stay off that path) or a local
+  `refs/remotes/origin/<branch>` check that's itself imperfect (a push without
+  `-u` and no fetch leaves no tracking ref, so it still falls back). *Start in:*
+  `Sidebar.browse_args` (`sidebar.rb`) + a `Git` remote-branch helper. Low
+  priority — repo home is a fine fallback; only worth it if the gap is felt.
+
+- **Residual `O` deep-link 404 windows (accepted).** The OPEN-PR gate avoids the
+  common 404 but isn't airtight (both adversarial reviewers flagged this): (1) a
+  **stale PR cache** — a PR open at the last `gh` fetch, then merged + head-branch
+  deleted before the next background refresh (worse when the fetch is failing, since
+  `Pr.refresh` preserves the last-good cache) — keeps an `OPEN` badge, so `O` opens
+  `/tree/<dead-branch>` → 404; (2) **fork PRs** (`headRefName` is the fork's branch,
+  absent in the base repo); (3) the **cross-project branch-name collision** (issue
+  #66). All three open a recoverable GitHub 404 (never data loss/security), so they're
+  accepted, not blocking. The would-be fix (a keypress-time remote check) is rejected
+  for the same reasons as the bullet above. Captured so the reasoning isn't lost.
+
 ## Community / contributor hygiene (devex-review) follow-ups
 
 - ~~**Add CONTRIBUTING.md once there's contributor interest.**~~ ✓ Done — added

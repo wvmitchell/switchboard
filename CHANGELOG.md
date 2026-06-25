@@ -7,6 +7,16 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.23.0] — open a workspace's repo from the sidebar (2026-06-24)
+
+### Added
+- **`O` opens the highlighted row's repo in the browser** — a sibling to `o`
+  (which opens the row's PR). It rides every row kind, including the project
+  header. When the row has an open PR, it opens the repo at that branch;
+  otherwise it opens the repo home (the default branch). Like `o`, it runs
+  `gh` detached so the sidebar never blocks on the network, and quietly does
+  nothing if there's no GitHub remote.
+
 ## [0.22.2] — doc fix: worktrees hold multiple branches (2026-06-24)
 
 ### Changed
