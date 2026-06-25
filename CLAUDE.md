@@ -13,7 +13,12 @@ dependencies**: everything is stdlib plus shelling out to `tmux`, `git`, and
 (`test/test_helper.rb`) walls off real state — config, XDG dirs, git global,
 `HOME`, `TMUX` — into a tmpdir, and its `temp_git_repo` helper spins up throwaway
 repos for the git-backed tests (tmux/gh shell-outs are stubbed). See `README.md`
-for the user-facing feature tour.
+for the user-facing feature tour, and `docs/` for the full Diataxis documentation
+set. The explanation docs (`docs/explanation-architecture.md`,
+`explanation-agent-presence.md`, `explanation-sidebar-lifecycle.md`) are the
+human-readable companions to this file; `CONTRIBUTING.md` collects the
+test/zero-gem/release conventions; `AGENTS.md` is the tool-neutral pointer back
+here.
 
 ## Commands
 

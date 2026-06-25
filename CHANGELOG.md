@@ -7,6 +7,19 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.22.1] — a full documentation set (2026-06-24)
+
+### Added
+- **A `docs/` directory with the complete documentation set**, organized by the
+  Diataxis framework (tutorial / how-to / reference / explanation) and cross-linked
+  from the README. New: a getting-started tutorial; how-to guides for managing
+  projects, agent state & sounds, keybindings, and housekeeping; reference docs for
+  the CLI, `config.yml`, and keybindings; and explanation docs for the architecture,
+  agent presence, and the sidebar lifecycle. Plus a `CONTRIBUTING.md` (tests, the
+  zero-gem/Ruby-3.0 constraints, conventions, release process) and an `AGENTS.md`
+  pointer for tool-neutral AI agents. Everything that was implicit in the README and
+  `CLAUDE.md` is now structured and discoverable. Docs only — no behavior change.
+
 ## [0.22.0] — shared project collapse across every sidebar (2026-06-24)
 
 ### Added

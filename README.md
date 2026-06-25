@@ -66,6 +66,28 @@ that apply to the highlighted row, so a project header foregrounds `d remove`
 (unregister) while a workspace shows the per-workspace keys (`o` PR, `r` rename,
 `d` delete).
 
+## Documentation
+
+This README is the overview. The full documentation set lives in
+[`docs/`](docs/README.md), organized by the
+[Diataxis](https://diataxis.fr/) framework:
+
+- **New here?** [Tutorial: getting started](docs/tutorial-getting-started.md) —
+  install to your first worktree switch in ~10 minutes.
+- **How-to guides** — [manage projects](docs/howto-manage-projects.md) ·
+  [agent state & sounds](docs/howto-agent-state-and-sounds.md) ·
+  [keybindings](docs/howto-keybindings.md) ·
+  [housekeeping](docs/howto-housekeeping.md).
+- **Reference** — [CLI](docs/reference-cli.md) ·
+  [config.yml](docs/reference-config.md) ·
+  [keybindings](docs/reference-keybindings.md).
+- **Explanation** — [architecture](docs/explanation-architecture.md) ·
+  [agent presence](docs/explanation-agent-presence.md) ·
+  [sidebar lifecycle](docs/explanation-sidebar-lifecycle.md).
+
+Contributing or pointing an AI agent at the repo? See
+[CONTRIBUTING.md](CONTRIBUTING.md) and [AGENTS.md](AGENTS.md).
+
 ## Install
 
 ```sh

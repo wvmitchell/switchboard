@@ -82,12 +82,8 @@ and where to start.
 
 ## Community / contributor hygiene (devex-review) follow-ups
 
-- **Add CONTRIBUTING.md once there's contributor interest.** A short guide: run the
-  suite with `bin/test` (stdlib Minitest, offline), the hard **zero-gem stdlib-only**
-  constraint, and the module-vs-class conventions (stateless helpers are
-  `module_function` modules; only `Model`/`Config`/`Sidebar`/`AgentState` are classes —
-  see CLAUDE.md). *Why deferred:* the DX review added a `LICENSE` now (the actual
-  adoption blocker — an unlicensed public repo is legally all-rights-reserved), but a
-  CONTRIBUTING guide only pays off when outside contributors actually show up. *Start
-  in:* a new `CONTRIBUTING.md` referencing the conventions already documented in
-  `CLAUDE.md`. Low priority — add when the first external PR/issue lands.
+- ~~**Add CONTRIBUTING.md once there's contributor interest.**~~ ✓ Done — added
+  `CONTRIBUTING.md` (tests, the zero-gem/Ruby-3.0 constraints, the
+  module-vs-class conventions, and the release process) as part of the full
+  `docs/` Diataxis set. The conventions also live human-readable in
+  `docs/explanation-architecture.md`.

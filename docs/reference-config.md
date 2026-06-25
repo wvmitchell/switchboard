@@ -1,0 +1,197 @@
+# Reference: `config.yml`
+
+The complete configuration reference for switchboard. The config is a plain YAML
+file at `~/.config/switchboard/config.yml` (override with `$SWITCHBOARD_CONFIG`).
+It's the only persistent file switchboard *requires* — a project registry plus a
+handful of optional knobs. Git is the runtime source of truth; the config just
+says which repos to scan.
+
+`switchboard install` (or `init`) writes an annotated starter config; `a` in the
+sidebar and `switchboard add` grow it. Edit it any time with `switchboard config`
+or `e` in the sidebar — both reload on save.
+
+> A malformed config never crashes switchboard. It degrades to an empty config,
+> keeps the last-good values in a running sidebar, and `switchboard doctor`
+> reports the parse error. See [Explanation: architecture](explanation-architecture.md).
+
+---
+
+## Top-level keys
+
+| Key | Type | Default | Effect |
+|-----|------|---------|--------|
+| `worktree_root` | path | `~/switchboard/worktrees` | Where `n` creates new worktrees: `<root>/<project>/<name>`. |
+| `projects_root` | path | `~/Programming` | Where `a`/`clone` drop fetched repos: `<root>/<name>`. |
+| `base` | git ref | `origin/main` | Default ref new worktrees branch from. Per-project `base` overrides it. |
+| `branch_prefix` | string | _(none)_ | New branches become `<prefix>/<name>`. Empty/unset ⇒ bare `<name>`. |
+| `agent_state_hooks` | bool | `true` | Auto-wire per-worktree agent-state hooks on worktree create. |
+| `prune_on_launch` | bool | `true` | Prune orphaned `sb/` sessions when landing on the home session. |
+| `session_command` | string | _(none)_ | Command typed into a worktree's window the first time its session is created. Per-project override wins. |
+| `sounds` | map or `false` | _(on, built-ins)_ | Completion sounds. See [`sounds`](#sounds). |
+| `tmux_keys` | map | _(toggle `s`)_ | Which prefix keys switchboard binds. See [`tmux_keys`](#tmux_keys). |
+| `projects` | list | `[]` | The project registry. See [`projects`](#projects). |
+
+Paths accept `~` and are expanded. Unknown keys are ignored.
+
+### A complete example
+
+```yaml
+worktree_root: ~/switchboard/worktrees   # where `n` puts new worktrees
+projects_root: ~/Programming             # where `a`/`clone` drop cloned repos
+base: origin/main                        # default ref new worktrees branch from
+branch_prefix: wvmitchell                # new branches become wvmitchell/<name>
+agent_state_hooks: true                  # auto-wire agent-state dots on create
+prune_on_launch: true                    # tidy orphaned sessions on landing home
+session_command: claude                  # run this on a worktree's first session
+sounds:
+  enabled: true
+  done: train
+  waiting: chime
+tmux_keys:
+  toggle: s                              # prefix-s shows/hides the sidebar
+  home: S                                # prefix-S jumps to the home session
+projects:
+  - name: myapp
+    path: ~/code/myapp
+    base: origin/main                                       # per-project base
+    session_command: claude --dangerously-skip-permissions  # per-project command
+    sounds:
+      done: ~/sounds/celebrate.wav                          # per-project sound
+```
+
+---
+
+## `sounds`
+
+Completion sounds, on by default. A built-in name, a file path, or a macOS
+system-sound name. See [How-to: agent state & sounds](howto-agent-state-and-sounds.md)
+and [Explanation: agent presence](explanation-agent-presence.md).
+
+```yaml
+sounds:
+  enabled: true        # false mutes EVERY sound
+  done: train          # played when an agent finishes a turn
+  waiting: chime       # played when an agent asks for input
+```
+
+| Sub-key | Type | Default | Effect |
+|---------|------|---------|--------|
+| `enabled` | bool | `true` | `false` mutes all sounds (globally or per-project). |
+| `done` | sound spec | `train` | Sound when a hooked agent reaches `:done`. |
+| `waiting` | sound spec | `chime` | Sound when a hooked agent reaches `:waiting`. |
+
+**Sound spec** resolves in this order:
+
+1. A built-in name — synthesized in pure Ruby, cached on first use. One of:
+   `train`, `train_1`, `train_2`, `train_3`, `chime`, `chime_1`, `chime_2`, `chime_3`.
+2. A path (contains `/` or starts with `~`) — a literal audio file, e.g. `~/horn.wav`.
+3. A bare name — a macOS system sound at `/System/Library/Sounds/<name>.aiff`, e.g. `Glass`.
+
+**Muting is only ever `enabled: false`** (or a bare `sounds: false`). A blank or
+absent per-state key *inherits* the next level up — it never mutes. So you can't
+accidentally silence `done` by leaving it empty.
+
+**Resolution per state** (`done`/`waiting`), highest priority first:
+
+1. The project's `sounds.<state>`, if present and non-empty.
+2. The global `sounds.<state>`, if present and non-empty.
+3. The built-in default (`train` for `done`, `chime` for `waiting`).
+
+Sounds need a player on PATH (`afplay` on macOS; `paplay`/`aplay`/`ffplay` on
+Linux). With none, sounds stay silent. `switchboard doctor` reports the player
+and whether each spec resolves; `switchboard sound [done|waiting]` plays one.
+
+---
+
+## `tmux_keys`
+
+Which tmux prefix keys switchboard binds. See
+[Reference: keybindings](reference-keybindings.md) and
+[How-to: keybindings](howto-keybindings.md).
+
+```yaml
+tmux_keys:
+  toggle: s   # show/hide the sidebar (default)
+  home: S     # optional one-key jump to the home session (unbound by default)
+```
+
+| Role | Default | Effect |
+|------|---------|--------|
+| `toggle` | `s` | Binds `prefix-<key>` to show/hide the sidebar. |
+| `home` | _(unbound)_ | Binds `prefix-<key>` to jump to the home session. Omit to leave unbound. |
+
+A **key token** is a single char (`s`), a named key (`Space`, `F1`, `BSpace`),
+or a modifier combo (`C-s`, `M-x`). A usable token is a non-empty string with no
+whitespace, quotes, or control chars; anything else falls back to the role
+default and `doctor` flags it. tmux is the final authority on whether a token is
+a real key — an unusable one is caught at bind time.
+
+If `home` resolves to the same key as `toggle`, `home` is dropped (one key can't
+carry two actions; the toggle wins) and `doctor` reports the collision.
+
+---
+
+## `projects`
+
+The registry: which repos switchboard scans for worktrees. A project needs only
+`name` and `path`; the rest override the globals for that project.
+
+```yaml
+projects:
+  - name: myapp
+    path: ~/code/myapp
+    base: origin/develop                 # optional: override the global base
+    session_command: codex               # optional: override the global command
+    sounds:                              # optional: override the global sounds
+      enabled: false                     #   this repo stays quiet
+```
+
+| Key | Type | Required | Effect |
+|-----|------|----------|--------|
+| `name` | string | yes | Display name and the `sb/<name>/…` session prefix. |
+| `path` | path | yes | The repo's working directory (the primary checkout). |
+| `base` | git ref | no | Per-project base ref. Falls back to the global `base`. |
+| `session_command` | string | no | Per-project session command. Empty/absent ⇒ inherit the global. |
+| `sounds` | map or `false` | no | Per-project sound overrides (same shape as the global). Per-state keys inherit the global when absent. |
+
+A project entry missing `name` or `path` is silently skipped. A project whose
+`path` doesn't exist on disk is dropped from the tree (so a moved repo never
+breaks the sidebar — but its orphaned sessions are then left alone by `prune`;
+see [How-to: housekeeping](howto-housekeeping.md)).
+
+---
+
+## Filesystem locations
+
+Everything switchboard writes, and how to redirect it. State dirs follow XDG.
+
+| What | Default location | Override |
+|------|------------------|----------|
+| Config | `~/.config/switchboard/config.yml` | `$SWITCHBOARD_CONFIG` |
+| Agent-state files | `$XDG_STATE_HOME/switchboard/agents` → `~/.local/state/switchboard/agents` | `$SWITCHBOARD_STATE_DIR` |
+| Attention markers (bold-until-viewed) | `$XDG_STATE_HOME/switchboard/attention` → `~/.local/state/switchboard/attention` | `$SWITCHBOARD_ATTENTION_DIR` |
+| Project-collapse folds | `$XDG_STATE_HOME/switchboard/collapse` → `~/.local/state/switchboard/collapse` | `$SWITCHBOARD_COLLAPSE_DIR` |
+| PR-badge cache | `$XDG_CACHE_HOME/switchboard/prs` → `~/.cache/switchboard/prs` | `$SWITCHBOARD_CACHE_DIR` |
+| Agent-state reporter script | `$XDG_DATA_HOME/switchboard/sb-agent-hook` → `~/.local/share/switchboard/sb-agent-hook` | `$XDG_DATA_HOME` |
+| Synthesized sound WAVs | `$XDG_DATA_HOME/switchboard/sounds` → `~/.local/share/switchboard/sounds` | `$XDG_DATA_HOME` |
+| PATH symlinks (`switchboard`, `sb`) | `~/.local/bin` | `$SWITCHBOARD_BIN_DIR` |
+
+The data-dir paths (reporter script, sound WAVs) are deliberately install-independent,
+so they survive a `git pull` upgrade or a `brew upgrade`. Both self-heal, by
+slightly different means: the reporter script is rewritten in place whenever it's
+missing or its contents have drifted from the embedded version, while the sound
+WAVs carry `ASSET_VERSION` in their filename — a version bump writes new files and
+the stale ones are simply never referenced again.
+
+These env overrides also make it safe to run switchboard locally against throwaway
+state without touching your real config — the same walls the test suite uses (see
+[CONTRIBUTING](../CONTRIBUTING.md)).
+
+---
+
+## Related
+
+- [Reference: CLI](reference-cli.md) — every command that reads or writes this config.
+- [Reference: keybindings](reference-keybindings.md) — `tmux_keys` and the sidebar keys.
+- [How-to: manage projects](howto-manage-projects.md) — grow the `projects` list.
+- [Explanation: architecture](explanation-architecture.md) — why the config is just a registry.
