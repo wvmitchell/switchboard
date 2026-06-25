@@ -165,6 +165,138 @@ module Switchboard
       assert_equal 1, cursor_of(sb), "k moves up"
     end
 
+    # --- pane resize: ←/→ step the width (issue #78) -------------------------
+
+    def width_of(sb) = sb.instance_variable_get(:@width)
+
+    def test_left_and_right_step_the_pane_width
+      sb = sidebar(nodes: [proj("app"), ws("a")])
+      start = width_of(sb)
+      sb.send(:dispatch, "\e[C") # →
+      assert_equal start + Sidebar::WIDTH_STEP, width_of(sb), "→ widens by a step"
+      assert sb.instance_variable_get(:@resized), "...and flags a pending commit"
+      sb.send(:dispatch, "\e[D") # ←
+      assert_equal start, width_of(sb), "← narrows back"
+    end
+
+    def test_resize_clamps_at_the_bounds
+      sb = sidebar(nodes: [proj("app"), ws("a")])
+      sb.instance_variable_set(:@width, Width::MAX)
+      sb.send(:dispatch, "\e[C")
+      assert_equal Width::MAX, width_of(sb), "→ at the max is a no-op"
+      refute sb.instance_variable_get(:@resized), "...and queues no commit"
+      sb.instance_variable_set(:@width, Width::MIN)
+      sb.instance_variable_set(:@resized, false)
+      sb.send(:dispatch, "\e[D")
+      assert_equal Width::MIN, width_of(sb), "← at the min is a no-op"
+      refute sb.instance_variable_get(:@resized)
+    end
+
+    # The held-key contract: handle drains a whole autorepeat burst flag-only (no
+    # pin mid-drain), then commit_resize fires ONCE — one resize-pane + one disk
+    # write for the burst, so holding the key stays smooth.
+    def test_a_resize_burst_pins_and_persists_once
+      sb = sidebar(nodes: [proj("app"), ws("a")])
+      start = width_of(sb)
+      pins = 0
+      stub_method(sb, :pin_width, -> { pins += 1 }) do
+        sb.send(:handle, "\e[C\e[C") # two →'s in one read, as autorepeat delivers
+        assert_equal start + 2 * Sidebar::WIDTH_STEP, width_of(sb), "every token steps the width"
+        assert_equal 0, pins, "handle is flag-only — no pin mid-burst"
+        sb.send(:commit_resize)
+      end
+      assert_equal 1, pins, "the burst pins exactly once, post-drain"
+      assert_equal start + 2 * Sidebar::WIDTH_STEP, Width.resolved, "...and persists once to the shared store"
+      refute sb.instance_variable_get(:@resized), "the pending flag clears after commit"
+    end
+
+    # Same store-hydration contract as the folds and the full-header flag: a resize
+    # in one window is picked up by every other sidebar on its next rebuild.
+    def test_rebuild_hydrates_the_width_from_the_shared_store
+      repo = temp_git_repo("app")
+      File.write(Config.path, YAML.dump("projects" => [{ "name" => "app", "path" => repo }]))
+      Width.set(58) # as if another window's sidebar resized
+
+      sb = sidebar(nodes: [])
+      sb.instance_variable_set(:@config, Config.new)
+      sb.send(:rebuild)
+      assert_equal 58, width_of(sb), "rebuild picks up the width another sidebar wrote"
+    end
+
+    # A peer window already pinned at the old width has @geom == its winsize, so
+    # pin_if_resized would short-circuit and never apply a width another window set.
+    # rebuild must invalidate @geom when the shared width changed, so the next
+    # pin_if_resized re-pins this pane.
+    def test_rebuild_invalidates_the_pin_cache_when_the_shared_width_changed
+      repo = temp_git_repo("app")
+      File.write(Config.path, YAML.dump("projects" => [{ "name" => "app", "path" => repo }]))
+      Width.set(40)
+      sb = sidebar(nodes: [])
+      sb.instance_variable_set(:@config, Config.new)
+      sb.send(:rebuild)                            # hydrate @width = 40
+      sb.instance_variable_set(:@geom, [50, 40])   # as if pinned at the 40-col geometry
+      Width.set(60)                                # another window resized
+      sb.send(:rebuild)
+      assert_nil sb.instance_variable_get(:@geom), "a changed shared width clears the pin cache so the pane re-pins"
+      assert_equal 60, width_of(sb)
+    end
+
+    # A rebuild can fire mid-burst (a C-l/C-r poke byte arriving in the same read as a
+    # ←/→), while a resize is stepped in memory but not yet committed. rebuild must NOT
+    # rehydrate the old on-disk width over it, or the resize is silently dropped before
+    # commit_resize can persist it.
+    def test_rebuild_does_not_clobber_a_pending_uncommitted_resize
+      repo = temp_git_repo("app")
+      File.write(Config.path, YAML.dump("projects" => [{ "name" => "app", "path" => repo }]))
+      Width.set(40)
+      sb = sidebar(nodes: [])
+      sb.instance_variable_set(:@config, Config.new)
+      sb.send(:rebuild)                          # @width = 40
+      sb.instance_variable_set(:@width, 42)      # a ←/→ stepped it, not yet committed
+      sb.instance_variable_set(:@resized, true)
+      sb.send(:rebuild)                          # a poke byte rebuilt mid-burst
+      assert_equal 42, width_of(sb), "rebuild must not rehydrate over a pending resize"
+    end
+
+    # commit_resize nils @geom so a pin tmux refused (width didn't fit) is retried by
+    # the next pin_if_resized instead of short-circuiting forever on the stale cache.
+    def test_commit_resize_invalidates_the_pin_cache
+      sb = sidebar(nodes: [proj("app"), ws("a")])
+      sb.instance_variable_set(:@geom, [50, 40])
+      sb.instance_variable_set(:@width, 60)
+      stub_method(sb, :pin_width, -> { false }) do # simulate tmux refusing the resize
+        sb.send(:commit_resize)
+      end
+      assert_nil sb.instance_variable_get(:@geom), "a committed resize clears @geom so a failed pin retries"
+      refute sb.instance_variable_get(:@resized)
+      assert_equal 60, Width.resolved, "...and still persists the chosen width"
+    end
+
+    def test_rebuild_keeps_the_pin_cache_when_width_is_unchanged
+      repo = temp_git_repo("app")
+      File.write(Config.path, YAML.dump("projects" => [{ "name" => "app", "path" => repo }]))
+      Width.set(50)
+      sb = sidebar(nodes: [])
+      sb.instance_variable_set(:@config, Config.new)
+      sb.send(:rebuild)                            # @width = 50
+      sb.instance_variable_set(:@geom, [50, 50])
+      sb.send(:rebuild)                            # width unchanged
+      refute_nil sb.instance_variable_get(:@geom), "an unchanged width leaves the pin cache intact (no redundant re-pin)"
+    end
+
+    # ←/→ are inert while filtering (issue #60 keeps movement off j/k there; resize
+    # stays off too) — they neither resize nor leak into the query.
+    def test_resize_keys_are_inert_while_filtering
+      sb = sidebar(nodes: [proj("app"), ws("a")])
+      sb.send(:dispatch, "/")
+      start = width_of(sb)
+      sb.send(:dispatch, "\e[C")
+      sb.send(:dispatch, "\e[D")
+      assert_equal start, width_of(sb), "←/→ don't resize while filtering"
+      refute sb.instance_variable_get(:@resized), "...and queue no commit"
+      assert_equal "", sb.instance_variable_get(:@filter), "...nor leak into the query"
+    end
+
     def test_jump_keys_stay_in_bounds_on_an_empty_tree
       sb = sidebar(nodes: [])
       sb.send(:dispatch, "G")

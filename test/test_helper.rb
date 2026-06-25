@@ -56,6 +56,7 @@ module Switchboard
       ENV["SWITCHBOARD_ATTENTION_DIR"] = path("attention") # Attention markers (bold-until-viewed)
       ENV["SWITCHBOARD_COLLAPSE_DIR"]  = path("collapse")  # Collapse folds (shared project collapse state)
       ENV["SWITCHBOARD_FULL_HEADER_FILE"] = path("full_header") # FullHeader toggle (full header on every session)
+      ENV["SWITCHBOARD_WIDTH_FILE"]    = path("width")     # Width (shared sidebar pane width, ←/→ resize)
       ENV["SWITCHBOARD_CACHE_DIR"]     = path("cache")     # Pr cache (T3 seam)
 
       # Anything that reads $HOME / XDG / git-global must land in the sandbox —

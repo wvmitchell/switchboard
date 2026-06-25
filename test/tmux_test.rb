@@ -70,6 +70,24 @@ module Switchboard
       assert_nil Tmux.work_dir(""), "no panes (server gone) -> nil, so -c is just omitted"
     end
 
+    # --- spawn width clamp: a saved width can't starve the work pane (issue #78) ---
+
+    def test_fit_width_returns_the_saved_width_on_a_roomy_window
+      assert_equal 76, Tmux.fit_width(76, 200)
+    end
+
+    def test_fit_width_clamps_to_leave_room_for_the_work_pane
+      assert_equal 68, Tmux.fit_width(76, 80), "80-col client, 76 saved -> 68 so the work pane keeps 12"
+    end
+
+    def test_fit_width_uses_the_saved_width_when_cols_is_unknown
+      assert_equal 76, Tmux.fit_width(76, nil), "no window size -> the historic behavior"
+    end
+
+    def test_fit_width_stays_positive_on_a_tiny_window
+      assert_operator Tmux.fit_width(40, 8), :>=, 1, "never emit a non-positive -l"
+    end
+
     # --- name builders share one sanitization --------------------------------
 
     def test_session_prefix_matches_session_name_under_sanitization

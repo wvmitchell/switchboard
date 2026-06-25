@@ -301,6 +301,41 @@ existence is read (never the contents), no temp+rename dance is needed (unlike
 feedback. Like the folds it is a **durable view preference** — NOT cleared on
 `quit`.
 
+### Sidebar width (the same trick, holding a number)
+
+The sidebar pane was a hardcoded 40 cols (`Tmux::SIDEBAR_WIDTH`) that
+`pin_if_resized` re-asserted every paint — so a naive `resize-pane` was clobbered
+by the next pin. `←`/`→` in the tree now step the width (`WIDTH_STEP` cols/press,
+issue #78), and the chosen width is the value the pin **respects**. `Width`
+(`width.rb`) keeps it **on disk, not in a sidebar ivar**, for the same
+multi-process reason as `Collapse`/`FullHeader`/the dots: only a shared value sizes
+every window's pane alike (and survives a respawn). A **single global** file
+(`SWITCHBOARD_WIDTH_FILE` / `XDG_STATE_HOME`) like `FullHeader`, but holding an
+**integer** — so unlike the existence-only flag the value is *read*, which means a
+torn write could misread; hence `Collapse`'s atomic temp+rename. `resolved` clamps
+to `[MIN, MAX]` and degrades to `DEFAULT` (40) on a missing/garbage/torn file, so a
+bad read just sizes the pane normally. `Tmux.pin(pane, width = Width.resolved)`
+defaults to it (every cross-session caller pins to the saved width, no flash); the
+sidebar's per-tick `pin_width` passes its hydrated `@width` to skip a disk read in
+the hot loop. `spawn_sidebar`'s `-l` uses the saved width too, but clamped through
+`fit_width` against the target window's `window_cols` (keeping `RESERVE_COLS` for the
+work pane) — else a width chosen on a wide client would make `split-window` fail and
+leave a narrow client with no sidebar at all. `rebuild` **hydrates** `@width` every
+reload (a resize in one window lands in the others on their next poke/scan) — and
+when the hydrated width *changed*, it nils `@geom` so the next `pin_if_resized`
+actually re-pins; otherwise that throttle would short-circuit on the peer pane's
+still-unchanged geometry and leave it stuck at the old width until a cross-session
+re-pin. Like the folds it is a **durable view preference** — NOT cleared on `quit`.
+
+The held-key detail: `resize` is **flag-only** (clamp `@width`, set `@resized`) —
+no I/O. `handle` drains a whole autorepeat burst calling it per token, then the run
+loop fires `commit_resize` **once** (one `Width.set` + one `resize-pane`), and
+`render` reflows to the new `winsize` next iteration. So holding `←`/`→` resizes
+smoothly instead of flooding one subprocess + disk write per repeat; `@geom`
+self-heals on the next `pin_if_resized` (it pins to the same `@width`, never
+fighting the resize). In `/` filter mode `←`/`→` are inert (the escapes aren't
+printable, so `filter_key` ignores them) — movement-free there like `j`/`k`.
+
 ### Type-to-filter (the deliberately un-shared one)
 
 `/` enters an in-sidebar incremental filter (issue #60) — fzf-style, but NOT the

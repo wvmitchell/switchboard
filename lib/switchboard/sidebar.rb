@@ -75,6 +75,7 @@ module Switchboard
 
     BRANCH_FG = "\e[90m"         # branch rows: bright-black, a theme-relative dim (#23)
     RELOAD_CONFIG_BYTE = "\x12"  # C-r: the dedicated post-edit "re-read config" poke (Tmux.poke_sidebar_of)
+    WIDTH_STEP = 2               # cols per ←/→ press; bounds live in Width (issue #78)
 
     # Key-hint legend, built by `footer` (below) and kept within the pin width.
     # Reload isn't shown — it's automatic; Ctrl-L triggers it internally (the
@@ -167,6 +168,12 @@ module Switchboard
       @last_reload = nil   # monotonic of the last full reload (throttles switch pokes)
       @last_vis = nil      # monotonic of the last mid-pulse visibility re-check
       @geom = nil          # winsize at the last successful width-pin (skip no-op pins)
+      @width = Width.resolved # pane width in cols; ←/→ step it. Hydrated from the shared
+                           # on-disk store (Width) here and on every rebuild, so all
+                           # windows size alike and a respawn keeps it. Seeded now (before
+                           # the first reload) so run's opening pin matches the spawn -l.
+      @resized = false     # a ←/→ press is pending: commit_resize pins + persists ONCE
+                           # after the input burst drains, so a held key stays smooth
       @visible = false     # is this pane currently on screen? gates render + pulse;
                            # the single source of truth, mutated only via set_visible
       @pane_tty = nil      # our pane's pty, captured at startup — the durable pane
@@ -214,6 +221,7 @@ module Switchboard
           key = read_key
           break if key == :eof # our pane's pty hit EOF (closed) — exit, don't spin as an orphan
           break unless handle(key)
+          commit_resize if @resized # ←/→ pinned + persisted ONCE per burst, post-drain
         else
           @pulse += 1
           # While pulsing we wake ~8x/s; re-check visibility a little faster than a
@@ -361,7 +369,33 @@ module Switchboard
     private
 
     def pin_width
-      Tmux.pin(ENV["TMUX_PANE"])
+      Tmux.pin(ENV["TMUX_PANE"], @width)
+    end
+
+    # ←/→ step the pane width (issue #78). Flag-only, no I/O: handle drains a whole
+    # read burst (a held key autorepeats), calling this per token, and run commits
+    # ONCE afterward — one resize-pane + one disk write for the burst, so holding the
+    # key resizes smoothly instead of flooding subprocesses. A press at a bound is a
+    # silent no-op (the held key just rests there).
+    def resize(delta)
+      new = (@width + delta).clamp(Width::MIN, Width::MAX)
+      return if new == @width
+
+      @width = new
+      @resized = true
+    end
+
+    # Apply a pending ←/→ resize: persist the chosen width (shared on disk) and pin
+    # the pane to it. Coalesced — called once per input burst from run, not per key.
+    # Nil @geom so the next pin_if_resized re-pins: a no-op if this direct pin took,
+    # but a retry if tmux refused it (e.g. the width didn't fit) — without it a failed
+    # pin would short-circuit forever on the unchanged geometry. render reflows to the
+    # new winsize next iteration.
+    def commit_resize
+      Width.set(@width)
+      pin_width
+      @geom = nil
+      @resized = false
     end
 
     # Re-assert the fixed width only when the pane geometry actually changed. tmux
@@ -387,6 +421,19 @@ module Switchboard
       # momentarily fails to build doesn't lose its fold).
       @collapsed = Collapse.collapsed(@config.projects.map { |p| p["name"] })
       @full_header = FullHeader.enabled? # shared toggle: full header on every session
+      # Shared pane width: a ←/→ resize in any window lands here. Skip the hydrate
+      # while a local resize is pending uncommitted (@resized): a rebuild triggered
+      # mid-burst (a C-l/C-r token following a ←/→ in the same read) would otherwise
+      # rehydrate the OLD on-disk width over the value commit_resize is about to
+      # persist, silently dropping the resize. When the width changed elsewhere, nil
+      # @geom so the next pin_if_resized actually re-pins — else it short-circuits on
+      # our unchanged pane geometry and a peer window stays stuck at the old width
+      # until a cross-session re-pin.
+      unless @resized
+        new_width = Width.resolved
+        @geom = nil if new_width != @width
+        @width = new_width
+      end
       recompute_rows
     end
 
@@ -742,6 +789,8 @@ module Switchboard
       case key
       when "\e[B", "\x0E", "j" then move(1)   # down (↓ / ^N / j)
       when "\e[A", "\x10", "k" then move(-1)  # up   (↑ / ^P / k)
+      when "\e[C"              then resize(WIDTH_STEP)  # → widen the pane (issue #78)
+      when "\e[D"              then resize(-WIDTH_STEP) # ← narrow the pane
       when "/"                 then start_filter # type-to-filter the tree (issue #60)
       when "\r", "\n"          then enter
       when "a"                 then add
@@ -1358,6 +1407,8 @@ module Switchboard
       # The / filter hint rides line 1 (the title/nav line) — the only line with
       # room across every kind, since the ws action lines are full at the pin
       # width. At home it trails the title, where a long list most wants searching.
+      # (←/→ resize is intentionally NOT advertised here: the proj nav line is
+      # already near the pin width, and discoverability lives in the #62 help overlay.)
       ["#{@home ? HOME_TITLE : nav} · / filter", *rest]
     end
 

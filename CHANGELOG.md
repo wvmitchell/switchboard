@@ -7,6 +7,21 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.28.0] — resize the sidebar pane with ←/→ (2026-06-25)
+
+### Added
+- **`←`/`→` resize the sidebar pane.** The pane was a fixed 40 columns that the
+  width-pin re-asserted on every paint, so a long workspace/branch name just
+  truncated and there was no way to give the work pane more room (#78). In the
+  tree, `→` widens and `←` narrows the pane (2 cols/press, bounds 20–80). The
+  chosen width is a **durable, global, on-disk preference** (shared by every
+  window's sidebar like the `H` full-header toggle), so all panes size alike and
+  it survives a respawn and restart. Holding the key resizes smoothly (the pin and
+  the on-disk write are coalesced once per key-repeat burst), and `←`/`→` stay
+  inert in `/` filter mode. The width persists across `quit`. The initial split is
+  clamped to the client width, so a width chosen on a wide monitor can't leave a
+  narrow terminal with no sidebar.
+
 ## [0.27.2] — keep the name-prompt hint inside the 40-col pane (2026-06-25)
 
 ### Fixed

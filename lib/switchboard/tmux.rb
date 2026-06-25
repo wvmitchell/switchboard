@@ -327,6 +327,30 @@ module Switchboard
          .dig(0, 1)
     end
 
+    RESERVE_COLS = 12 # cols kept for the work pane when clamping the sidebar at spawn
+
+    # The target window's column count, or nil when unknown (no -t = current window).
+    # Used to clamp the spawn width so a saved width wider than the client can't make
+    # split-window fail and leave the window with no sidebar.
+    def window_cols(target = nil)
+      t = target ? " -t #{Shellwords.escape(target)}" : ""
+      out = `tmux display-message -p#{t} '#\{window_width}' 2>/dev/null`.strip
+      out.empty? ? nil : Integer(out, 10)
+    rescue StandardError
+      nil
+    end
+
+    # Pure: the width to split the sidebar at — the saved width, but capped so the
+    # work pane keeps RESERVE_COLS (else `split-window -l` fails on a client narrower
+    # than the saved width and the window gets no sidebar at all). Unknown cols ⇒ the
+    # saved width unchanged (the historic behavior). Floored at 1 so a pathologically
+    # tiny window never yields a non-positive -l. Split out so it's testable serverless.
+    def fit_width(saved, cols)
+      return saved unless cols&.positive?
+
+      [saved, [cols - RESERVE_COLS, 1].max].min
+    end
+
     # --- per-session visibility flag (@sb_sidebar) ---------------------------
     # Stored on the tmux session itself, so it survives window churn and is the
     # source of truth for "should this session show a sidebar." Unset reads as on,
@@ -386,12 +410,15 @@ module Switchboard
       path.empty? ? nil : path
     end
 
-    # Re-assert the sidebar's fixed width. Windows rescale panes proportionally
-    # on resize (and aggressive-resize), which grows an absolute-width sidebar.
-    def pin(pane)
+    # Re-assert the sidebar's width. Windows rescale panes proportionally on resize
+    # (and aggressive-resize), which grows an absolute-width sidebar. Width defaults
+    # to the shared, on-disk chosen value (Width.resolved) so every cross-session
+    # caller pins to the user's width with no flash; the sidebar's own per-tick pin
+    # passes its hydrated ivar to skip a disk read in the hot loop.
+    def pin(pane, width = Width.resolved)
       return unless pane
 
-      system("tmux", "resize-pane", "-t", pane, "-x", SIDEBAR_WIDTH.to_s, out: File::NULL, err: File::NULL)
+      system("tmux", "resize-pane", "-t", pane, "-x", width.to_s, out: File::NULL, err: File::NULL)
     end
 
     # prefix-s is switchboard's ONE sidebar verb (the in-sidebar `h` is retired):
@@ -551,8 +578,12 @@ module Switchboard
       dir ||= target && window_work_dir(target)
 
       # -l fixes the new pane's width at split time (resize-after-split raced
-      # and sometimes left it at the 50/50 default).
-      cmd = +"tmux split-window -hb -d -l #{SIDEBAR_WIDTH} -P -F '#\{pane_id}'"
+      # and sometimes left it at the 50/50 default). Start at the saved width so a
+      # freshly split pane never flashes the default before pin_if_resized corrects it,
+      # but clamp it to the window so a width chosen on a wide client can't make the
+      # split fail (and leave no sidebar) on a narrow one.
+      width = fit_width(Width.resolved, window_cols(target))
+      cmd = +"tmux split-window -hb -d -l #{width} -P -F '#\{pane_id}'"
       cmd << " -t #{Shellwords.escape(target)}" if target
       cmd << " -c #{Shellwords.escape(dir)}" if dir
       cmd << " #{Shellwords.escape(bin)} sidebar"
