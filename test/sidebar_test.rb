@@ -136,15 +136,19 @@ module Switchboard
       assert_equal 0, cursor_of(sb)
     end
 
-    # j/k were vi movers before #60; now they're nothing in normal mode (and query
-    # input while filtering), so motion is one consistent set: arrows / ^N / ^P.
-    def test_j_and_k_do_not_move_in_normal_mode
+    # j/k are vi movers in normal mode (down/up). They're NOT movers while
+    # filtering — there a printable key is query input (test below) — so motion in
+    # the tree is arrows / ^N / ^P / j / k, and in the filter arrows / ^N / ^P.
+    def test_j_and_k_move_in_normal_mode
       sb = sidebar(nodes: [proj("app"), ws("a"), ws("b")])
       sb.send(:dispatch, "j")
-      assert_equal 0, cursor_of(sb), "j is not a mover"
-      sb.send(:dispatch, "G")
+      assert_equal 1, cursor_of(sb), "j moves down"
+      sb.send(:dispatch, "j")
+      assert_equal 2, cursor_of(sb), "...clamping at the last row"
+      sb.send(:dispatch, "j")
+      assert_equal 2, cursor_of(sb)
       sb.send(:dispatch, "k")
-      assert_equal 2, cursor_of(sb), "k is not a mover"
+      assert_equal 1, cursor_of(sb), "k moves up"
     end
 
     def test_jump_keys_stay_in_bounds_on_an_empty_tree
@@ -604,13 +608,13 @@ module Switchboard
     end
 
     # / enters the mode with an empty query (matches everything), keeping the tree
-    # grouped: project headers stay, and the cursor lands on a workspace.
+    # grouped: project headers stay, and the cursor lands on the first row.
     def test_slash_enters_filter_mode_showing_the_grouped_tree
       sb = sidebar(nodes: [proj("app"), ws("alpha"), ws("beta"), proj("api"), ws("gamma", project: "api")])
       sb.send(:dispatch, "/")
       assert_equal "", sb.instance_variable_get(:@filter), "/ enters filter mode with an empty query"
       assert_equal %w[proj ws ws proj ws], rows_of(sb).map(&:kind), "headers stay, grouping the matches"
-      refute_equal "proj", current_node(sb).kind, "the cursor lands on a workspace, not a header"
+      assert_equal 0, cursor_of(sb), "the cursor lands on the first row on entry"
       assert_includes sb.send(:footer)[2], "3 matches", "the count pluralizes and excludes headers"
     end
 
@@ -684,8 +688,8 @@ module Switchboard
     def test_esc_restores_the_cursor_to_the_current_workspace
       sb = sidebar(nodes: [proj("app"), ws("alpha", path: "/wt/alpha"), ws("beta", path: "/wt/beta")],
                    current_path: "/wt/beta")
-      sb.send(:dispatch, "/") # cursor lands on alpha (first match)
-      assert_equal "alpha", current_node(sb).name
+      sb.send(:dispatch, "/") # cursor lands on the first row (the app header)
+      assert_equal "proj", current_node(sb).kind
       sb.send(:dispatch, "\e")
       assert_nil sb.instance_variable_get(:@filter)
       assert_equal "beta", current_node(sb).name, "Esc lands back on the session's current workspace"
@@ -756,22 +760,26 @@ module Switchboard
 
     def test_arrows_and_ctrl_np_move_within_the_filtered_set
       sb = sidebar(nodes: [proj("app"), ws("alpha"), ws("beta")])
-      sb.send(:dispatch, "/") # empty query: header + both workspaces
-      assert_equal "alpha", current_node(sb).name, "starts on the first workspace, not the header"
+      sb.send(:dispatch, "/") # empty query: cursor on the header (first row)
+      assert_equal "proj", current_node(sb).kind, "starts on the first row, the header"
       sb.send(:dispatch, "\e[B")
-      assert_equal "beta", current_node(sb).name, "↓ moves to the next workspace"
+      assert_equal "alpha", current_node(sb).name, "↓ moves onto the first workspace"
+      sb.send(:dispatch, "\x0E")
+      assert_equal "beta", current_node(sb).name, "^N moves to the next workspace"
       sb.send(:dispatch, "\x0E")
       assert_equal "beta", current_node(sb).name, "^N clamps at the last workspace"
       sb.send(:dispatch, "\e[A")
       assert_equal "alpha", current_node(sb).name, "↑ moves back up"
     end
 
-    # Entry lands on the first workspace (fast type-then-↵ jump), but headers ARE
-    # selectable — arrow up onto one to take a project-level action.
-    def test_filter_enters_on_a_workspace_but_headers_are_selectable
+    # Entry lands on the first row (the header); a query keystroke then snaps to the
+    # first workspace match (fast type-then-↵ jump). Headers stay selectable via ↑.
+    def test_filter_enters_on_the_first_row_then_snaps_to_a_match_on_typing
       sb = sidebar(nodes: [proj("app"), ws("a1"), ws("a2")])
       sb.send(:dispatch, "/")
-      assert_equal "a1", current_node(sb).name, "lands on the first workspace, not the header"
+      assert_equal "proj", current_node(sb).kind, "entry lands on the first row, the header"
+      sb.send(:dispatch, "a") # a query keystroke snaps to the first match
+      assert_equal "a1", current_node(sb).name, "typing snaps to the first workspace match"
       sb.send(:dispatch, "\e[A") # up onto the project header
       assert_equal "proj", current_node(sb).kind, "↑ can land on the project header"
       assert_equal "app", current_node(sb).project

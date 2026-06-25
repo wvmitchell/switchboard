@@ -7,6 +7,19 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.25.1] — restore j/k movement; filter enters on the first row (2026-06-25)
+
+### Changed
+- **`j`/`k` move in the tree again.** They were vi-style down/up until 0.24.0,
+  which dropped them so they'd be free to type into the `/` filter. Now they move
+  in the normal tree (alongside the arrows + `Ctrl-N`/`Ctrl-P`) and remain query
+  input *only* while filtering — so any name is still reachable by typing, but
+  muscle-memory vi movement works again outside the filter.
+- **`/` filter mode now enters on the first row, not the first workspace.** Pressing
+  `/` leaves the cursor on the top item (the leading project header); the cursor
+  snaps to the first workspace match as soon as you type, so type-then-`↵` still
+  jumps straight to the best match.
+
 ## [0.25.0] — a branded sidebar header + completion sparkle (2026-06-25)
 
 ### Added

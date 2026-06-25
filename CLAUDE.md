@@ -294,8 +294,9 @@ header** (the grouping you navigate by stays visible) — a header with no match
 dropped. Matching is the pure `Sidebar.fuzzy_match?` (case-insensitive
 subsequence) over `filter_text` (project + name/branch). Filtering spans the
 **whole tree, collapse ignored** — the point is reaching any workspace fast, even
-a folded one. Entry/keystrokes snap the cursor to the first workspace match (so
-type-then-`↵` jumps), but headers ARE selectable — `↵` (`switch_to_filtered`) is
+a folded one. Entry (`start_filter`) leaves the cursor on the first row; a query
+keystroke then snaps it to the first workspace match (so type-then-`↵` jumps),
+but headers ARE selectable — `↵` (`switch_to_filtered`) is
 context-sensitive: a workspace switches, a **project header creates a new
 workspace there** (`create(node)`; collapse is meaningless mid-filter, so
 `↵`-on-project becomes the project-level action). Backspacing past an empty query
@@ -305,9 +306,9 @@ no destructive key (`d`/`q`) can fire mid-search. `footer` swaps to
 `filter_footer` (live query + a `↵`-label that tracks the row + a workspace-only
 match count); a `/ filter` hint rides the nav line otherwise.
 
-Movement is **arrows / `^N`/`^P` everywhere** — `j`/`k` are deliberately NOT
-movers (so they're free to type into the filter, and the binding is identical in
-both modes; see #60). That's the one behavior `/`-filter changed outside itself.
+Movement in the tree is **arrows / `^N`/`^P` / `j`/`k`** (vi-style down/up). In
+filter mode `j`/`k` are query input instead — there movement is arrows / `^N`/`^P`
+only, so any name stays reachable by typing (see #60).
 
 Unlike `Collapse`/`Attention`/the dots, this is **deliberately NOT shared on
 disk** — a search is a transient act, not a view preference, so it's a plain

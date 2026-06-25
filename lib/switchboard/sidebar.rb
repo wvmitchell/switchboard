@@ -417,9 +417,10 @@ module Switchboard
       rows
     end
 
-    # Where the cursor lands when entering filter mode or after a keystroke: the
-    # first workspace match (so type-then-↵ jumps), not the leading project header.
-    # You can still arrow up onto a header to create. 0 when there's no match.
+    # Where the cursor lands after a query keystroke: the first workspace match (so
+    # type-then-↵ jumps), not the leading project header. Entry (start_filter) lands
+    # on the first row instead; you can arrow up onto a header to create. 0 when
+    # there's no match.
     def first_selectable
       @rows.index { |n| n.kind != "proj" } || 0
     end
@@ -728,8 +729,8 @@ module Switchboard
       return filter_key(key) if @filter # / filter mode swallows the normal bindings
 
       case key
-      when "\e[B", "\x0E"      then move(1)   # down (↓ / ^N) — j/k are intentionally not movers
-      when "\e[A", "\x10"      then move(-1)  # up   (↑ / ^P)
+      when "\e[B", "\x0E", "j" then move(1)   # down (↓ / ^N / j)
+      when "\e[A", "\x10", "k" then move(-1)  # up   (↑ / ^P / k)
       when "/"                 then start_filter # type-to-filter the tree (issue #60)
       when "\r", "\n"          then enter
       when "a"                 then add
@@ -818,9 +819,9 @@ module Switchboard
     # An in-sidebar, fzf-style incremental filter — NOT the removed external fzf
     # popup. `/` enters; printable keys extend a query that narrows the rows to
     # matching switch targets; ↵ jumps to the highlighted match; Esc restores the
-    # full tree. Like fzf, j/k are query input here (not motion) — movement is the
-    # arrows / ^N / ^P — so any name is reachable by typing, and no destructive
-    # key (d, q) can fire mid-search.
+    # full tree. Like fzf, j/k are query input here (not motion — unlike the tree,
+    # where they move) — movement is the arrows / ^N / ^P — so any name is reachable
+    # by typing, and no destructive key (d, q) can fire mid-search.
 
     # Key handling while filtering. Always returns true: filter mode never quits
     # the loop — a typed 'q' is just a query character, not a teardown.
@@ -845,11 +846,12 @@ module Switchboard
     end
 
     # /: enter filter mode with an empty query (matches everything, so the full
-    # tree shows) and the cursor on the first workspace, not the leading header.
+    # tree shows) and the cursor on the first row. The leap-to-first-match only
+    # happens once you type (append_filter) — entry leaves you at the top.
     def start_filter
       @filter = +""
       recompute_rows
-      @cursor = first_selectable
+      @cursor = 0
     end
 
     # Esc: leave filter mode, restore the full collapse-aware tree, and land back
@@ -1276,7 +1278,7 @@ module Switchboard
     end
 
     # The filter-mode legend: the live query, then the in-mode keys. j/k are query
-    # input here (as everywhere — they're never movers), so movement is the arrows
+    # input here (unlike the tree, where they move), so movement is the arrows
     # / ^N^P. ↵ is context-sensitive — opens a highlighted workspace, or creates a
     # new one on a highlighted project header — so the label tracks the row. The
     # count is workspaces only (headers don't count) — it reassures you the query is
