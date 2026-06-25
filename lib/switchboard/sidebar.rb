@@ -973,20 +973,17 @@ module Switchboard
 
     # Prompt inline, create the worktree (quiet), then drop into it. Defaults to the
     # highlighted row (the `n` key); filter-mode ↵-on-a-project passes that header in.
+    # Esc/bare-↵ abort with nothing created (prompt_line + blank_input?, issue #68).
     def create(node = current)
       return unless node
 
+      name = prompt_line("new workspace in #{node.project}")
+      return reload if blank_input?(name)
+
       rows, = winsize
-      $stdin.cooked!
-      print "\e[#{rows};1H\e[K\e[?25hnew workspace in #{node.project} › "
+      print "\e[#{rows};1H\e[K\e[?25lcreating…"
       $stdout.flush
-      name = $stdin.gets
-      if name && !name.strip.empty?
-        print "\r\ncreating…"
-        $stdout.flush
-        dest = Creator.create(@config, node.project, name)
-      end
-      $stdin.raw!
+      dest = Creator.create(@config, node.project, name)
 
       if dest
         Tmux.go(Worktree.new(project: node.project, path: dest, branch: nil,
@@ -1176,13 +1173,8 @@ module Switchboard
       project = @config.project(node.project)
       return unless project
 
-      rows, = winsize
-      $stdin.cooked!
-      print "\e[#{rows};1H\e[K\e[?25hrename #{File.basename(node.path)} to › "
-      $stdout.flush
-      newname = $stdin.gets
-      $stdin.raw!
-      return reload if newname.nil? || newname.strip.empty?
+      newname = prompt_line("rename #{File.basename(node.path)} to")
+      return reload if blank_input?(newname)
 
       dest = File.join(File.dirname(node.path), Creator.sanitize(newname))
       # bridge: leave a symlink at the old path so a running agent's frozen
@@ -1207,23 +1199,85 @@ module Switchboard
       answer.to_s.downcase == "y"
     end
 
-    # Cooked-mode line prompt on the bottom row. Returns the entered text
-    # (stripped) or nil. Raw mode and the hidden cursor are restored in an
-    # ensure, so a read that raises can't strand the sidebar in cooked mode.
+    # Inline line prompt on the bottom row, edited in raw mode (issue #68). We stay
+    # raw — never drop to cooked — so the line discipline can't swallow Esc as a
+    # literal byte: Esc and Ctrl-C cancel (return nil), ↵ submits the stripped text,
+    # Backspace/Ctrl-U edit. The old cooked `$stdin.gets` left the prompt with no way
+    # out but a bare ↵ (undiscoverable) or killing the sidebar. Shared by n/a/r so
+    # every name prompt cancels the same way. The hidden cursor is restored in an
+    # ensure so a raise can't strand a visible block cursor; any read fault returns
+    # nil (cancel), the same graceful-degrade contract the cooked version had.
     def prompt_line(label)
-      rows, = winsize
-      $stdin.cooked!
-      print "\e[#{rows};1H\e[K\e[?25h#{label} › "
-      $stdout.flush
-      $stdin.gets&.strip
+      buf = +""
+      draw_prompt(label, buf)
+      loop do
+        chunk = read_prompt_key
+        return nil if chunk.nil? # read fault / dead pane: cancel
+        case edit_buffer(chunk, buf)
+        when :cancel then return nil
+        when :submit then return buf.strip # bare ↵ ⇒ "" ⇒ blank_input? cancels too
+        end
+        draw_prompt(label, buf)
+      end
     rescue StandardError
       nil
     ensure
-      $stdin.raw!
       print "\e[?25l"
     end
 
-    # An empty prompt result — nil (read failed) or "" (bare enter) — means cancel.
+    # Fold one raw read into the name buffer, returning :submit / :cancel / :edit. A
+    # read arrives as a burst — a paste (the `a` clone URL / local path), or a fast
+    # key-repeat — so process it token by token the way the main loop's `handle`
+    # does (escape-led tokens are 3 bytes), NOT all-or-nothing: a pasted URL must
+    # land its printable bytes while an arrow burst ("\e[A") still drops whole rather
+    # than leaking "[A" into the name. Cooked `gets` buffered pastes for free; raw
+    # mode has to reassemble them here.
+    def edit_buffer(chunk, buf)
+      chunk = chunk.dup # slice! mutates; never consume the caller's (possibly frozen) read
+      until chunk.empty?
+        token = chunk.start_with?("\e") ? chunk.slice!(0, 3) : chunk.slice!(0, 1)
+        case token
+        when "\e", "\x03" then return :cancel  # bare Esc / Ctrl-C
+        when "\r", "\n"   then return :submit  # ↵ (rest of a multi-line paste is dropped, like gets)
+        when "\x7F", "\b" then buf.chop!       # Backspace (DEL / ^H)
+        when "\x15"       then buf.clear       # Ctrl-U: clear the line
+        else buf << token if printable?(token) # printable byte ⇒ name; arrow/fn bursts drop
+        end
+      end
+      :edit
+    end
+
+    # Block for the next raw read and return its bytes — a keypress, an escape
+    # sequence, or a whole paste (read big so a pasted URL lands in one go, not 8
+    # bytes at a time). We're already raw, so Esc and Ctrl-C arrive as bytes here,
+    # not as a swallowed control or a signal. nil on a dead pane (EOF) so prompt_line
+    # cancels rather than spinning; a spurious select wakeup with nothing to read
+    # retries rather than cancelling, matching read_key's no-op on the same race.
+    def read_prompt_key
+      IO.select([$stdin]) # block until there's something to read
+      $stdin.read_nonblock(1024)
+    rescue IO::WaitReadable
+      retry
+    rescue EOFError
+      nil
+    end
+
+    # Repaint the inline prompt on the bottom row and park a real cursor right after
+    # the typed text. An empty buffer shows a dim "(esc cancel)" hint advertising the
+    # escape hatch (issue #68); it clears the moment you type so a long name isn't
+    # crowded on the narrow pane. The caret column is set explicitly so the hint can
+    # trail the input without the caret jumping past it.
+    def draw_prompt(label, buf)
+      rows, cols = winsize
+      prefix = "#{label} › "
+      hint   = buf.empty? ? " \e[2m(esc cancel)\e[0m" : ""
+      print "\e[#{rows};1H\e[K#{trunc(prefix + buf, cols)}#{hint}"
+      caret = [prefix.length + buf.length + 1, cols].min # 1-based, clamped to the pane
+      print "\e[#{rows};#{caret}H\e[?25h"
+      $stdout.flush
+    end
+
+    # An empty prompt result — nil (read failed / cancelled) or "" (bare enter) — means cancel.
     def blank_input?(text)
       text.nil? || text.empty?
     end

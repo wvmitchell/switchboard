@@ -7,6 +7,19 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.27.1] — cancel the inline name prompts with Esc (2026-06-25)
+
+### Fixed
+- **`Esc` now cancels the `n`/`a`/`r` name prompts.** They read in cooked mode, so
+  Esc was swallowed by the terminal line discipline and the only way out was a bare
+  Enter (undiscoverable) or killing the sidebar (#68). The prompts now edit in raw
+  mode: `Esc` or `Ctrl-C` cancels with nothing created, `↵` submits, `Backspace`/
+  `Ctrl-U` edit, and the prompt advertises `(esc cancel)` until you type.
+- **Pasting works in the prompts again.** The raw-mode reader handles a multi-byte
+  burst (a paste, or fast key-repeat) by appending its printable bytes while still
+  dropping arrow-key sequences — so a pasted clone URL or repo path lands intact,
+  the way cooked-mode `gets` buffered it.
+
 ## [0.27.0] — a "you are here" pointer on the current workspace (2026-06-25)
 
 ### Added

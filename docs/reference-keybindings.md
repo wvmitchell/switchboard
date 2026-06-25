@@ -56,6 +56,10 @@ it shows the keys that apply to the current row.
 The footer legend shows only the common keys for the highlighted row; `g`/`G` and
 the `Ctrl-N`/`Ctrl-P` movement aliases are unshown power-user shortcuts.
 
+Every name prompt (`n` create, `a` add local/clone, `r` rename) edits in raw mode:
+`Esc` (or `Ctrl-C`) cancels and returns to the tree with nothing created, `↵`
+submits, `Backspace` edits. The prompt shows `(esc cancel)` until you start typing.
+
 `↵` on a workspace **creates the session on first switch** and runs the project's
 `session_command` then (only then — never on a re-switch into a live session). A
 workspace that has held more than one branch expands into inline branch rows

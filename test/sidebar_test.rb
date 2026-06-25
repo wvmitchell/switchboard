@@ -909,6 +909,171 @@ module Switchboard
       assert_equal %w[beta], ws_names(sb), "the filter still applies after a reload recompute"
     end
 
+    # --- inline name prompts: raw-mode edit, Esc/Ctrl-C cancel (issue #68) ----
+
+    # Drive prompt_line over a scripted key stream. draw_prompt is silenced so the
+    # test never paints to the real tty; read_prompt_key pops the next scripted key.
+    def drive_prompt(sb, keys)
+      keys = keys.dup
+      result = nil
+      capture_stdout do # swallow prompt_line's ensure cursor-restore escape
+        stub_method(sb, :draw_prompt, ->(*) {}) do
+          stub_method(sb, :read_prompt_key, -> { keys.shift }) do
+            result = sb.send(:prompt_line, "name")
+          end
+        end
+      end
+      result
+    end
+
+    def capture_stdout
+      orig = $stdout
+      $stdout = StringIO.new
+      yield
+      $stdout.string
+    ensure
+      $stdout = orig
+    end
+
+    def test_prompt_line_returns_the_typed_name_on_enter
+      assert_equal "feat-x", drive_prompt(sidebar, ["f", "e", "a", "t", "-", "x", "\r"])
+    end
+
+    # The crux of #68: Esc reaches us as a byte in raw mode and cancels — the old
+    # cooked gets swallowed it, leaving the prompt with no way out but killing the pane.
+    def test_prompt_line_esc_cancels_returning_nil
+      assert_nil drive_prompt(sidebar, ["a", "b", "\e"]), "Esc aborts the prompt"
+    end
+
+    def test_prompt_line_ctrl_c_cancels_returning_nil
+      assert_nil drive_prompt(sidebar, ["a", "\x03"]), "Ctrl-C aborts (raw mode: a byte, not a signal)"
+    end
+
+    def test_prompt_line_backspace_trims_the_buffer
+      assert_equal "ab", drive_prompt(sidebar, ["a", "b", "c", "\x7F", "\r"])
+    end
+
+    # An arrow key is a 3-byte burst — neither a bare Esc (cancel) nor a printable
+    # byte (append) — so it's dropped, never mistaken for an Esc that would cancel.
+    def test_prompt_line_ignores_escape_sequence_bursts
+      assert_equal "ab", drive_prompt(sidebar, ["a", "\e[A", "b", "\r"])
+    end
+
+    # A paste (or fast key-repeat) lands as ONE multi-byte read — it must contribute
+    # all its printable bytes, not be dropped whole. The `a` clone-URL / local-path
+    # prompts are pasted, never typed; cooked gets buffered them, raw mode must too.
+    def test_prompt_line_accepts_a_pasted_multibyte_chunk
+      url = "git@github.com:wvmitchell/switchboard.git"
+      assert_equal url, drive_prompt(sidebar, [url, "\r"])
+    end
+
+    # An arrow burst embedded mid-paste still drops whole — its "[A" bytes must not
+    # leak into the name even though they're individually printable.
+    def test_prompt_line_drops_an_arrow_burst_within_a_chunk
+      assert_equal "ab", drive_prompt(sidebar, ["a\e[Ab", "\r"])
+    end
+
+    # A stray non-printable byte (a high 0x80, a lone control char) is dropped, never
+    # appended or a crash — the same byte-level printable? guard the filter uses.
+    def test_prompt_line_drops_a_stray_non_printable_byte
+      assert_equal "ab", drive_prompt(sidebar, ["a", "\x80".b, "b", "\r"])
+    end
+
+    # Ctrl-U wipes the buffer; what's typed after is all that submits.
+    def test_prompt_line_ctrl_u_clears_the_line
+      assert_equal "new", drive_prompt(sidebar, ["o", "l", "d", "\x15", "n", "e", "w", "\r"])
+    end
+
+    # \n submits like \r (a pasted line ends in \n, not \r).
+    def test_prompt_line_submits_on_a_bare_newline
+      assert_equal "feat", drive_prompt(sidebar, ["f", "e", "a", "t", "\n"])
+    end
+
+    # A bare ↵ (and whitespace-only, stripped) yields "" — blank_input? treats that
+    # as cancel too, so the old empty-enter escape hatch survives alongside Esc.
+    def test_prompt_line_empty_enter_is_a_blank_cancel
+      sb = sidebar
+      assert_equal "", drive_prompt(sb, [" ", " ", "\r"]), "whitespace is stripped away"
+      assert sb.send(:blank_input?, ""), "...and an empty result cancels"
+    end
+
+    def test_read_prompt_key_returns_nil_on_a_dead_pane
+      sb = Sidebar.new
+      r, w = IO.pipe
+      w.close # reader at EOF — select wakes, read_nonblock raises EOFError
+      with_stdin(r) { assert_nil sb.send(:read_prompt_key), "a closed pane cancels, never spins" }
+    ensure
+      r.close
+    end
+
+    def test_draw_prompt_advertises_esc_cancel_until_you_type
+      sb = sidebar
+      empty = capture_stdout { sb.send(:draw_prompt, "new workspace in app", "") }
+      typed = capture_stdout { sb.send(:draw_prompt, "new workspace in app", "feat") }
+      assert_includes empty, "esc cancel", "the escape hatch is advertised on an empty prompt (#68)"
+      assert_includes empty, "new workspace in app", "...alongside the label"
+      refute_includes typed, "esc cancel", "the hint clears once you start typing"
+      assert_includes typed, "feat", "...showing the typed name instead"
+    end
+
+    # create aborts cleanly on a cancelled prompt: nothing built, just a reload back
+    # to the tree (no more killing the sidebar to back out — issue #68).
+    def test_create_aborts_when_the_prompt_is_cancelled
+      sb = sidebar(nodes: [proj("app")], cursor: 0)
+      reloaded = false
+      stub_method(sb, :prompt_line, ->(*) { nil }) do
+        stub_method(sb, :reload, -> { reloaded = true }) do
+          stub_method(Creator, :create, ->(*) { flunk "nothing is created on cancel" }) do
+            stub_method(Tmux, :go, ->(*, **) { flunk "no switch on cancel" }) do
+              sb.send(:create)
+            end
+          end
+        end
+      end
+      assert reloaded, "a cancelled create returns to the tree"
+    end
+
+    def test_rename_aborts_when_the_prompt_is_cancelled
+      File.write(Config.path, YAML.dump("projects" => [{ "name" => "app", "path" => "/x" }]))
+      sb = sidebar(nodes: [proj("app"), ws("alpha", path: "/wt/alpha")], cursor: 1)
+      sb.instance_variable_set(:@config, Config.new)
+      reloaded = false
+      stub_method(sb, :prompt_line, ->(*) { nil }) do
+        stub_method(sb, :reload, -> { reloaded = true }) do
+          stub_method(Git, :move_worktree, ->(*, **) { flunk "no move on cancel" }) do
+            sb.send(:rename)
+          end
+        end
+      end
+      assert reloaded, "a cancelled rename returns to the tree"
+    end
+
+    def test_add_local_aborts_when_the_prompt_is_cancelled
+      sb = sidebar
+      reloaded = false
+      stub_method(sb, :prompt_line, ->(*) { nil }) do
+        stub_method(sb, :reload, -> { reloaded = true }) do
+          stub_method(Registrar, :register, ->(*) { flunk "nothing is registered on cancel" }) do
+            sb.send(:add_local)
+          end
+        end
+      end
+      assert reloaded, "a cancelled add-local returns to the tree"
+    end
+
+    def test_add_clone_aborts_when_the_prompt_is_cancelled
+      sb = sidebar
+      reloaded = false
+      stub_method(sb, :prompt_line, ->(*) { nil }) do
+        stub_method(sb, :reload, -> { reloaded = true }) do
+          stub_method(Registrar, :clone, ->(*) { flunk "nothing is cloned on cancel" }) do
+            sb.send(:add_clone)
+          end
+        end
+      end
+      assert reloaded, "a cancelled add-clone returns to the tree"
+    end
+
     # --- remove: d routes by row kind ----------------------------------------
 
     def test_remove_routes_project_to_remove_project_and_workspace_to_delete
