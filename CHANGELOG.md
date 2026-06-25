@@ -7,6 +7,13 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.25.2] — linger the completion sparkle to three seconds (2026-06-25)
+
+### Changed
+- **The completion sparkle now twinkles for three seconds** before settling to the
+  steady DONE dot (was one). More time to notice a finished agent out of the corner
+  of your eye.
+
 ## [0.25.1] — restore j/k movement; filter enters on the first row (2026-06-25)
 
 ### Changed

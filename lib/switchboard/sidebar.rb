@@ -65,7 +65,7 @@ module Switchboard
     # survives, color is stripped) and a pre-built colored string for normal rows.
     SPARKLE_GLYPHS  = %w[✦ ✧].freeze
     SPARKLE_COLORED = SPARKLE_GLYPHS.map { |g| "\e[1;92m#{g}\e[0m" }.freeze
-    SPARKLE_SECS    = 1.0        # wall-clock lifetime of a twinkle before it settles to DONE
+    SPARKLE_SECS    = 3.0        # wall-clock lifetime of a twinkle before it settles to DONE
 
     BRANCH_FG = "\e[90m"         # branch rows: bright-black, a theme-relative dim (#23)
     RELOAD_CONFIG_BYTE = "\x12"  # C-r: the dedicated post-edit "re-read config" poke (Tmux.poke_sidebar_of)
