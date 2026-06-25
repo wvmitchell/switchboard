@@ -7,6 +7,17 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.27.2] — keep the name-prompt hint inside the 40-col pane (2026-06-25)
+
+### Fixed
+- **The `(esc cancel)` hint no longer scrolls a stale prompt line into scrollback
+  (#80).** `draw_prompt` truncated only the label+input to the pane width and then
+  appended the dim hint *after* the budget, so a long label plus the 13-col hint
+  overflowed the bottom row; the over-width character auto-wrapped (DECAWM) and
+  pushed a copy of the prompt up on every cancel→reopen. The hint's display width
+  is now reserved inside the truncation budget, so the whole line always fits — a
+  long label is clipped while the buffer is empty and restored the moment you type.
+
 ## [0.27.1] — cancel the inline name prompts with Esc (2026-06-25)
 
 ### Fixed

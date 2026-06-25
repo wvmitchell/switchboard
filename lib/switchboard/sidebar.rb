@@ -1270,9 +1270,17 @@ module Switchboard
     def draw_prompt(label, buf)
       rows, cols = winsize
       prefix = "#{label} › "
-      hint   = buf.empty? ? " \e[2m(esc cancel)\e[0m" : ""
-      print "\e[#{rows};1H\e[K#{trunc(prefix + buf, cols)}#{hint}"
-      caret = [prefix.length + buf.length + 1, cols].min # 1-based, clamped to the pane
+      # The hint must live INSIDE the width budget. Truncating only prefix+buf and
+      # tacking the hint on after let a long label + the 13-col hint overflow the
+      # 40-col pane; the 41st char auto-wrapped (DECAWM) on the bottom row and
+      # scrolled a stale prompt copy into scrollback every cancel→reopen (issue #80).
+      # Reserve the hint's display width so the whole line fits — a long label is
+      # clipped while empty and restored the moment you type (hint gone). Held plain
+      # for the width count; the dim SGR is applied only at print time.
+      hint   = buf.empty? ? " (esc cancel)" : ""
+      shown  = trunc(prefix + buf, cols - hint.length)
+      print "\e[#{rows};1H\e[K#{shown}#{hint.empty? ? '' : "\e[2m#{hint}\e[0m"}"
+      caret = [shown.length + 1, cols].min # 1-based, parked right after the visible input
       print "\e[#{rows};#{caret}H\e[?25h"
       $stdout.flush
     end

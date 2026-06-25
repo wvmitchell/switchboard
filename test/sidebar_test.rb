@@ -1016,6 +1016,19 @@ module Switchboard
       assert_includes typed, "feat", "...showing the typed name instead"
     end
 
+    # A long label + the dim "(esc cancel)" hint must stay within the 40-col pane:
+    # an overflowing bottom row auto-wraps (DECAWM) and scrolls a stale prompt copy
+    # into scrollback on every cancel→reopen (issue #80). winsize falls back to
+    # [40, 40] under capture_stdout's StringIO, so cols == the real SIDEBAR_WIDTH.
+    def test_draw_prompt_keeps_label_plus_hint_within_the_pane
+      sb = sidebar
+      out = capture_stdout { sb.send(:draw_prompt, "path to an existing git repo", "") }
+      visible = out.gsub(/\e\[[0-9;?]*[A-Za-z]/, "") # strip every SGR / cursor-move / mode escape
+      assert_operator visible.length, :<=, 40,
+                      "the prompt + hint must fit 40 cols so the bottom row never wraps (#80)"
+      assert_includes visible, "esc cancel", "...while still advertising the escape hatch"
+    end
+
     # create aborts cleanly on a cancelled prompt: nothing built, just a reload back
     # to the tree (no more killing the sidebar to back out — issue #68).
     def test_create_aborts_when_the_prompt_is_cancelled
