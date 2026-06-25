@@ -57,6 +57,16 @@ module Switchboard
     WANTS_OFF = "\e[1;35m◇\e[0m"  # ...and hollow, the blink's off-beat
     DONE      = "\e[1;32m●\e[0m"  # green: replied, ready for you (not blocked)
     BLINK_PERIOD = 4             # @pulse ticks per blink half-cycle (~0.5s at PULSE)
+
+    # Completion twinkle — the visual twin of the sound: a brief ✦/✧ shimmer when a
+    # hooked agent's turn lands (:done), settling to the steady DONE dot. Bright
+    # green so it reads a touch louder than DONE for the moment it lasts. Two forms,
+    # like the spinner: a bare glyph for the reverse-video selected row (shape
+    # survives, color is stripped) and a pre-built colored string for normal rows.
+    SPARKLE_GLYPHS  = %w[✦ ✧].freeze
+    SPARKLE_COLORED = SPARKLE_GLYPHS.map { |g| "\e[1;92m#{g}\e[0m" }.freeze
+    SPARKLE_SECS    = 0.7        # wall-clock lifetime of a twinkle before it settles to DONE
+
     BRANCH_FG = "\e[90m"         # branch rows: bright-black, a theme-relative dim (#23)
     RELOAD_CONFIG_BYTE = "\x12"  # C-r: the dedicated post-edit "re-read config" poke (Tmux.poke_sidebar_of)
 
@@ -66,6 +76,13 @@ module Switchboard
     # session it's the "you are at the base" title (HOME_TITLE), otherwise the
     # navigation keys, which differ by row kind (a project opens/collapses).
     HOME_TITLE = "switchboard · home"
+    # The home sidebar's brand header (crafted, home-only — see `header`). The
+    # wordmark gives the name presence beyond the footer; the ◖═◗ motif reads as a
+    # patch cable plugged between two jacks — the telephone switchboard the tool is
+    # named for. Bold cyan is switchboard's signature accent (the "you are here" hue).
+    BRAND    = "\e[1;36m"
+    WORDMARK = "◖═◗ Switchboard"
+
     NAV_PROJ   = "↑↓ move · ↵ open/collapse"
     NAV_WS     = "↑↓ move · ↵ open"
     NAV_BR     = "↑↓ move · ↵ switch"
@@ -135,6 +152,8 @@ module Switchboard
                            # a view preference (issue #60).
       @ticks = 0
       @pulse = 0           # animation frame counter (spinner cycle + blink phase)
+      @sparkles = {}       # worktree path => @pulse deadline of an active completion
+                           # twinkle; pulsing? keeps animating until it lapses (sparkling?)
       @last_scan = nil     # monotonic time of the last agent re-scan
       @last_reload = nil   # monotonic of the last full reload (throttles switch pokes)
       @last_vis = nil      # monotonic of the last mid-pulse visibility re-check
@@ -151,6 +170,8 @@ module Switchboard
       @branch_cache = {}   # worktree path => [gitdir, logs/HEAD mtime, limit, branches],
                            # so a reload skips the per-ws rev-parse when the reflog is
                            # unchanged. Bounded by worktrees seen this process; never pruned.
+      @operator = false    # home greeting's first name; resolved lazily on the first
+                           # home render (git shell-out) so non-home sidebars never pay
     end
 
     def run
@@ -206,11 +227,24 @@ module Switchboard
     # A thinking/waiting dot is actually on screen and worth animating. Gated on
     # @visible (off screen never animates) AND the rendered slice (not all @agents)
     # so a collapsed or scrolled-off agent never drives repaints; :done is steady
-    # and never pulses.
+    # and never pulses — except for the brief twinkle right after it lands (sparkling?).
     def pulsing?
       return false unless @visible
 
-      @visible_rows.any? { |n| %i[thinking waiting].include?(@agents[n.path]) }
+      @visible_rows.any? { |n| %i[thinking waiting].include?(@agents[n.path]) || sparkling?(n.path) }
+    end
+
+    # Is `path` mid-twinkle? Deadlines are wall-clock (monotonic), NOT @pulse units —
+    # @pulse only crawls while a pane is off-screen, so a pulse-denominated deadline
+    # would survive ~48s hidden and replay the twinkle on switch-back. Once passed,
+    # drop the entry so @sparkles stays bounded and the dot settles. Self-GCing.
+    def sparkling?(path)
+      deadline = @sparkles[path]
+      return false unless deadline
+      return true if deadline > monotonic
+
+      @sparkles.delete(path)
+      false
     end
 
     # Pure: has `window` seconds elapsed since `last` (nil = never)? The shared
@@ -510,20 +544,21 @@ module Switchboard
     end
 
     # T1 — a hooked agent just reached a resting state (finished a turn / asked
-    # for input). Three consumers ride the same edge: a bold "needs attention"
+    # for input). Four consumers ride the same edge: a bold "needs attention"
     # marker (the visual twin of the dot, persisted so it survives until viewed), a
-    # background PR refresh (it may have pushed a branch / opened a PR), and a
-    # completion sound (the audible twin). Uses the hook-only states (never the
-    # activity fallback, which flips every 3s and would fire on noise). Skips the
-    # first scan — no baseline to diff.
+    # background PR refresh (it may have pushed a branch / opened a PR), a
+    # completion sound (the audible twin), and a brief on-row twinkle (its visual
+    # twin — same announce_sounds gate as the sound). Uses the hook-only states
+    # (never the activity fallback, which flips every 3s and would fire on noise).
+    # Skips the first scan — no baseline to diff.
     #
     # Ordering + isolation are load-bearing: the mark and PR refresh run first,
     # each fully rescued so its fault can't starve the others, and @prev_hook_states
     # ALWAYS advances (ensure) so a raise here can't corrupt the next edge diff — or
     # trip refresh_agents' broad rescue into blanking the dots.
     #
-    # announce_sounds gates ONLY the sound, not the mark, the PR refresh, or the
-    # baseline advance. A catch-up scan (switch-in / reappear) passes false: each sidebar
+    # announce_sounds gates the sound and its twinkle, not the mark, the PR refresh,
+    # or the baseline advance. A catch-up scan (switch-in / reappear) passes false: each sidebar
     # is its own process with its own baseline, frozen while off-screen, so without
     # this it would re-ring every completion that finished while it slept (already
     # heard from the sidebar that was on screen then). PRs still refresh — debounced
@@ -535,7 +570,10 @@ module Switchboard
         edges = self.class.completion_edges(@prev_hook_states, now)
         mark_attention_for(edges)
         refresh_prs_for(edges)
-        play_sounds_for(edges, now) if announce_sounds
+        if announce_sounds
+          play_sounds_for(edges, now)
+          sparkle_for(edges, now)
+        end
       end
     ensure
       # Merge, not replace: keep a STICKY baseline. A worktree whose hook report
@@ -581,6 +619,20 @@ module Switchboard
     # rescued — a sound fault never disturbs the scan or the PR refresh above.
     def play_sounds_for(edges, now)
       edges.each { |path| Sound.play(@config.sound_for(project_for_path(path), now[path])) }
+    rescue StandardError
+      nil
+    end
+
+    # Edge paths -> a brief completion twinkle each — the visual twin of the sound,
+    # so it rides the same announce_sounds gate: only the sidebar you're watching
+    # twinkles (a catch-up scan re-baselines silently and still). Only :done
+    # sparkles — :waiting already blinks for attention. The deadline is wall-clock
+    # (monotonic) so it expires in real time even while the pane is hidden — no stale
+    # replay on switch-back; pulsing? keeps the loop animating while it's live, then
+    # sparkling? GCs it. Fully rescued — a fault never disturbs scan, sound, or refresh.
+    def sparkle_for(edges, now)
+      deadline = monotonic + SPARKLE_SECS
+      edges.each { |path| @sparkles[path] = deadline if now[path] == :done }
     rescue StandardError
       nil
     end
@@ -1237,23 +1289,88 @@ module Switchboard
       ["/#{@filter}", "#{action} · esc cancel", "↑↓ ^n/^p move · #{count}"]
     end
 
+    # The brand header above the tree. EVERY session leads with the wordmark, so the
+    # name has presence beyond the footer in any pane — a minimal one-liner on a
+    # focused worktree session. The HOME sidebar (switchboard's anchor, where the
+    # tree is short and base-camp framing fits) additionally seats a time-of-day
+    # greeting, a one-line console of what the board is handling, and a rule. Each
+    # line carries its own ANSI and is fit to `cols`; only the wordmark wears the accent.
+    def header(cols)
+      wordmark = "#{BRAND}#{trunc(WORDMARK, cols)}\e[0m"
+      return [wordmark] unless @home
+
+      [
+        wordmark,
+        "\e[2m#{trunc(greeting, cols)}\e[0m",
+        "\e[2m#{trunc(console, cols)}\e[0m",
+        "\e[2m#{'─' * cols}\e[0m"
+      ]
+    end
+
+    # First name for the home greeting, from git's global identity (falling back to
+    # $USER), downcased to match the sidebar's lowercase voice. nil when we can't
+    # tell — the greeting then drops the name. Called once, lazily, from greeting
+    # (memoized there); degrades to nil on any failure, like every other shell-out here.
+    def operator_name
+      name = `git config user.name 2>/dev/null`.strip
+      name = ENV["USER"].to_s if name.empty?
+      first = name.split.first
+      first && !first.empty? ? first.downcase : nil
+    rescue StandardError
+      nil
+    end
+
+    # Time-of-day greeting for the home header, by name when we know the operator.
+    # The name is resolved once here (lazy + memoized; nil is a valid result, so the
+    # uncomputed sentinel is `false`) — only a home pane that renders a greeting ever
+    # shells out. The time part is recomputed each paint (cheap), tracking the clock.
+    def greeting
+      @operator = operator_name if @operator == false
+      part = case Time.now.hour
+             when 0...12  then "morning"
+             when 12...18 then "afternoon"
+             else              "evening"
+             end
+      @operator ? "good #{part}, #{@operator}" : "good #{part}"
+    end
+
+    # One-line operator console for the home header: how many workspaces the board
+    # is patching, how many agents are working right now, how many PRs are open.
+    # Counts the whole tree (@nodes) so a collapsed project still tallies; the
+    # active/PR clauses drop when zero to keep the line calm. Terse to fit the pane.
+    def console
+      trees  = @nodes.count { |n| n.kind == "ws" }
+      active = @agents.values.count(:thinking)
+      prs    = @nodes.count { |n| n.pr.is_a?(Hash) && View.pr_state(n.pr) == "OPEN" }
+      parts  = ["#{trees} #{trees == 1 ? 'worktree' : 'worktrees'}"]
+      parts << "#{active} active"                       if active.positive?
+      parts << "#{prs} #{prs == 1 ? 'PR' : 'PRs'} open" if prs.positive?
+      parts.join(" · ")
+    end
+
     def render
       rows, cols = winsize
+      head = header(cols)
       foot = footer
-      height = rows - foot.size
+      head = [] if rows - foot.size - head.size < 1 # too short to seat both — tree first
+      top = head.size
+      height = rows - foot.size - top
       scroll(height)
 
       visible = @rows[@offset, height].to_a
       @visible_rows = visible # the on-screen slice — pulsing? animates only for these
       out = +"\e[H"
+      head.each_with_index do |text, i|
+        out << "\e[#{i + 1};1H\e[K#{text}" # header lines carry (and reset) their own ANSI
+      end
       visible.each_with_index do |node, i|
-        out << "\e[#{i + 1};1H\e[K" << line(node, @offset + i == @cursor, cols)
+        out << "\e[#{top + i + 1};1H\e[K" << line(node, @offset + i == @cursor, cols)
       end
       # Erase rows left over from a previous, longer state (e.g. after a
       # collapse), then draw the footer hints on the bottom rows.
-      out << "\e[#{visible.size + 1};1H\e[0J"
+      out << "\e[#{top + visible.size + 1};1H\e[0J"
       foot.each_with_index do |text, i|
-        out << "\e[#{height + 1 + i};1H\e[K\e[2m#{trunc(text, cols)}\e[0m"
+        out << "\e[#{rows - foot.size + 1 + i};1H\e[K\e[2m#{trunc(text, cols)}\e[0m"
       end
       $stdout.write(out)
     end
@@ -1302,7 +1419,7 @@ module Switchboard
         # reads expanded (▾); the ▸ collapsed glyph only applies to the normal tree.
         folded = @filter.nil? && @collapsed.include?(node.project)
         "#{folded ? '▸' : '▾'} #{node.project}"
-      when "ws"   then "  #{glyph_for(@agents[node.path])} #{node.name}"
+      when "ws"   then "  #{ws_glyph(node.path)} #{node.name}"
       else             "     #{node.last ? '└' : '├'}#{node.active ? '●' : ' '}#{node.branch}"
       end
     end
@@ -1311,7 +1428,7 @@ module Switchboard
       case node.kind
       when "proj" then "\e[1m#{text}\e[0m"
       when "ws"
-        dot = dot_for(@agents[node.path])
+        dot = sparkling?(node.path) ? SPARKLE_COLORED[(@pulse / 2) % SPARKLE_COLORED.size] : dot_for(@agents[node.path])
         name = trunc(node.name.to_s, [text.length - 4, 1].max)
         if current
           name = "\e[36m#{name}\e[0m"            # "you are here" — cyan, matching the prompt's directory color
@@ -1321,6 +1438,15 @@ module Switchboard
         "  #{dot} #{name}"
       else "#{BRANCH_FG}#{text}\e[0m"
       end
+    end
+
+    # Bare state glyph for a workspace row, twinkling briefly right after the
+    # agent's turn lands before it settles to the steady dot. Bare (uncolored) so
+    # the shape survives under the reverse-video selected row, mirroring glyph_for.
+    def ws_glyph(path)
+      return SPARKLE_GLYPHS[(@pulse / 2) % SPARKLE_GLYPHS.size] if sparkling?(path)
+
+      glyph_for(@agents[path])
     end
 
     # Bare state glyph (no color), the single source for both render paths. The

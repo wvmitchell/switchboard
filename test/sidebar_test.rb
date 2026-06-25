@@ -501,6 +501,96 @@ module Switchboard
       end
     end
 
+    # --- brand header: wordmark everywhere, dashboard on home ----------------
+    # Every session leads with the wordmark (the name beyond the footer); the home
+    # anchor additionally seats a greeting, a one-line console, and a rule above the
+    # tree. Off home it's just the minimal one-liner.
+
+    def home(sb)
+      sb.instance_variable_set(:@home, true)
+      sb
+    end
+
+    def test_header_off_home_is_just_the_minimal_wordmark
+      head = sidebar(nodes: [proj("app"), ws("a")]).send(:header, Tmux::SIDEBAR_WIDTH)
+      assert_equal 1, head.size, "a focused worktree pane gets a minimal one-line brand header"
+      assert head[0].include?(Sidebar::WORDMARK), "the name rides every session now"
+      refute head.any? { |l| l.include?("good ") }, "no greeting off home — that's base-camp framing"
+    end
+
+    def test_header_on_home_leads_with_the_wordmark_then_a_full_width_rule
+      sb = home(sidebar(nodes: [proj("app"), ws("a")]))
+      head = sb.send(:header, Tmux::SIDEBAR_WIDTH)
+      assert_equal 4, head.size, "wordmark, greeting, console, rule"
+      assert head[0].include?(Sidebar::WORDMARK), "the name gets presence beyond the footer"
+      assert head[0].include?(Sidebar::BRAND),    "the wordmark wears the brand accent"
+      assert_equal "─" * Tmux::SIDEBAR_WIDTH, head[3].gsub(/\e\[[0-9;]*m/, ""), "a rule seats the tree below"
+    end
+
+    def test_greeting_addresses_the_operator_by_name_when_known
+      sb = sidebar
+      sb.instance_variable_set(:@operator, "will")
+      assert_match(/\Agood (morning|afternoon|evening), will\z/, sb.send(:greeting))
+
+      sb.instance_variable_set(:@operator, nil)
+      assert_match(/\Agood (morning|afternoon|evening)\z/, sb.send(:greeting), "no name → no comma")
+    end
+
+    def test_console_counts_worktrees_active_agents_and_open_prs
+      open_pr  = { "identifier" => "#7", "status" => "OPEN", "is_draft" => 0 }
+      draft_pr = { "identifier" => "#8", "status" => "OPEN", "is_draft" => 1 } # draft ≠ open
+      nodes = [proj("app"),
+               ws("a", path: "/wt/a", pr: open_pr),
+               ws("b", path: "/wt/b", pr: draft_pr),
+               ws("c", path: "/wt/c")]
+      sb = sidebar(nodes: nodes, agents: { "/wt/a" => :thinking, "/wt/b" => :done })
+      assert_equal "3 worktrees · 1 active · 1 PR open", sb.send(:console)
+    end
+
+    def test_console_quiets_the_zero_clauses
+      sb = sidebar(nodes: [proj("app"), ws("a")])
+      assert_equal "1 worktree", sb.send(:console), "no agents, no PRs → just the calm count"
+    end
+
+    # --- completion twinkle (the visual twin of the sound) -------------------
+
+    def test_sparkle_fires_only_on_done
+      sb = sidebar
+      sb.send(:sparkle_for, ["/wt/w"], { "/wt/w" => :waiting })
+      refute sb.send(:sparkling?, "/wt/w"), ":waiting already blinks — no twinkle"
+
+      sb.send(:sparkle_for, ["/wt/a"], { "/wt/a" => :done })
+      assert sb.send(:sparkling?, "/wt/a"), "a just-completed agent twinkles"
+    end
+
+    # The twinkle's lifetime is wall-clock (monotonic), NOT @pulse units — which is
+    # what stops it replaying on switch-back. @pulse barely advances while a pane is
+    # off-screen, so a pulse-denominated deadline would stay live ~48s hidden and
+    # re-twinkle on return; a wall-clock one lapses in real time — proven here with
+    # @pulse frozen entirely while a stubbed clock advances past the window.
+    def test_sparkle_settles_by_wall_clock_so_it_cannot_replay_on_return
+      sb = sidebar(pulse: 0)
+      clock = 1000.0
+      sb.define_singleton_method(:monotonic) { clock }
+
+      sb.send(:sparkle_for, ["/wt/a"], { "/wt/a" => :done })
+      assert sb.send(:sparkling?, "/wt/a"), "twinkles right after completion"
+
+      clock += Sidebar::SPARKLE_SECS + 1 # real time passes while the pane is off-screen
+      refute sb.send(:sparkling?, "/wt/a"), "expired by wall-clock with @pulse frozen — no replay"
+      refute sb.instance_variable_get(:@sparkles).key?("/wt/a"), "and self-GCs"
+    end
+
+    def test_pulsing_wakes_for_an_active_sparkle_on_an_otherwise_steady_done
+      sb = sidebar(nodes: [proj("app"), ws("a", path: "/wt/a")], agents: { "/wt/a" => :done })
+      sb.instance_variable_set(:@visible, true)
+      sb.instance_variable_set(:@visible_rows, rows_of(sb))
+      refute sb.send(:pulsing?), ":done alone is steady — the pane sleeps"
+
+      sb.send(:sparkle_for, ["/wt/a"], { "/wt/a" => :done })
+      assert sb.send(:pulsing?), "an active sparkle keeps the loop animating until it settles"
+    end
+
     # --- / filter mode (issue #60) -------------------------------------------
 
     # fzf-style fuzzy: a case-insensitive subsequence, order-sensitive, with an

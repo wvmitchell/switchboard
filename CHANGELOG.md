@@ -7,6 +7,21 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.25.0] — a branded sidebar header + completion sparkle (2026-06-25)
+
+### Added
+- **A brand header above the tree.** Every session now leads with a
+  `◖═◗ Switchboard` wordmark, so the name has presence beyond the footer. The
+  home sidebar (the anchor) additionally seats a time-of-day greeting that
+  addresses you by name and a one-line console of what the board is handling —
+  worktrees, agents working right now, and open PRs. The header drops
+  automatically on a pane too short to seat it.
+- **A completion sparkle.** A brief `✦` twinkle lands on a workspace row the
+  moment its hooked agent finishes a turn — the visual twin of the completion
+  sound. It rides the same `announce_sounds` gate (only the sidebar you're
+  watching twinkles, never a catch-up scan) and has a wall-clock lifetime, so it
+  expires in real time and never replays when you switch back to a session.
+
 ## [0.24.0] — type-to-filter the sidebar (2026-06-24)
 
 ### Added
