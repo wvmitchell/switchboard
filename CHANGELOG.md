@@ -7,6 +7,17 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.27.0] — a "you are here" pointer on the current workspace (2026-06-25)
+
+### Added
+- **A `»` pointer marks the workspace your current session is in.** Until now the
+  current workspace was distinguished only by its cyan name — colour alone, which
+  doesn't read for everyone. The pointer adds *shape* in the otherwise-blank
+  gutter, so "you are here" is legible without relying on colour. It's one column,
+  so name alignment and the PR badges don't move, and it rides the selection bar
+  too, so it stays visible even when that row is highlighted. The cyan name stays —
+  this is colour *and* shape, not a replacement.
+
 ## [0.26.0] — toggle the full header on every session (2026-06-25)
 
 ### Added

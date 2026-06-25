@@ -343,6 +343,11 @@ The motion lives in the glyph, not a brightness ramp, so the spinner reads the
 same on any background. (Branch rows use the palette's dim grey for the same
 reason.)
 
+**You are here.** The workspace your current session sits in is marked with a
+`»` pointer in the gutter *and* its name in cyan — shape and colour together, so
+it reads at a glance without relying on colour alone. The pointer rides the
+selection bar too, so it stays visible even when that row is highlighted.
+
 **Bold until you look.** When a hooked agent finishes a turn or asks for input,
 its workspace name goes **bold** and stays bold until you switch into it — so a
 completion that lands while you're heads-down elsewhere is still waiting for your

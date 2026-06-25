@@ -67,6 +67,12 @@ module Switchboard
     SPARKLE_COLORED = SPARKLE_GLYPHS.map { |g| "\e[1;92m#{g}\e[0m" }.freeze
     SPARKLE_SECS    = 3.0        # wall-clock lifetime of a twinkle before it settles to DONE
 
+    # The "you are here" pointer: marks the session's current workspace with SHAPE,
+    # not just the cyan name, so it reads without relying on color. One column,
+    # dropped into the otherwise-blank ws gutter, so the 4-col prefix — and name
+    # alignment, and the badge math off it — is unchanged; blank on every other row.
+    CURRENT_MARK = "»"
+
     BRANCH_FG = "\e[90m"         # branch rows: bright-black, a theme-relative dim (#23)
     RELOAD_CONFIG_BYTE = "\x12"  # C-r: the dedicated post-edit "re-read config" poke (Tmux.poke_sidebar_of)
 
@@ -483,7 +489,8 @@ module Switchboard
 
     # Which workspace is this sidebar's session in? Matched by the sidebar's
     # working directory, so it covers any session in a worktree (switchboard,
-    # emdash, conductor). Shown in bold; independent of the navigation cursor.
+    # emdash, conductor). Marked with the » pointer + a cyan name (CURRENT_MARK);
+    # independent of the navigation cursor.
     def locate
       here = Tmux.pane_path(ENV["TMUX_PANE"])
       @current_path = here && @nodes.select { |n| n.kind == "ws" }
@@ -1438,9 +1445,17 @@ module Switchboard
         # reads expanded (▾); the ▸ collapsed glyph only applies to the normal tree.
         folded = @filter.nil? && @collapsed.include?(node.project)
         "#{folded ? '▸' : '▾'} #{node.project}"
-      when "ws"   then "  #{ws_glyph(node.path)} #{node.name}"
+      when "ws"   then "#{pointer(node.path)} #{ws_glyph(node.path)} #{node.name}"
       else             "     #{node.last ? '└' : '├'}#{node.active ? '●' : ' '}#{node.branch}"
       end
+    end
+
+    # The bare (uncolored) "you are here" gutter pointer for a workspace path —
+    # CURRENT_MARK for the session's current workspace, a blank otherwise. Shared by
+    # plain (so the marker survives under the reverse-video cursor bar, where color
+    # is stripped but shape isn't); colored builds its own bold-cyan form.
+    def pointer(path)
+      path == @current_path ? CURRENT_MARK : " "
     end
 
     def colored(node, text, current: false)
@@ -1449,12 +1464,14 @@ module Switchboard
       when "ws"
         dot = sparkling?(node.path) ? SPARKLE_COLORED[(@pulse / 2) % SPARKLE_COLORED.size] : dot_for(@agents[node.path])
         name = trunc(node.name.to_s, [text.length - 4, 1].max)
+        ptr = " "
         if current
-          name = "\e[36m#{name}\e[0m"            # "you are here" — cyan, matching the prompt's directory color
+          ptr  = "#{BRAND}#{CURRENT_MARK}\e[0m"  # "you are here" pointer — bold-cyan, switchboard's signature accent
+          name = "\e[36m#{name}\e[0m"            # ...and the name cyan, matching the prompt's directory color
         elsif @attention.include?(node.path)
           name = "\e[1;33m#{name}\e[0m"          # unviewed completion — bold yellow until you look (the current row is never marked)
         end
-        "  #{dot} #{name}"
+        "#{ptr} #{dot} #{name}"
       else "#{BRANCH_FG}#{text}\e[0m"
       end
     end

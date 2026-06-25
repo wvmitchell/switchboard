@@ -357,6 +357,41 @@ module Switchboard
       refute_includes out, "\e[1;33m", "...and never also the attention highlight"
     end
 
+    # --- "you are here" pointer ----------------------------------------------
+    # The current workspace also carries a SHAPE cue — a » gutter pointer — so it
+    # reads without relying on the cyan color alone (the accessibility win).
+
+    def test_colored_points_at_the_current_workspace
+      sb = sidebar(current_path: "/wt/a")
+      out = sb.send(:colored, ws("a", path: "/wt/a"), "  ● a", current: true)
+      assert_includes out, Sidebar::CURRENT_MARK, "the current workspace gets the » pointer"
+    end
+
+    def test_colored_leaves_other_workspaces_unmarked
+      sb = sidebar(current_path: "/wt/a")
+      out = sb.send(:colored, ws("b", path: "/wt/b"), "  ● b", current: false)
+      refute_includes out, Sidebar::CURRENT_MARK, "a non-current workspace keeps a blank gutter"
+    end
+
+    # plain() carries the pointer too, so the cue survives under the reverse-video
+    # cursor bar (where color is stripped but shape isn't).
+    def test_plain_points_at_the_current_workspace
+      sb = sidebar(current_path: "/wt/a")
+      assert sb.send(:plain, ws("a", path: "/wt/a")).start_with?(Sidebar::CURRENT_MARK),
+             "the current workspace's plain row leads with the » pointer"
+      refute sb.send(:plain, ws("b", path: "/wt/b")).start_with?(Sidebar::CURRENT_MARK),
+             "another workspace's plain row does not"
+    end
+
+    # The pointer is one column, so a workspace name still starts at the same
+    # offset whether or not the row is current — no reflow between rows.
+    def test_pointer_preserves_name_alignment
+      sb = sidebar(current_path: "/wt/a")
+      here  = sb.send(:plain, ws("a", path: "/wt/a"))
+      other = sb.send(:plain, ws("b", path: "/wt/b"))
+      assert_equal other.index("b"), here.index("a"), "names line up regardless of the pointer"
+    end
+
     # --- scrolling -----------------------------------------------------------
 
     def test_scroll_keeps_the_cursor_within_the_window
