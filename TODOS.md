@@ -17,7 +17,13 @@ and where to start.
   `File.join(worktree_root, project_name, name)`). One validation point closes
   both. *Start in:* `Registrar.register` / `CLI#add_project`; decide the collision
   policy (reject vs auto-suffix). Low priority — the collision needs unusual names
-  and `prune --dry-run` makes it visible before anything is killed.
+  and `prune --dry-run` makes it visible before anything is killed. *Also covers
+  the leaf:* `switchboard rename` (issue #42) and the sidebar `r` produce a new
+  workspace leaf that `Tmux.session_name` sanitizes the same way, so `rename
+  foo.bar` next to an existing `foo-bar` workspace collides on `sb/proj/foo-bar`
+  — the move succeeds but `rename_session` then fails into the existing name
+  (rename now reports `:partial`; prune/doctor surface the orphan). Same
+  validation point should guard leaf names, not just project names.
 
 - **`doctor` warns on missing/moved project repo dirs.** A `switchboard doctor`
   line listing config projects whose `path` no longer exists. *Why:* `prune`
@@ -26,6 +32,33 @@ and where to start.
   is the read-only place to surface it before orphans accumulate. *Start in:*
   `CLI#doctor` (a `Dir.exist?` loop over `config.projects`). Independent of the
   above.
+
+## Rename / worktree-move (issue #42) follow-ups
+
+- **`clear_bridge` only deletes a *verified* bridge, not any symlink.**
+  `Git.move_worktree` calls `clear_bridge(new_path)` to reclaim a stale rename
+  bridge squatting the target; `clear_bridge` deletes *any* symlink at that path
+  (`git.rb:98`), trusting the comment's invariant ("only ever a symlink, never a
+  real worktree"). A user-created symlink at exactly
+  `<worktree_root>/<project>/<name>` would be silently removed. *Why not now:*
+  `clear_bridge` is shared by `Creator.create`'s reclaim, so hardening it is
+  broader than #42 and needs its own tests; the path is implausible in practice.
+  *Start in:* `Git.clear_bridge` — only delete when the symlink target is dangling
+  or resolves under the worktree root (a known bridge shape), else leave it and let
+  the `git worktree move` fail loudly. Low priority, low likelihood.
+
+- **Narrow the rename move→session-rename prune window (or make prune
+  bridge-aware).** `Rename.perform` does `Git.move_worktree` then
+  `Tmux.rename_session` as two steps. In the (microsecond) gap the dir is at the
+  NEW path but the session still has the OLD leaf name, and the old path is only a
+  bridge symlink — invisible to `git worktree list`. A concurrent `Reconcile.prune`
+  (a `go_home` launch or a manual `switchboard prune` in another terminal) sampling
+  exactly then would see `sb/<proj>/<old>` as an orphan and could kill a live
+  agent. *Why low:* the window is two consecutive shell-outs, and it's pre-existing
+  — the sidebar `r` rename always did move-then-rename; #42 only extracted it.
+  *Start in:* teach `Reconcile.prune` to treat a session whose leaf has a live
+  bridge symlink as non-orphaned, OR have `Rename` hold a brief guard. Surfaced by
+  Codex during the #42 review.
 
 ## PR-badge refresh (issue #19) follow-ups
 

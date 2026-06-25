@@ -26,6 +26,7 @@ module Switchboard
       when "refresh"           then refresh(*refresh_args(argv))
       when "enable-hooks"      then enable_hooks(argv[1])
       when "disable-hooks"     then disable_hooks(argv[1])
+      when "rename"            then exit(1) unless rename(argv[1])
       when "sound"             then play_sound(argv[1])
       when "sidebar"           then Sidebar.run
       when "poke-sidebar"      then Tmux.poke_current_sidebar
@@ -248,6 +249,102 @@ module Switchboard
       dir = path ? File.expand_path(path) : Dir.pwd
       top = `git -C #{Shellwords.escape(dir)} rev-parse --show-toplevel 2>/dev/null`.strip
       top.empty? ? nil : top
+    end
+
+    # Rename the workspace the cwd is in (issue #42) — the agent verb: a running
+    # agent has the best context for a good name, so let it (re)name its own live
+    # workspace. Resolves the workspace from cwd, refuses the primary checkout,
+    # then runs the shared Rename core (dir move + bridge + session rename).
+    # Returns true on success so `run` can exit non-zero on failure — an agent's
+    # `switchboard rename x && cd …` must not proceed past a failed rename.
+    def rename(newname)
+      return warn("usage: switchboard rename <newname>") if newname.nil?
+
+      wt = current_worktree
+      return warn("not inside a switchboard-managed worktree (cd into one first)") unless wt
+      return warn("can't rename the primary checkout") if wt.primary
+
+      sub = subpath_in(wt.path) # capture before the move so the cd hint is subdir-aware
+      report_rename(Rename.perform(config, wt.project, wt.path, newname), sub)
+    end
+
+    # Map a Rename::Result to output, returning true on success (false ⇒ `run`
+    # exits non-zero). Both :ok and :partial moved the dir, so both announce the
+    # new path; :partial adds the orphaned-session caveat and still fails.
+    def report_rename(result, sub)
+      case result.status
+      when :ok
+        announce_landing(result, sub)
+        Tmux.poke_current_sidebar if ENV["TMUX"]
+        true
+      when :partial
+        announce_landing(result, sub)
+        warn "  the tmux session rename failed — run `switchboard prune` to clean the orphan"
+        false
+      when :unchanged
+        puts "already named #{File.basename(result.dest)}"
+        true
+      when :invalid
+        warn "invalid workspace name (letters, digits, . - _ only; no `/`)"
+        false
+      when :exists
+        warn "already exists: #{result.dest}"
+        false
+      else # :failed
+        warn "rename failed (git worktree move)"
+        false
+      end
+    end
+
+    # Point the user at the new path. The interactive shell's cwd is now stale
+    # (the bridge keeps the OLD path resolvable, but `pwd` still reports it), so
+    # cd into the new one — preserving any subdir they were standing in.
+    def announce_landing(result, sub)
+      target = sub.empty? ? result.dest : File.join(result.dest, sub)
+      puts "renamed to #{result.dest}"
+      puts "  cd into the new path: cd #{Shellwords.escape(target)}"
+    end
+
+    # The workspace the cwd is in, as a Worktree (project, path, primary), or nil
+    # if cwd isn't inside any registered project's worktree. Reuses Model (same
+    # tree the sidebar navigates). Both sides are realpath-normalized so a match
+    # holds across macOS symlinked roots (/tmp, symlinked HOME); `primary` is
+    # re-derived from realpath too, not trusted from Model's raw string compare.
+    def current_worktree
+      top = worktree_at(nil)
+      real = top && real_path(top)
+      return nil unless real
+
+      Model.new(config, with_dirty: false).projects.each do |project|
+        project.worktrees.each do |w|
+          wp = real_path(w.path)
+          next unless wp == real
+
+          w.primary = wp == real_path(project.path)
+          return w
+        end
+      end
+      nil
+    end
+
+    # File.realpath, degrading to nil (not the raw path, unlike the realpath
+    # helpers in reconcile/attention/agent_state) on a vanished path: a cwd that
+    # no longer resolves must match NO worktree, so `current_worktree` returns nil
+    # rather than risk a bogus match against an unresolved string.
+    def real_path(path)
+      File.realpath(path)
+    rescue StandardError
+      nil
+    end
+
+    # cwd relative to a worktree root ("" when standing at the root), so the
+    # rename cd hint can return the user to the same subdir under the new path.
+    def subpath_in(root)
+      cwd = real_path(Dir.pwd)
+      base = real_path(root)
+      return "" unless cwd && base && cwd.start_with?("#{base}/")
+
+      cwd[(base.length + 1)..]
     end
 
     # Play a configured sound, for trying audio out / picking sounds (and showing
@@ -514,6 +611,7 @@ module Switchboard
           switchboard refresh      re-fetch PR badges from gh (normally automatic)
           switchboard enable-hooks [P]   wire agent-state dots in a worktree (default: cwd)
           switchboard disable-hooks [P]  remove them from that worktree
+          switchboard rename NAME  rename the current workspace (dir + tmux session); then cd into the new path
           switchboard sound [done|waiting]  play a state's sound (try audio / pick sounds)
           switchboard prune        kill orphaned sb/ sessions (--dry-run / -n previews)
           switchboard quit         close ALL switchboard sessions (full teardown — kills the one you're in too)

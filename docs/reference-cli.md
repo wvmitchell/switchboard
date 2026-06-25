@@ -94,6 +94,23 @@ switchboard-created worktrees get this automatically.
 Remove switchboard's hooks from a worktree's local settings (leaving any other
 settings intact). Defaults to the current worktree.
 
+### `switchboard rename <name>`
+Rename the workspace you're standing in: moves the worktree directory to `<name>`
+(the display leaf) and renames its `sb/` tmux session in place, so a running agent
+and its conversation survive. The git branch is left untouched (its PR link stays
+intact). This is the verb for an **agent to (re)name its own live workspace** once
+it knows what the work actually is — the sidebar's `r` key does the same from the
+tree.
+
+It refuses to rename the primary/trunk checkout, a name that collapses to empty,
+or a name containing `/` (the leaf must be flat). It exits non-zero on any failure
+so `switchboard rename x && cd …` is safe to chain.
+
+> **After a rename, `cd` into the new path.** The move leaves a symlink bridge at
+> the old path (so a running agent's hooks keep resolving), but your interactive
+> shell's `pwd` still reports the old name. The command prints the exact `cd` to
+> run — into the same subdir you were in, under the new path.
+
 ### `switchboard sound [done|waiting]`
 Play a state's configured sound, for trying audio out or auditioning sounds.
 Defaults to `done`. Uses the global sound config, blocks until it finishes, and

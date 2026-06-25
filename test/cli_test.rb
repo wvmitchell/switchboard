@@ -420,6 +420,158 @@ module Switchboard
       assert_includes out, "replaced a prior binding: send-keys hi"
     end
 
+    # --- switchboard rename (issue #42) -------------------------------------
+
+    # Config registering proj -> repo, plus a linked worktree at wts/proj/<leaf>.
+    # Returns the worktree path.
+    def rename_fixture(leaf = "old")
+      repo = temp_git_repo("proj")
+      File.write(Config.path, YAML.dump("worktree_root" => path("wts"),
+                                        "projects" => [{ "name" => "proj", "path" => repo }]))
+      dest = path("wts", "proj", leaf)
+      git(repo, "worktree", "add", "-q", dest, "-b", leaf)
+      dest
+    end
+
+    def test_rename_without_a_name_warns_and_fails
+      err = capture_err { refute CLI.rename(nil) }
+      assert_match(/usage: switchboard rename/, err)
+    end
+
+    def test_rename_outside_a_worktree_warns_and_fails
+      FileUtils.mkdir_p(path("plain"))
+      Dir.chdir(path("plain")) do
+        err = capture_err { refute CLI.rename("x") }
+        assert_match(/not inside a switchboard-managed worktree/, err)
+      end
+    end
+
+    def test_rename_refuses_the_primary_checkout
+      stub_method(CLI, :current_worktree, -> { Worktree.new(project: "proj", path: "/x", primary: true) }) do
+        err = capture_err { refute CLI.rename("x") }
+        assert_match(/can't rename the primary checkout/, err)
+      end
+    end
+
+    def test_rename_renames_a_managed_worktree_from_inside_it
+      old = rename_fixture
+      # git canonicalizes the worktree path (macOS /var -> /private/var), so assert
+      # on the leaf shape, not the exact symlinked prefix.
+      out = Dir.chdir(old) { capture { assert CLI.rename("fresh") } }
+      assert File.directory?(path("wts", "proj", "fresh"))
+      assert_includes out, "renamed to "
+      assert_includes out, "wts/proj/fresh"
+      assert_includes out, "cd into the new path"
+    end
+
+    def test_rename_reports_partial_and_fails
+      stub_method(CLI, :current_worktree, -> { Worktree.new(project: "proj", path: "/x", primary: false) }) do
+        stub_method(Rename, :perform, ->(*) { Rename::Result.new(:partial, "/wts/proj/new") }) do
+          err = nil
+          capture { err = capture_err { refute CLI.rename("new") } } # :partial also puts the landing to stdout
+          assert_match(/session rename failed/, err)
+        end
+      end
+    end
+
+    def test_rename_reports_exists_and_fails
+      stub_method(CLI, :current_worktree, -> { Worktree.new(project: "proj", path: "/x", primary: false) }) do
+        stub_method(Rename, :perform, ->(*) { Rename::Result.new(:exists, "/wts/proj/taken") }) do
+          err = capture_err { refute CLI.rename("taken") }
+          assert_match(/already exists/, err)
+        end
+      end
+    end
+
+    def test_rename_reports_unchanged_and_succeeds
+      stub_method(CLI, :current_worktree, -> { Worktree.new(project: "proj", path: "/x", primary: false) }) do
+        stub_method(Rename, :perform, ->(*) { Rename::Result.new(:unchanged, "/wts/proj/old") }) do
+          out = capture { assert CLI.rename("old") }
+          assert_match(/already named old/, out)
+        end
+      end
+    end
+
+    def test_current_worktree_is_nil_outside_any_repo
+      FileUtils.mkdir_p(path("plain"))
+      Dir.chdir(path("plain")) { assert_nil CLI.current_worktree }
+    end
+
+    def test_current_worktree_finds_the_managed_worktree
+      old = rename_fixture
+      wt = Dir.chdir(old) { CLI.current_worktree }
+      refute_nil wt
+      assert_equal "proj", wt.project
+      refute wt.primary, "a linked worktree isn't primary"
+    end
+
+    def test_current_worktree_degrades_when_realpath_raises
+      old = rename_fixture
+      Dir.chdir(old) do
+        stub_method(File, :realpath, ->(*) { raise Errno::ENOENT }) do
+          assert_nil CLI.current_worktree
+        end
+      end
+    end
+
+    def test_run_rename_exits_nonzero_on_failure
+      capture_err do
+        e = assert_raises(SystemExit) { CLI.run(["rename"]) }
+        assert_equal 1, e.status
+      end
+    end
+
+    # The realpath-derived primary flag is the guard that stops renaming the trunk —
+    # exercise its true branch (the linked-worktree test only covers false).
+    def test_current_worktree_flags_the_primary_checkout
+      repo = temp_git_repo("proj")
+      File.write(Config.path, YAML.dump("worktree_root" => path("wts"),
+                                        "projects" => [{ "name" => "proj", "path" => repo }]))
+      wt = Dir.chdir(repo) { CLI.current_worktree }
+      refute_nil wt
+      assert wt.primary, "the trunk checkout is flagged primary"
+    end
+
+    # The cd hint must return you to the subdir you were standing in, under the new
+    # path (subpath_in non-empty branch + report_rename's File.join).
+    def test_rename_cd_hint_preserves_the_subdir
+      old = rename_fixture
+      FileUtils.mkdir_p(File.join(old, "sub", "dir"))
+      out = Dir.chdir(File.join(old, "sub", "dir")) { capture { assert CLI.rename("fresh") } }
+      assert_includes out, "wts/proj/fresh/sub/dir"
+    end
+
+    def test_rename_reports_invalid_and_fails
+      stub_method(CLI, :current_worktree, -> { Worktree.new(project: "proj", path: "/x", primary: false) }) do
+        stub_method(Rename, :perform, ->(*) { Rename::Result.new(:invalid, nil) }) do
+          err = capture_err { refute CLI.rename("bad name") }
+          assert_match(/invalid workspace name/, err)
+        end
+      end
+    end
+
+    def test_rename_reports_failed_and_fails
+      stub_method(CLI, :current_worktree, -> { Worktree.new(project: "proj", path: "/x", primary: false) }) do
+        stub_method(Rename, :perform, ->(*) { Rename::Result.new(:failed, nil) }) do
+          err = capture_err { refute CLI.rename("x") }
+          assert_match(/rename failed/, err)
+        end
+      end
+    end
+
+    def test_rename_pokes_the_sidebar_when_inside_tmux
+      poked = false
+      stub_method(CLI, :current_worktree, -> { Worktree.new(project: "proj", path: "/x", primary: false) }) do
+        stub_method(Rename, :perform, ->(*) { Rename::Result.new(:ok, "/wts/proj/new") }) do
+          stub_method(Tmux, :poke_current_sidebar, -> { poked = true }) do
+            ENV["TMUX"] = "/tmp/fake-tmux,1,0"
+            capture { assert CLI.rename("new") }
+          end
+        end
+      end
+      assert poked, "an :ok rename pokes the sidebar inside tmux"
+    end
+
     # CLI memoizes its Config; clear it so each test reads its own sandbox config.
     def teardown
       CLI.instance_variable_set(:@config, nil)

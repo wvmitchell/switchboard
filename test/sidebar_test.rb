@@ -1371,12 +1371,51 @@ module Switchboard
       reloaded = false
       stub_method(sb, :prompt_line, ->(*) { nil }) do
         stub_method(sb, :reload, -> { reloaded = true }) do
-          stub_method(Git, :move_worktree, ->(*, **) { flunk "no move on cancel" }) do
+          stub_method(Rename, :perform, ->(*) { flunk "no rename on cancel" }) do
             sb.send(:rename)
           end
         end
       end
       assert reloaded, "a cancelled rename returns to the tree"
+    end
+
+    # The sidebar shares the rename core with `switchboard rename` (Rename.perform)
+    # and passes the highlighted workspace's project + path + the typed name.
+    def test_rename_delegates_to_the_shared_rename_core
+      File.write(Config.path, YAML.dump("projects" => [{ "name" => "app", "path" => "/x" }]))
+      sb = sidebar(nodes: [proj("app"), ws("alpha", path: "/wt/alpha")], cursor: 1)
+      sb.instance_variable_set(:@config, Config.new)
+      seen = nil
+      reloaded = false
+      stub_method(sb, :prompt_line, ->(*) { "beta" }) do
+        stub_method(sb, :reload, -> { reloaded = true }) do
+          stub_method(Rename, :perform, lambda { |_cfg, project, old_path, name|
+            seen = [project, old_path, name]
+            Rename::Result.new(:ok, "/wt/beta")
+          }) do
+            sb.send(:rename)
+          end
+        end
+      end
+      assert_equal ["app", "/wt/alpha", "beta"], seen
+      assert reloaded
+    end
+
+    # Unlike the CLI, the sidebar discards the status and just reloads — silent on
+    # any failure (the tree re-reads git truth). It must not raise or message.
+    def test_rename_stays_silent_on_a_failed_result
+      File.write(Config.path, YAML.dump("projects" => [{ "name" => "app", "path" => "/x" }]))
+      sb = sidebar(nodes: [proj("app"), ws("alpha", path: "/wt/alpha")], cursor: 1)
+      sb.instance_variable_set(:@config, Config.new)
+      reloaded = false
+      stub_method(sb, :prompt_line, ->(*) { "beta" }) do
+        stub_method(sb, :reload, -> { reloaded = true }) do
+          stub_method(Rename, :perform, ->(*) { Rename::Result.new(:failed, nil) }) do
+            sb.send(:rename)
+          end
+        end
+      end
+      assert reloaded, "the sidebar reloads regardless of the rename outcome"
     end
 
     def test_add_local_aborts_when_the_prompt_is_cancelled

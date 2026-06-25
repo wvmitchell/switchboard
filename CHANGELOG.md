@@ -7,6 +7,24 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.31.0] — `switchboard rename` from inside a workspace (2026-06-25)
+
+### Added
+- **`switchboard rename <name>` renames the current workspace.** The agent inside a
+  worktree has the best context for a good name — its branch, its diff, the task it's
+  on — but until now renaming was UI-only (sidebar `r`). The new verb resolves the
+  workspace from your cwd, moves the worktree directory, leaves a bridge symlink so a
+  running agent's hooks keep resolving, and renames the `sb/` tmux session in place so
+  the live agent and its conversation survive (#42). The git branch is left untouched
+  (its PR link stays intact). The sidebar `r` key and the CLI now share one path
+  (`Rename`). It refuses the primary checkout, a name that sanitizes to empty, and a
+  name containing `/` (the leaf must be flat); it exits non-zero on failure so
+  `switchboard rename x && cd …` is safe to chain, and prints the exact `cd` to run
+  (the shell's cwd goes stale — the bridge keeps the old path resolvable, but `pwd`
+  still reports it), preserving any subdir you were in. A case-only rename (`Old`→`old`)
+  is handled correctly on case-insensitive filesystems. If the dir moves but the tmux
+  session rename fails, it reports a partial result and points you at `switchboard prune`.
+
 ## [0.30.0] — show the git diff count on workspace rows (2026-06-25)
 
 ### Added

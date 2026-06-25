@@ -1290,28 +1290,19 @@ module Switchboard
       reload unless deleting_current
     end
 
-    # Rename a workspace: move its worktree directory (the display name). The
-    # branch is left as-is so its PR link and git identity stay intact.
+    # Rename a workspace: move its worktree directory (the display name) + rename
+    # its session in place. Shares the core with `switchboard rename` via Rename
+    # (issue #42); the sidebar reloads on every outcome (silent on failure, as
+    # before — the tree just re-reads git truth).
     def rename
       node = current
       return unless node && node.kind == "ws"
-
-      project = @config.project(node.project)
-      return unless project
+      return unless @config.project(node.project)
 
       newname = prompt_line("rename #{File.basename(node.path)} to")
       return reload if blank_input?(newname)
 
-      dest = File.join(File.dirname(node.path), Creator.sanitize(newname))
-      # bridge: leave a symlink at the old path so a running agent's frozen
-      # project dir keeps resolving and its hooks keep reporting (see move_worktree).
-      return reload unless Git.move_worktree(project["path"], node.path, dest, bridge: true)
-
-      # Rename the session in place (don't kill it) so a running agent and its
-      # conversation survive. The moved dir keeps its inode, so cwd follows.
-      old_name = Tmux.session_name(Worktree.new(project: node.project, path: node.path))
-      new_name = Tmux.session_name(Worktree.new(project: node.project, path: dest))
-      Tmux.rename_session(old_name, new_name)
+      Rename.perform(@config, node.project, node.path, newname)
       reload
     end
 

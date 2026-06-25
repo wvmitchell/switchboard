@@ -168,6 +168,7 @@ bin/switchboard clone U [N]     # clone a repo under projects_root, then registe
 bin/switchboard                 # start: attach home from a shell, or toggle the sidebar inside tmux (alias: sb)
 bin/switchboard refresh         # re-fetch PR badges from gh
 bin/switchboard enable-hooks [P]  # exact agent-state dots in a worktree (see below)
+bin/switchboard rename NAME     # rename the current workspace (dir + tmux session); then cd into the new path
 bin/switchboard sound [done|waiting]  # play a state's sound (try audio / pick sounds)
 bin/switchboard doctor          # check dependencies + config
 ```
