@@ -26,6 +26,7 @@ or `e` in the sidebar — both reload on save.
 | `branch_prefix` | string | _(none)_ | New branches become `<prefix>/<name>`. Empty/unset ⇒ bare `<name>`. |
 | `agent_state_hooks` | bool | `true` | Auto-wire per-worktree agent-state hooks on worktree create. |
 | `prune_on_launch` | bool | `true` | Prune orphaned `sb/` sessions when landing on the home session. |
+| `suggest_names` | bool | `true` | Offer a rename suggestion (the agent's pane title, then the first commit subject). `false` ⇒ sidebar `r` opens an empty prompt and no-arg `switchboard rename` prints usage. |
 | `session_command` | string | _(none)_ | Command typed into a worktree's window the first time its session is created. Per-project override wins. |
 | `sounds` | map or `false` | _(on, built-ins)_ | Completion sounds. See [`sounds`](#sounds). |
 | `tmux_keys` | map | _(toggle `s`)_ | Which prefix keys switchboard binds. See [`tmux_keys`](#tmux_keys). |
@@ -42,6 +43,7 @@ base: origin/main                        # default ref new worktrees branch from
 branch_prefix: wvmitchell                # new branches become wvmitchell/<name>
 agent_state_hooks: true                  # auto-wire agent-state dots on create
 prune_on_launch: true                    # tidy orphaned sessions on landing home
+suggest_names: true                      # rename suggests a name (agent pane title / first commit)
 session_command: claude                  # run this on a worktree's first session
 sounds:
   enabled: true

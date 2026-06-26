@@ -1297,13 +1297,34 @@ module Switchboard
     def rename
       node = current
       return unless node && node.kind == "ws"
-      return unless @config.project(node.project)
+      project = @config.project(node.project)
+      return unless project
 
-      newname = prompt_line("rename #{File.basename(node.path)} to")
+      # Prefill the prompt with a suggested name (#84) — the agent's pane title,
+      # then the first commit subject — so you rarely type a name. Snapshotted here
+      # (bare ↵ accepts it); editable; empty when suggestions are off / none found.
+      wt = Worktree.new(project: node.project, path: node.path, base: project["base_ref"])
+      newname = prompt_line("rename #{File.basename(node.path)} to",
+                            prefill: Rename.suggest(@config, wt, session: Tmux.session_name(wt)).first)
       return reload if blank_input?(newname)
 
-      Rename.perform(@config, node.project, node.path, newname)
+      # The CLI warns these to stderr; the sidebar can't (stderr would paint over
+      # the TUI), so flash on the bottom row — a silent reload would leave a failed
+      # rename looking like nothing happened.
+      msg = rename_error(Rename.perform(@config, node.project, node.path, newname))
+      flash(msg) if msg
       reload
+    end
+
+    # Bottom-row message for a non-success rename, or nil when it succeeded (the
+    # reloaded tree is feedback enough; :unchanged is not an error).
+    def rename_error(result)
+      case result.status
+      when :exists  then "already exists: #{File.basename(result.dest)}"
+      when :invalid then "invalid name — letters, digits, . - _ only, no /"
+      when :partial then "renamed the dir, but the tmux session rename failed — run prune"
+      when :failed  then "rename failed (git worktree move)"
+      end
     end
 
     # Single-key y/N confirmation on the bottom row.
@@ -1324,8 +1345,8 @@ module Switchboard
     # every name prompt cancels the same way. The hidden cursor is restored in an
     # ensure so a raise can't strand a visible block cursor; any read fault returns
     # nil (cancel), the same graceful-degrade contract the cooked version had.
-    def prompt_line(label)
-      buf = +""
+    def prompt_line(label, prefill: "")
+      buf = +(prefill || "") # a seeded buffer edits/submits normally; bare ↵ accepts it
       draw_prompt(label, buf)
       loop do
         chunk = read_prompt_key

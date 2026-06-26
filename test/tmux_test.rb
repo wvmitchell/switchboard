@@ -70,6 +70,38 @@ module Switchboard
       assert_nil Tmux.work_dir(""), "no panes (server gone) -> nil, so -c is just omitted"
     end
 
+    # --- glyph_titled: pick Claude's pane title by its leading activity glyph (#84) ---
+
+    def test_glyph_titled_picks_a_title_with_a_leading_activity_glyph
+      # zsh shows an ASCII hostname; the sidebar shows sb-sidebar; Claude leads with
+      # a non-ASCII glyph + space. Only the last qualifies.
+      raw = "Wills-MacBook-Pro.local\n#{Tmux::SIDEBAR_TITLE}\n⠐ Fix tmux status bar\n"
+      assert_equal "⠐ Fix tmux status bar", Tmux.glyph_titled(raw)
+    end
+
+    def test_glyph_titled_accepts_the_idle_asterisk_glyph
+      assert_equal "✳ Research the plan", Tmux.glyph_titled("zsh-title\n✳ Research the plan\n")
+    end
+
+    def test_glyph_titled_is_nil_without_a_glyph_title
+      # only ASCII titles (shell hostname, program name) -> no Claude title -> nil
+      assert_nil Tmux.glyph_titled("Wills-MacBook-Pro.local\nvim\n#{Tmux::SIDEBAR_TITLE}\n")
+      assert_nil Tmux.glyph_titled(""), "no panes -> nil -> falls back to the git suggestion"
+    end
+
+    def test_glyph_titled_requires_a_space_after_the_glyph
+      # an accented program title (no "glyph + space" shape) must not masquerade as Claude
+      assert_nil Tmux.glyph_titled("über-tool\n")
+    end
+
+    # A pane title can carry invalid UTF-8 (a non-UTF-8 locale's OSC title); the
+    # regex must not raise — it's scrubbed, degrading gracefully.
+    def test_glyph_titled_does_not_raise_on_invalid_utf8
+      bad = (+"\xFF bad title").force_encoding("UTF-8")
+      refute bad.valid_encoding?, "the fixture is genuinely invalid UTF-8"
+      assert_includes Tmux.glyph_titled("#{bad}\n").to_s, "bad title" # scrubbed + matched, no raise
+    end
+
     # --- spawn width clamp: a saved width can't starve the work pane (issue #78) ---
 
     def test_fit_width_returns_the_saved_width_on_a_roomy_window

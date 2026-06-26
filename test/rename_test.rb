@@ -171,5 +171,114 @@ module Switchboard
       end
       assert File.directory?(path("wts", "proj", "foo-bar"))
     end
+
+    # --- name suggestion (issue #84) -----------------------------------------
+
+    def test_slugify_title_strips_the_glyph_downcases_and_caps_at_a_word_boundary
+      assert_equal "fix-tmux-status-bar", Rename.slugify_title("⠐ Fix tmux status bar text truncation")
+    end
+
+    def test_slugify_title_handles_the_idle_glyph
+      assert_equal "hello-world", Rename.slugify_title("✳ Hello World")
+    end
+
+    def test_slugify_title_rejects_a_slash_and_empties
+      assert_nil Rename.slugify_title("feature/auth"), "a surviving slash is rejected"
+      assert_nil Rename.slugify_title("⠐ "), "glyph-only -> empty -> nil"
+      assert_nil Rename.slugify_title(""), "empty -> nil"
+      assert_nil Rename.slugify_title(nil), "nil -> nil"
+    end
+
+    # Invalid UTF-8 (a non-UTF-8 locale's OSC title / i18n commit subject) must NOT
+    # crash the regex/downcase/sanitize — it's scrubbed, the UI degrades gracefully.
+    def test_slugify_title_scrubs_invalid_utf8_instead_of_raising
+      bad = (+"\xFF Fix the bug").force_encoding("UTF-8")
+      refute bad.valid_encoding?, "the fixture is genuinely invalid UTF-8"
+      assert_equal "fix-the-bug", Rename.slugify_title(bad)
+    end
+
+    def test_slugify_title_strips_a_trailing_punctuation_dash
+      assert_equal "fix-the-bug", Rename.slugify_title("Fix the bug !")
+    end
+
+    def test_slugify_title_strips_a_leading_dash_from_a_dropped_nonascii_alnum
+      # "é" survives the Unicode [[:alnum:]] glyph-strip but ASCII \w in sanitize
+      # drops it, leaving a leading dash that must be trimmed.
+      assert_equal "thing-here", Rename.slugify_title("é-thing here")
+    end
+
+    # A Worktree for suggest() — path under wts/proj, base optional (git is stubbed).
+    def wt(leaf, base: nil)
+      Worktree.new(project: "proj", path: path("wts", "proj", leaf), base: base)
+    end
+
+    # Title present -> use it and SKIP the git fallback (a fallback shouldn't shell
+    # `git log` on every keypress). The flunk proves the laziness.
+    def test_suggest_uses_the_title_and_skips_the_lazy_git_fallback
+      config = config_for(temp_git_repo("proj"))
+      stub_method(Tmux, :agent_pane_title, ->(*) { "⠐ Fix the parser" }) do
+        stub_method(Git, :first_commit_subject, ->(*) { flunk "git fallback must be lazy when a title exists" }) do
+          assert_equal %w[fix-the-parser], Rename.suggest(config, wt("alpha"), session: "s")
+        end
+      end
+    end
+
+    def test_suggest_falls_back_to_git_when_no_title
+      config = config_for(temp_git_repo("proj"))
+      stub_method(Tmux, :agent_pane_title, ->(*) { nil }) do
+        stub_method(Git, :first_commit_subject, ->(*) { "Add the parser" }) do
+          assert_equal %w[add-the-parser], Rename.suggest(config, wt("alpha"), session: "s")
+        end
+      end
+    end
+
+    def test_suggest_drops_the_current_leaf
+      config = config_for(temp_git_repo("proj"))
+      stub_method(Tmux, :agent_pane_title, ->(*) { "alpha" }) do # equals the current name
+        assert_empty Rename.suggest(config, wt("alpha"), session: "s")
+      end
+    end
+
+    def test_suggest_drops_a_denylisted_title
+      config = config_for(temp_git_repo("proj"))
+      stub_method(Tmux, :agent_pane_title, ->(*) { "wip" }) do
+        assert_empty Rename.suggest(config, wt("alpha"), session: "s")
+      end
+    end
+
+    def test_suggest_drops_a_bare_numeric_title
+      config = config_for(temp_git_repo("proj"))
+      stub_method(Tmux, :agent_pane_title, ->(*) { "✳ 12345" }) do
+        assert_empty Rename.suggest(config, wt("alpha"), session: "s")
+      end
+    end
+
+    def test_suggest_drops_a_real_sibling_collision
+      config = config_for(temp_git_repo("proj"))
+      FileUtils.mkdir_p(path("wts", "proj", "taken"))
+      stub_method(Tmux, :agent_pane_title, ->(*) { "taken" }) do
+        assert_empty Rename.suggest(config, wt("alpha"), session: "s")
+      end
+    end
+
+    # A stale rename-bridge symlink at the target is NOT a collision — perform clears
+    # it — so suggest must still offer the name (mirrors perform's :exists check).
+    def test_suggest_keeps_a_name_that_only_collides_with_a_bridge_symlink
+      config = config_for(temp_git_repo("proj"))
+      FileUtils.mkdir_p(path("wts", "proj"))
+      File.symlink(path("wts", "proj", "elsewhere"), path("wts", "proj", "bridged"))
+      stub_method(Tmux, :agent_pane_title, ->(*) { "bridged" }) do
+        assert_equal %w[bridged], Rename.suggest(config, wt("alpha"), session: "s")
+      end
+    end
+
+    def test_suggest_returns_nothing_when_disabled
+      File.write(Config.path, YAML.dump("worktree_root" => path("wts"), "suggest_names" => false,
+                                        "projects" => [{ "name" => "proj", "path" => temp_git_repo("proj") }]))
+      config = Config.new
+      stub_method(Tmux, :agent_pane_title, ->(*) { flunk "no pane read when suggestions are off" }) do
+        assert_empty Rename.suggest(config, wt("alpha"), session: "s")
+      end
+    end
   end
 end

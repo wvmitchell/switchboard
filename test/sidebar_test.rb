@@ -1401,21 +1401,93 @@ module Switchboard
       assert reloaded
     end
 
-    # Unlike the CLI, the sidebar discards the status and just reloads — silent on
-    # any failure (the tree re-reads git truth). It must not raise or message.
-    def test_rename_stays_silent_on_a_failed_result
+    # A failed rename flashes the reason on the bottom row (the CLI warns to stderr;
+    # the sidebar can't, so a silent reload would hide the failure) then reloads.
+    def test_rename_flashes_the_reason_on_failure
+      File.write(Config.path, YAML.dump("projects" => [{ "name" => "app", "path" => "/x" }]))
+      sb = sidebar(nodes: [proj("app"), ws("alpha", path: "/wt/alpha")], cursor: 1)
+      sb.instance_variable_set(:@config, Config.new)
+      flashed = nil
+      reloaded = false
+      stub_method(Rename, :suggest, ->(*, **) { [] }) do
+        stub_method(sb, :prompt_line, ->(*, **) { "beta" }) do
+          stub_method(sb, :reload, -> { reloaded = true }) do
+            stub_method(sb, :flash, ->(msg) { flashed = msg }) do
+              stub_method(Rename, :perform, ->(*) { Rename::Result.new(:exists, "/wt/beta") }) do
+                sb.send(:rename)
+              end
+            end
+          end
+        end
+      end
+      assert_match(/already exists: beta/, flashed.to_s, "the failure reason is flashed")
+      assert reloaded, "the sidebar still reloads after flashing"
+    end
+
+    # A successful rename does NOT flash — the reloaded tree is feedback enough.
+    def test_rename_does_not_flash_on_success
       File.write(Config.path, YAML.dump("projects" => [{ "name" => "app", "path" => "/x" }]))
       sb = sidebar(nodes: [proj("app"), ws("alpha", path: "/wt/alpha")], cursor: 1)
       sb.instance_variable_set(:@config, Config.new)
       reloaded = false
-      stub_method(sb, :prompt_line, ->(*) { "beta" }) do
-        stub_method(sb, :reload, -> { reloaded = true }) do
-          stub_method(Rename, :perform, ->(*) { Rename::Result.new(:failed, nil) }) do
-            sb.send(:rename)
+      stub_method(Rename, :suggest, ->(*, **) { [] }) do
+        stub_method(sb, :prompt_line, ->(*, **) { "beta" }) do
+          stub_method(sb, :reload, -> { reloaded = true }) do
+            stub_method(sb, :flash, ->(*) { flunk "no flash on a successful rename" }) do
+              stub_method(Rename, :perform, ->(*) { Rename::Result.new(:ok, "/wt/beta") }) do
+                sb.send(:rename)
+              end
+            end
           end
         end
       end
-      assert reloaded, "the sidebar reloads regardless of the rename outcome"
+      assert reloaded
+    end
+
+    # The `r` prompt is prefilled with the top suggestion (#84) — editable, bare ↵
+    # accepts it. Also pins the suggest() contract: the node's resolved base_ref and
+    # its OWN session (not the current one) are passed, so the git fallback + pane
+    # read target the right workspace.
+    def test_rename_prefills_the_prompt_and_passes_the_node_context
+      File.write(Config.path, YAML.dump("base" => "origin/dev",
+                                        "projects" => [{ "name" => "app", "path" => "/x" }]))
+      sb = sidebar(nodes: [proj("app"), ws("alpha", path: "/wt/alpha")], cursor: 1)
+      sb.instance_variable_set(:@config, Config.new)
+      seen_prefill = :unset
+      seen_wt = nil
+      seen_session = nil
+      stub_method(Rename, :suggest, lambda { |_cfg, worktree, session:|
+        seen_wt = worktree
+        seen_session = session
+        %w[fix-tmux-status-bar other-cand]
+      }) do
+        stub_method(sb, :prompt_line, lambda { |_label, prefill: ""|
+          seen_prefill = prefill
+          nil # cancel after capturing → blank_input? → reload, no perform
+        }) do
+          stub_method(sb, :reload, -> {}) do
+            stub_method(Rename, :perform, ->(*) { flunk "cancelled before perform" }) do
+              sb.send(:rename)
+            end
+          end
+        end
+      end
+      assert_equal "fix-tmux-status-bar", seen_prefill
+      assert_equal "/wt/alpha", seen_wt.path
+      assert_equal "origin/dev", seen_wt.base, "the resolved base_ref is passed for the git fallback"
+      assert_equal "sb/app/alpha", seen_session, "reads the node's session, not the current one"
+    end
+
+    # rename_error maps each non-success status to a distinct message; success and
+    # :unchanged return nil (no flash). Pins all arms so a typo can't slip through.
+    def test_rename_error_maps_each_status
+      sb = sidebar
+      assert_match(/already exists: beta/, sb.send(:rename_error, Rename::Result.new(:exists, "/wt/beta")))
+      assert_match(/invalid name/,         sb.send(:rename_error, Rename::Result.new(:invalid, nil)))
+      assert_match(/session rename failed/, sb.send(:rename_error, Rename::Result.new(:partial, "/wt/x")))
+      assert_match(/rename failed/,        sb.send(:rename_error, Rename::Result.new(:failed, nil)))
+      assert_nil sb.send(:rename_error, Rename::Result.new(:ok, "/wt/x")), "success doesn't flash"
+      assert_nil sb.send(:rename_error, Rename::Result.new(:unchanged, "/wt/x")), "unchanged doesn't flash"
     end
 
     def test_add_local_aborts_when_the_prompt_is_cancelled

@@ -7,6 +7,27 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.32.0] — suggest a workspace name from the agent's pane title (2026-06-25)
+
+### Added
+- **`rename` suggests a name, so you rarely type one (#84).** Claude Code already
+  writes a model-generated summary of the conversation to its pane title (e.g.
+  `⠐ Fix tmux status bar text truncation`); switchboard now harvests it as the rename
+  suggestion. The sidebar `r` prompt is **prefilled** with it (just press `↵`, or
+  edit), and no-arg `switchboard rename` **prints** the candidates plus the command
+  to apply one (it never renames on the no-arg form — the title drifts, so the
+  suggestion is a proposal you pick). The agent's pane is found by the leading
+  activity glyph on its title (a non-ASCII spinner/✳), which also filters out a plain
+  shell's hostname title and the sidebar's own pane — `pane_current_command` can't be
+  used because Claude reports it as its version, not `claude`. The name is
+  glyph-stripped, downcased, sanitized, slash-rejected, and capped at a word boundary
+  so it fits the pane. When there's no usable title it falls back to the branch's
+  first commit subject (local-only, no fetch). Invalid-UTF-8 titles/subjects are
+  scrubbed, never crashing the prompt.
+- **`suggest_names` config knob (default on).** Set `suggest_names: false` to turn
+  the whole thing off — the sidebar `r` prompt opens empty and no-arg `rename` prints
+  usage.
+
 ## [0.31.1] — carry the Claude `/resume` history across a rename (2026-06-25)
 
 ### Fixed

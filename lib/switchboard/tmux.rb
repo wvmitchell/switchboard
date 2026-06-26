@@ -327,6 +327,27 @@ module Switchboard
          .dig(0, 1)
     end
 
+    # The agent's pane title in a session — Claude Code sets it to a model-generated
+    # conversation summary, the best source for a workspace-name suggestion (#84).
+    # We find the agent's pane by the leading activity glyph Claude puts on its
+    # title (a braille spinner while working, ✳ when idle — both non-ASCII): a plain
+    # shell shows an ASCII hostname and the sidebar shows SIDEBAR_TITLE, so neither
+    # matches. pane_current_command can't be used — Claude reports it as its version
+    # ("2.1.191"), never "claude". Returns the raw glyphed title, or nil.
+    def agent_pane_title(session)
+      glyph_titled(`tmux list-panes -t #{Shellwords.escape(session)} -F '#\{pane_title}' 2>/dev/null`)
+    end
+
+    # Pure: the first title that leads with a non-ASCII activity glyph + whitespace
+    # (a Claude-set title), else nil. The "+ space" keeps it specific to Claude's
+    # "<glyph> <summary>" shape, so an accented program title (über-tool) won't
+    # match. Split out so it's unit-testable without a server.
+    def glyph_titled(raw)
+      # scrub: a pane title can carry invalid UTF-8 (a non-UTF-8 locale's OSC title);
+      # match? would raise on bad bytes, so replace them first — degrade, don't crash.
+      raw.to_s.scrub.lines.map(&:chomp).find { |t| t.match?(/\A\P{ASCII}\s/) }
+    end
+
     RESERVE_COLS = 12 # cols kept for the work pane when clamping the sidebar at spawn
 
     # The target window's column count, or nil when unknown (no -t = current window).
