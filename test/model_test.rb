@@ -32,7 +32,7 @@ module Switchboard
 
     def test_pr_for_is_nil_without_a_cache
       model = Model.new(config_for(File.realpath(temp_git_repo("app"))))
-      assert_nil model.pr_for("main")
+      assert_nil model.pr_for("app", "main")
     end
 
     # Exercises the Pr cache read end-to-end (cache_file under the sandboxed
@@ -41,7 +41,32 @@ module Switchboard
       model = Model.new(config_for(File.realpath(temp_git_repo("app"))))
       FileUtils.mkdir_p(Pr.cache_dir)
       File.write(Pr.cache_file("app"), JSON.dump("main" => { "identifier" => "#7", "status" => "OPEN" }))
-      assert_equal "#7", model.pr_for("main")["identifier"]
+      assert_equal "#7", model.pr_for("app", "main")["identifier"]
+    end
+
+    # The #66 guard: two projects each with a branch of the SAME name must return
+    # their OWN PR, not the other's. A flat branch-keyed map let the second to load
+    # shadow the first; keying by (project, branch) fixes it.
+    def test_pr_for_is_scoped_per_project
+      app   = File.realpath(temp_git_repo("app"))
+      other = File.realpath(temp_git_repo("other"))
+      File.write(Config.path, YAML.dump("projects" => [
+                                          { "name" => "app", "path" => app },
+                                          { "name" => "other", "path" => other }
+                                        ]))
+      model = Model.new(Config.new)
+      FileUtils.mkdir_p(Pr.cache_dir)
+      File.write(Pr.cache_file("app"),   JSON.dump("shared" => { "identifier" => "#1" }))
+      File.write(Pr.cache_file("other"), JSON.dump("shared" => { "identifier" => "#2" }))
+      assert_equal "#1", model.pr_for("app",   "shared")["identifier"]
+      assert_equal "#2", model.pr_for("other", "shared")["identifier"]
+    end
+
+    # An unknown project resolves to nil (the dig nil-safety contract), never a raise —
+    # Tree.nodes only ever passes a real project, but the contract is worth pinning.
+    def test_pr_for_unknown_project_is_nil
+      model = Model.new(config_for(File.realpath(temp_git_repo("app"))))
+      assert_nil model.pr_for("nope", "main")
     end
   end
 end

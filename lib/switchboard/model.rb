@@ -20,7 +20,8 @@ module Switchboard
   class Model
     def initialize(config = Config.new, with_dirty: true)
       @config = config
-      @prs = {}
+      @prs = {}                # project name => { branch => pr }; keyed per project
+                               # so two repos sharing a branch name don't collide (#66)
       @with_dirty = with_dirty # the sidebar skips the per-worktree git status
     end
 
@@ -35,17 +36,21 @@ module Switchboard
       end
     end
 
-    # PR for an arbitrary branch (cached map, accumulated as projects build).
-    def pr_for(branch)
+    # PR for a branch within a project (cached map, accumulated as projects build).
+    # Keyed by (project, branch), not bare branch: two registered projects can both
+    # have a `feature/foo`, and a flat branch-keyed map let the second to load shadow
+    # the first — rendering the wrong repo's badge on a branch row (issue #66). `dig`
+    # is nil-safe for an unknown project.
+    def pr_for(project, branch)
       projects # ensure the map is populated
-      @prs[branch]
+      @prs.dig(project, branch)
     end
 
     private
 
     def build_worktrees(project)
       prs = Pr.for_project(project["name"])
-      @prs.merge!(prs)
+      @prs[project["name"]] = prs # this project's branch->PR map, under its own key
 
       Git.worktrees(project["path"]).reject { |w| w[:bare] }.map do |w|
         branch = w[:branch] || Git.current_branch(w[:path])

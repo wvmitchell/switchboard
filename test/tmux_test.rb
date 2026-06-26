@@ -70,6 +70,52 @@ module Switchboard
       assert_nil Tmux.work_dir(""), "no panes (server gone) -> nil, so -c is just omitted"
     end
 
+    # --- pane_switch_keys: the user's own select-pane bindings, surfaced in the ?
+    # overlay (issue #62). Pure given the `tmux list-keys -T prefix` output.
+
+    def test_pane_switch_keys_collapses_arrows_and_keeps_letters
+      raw = <<~KEYS
+        bind-key -T prefix Left select-pane -L
+        bind-key -T prefix Right select-pane -R
+        bind-key -T prefix Up select-pane -U
+        bind-key -T prefix Down select-pane -D
+        bind-key -T prefix o select-pane -t :.+
+        bind-key -T prefix h select-pane -L
+        bind-key -T prefix C-Left resize-pane -L
+        bind-key -T prefix x kill-pane
+      KEYS
+      # all four arrows collapse to one glyph token; o + h kept; resize/kill excluded
+      assert_equal ["↑↓←→", "o", "h"], Tmux.pane_switch_keys(raw)
+    end
+
+    def test_pane_switch_keys_does_not_collapse_a_partial_arrow_set
+      raw = "bind-key -T prefix Left select-pane -L\nbind-key -T prefix Right select-pane -R\n"
+      assert_equal ["←", "→"], Tmux.pane_switch_keys(raw), "only ←→ bound -> shown separately, not collapsed"
+    end
+
+    def test_pane_switch_keys_empty_when_none_or_unparseable
+      assert_empty Tmux.pane_switch_keys(""), "no server / no output -> [] (overlay omits the row)"
+      assert_empty Tmux.pane_switch_keys("bind-key -T prefix o next-window\n"), "non-select-pane bindings ignored"
+    end
+
+    # Only MOVEMENT select-pane counts — mark/unmark (-m/-M) are select-pane commands
+    # but not "move between panes", so they're excluded from the overlay row.
+    def test_pane_switch_keys_excludes_mark_and_unmark
+      raw = "bind-key -T prefix m select-pane -m\nbind-key -T prefix M select-pane -M\n" \
+            "bind-key -T prefix Left select-pane -L\n"
+      assert_equal ["←"], Tmux.pane_switch_keys(raw), "mark/unmark dropped; the directional move kept"
+    end
+
+    def test_pane_switch_keys_caps_the_list
+      raw = %w[a b c d e f g].map { |k| "bind-key -T prefix #{k} select-pane -t :.+" }.join("\n")
+      assert_equal 5, Tmux.pane_switch_keys(raw).size, "capped so the overlay row can't overrun the pane"
+    end
+
+    def test_pane_switch_keys_collapses_the_vim_cluster
+      raw = %w[h j k l].map { |k| "bind-key -T prefix #{k} select-pane -L" }.join("\n")
+      assert_equal ["hjkl"], Tmux.pane_switch_keys(raw), "a full hjkl set shows as one token, not four"
+    end
+
     # --- spawn width clamp: a saved width can't starve the work pane (issue #78) ---
 
     def test_fit_width_returns_the_saved_width_on_a_roomy_window

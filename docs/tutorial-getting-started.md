@@ -60,7 +60,9 @@ left titled `switchboard · home`. It's empty except for a hint to add a project
 This is your anchor: a stable base you can always get back to. The footer at the
 bottom of the pane shows the keys that apply right now.
 
-You've now seen the sidebar. Everything from here is keys inside it.
+You've now seen the sidebar. Everything from here is keys inside it. The footer
+only has room for the most common ones, so whenever you forget a key, press
+**`?`** for the full map — any key closes it again.
 
 ## Step 3: Add your first project
 

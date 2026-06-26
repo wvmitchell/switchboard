@@ -150,6 +150,101 @@ module Switchboard
       assert_equal 0, cursor_of(sb)
     end
 
+    # --- ? help overlay (issue #62) ------------------------------------------
+
+    def help_of(sb) = sb.instance_variable_get(:@help)
+
+    def test_question_mark_opens_the_help_overlay
+      sb = sidebar(nodes: [proj("app"), ws("a")])
+      refute help_of(sb), "help starts closed"
+      sb.send(:dispatch, "?")
+      assert help_of(sb), "? opens the overlay"
+    end
+
+    # While the overlay is open a real keystroke dismisses it and does NOTHING else —
+    # no passthrough into the action that key would normally fire.
+    def test_any_real_key_dismisses_help_without_side_effects
+      sb = sidebar(nodes: [proj("app"), ws("a"), ws("b")], cursor: 0)
+      sb.send(:dispatch, "?")
+      assert_equal true, sb.send(:dispatch, "j"), "dispatch returns true (loop lives on)"
+      refute help_of(sb), "j closed the overlay"
+      assert_equal 0, cursor_of(sb), "...and did NOT also move the cursor"
+    end
+
+    # Even a typed q just closes the overlay — it never reaches the quit-all path.
+    def test_q_in_help_closes_instead_of_quitting
+      sb = sidebar(nodes: [proj("app"), ws("a")])
+      sb.send(:dispatch, "?")
+      assert_equal true, sb.send(:dispatch, "q"), "q in help doesn't quit the loop"
+      refute help_of(sb), "q closed the overlay"
+    end
+
+    # The F1 robustness guard: a synthetic tmux byte (the C-l background/switch poke,
+    # the C-r config poke, focus in/out) must NOT dismiss the overlay out from under
+    # the reader — the gap that "any key dismisses" would have shipped.
+    def test_synthetic_pokes_do_not_dismiss_help
+      sb = sidebar(nodes: [proj("app"), ws("a")])
+      sb.send(:dispatch, "?")
+      ["\f", "\e[I", "\e[O", Sidebar::RELOAD_CONFIG_BYTE].each do |poke|
+        sb.send(:dispatch, poke)
+        assert help_of(sb), "#{poke.inspect} (a poke/focus byte) must not close help"
+      end
+    end
+
+    # `?` while filtering is a query char, not a help trigger: the @filter guard sits
+    # after the @help guard, and ? never reaches the normal table while filtering.
+    def test_question_mark_in_filter_is_query_input_not_help
+      sb = sidebar(nodes: [proj("app"), ws("a")])
+      sb.send(:dispatch, "/")
+      sb.send(:dispatch, "?")
+      refute help_of(sb), "? in filter mode does not open help"
+      assert_equal "?", sb.instance_variable_get(:@filter), "...it extends the query"
+    end
+
+    # The discoverability regression guard (the exact gap that motivated #62): the
+    # overlay must list g/G, and every line must fit the pane width. (Stub the tmux
+    # pane-key probe so the test stays offline and the row's width is exercised.)
+    def test_help_lines_list_the_jump_keys_and_fit_width
+      sb = sidebar(nodes: [proj("app")])
+      stub_method(Tmux, :pane_switch_keys, -> { %w[↑↓←→ o h j k] }) do
+        lines = sb.send(:help_lines, 40)
+        assert(lines.any? { |l| l.include?("g  G") }, "the overlay advertises g/G")
+        assert(lines.all? { |l| strip_ansi(l).length <= 40 }, "no line overruns the pane width")
+      end
+    end
+
+    # The devex-magic row: the overlay shows the user's OWN select-pane keys, so they
+    # know how to move focus into the sidebar (the step switchboard never binds).
+    def test_help_overlay_shows_the_users_pane_switch_keys
+      sb = sidebar(nodes: [proj("app")])
+      stub_method(Tmux, :pane_switch_keys, -> { %w[↑↓←→ o] }) do
+        lines = sb.send(:help_lines, 40).map { |l| strip_ansi(l) }
+        assert(lines.any? { |l| l.include?("tmux (operate the sidebar)") }, "the tmux section heads it")
+        assert(lines.any? { |l| l.include?("prefix ↑↓←→ o") && l.include?("move between panes") },
+               "the user's resolved pane-switch keys are shown")
+      end
+    end
+
+    # No detected pane-switch keys (no server / remapped away) -> the row is omitted,
+    # never a blank or guessed binding.
+    def test_help_overlay_omits_pane_switch_row_when_undetected
+      sb = sidebar(nodes: [proj("app")])
+      stub_method(Tmux, :pane_switch_keys, -> { [] }) do
+        lines = sb.send(:help_lines, 40).map { |l| strip_ansi(l) }
+        refute(lines.any? { |l| l.include?("move between panes") }, "no keys -> no row")
+      end
+    end
+
+    # help_body caps the body to rows-1 so the "any key to close" hint always seats,
+    # even on a tiny pane (the height-cap, testable without raw I/O).
+    def test_help_body_caps_to_leave_room_for_the_hint
+      sb = sidebar(nodes: [proj("app")])
+      stub_method(Tmux, :pane_switch_keys, -> { [] }) do
+        assert_equal 4, sb.send(:help_body, 5, 40).size, "body capped to rows-1 on a short pane"
+        assert_operator sb.send(:help_body, 100, 40).size, :>, 10, "a tall pane shows the full map"
+      end
+    end
+
     # j/k are vi movers in normal mode (down/up). They're NOT movers while
     # filtering — there a printable key is query input (test below) — so motion in
     # the tree is arrows / ^N / ^P / j / k, and in the filter arrows / ^N / ^P.
@@ -863,74 +958,54 @@ module Switchboard
       assert_equal 2, calls, "kind-keyed entries never ping-pong into a per-reload recompute"
     end
 
-    # --- footer: context-sensitive legend ------------------------------------
-    # The legend adapts to the highlighted row's kind, but stays three lines so
-    # the tree never reflows as the cursor crosses the project/workspace boundary.
+    # --- footer: one-line nav + ? help (issue #62) ---------------------------
+    # Now that the ? overlay is the complete key reference, the footer sheds the
+    # action-key tail: it's a SINGLE line — the context-sensitive nav verb plus the
+    # ? help gateway — so it never reflows on cursor move and hands the tree two rows.
 
-    def test_footer_for_a_project_row_foregrounds_remove
-      sb = sidebar(nodes: [proj("app"), ws("a")], cursor: 0)
-      foot = sb.send(:footer)
-      assert_equal 3, foot.size, "always three lines — the tree must not reflow on cursor move"
-      assert foot[0].start_with?(Sidebar::NAV_PROJ), "line 1 leads with the project nav keys"
-      assert_includes foot[0], "/ filter", "the filter hint rides the nav line"
-      assert foot.any? { |l| l.include?("d remove") }, "d removes the project"
-      refute foot.any? { |l| l.include?("o PR") },   "PR is workspace-only"
-      refute foot.any? { |l| l.include?("r rename") }, "rename is workspace-only"
+    def test_footer_is_one_line_nav_plus_help_per_row_kind
+      nodes = [proj("app"), ws("a"), br("feat")]
+      [[0, Sidebar::NAV_PROJ], [1, Sidebar::NAV_WS], [2, Sidebar::NAV_BR]].each do |cursor, nav|
+        sb = sidebar(nodes: nodes, cursor: cursor)
+        foot = sb.send(:footer)
+        assert_equal 1, foot.size, "the footer is a single line for every kind (no reflow)"
+        assert foot[0].start_with?(nav), "line leads with the kind's nav verb"
+        assert_includes foot[0], "? help", "...and ends with the ? help gateway"
+      end
     end
 
-    def test_footer_for_a_workspace_row_shows_the_per_workspace_keys
+    # The action keys (a/n/o/O/r/d/e/R/q) no longer ride the footer — the ? overlay
+    # holds them now, so the footer stays one calm line.
+    def test_footer_drops_the_action_keys_into_the_overlay
       sb = sidebar(nodes: [proj("app"), ws("a")], cursor: 1)
       foot = sb.send(:footer)
-      assert_equal 3, foot.size
-      assert foot[0].start_with?(Sidebar::NAV_WS), "line 1 leads with the workspace nav keys"
-      assert_includes foot[0], "+/− vs base", "ws rows explain the diff-count column in place of / filter (#79)"
-      refute_includes foot[0], "/ filter", "the filter hint yields to the diff-count hint on ws/br rows"
-      assert foot.any? { |l| l.include?("d delete") }, "d deletes the worktree"
-      assert foot.any? { |l| l.include?("o PR") }
-      assert foot.any? { |l| l.include?("r rename") }
+      ["d delete", "o PR", "r rename", "R sync", "n new", "e settings"].each do |hint|
+        refute_includes foot[0], hint, "#{hint.inspect} moved to the ? overlay"
+      end
     end
 
-    # A branch child row only advertises keys that actually fire on it (↵ switch,
-    # o PR) — d/r guard on `ws`, so they'd be no-ops and are dropped.
-    def test_footer_for_a_branch_row_drops_the_workspace_only_keys
-      sb = sidebar(nodes: [proj("app"), ws("a"), br("feat")], cursor: 2)
-      foot = sb.send(:footer)
-      assert_equal 3, foot.size
-      assert foot[0].start_with?(Sidebar::NAV_BR), "line 1 leads with the branch nav keys"
-      assert_includes foot[0], "+/− vs base", "branch rows carry the diff-count hint too (#79)"
-      assert foot.any? { |l| l.include?("o PR") }, "opening the branch's PR works"
-      refute foot.any? { |l| l.include?("d delete") }, "delete no-ops on a branch row"
-      refute foot.any? { |l| l.include?("r rename") }, "rename no-ops on a branch row"
-    end
-
-    def test_footer_in_home_keeps_the_title_but_adapts_the_actions
+    def test_footer_in_home_shows_the_title_and_help
       sb = sidebar(nodes: [proj("app"), ws("a")], cursor: 0)
       sb.instance_variable_set(:@home, true)
-      assert sb.send(:footer)[0].start_with?(Sidebar::HOME_TITLE), "home keeps its title on a project row"
-      assert_includes sb.send(:footer)[0], "/ filter", "...with the filter hint trailing it"
-      assert sb.send(:footer).any? { |l| l.include?("d remove") }, "...and project actions below"
-
-      sb.instance_variable_set(:@cursor, 1) # workspace row
-      assert sb.send(:footer)[0].start_with?(Sidebar::HOME_TITLE), "...and on a workspace row"
-      assert sb.send(:footer).any? { |l| l.include?("d delete") }, "...with workspace actions below"
+      foot = sb.send(:footer)
+      assert_equal 1, foot.size
+      assert foot[0].start_with?(Sidebar::HOME_TITLE), "home shows its title, not the nav verb"
+      assert_includes foot[0], "? help"
     end
 
-    def test_footer_on_an_empty_tree_still_invites_a_first_project
+    def test_footer_on_an_empty_tree_invites_a_first_project
       foot = sidebar(nodes: []).send(:footer)
-      assert_equal 3, foot.size
-      assert foot.any? { |l| l.include?("a add") }, "the fresh-install state still shows how to add"
+      assert_equal 1, foot.size
+      assert_includes foot[0], "a add a project", "the fresh-install state shows how to add"
+      assert_includes foot[0], "? help"
     end
 
-    # R (manual PR-badge refresh) is global, so its hint rides every row kind —
-    # and every legend line must still fit the pinned pane width uncut, or the
-    # trailing key (q quit) would be truncated away.
-    def test_footer_advertises_R_on_every_kind_within_the_pin_width
+    # Every kind's single line must still fit the pinned pane width uncut.
+    def test_footer_fits_the_pin_width_on_every_kind
       [[proj("app")], [proj("app"), ws("a")], [proj("app"), ws("a"), br("f")], []].each do |nodes|
-        sb = sidebar(nodes: nodes, cursor: nodes.size - 1)
-        foot = sb.send(:footer)
-        assert foot.any? { |l| l.include?("R sync") }, "R sync hint present for #{nodes.map(&:kind)}"
-        foot.each do |line|
-          assert line.length <= Tmux::SIDEBAR_WIDTH, "legend line #{line.inspect} fits the #{Tmux::SIDEBAR_WIDTH}-col pane"
+        sb = sidebar(nodes: nodes, cursor: [nodes.size - 1, 0].max)
+        sb.send(:footer).each do |line|
+          assert line.length <= Tmux::SIDEBAR_WIDTH, "footer #{line.inspect} fits the #{Tmux::SIDEBAR_WIDTH}-col pane"
         end
       end
     end
@@ -1270,7 +1345,7 @@ module Switchboard
       sb = sidebar(nodes: [proj("app"), ws("alpha"), ws("beta")])
       sb.send(:handle, "/be")
       foot = sb.send(:footer)
-      assert_equal 3, foot.size, "three lines, like the normal footer — no reflow entering the mode"
+      assert_equal 3, foot.size, "filter mode keeps its 3-line legend (query + action + count) — it's live state, not key-teaching"
       assert_equal "/be", foot[0], "line 1 echoes the live query"
       assert_includes foot[1], "↵ open", "on a workspace, ↵ opens"
       assert_includes foot[1], "esc cancel"
@@ -2261,13 +2336,14 @@ module Switchboard
       assert_equal "/wt/feat", captured[1][:chdir]
     end
 
-    # O (open the row's repo) needs no branch, so its hint rides EVERY row kind —
-    # including the project header, unlike o/PR. (The empty tree has no row to open.)
-    def test_footer_advertises_O_repo_on_every_row_kind
-      [[proj("app")], [proj("app"), ws("a")], [proj("app"), ws("a"), br("f")]].each do |nodes|
-        sb = sidebar(nodes: nodes, cursor: nodes.size - 1)
-        assert sb.send(:footer).any? { |l| l.include?("O repo") },
-               "O repo present for #{nodes.map(&:kind)}"
+    # O (open the row's repo) needs no branch, so it works on every row kind. It no
+    # longer rides the footer (one line now) — it lives in the ? overlay's action list.
+    def test_overlay_advertises_O_repo
+      sb = sidebar(nodes: [proj("app")])
+      stub_method(Tmux, :pane_switch_keys, -> { [] }) do
+        lines = sb.send(:help_lines, 40).map { |l| strip_ansi(l) }
+        assert(lines.any? { |l| l.include?("O") && l.include?("open its repo") },
+               "the overlay lists O (open repo)")
       end
     end
 

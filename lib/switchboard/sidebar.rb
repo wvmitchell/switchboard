@@ -96,6 +96,59 @@ module Switchboard
     NAV_WS     = "↑↓ move · ↵ open"
     NAV_BR     = "↑↓ move · ↵ switch"
 
+    # The `?` help overlay's static key map (issue #62) — [key, description] rows,
+    # where a row with an empty key is a section heading. The footer teaches only
+    # the common keys for the highlighted row (fixed at three lines, full at the pin
+    # width); this is the complete reference and the discoverable home for the keys
+    # the footer can't fit (g/G jumps, ←/→ resize, the ^N/^P aliases, the mode keys).
+    # Top-loaded with navigation — a short pane drops the tail, not the top. The
+    # tmux-layer keys that operate the sidebar (prefix-toggle/home) are appended at
+    # render time from config (tmux_help_rows), since they're resolved, not static.
+    HELP = [
+      ["", "navigate"],
+      ["↑ ↓  ^n ^p  j k", "move"],
+      ["g  G", "top · bottom"],
+      ["←  →", "narrow · widen pane"],
+      ["", "open"],
+      ["↵", "switch · collapse"],
+      ["/", "filter by name"],
+      ["", "the selected row"],
+      ["a", "add a project"],
+      ["n", "new workspace"],
+      ["o  ^o", "open its PR"],
+      ["O", "open its repo"],
+      ["r", "rename workspace"],
+      ["d", "delete · remove"],
+      ["", "anywhere"],
+      ["e", "edit settings"],
+      ["R", "refresh PR badges"],
+      ["H", "toggle full header"],
+      ["?", "this help"],
+      ["q", "quit all sessions"],
+      ["", "filter mode  (/)"],
+      ["↵", "open · create"],
+      ["Esc", "cancel"],
+      ["Bksp", "trim · exit when empty"],
+      ["", "name prompts"],
+      ["↵", "submit"],
+      ["Esc", "cancel"],
+      ["Bksp · ^u", "erase · clear"],
+      ["", "diff counts"],
+      ["+/−", "committed diff vs base"]
+    ].freeze
+    HELP_KEY_COLS = 6 # key column width; longer combos (move/prefix rows) overflow it
+
+    # Synthetic byte sequences that arrive on stdin without a keypress — the C-l
+    # switch/background-refresh poke, the C-r config poke, and tmux focus in/out.
+    # While the ? overlay is open these are IGNORED (a background poke must not dismiss
+    # it); every other byte is a real keystroke that closes it. Dropping their side
+    # effects is safe here: C-l's reload/visibility self-heals via the tick backstop
+    # within REFRESH (tick runs while help is open); C-r can't coincide with help (you
+    # can't open the editor while help is up — `e` dismisses it first — and C-r isn't
+    # broadcast, it targets the just-focused pane); focus is cosmetic under the overlay.
+    # If C-r ever becomes broadcast, revisit this (it'd then need honoring). (issue #62)
+    HELP_IGNORED_BYTES = ["\f", RELOAD_CONFIG_BYTE, "\e[I", "\e[O"].freeze
+
     def self.run
       new.run
     end
@@ -159,6 +212,9 @@ module Switchboard
                            # string. Pure per-process UI state — not shared on disk
                            # like @collapsed, because a search is a transient act, not
                            # a view preference (issue #60).
+      @help = false        # ? help overlay: when set, render paints the full key map
+                           # over the tree and the next real keystroke dismisses it
+                           # (issue #62). Per-process + transient, like @filter.
       @full_header = false # H: seat the full home-style header on EVERY session.
                            # Hydrated from the shared on-disk store (FullHeader) on
                            # every rebuild, so all windows agree and a respawn keeps it
@@ -195,6 +251,9 @@ module Switchboard
                            # @branch_cache, bounded by rows seen this process; never pruned.
       @operator = false    # home greeting's first name; resolved lazily on the first
                            # home render (git shell-out) so non-home sidebars never pay
+      @pane_switch_keys = nil # the user's tmux select-pane keys, shown in the ? overlay;
+                           # resolved once lazily on first help open (a tmux shell-out),
+                           # then memoized so the paint loop never re-queries (issue #62)
     end
 
     def run
@@ -254,6 +313,7 @@ module Switchboard
     # and never pulses — except for the brief twinkle right after it lands (sparkling?).
     def pulsing?
       return false unless @visible
+      return false if @help # the static overlay has no animation — don't ride the PULSE cadence (#62)
 
       @visible_rows.any? { |n| %i[thinking waiting].include?(@agents[n.path]) || sparkling?(n.path) }
     end
@@ -879,6 +939,7 @@ module Switchboard
     end
 
     def dispatch(key)
+      return help_key(key) if @help     # ? overlay is open: a real key closes it, pokes pass through
       return filter_key(key) if @filter # / filter mode swallows the normal bindings
 
       case key
@@ -901,6 +962,7 @@ module Switchboard
       when RELOAD_CONFIG_BYTE  then reload_config_and_rebuild # Ctrl-R (post-edit reload)
       when "g"                 then @cursor = 0
       when "G"                 then @cursor = [@rows.size - 1, 0].max # clamp: empty tree → 0, not -1
+      when "?"                 then show_help # the full key map overlay (issue #62)
       when "\e[I"              then focus_in        # tmux focus-in: on screen + light cursor bar
       when "\e[O"              then @focused = false # tmux focus-out: drop it
       when "q"                 then return quit # q: tear down ALL switchboard sessions
@@ -978,6 +1040,32 @@ module Switchboard
       Tmux.go(Worktree.new(project: node.project, path: node.path, branch: node.branch,
                            dirty: false, pr: node.pr, base: nil, primary: false),
               start: @config.session_command_for(node.project))
+    end
+
+    # --- ? help overlay (issue #62) ------------------------------------------
+    #
+    # `?` opens the full key map over the tree (render_help). While it's open,
+    # dispatch routes every key here: a real keystroke closes it, but a synthetic
+    # tmux byte (HELP_IGNORED_BYTES — the C-l/C-r pokes, focus in/out) is ignored so a
+    # background PR-refresh poke or a focus change can't dismiss it out from under
+    # the reader — the same robustness filter_key has. `?` can't open while filtering
+    # (there it's a query char), so @help and @filter are never both set.
+
+    # `?`: open the overlay. No recompute — the overlay doesn't read @rows.
+    def show_help
+      @help = true
+    end
+
+    # Any real key dismisses; a poke/focus byte passes through untouched. Always
+    # returns true (the loop lives on, and the dismissing key only closes the
+    # overlay — no passthrough into an action, even a typed q).
+    def help_key(key)
+      dismiss_help unless HELP_IGNORED_BYTES.include?(key)
+      true
+    end
+
+    def dismiss_help
+      @help = false
     end
 
     # --- / filter mode (issue #60) -------------------------------------------
@@ -1484,42 +1572,25 @@ module Switchboard
       [40, 40]
     end
 
-    # The three-line key legend, context-sensitive to the highlighted row. A
-    # project row foregrounds registry management (`d remove`s the project); a
-    # workspace row adds the per-workspace keys (o PR, r rename; `d delete`s the
-    # worktree). A branch child row only lists what actually works on it (↵
-    # switches, o opens its PR) — d/r guard on `ws`, so advertising them there
-    # would be a no-op. `O repo` (open the row's repo) rides EVERY kind — unlike o
-    # it needs no branch, so even the project header gets it. `R sync` (force a
-    # PR-badge refresh) is global too — terse labels because the lines run tight at
-    # the pin width: the `ws` line lands at exactly SIDEBAR_WIDTH cols, so don't
-    # add to it without dropping a key (the #62 help overlay is the real home for
-    # discoverability). Always three lines so the tree never reflows as the cursor
-    # moves between kinds — line 1 is the only one that swaps, to the home title or
-    # the kind-appropriate nav keys. The empty tree (the fresh-install home state)
-    # gets an inviting first-project hint.
+    # A SINGLE line: the context-sensitive nav verb + the `? help` gateway. The
+    # action keys (a/n/o/O/r/d/e/R/H/q) used to be crammed into two more lines ONLY
+    # because the footer was the sole place to teach them; the #62 overlay is now the
+    # complete reference, so the footer sheds the tail and gives those two rows back
+    # to the tree. `? help` is the always-on pointer to everything dropped — a help
+    # you must already know `?` to find would be circular. One line for every row
+    # kind, so the tree never reflows as the cursor moves (the nav verb swaps:
+    # open/collapse/switch; the home session shows its title instead). The empty tree
+    # (fresh install) shows the first-project invite in place of nav.
     def footer
       return filter_footer if @filter
+      return ["a add a project · ? help"] unless current # empty tree: invite the first project
 
-      nav, rest = case current&.kind
-                  when "proj"
-                    [NAV_PROJ, ["a add · n new · e settings · O repo", "d remove · R sync · q quit"]]
-                  when "ws"
-                    [NAV_WS, ["a add · n new · o PR · O repo · r rename", "d delete · e settings · R sync · q quit"]]
-                  when "br"
-                    [NAV_BR, ["a add · n new · o PR · O repo · R sync", "e settings · q quit"]]
-                  else # empty tree
-                    [NAV_WS, ["a add project · e settings", "R sync · q quit"]]
-                  end
-      # Line 1 carries one context hint after the title/nav — the only line with
-      # room across every kind, since the ws action lines are full at the pin width.
-      # On a workspace/branch row it explains the diff-count column in place ("+/−
-      # vs base" — the count is committed branch-vs-base, NOT the working tree, which
-      # every other tool's +/− means; issue #79); elsewhere it advertises / filter,
-      # which a long project list most wants. (←/→ resize stays out — the proj nav
-      # line is already near the pin width; discoverability lives in the #62 overlay.)
-      hint = %w[ws br].include?(current&.kind) ? "+/− vs base" : "/ filter"
-      ["#{@home ? HOME_TITLE : nav} · #{hint}", *rest]
+      nav = case current.kind
+            when "proj" then NAV_PROJ
+            when "br"   then NAV_BR
+            else             NAV_WS
+            end
+      ["#{@home ? HOME_TITLE : nav} · ? help"]
     end
 
     # The filter-mode legend: the live query, then the in-mode keys. j/k are query
@@ -1527,8 +1598,10 @@ module Switchboard
     # / ^N^P. ↵ is context-sensitive — opens a highlighted workspace, or creates a
     # new one on a highlighted project header — so the label tracks the row. The
     # count is workspaces only (headers don't count) — it reassures you the query is
-    # biting (and a 0-match query isn't a frozen pane). Always three lines, like the
-    # normal footer, so the tree doesn't reflow when you enter or leave the mode.
+    # biting (and a 0-match query isn't a frozen pane). Three lines: filter mode is
+    # live state (query + action + count), not key-teaching, so unlike the slimmed
+    # one-line normal footer it keeps the room it needs; entering/leaving the mode is
+    # a deliberate switch, so the height change there is fine (the tree changes too).
     def filter_footer
       n = @rows.count { |node| node.kind != "proj" }
       count = n == 1 ? "1 match" : "#{n} matches"
@@ -1598,6 +1671,8 @@ module Switchboard
     end
 
     def render
+      return render_help if @help # the ? overlay replaces the tree (issue #62)
+
       rows, cols = winsize
       head = header(cols)
       foot = footer
@@ -1622,6 +1697,64 @@ module Switchboard
         out << "\e[#{rows - foot.size + 1 + i};1H\e[K\e[2m#{trunc(text, cols)}\e[0m"
       end
       $stdout.write(out)
+    end
+
+    # The ? help overlay (issue #62). Paints the full key map with the same
+    # cursor-addressed \e[K / \e[0J no-flash technique as render (no full \e[2J, so
+    # the per-tick repaint while it's open doesn't flicker), with a dim "any key to
+    # close" hint pinned to the bottom row. The body comes from help_body, capped so
+    # the hint always seats.
+    def render_help
+      rows, cols = winsize
+      lines = help_body(rows, cols)
+      out = +"\e[H"
+      lines.each_with_index do |text, i|
+        out << "\e[#{i + 1};1H\e[K#{text}" # each line carries (and resets) its own ANSI
+      end
+      out << "\e[#{lines.size + 1};1H\e[0J" # erase below the last line (incl. any old footer)
+      out << "\e[#{rows};1H\e[K\e[2m#{trunc('any key to close', cols)}\e[0m"
+      $stdout.write(out)
+    end
+
+    # The overlay's lines, capped to leave the bottom row for the "any key to close"
+    # hint. A short pane drops the tail (HELP is top-loaded with navigation), never
+    # the top. Pure given winsize + @config, so the height-cap is unit-testable
+    # without raw I/O — the suite keeps render-to-stdout out of scope.
+    def help_body(rows, cols)
+      help_lines(cols).first([rows - 1, 0].max)
+    end
+
+    # Format HELP (+ the resolved tmux rows) into rendered lines: the wordmark, then
+    # each section as a blank separator + bold heading, and each key row as
+    # `key.ljust(HELP_KEY_COLS)  desc`. trunc runs on the PLAIN string BEFORE the ANSI
+    # is wrapped on, so truncation can never cut an escape sequence (the line() pattern).
+    def help_lines(cols)
+      out = ["#{BRAND}#{trunc(WORDMARK, cols)}\e[0m"]
+      (HELP + tmux_help_rows).each do |key, desc|
+        if key.empty?
+          out << "" << "#{BRAND}#{trunc(desc, cols)}\e[0m" # blank separator, then the heading
+        else
+          out << trunc("#{key.ljust(HELP_KEY_COLS)}  #{desc}", cols)
+        end
+      end
+      out
+    end
+
+    # The tmux-layer keys that operate the sidebar itself, resolved at render time
+    # (the prefix is needed first, unlike the in-pane keys — the heading says so).
+    # `show / hide` answers "how do I hide this whole thing?" (no in-sidebar key does
+    # — q quits everything); `move between panes` surfaces the user's OWN select-pane
+    # keys (Tmux.pane_switch_keys, memoized), the implicit step switchboard never
+    # binds. toggle defaults to "s"; home + pane-switch rows drop when unbound/undetected.
+    def tmux_help_rows
+      toggle = @config.tmux_key("toggle")
+      home   = @config.tmux_key("home")
+      switch = (@pane_switch_keys ||= Tmux.pane_switch_keys)
+      rows = [["", "tmux (operate the sidebar)"]]
+      rows << ["prefix #{toggle}", "show / hide the sidebar"] if toggle
+      rows << ["prefix #{switch.join(' ')}", "move between panes"] if switch.any?
+      rows << ["prefix #{home}", "jump to the home session"] if home
+      rows
     end
 
     def scroll(height)

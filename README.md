@@ -52,7 +52,9 @@ Keys (in the sidebar):
 
 ```
 ↑↓ ^N/^P j/k move (projects, workspaces, and a workspace's branches; j/k move in the tree, type in the filter)
+g/G      jump to the top / bottom of the tree
 ←→       resize the sidebar pane — ← narrows, → widens; the width is shared across sessions and persists
+?        show the full key map overlay (every shortcut, incl. filter/prompt modes; any key closes)
 /        filter — type to jump straight to a workspace by name (Esc cancels)
 ↵        switch to the workspace's tmux session (or collapse a project header)
 a        add a project (register a local repo or clone a URL)

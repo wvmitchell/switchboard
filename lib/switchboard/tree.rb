@@ -36,8 +36,8 @@ module Switchboard
 
           branches.each_with_index do |branch, i|
             list << Node.new(kind: "br", project: project.name, path: wt.path, branch: branch,
-                             pr: model.pr_for(branch), base: wt.base, active: branch == wt.branch,
-                             last: i == branches.size - 1)
+                             pr: model.pr_for(project.name, branch), base: wt.base,
+                             active: branch == wt.branch, last: i == branches.size - 1)
           end
         end
         list

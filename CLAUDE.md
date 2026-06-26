@@ -458,7 +458,8 @@ exits, like Esc. `dispatch` routes every key to `filter_key` while `@filter` is
 set: printables extend the query, `↵`/`Esc` open-or-create/cancel, and crucially
 no destructive key (`d`/`q`) can fire mid-search. `footer` swaps to
 `filter_footer` (live query + a `↵`-label that tracks the row + a workspace-only
-match count); a `/ filter` hint rides the nav line otherwise.
+match count); the normal footer is the one-line `nav · ? help` (the `/` filter key
+is taught in the `?` overlay now — see below).
 
 Movement in the tree is **arrows / `^N`/`^P` / `j`/`k`** (vi-style down/up). In
 filter mode `j`/`k` are query input instead — there movement is arrows / `^N`/`^P`
@@ -468,6 +469,64 @@ Unlike `Collapse`/`Attention`/the dots, this is **deliberately NOT shared on
 disk** — a search is a transient act, not a view preference, so it's a plain
 per-process ivar. A background reload re-applies it (recompute is filter-aware),
 but it's never persisted, GC'd, or seen by another window's pane.
+
+### The `?` help overlay (issue #62 — the discoverable home for the keys)
+
+`?` paints a full-pane key map over the tree (`render_help`); any real keystroke
+dismisses it. `@help` is the flag — transient and per-process like `@filter`, NOT
+shared on disk (opening help is an act, not a view preference). It exists because
+the footer is width-bound: a *daily* user never found `g`/`G` because the old 3-line
+legend had no room to teach them. The overlay is where every key the footer can't
+fit now lives — `g`/`G`, `←`/`→`, the `^N`/`^P` aliases, the filter/prompt sub-mode
+keys, the diff-count meaning, and the tmux keys that operate the sidebar.
+
+**The footer is the gateway, and it's now ONE line.** A help you must already know
+`?` to find is circular, so `footer` always ends with a persistent `? help`. And
+because the overlay holds the complete reference, the footer sheds its two
+action-key lines entirely — one context-sensitive line (`nav · ? help`, the nav
+verb swapping open/collapse/switch; the home title or the empty-tree first-project
+invite in its place), handing the tree two more rows. The former `/ filter` and
+`+/− vs base` hints moved INTO the overlay. `filter_footer` keeps its three lines:
+it's live query state, not key-teaching.
+
+**A real key dismisses; the synthetic pokes are ignored.** `dispatch` routes every
+key to `help_key` while `@help` is set. A genuine keystroke (even `q`) only closes
+the overlay — no passthrough into an action. But the non-keystroke bytes the loop
+also receives — the `C-l` switch/background-refresh poke, the `C-r` config poke,
+focus in/out (`HELP_IGNORED_BYTES`) — must NOT dismiss it, or a background PR
+refresh would close it out from under the reader (the same robustness `filter_key`
+has against non-printables). Dropping their side effects is safe: `C-l`'s
+reload/visibility self-heals via the `tick` backstop within `REFRESH` (tick runs
+while help is open); `C-r` can't coincide with help (you can't open the editor with
+help up — `e` dismisses first — and `C-r` isn't broadcast); focus is cosmetic under
+a full-pane overlay. `?` can't open mid-filter (there it's a query char), so `@help`
+and `@filter` are never both set.
+
+**Static overlay, so it's off the animation cadence.** `pulsing?` returns false
+while `@help` — a non-animating screen shouldn't ride the `PULSE` repaint. Close
+latency is unaffected: dismissal is input-driven, so the keypress wakes `IO.select`
+at once and the next iteration renders the tree; the gate only lengthens the idle
+wake while help is up. `render_help` uses the same cursor-addressed `\e[K`/`\e[0J`
+no-flash paint as `render` (no full `\e[2J`), with an "any key to close" hint pinned
+to the bottom row. The body is the pure `help_body(rows, cols)` =
+`help_lines(cols).first(rows - 1)` — the hint always seats, and a short pane drops
+the tail (HELP is top-loaded with nav), never the top; extracted pure so the
+height-cap is unit-testable without raw I/O. `help_lines` truncs the PLAIN string
+before wrapping ANSI (the `line()` pattern), so truncation can't cut an escape.
+
+**The magic row: the keys it shows are YOUR keys.** `tmux_help_rows` resolves the
+tmux-layer keys that operate the sidebar at render time — the toggle/home keys via
+`Config#tmux_key`, and (the implicit step switchboard splits the sidebar but
+deliberately never binds) the user's OWN pane-movement keys via
+`Tmux.pane_switch_keys`. That parses `tmux list-keys -T prefix` for `select-pane`
+*movement* binds (directional / `-t`, excluding mark `-m`/`-M`), renders arrow names
+as glyphs, collapses the full arrow / `hjkl` clusters to one token, and memoizes
+once so the paint loop never re-queries. Best-effort and correct-or-absent: it reads
+the prefix table and a literal `select-pane`, omits exotic idioms (if-shell-wrapped,
+root-table) rather than show a fabricated key, and the row drops entirely when
+nothing's detected. It `String#scrub`s the raw output first — a non-ASCII binding in
+a non-UTF-8 locale could otherwise raise mid-regex and crash the render (degrade,
+never crash).
 
 ### Conventions
 

@@ -17,7 +17,9 @@ module Switchboard
       end
       attr_reader :projects
 
-      def pr_for(branch)
+      # Matches Model#pr_for(project, branch) (#66). These fixtures are single-project,
+      # so the branch-keyed double ignores the project arg.
+      def pr_for(_project, branch)
         @prs[branch]
       end
     end

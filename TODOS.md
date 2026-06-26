@@ -153,10 +153,12 @@ and where to start.
   deleted before the next background refresh (worse when the fetch is failing, since
   `Pr.refresh` preserves the last-good cache) — keeps an `OPEN` badge, so `O` opens
   `/tree/<dead-branch>` → 404; (2) **fork PRs** (`headRefName` is the fork's branch,
-  absent in the base repo); (3) the **cross-project branch-name collision** (issue
-  #66). All three open a recoverable GitHub 404 (never data loss/security), so they're
-  accepted, not blocking. The would-be fix (a keypress-time remote check) is rejected
-  for the same reasons as the bullet above. Captured so the reasoning isn't lost.
+  absent in the base repo); (3) ~~the **cross-project branch-name collision**~~ ✓
+  **Fixed (#66)** — `Model#pr_for` now keys PRs by `(project, branch)`, so a `br` row
+  can't pick up another project's badge. (1) and (2) still open a recoverable GitHub
+  404 (never data loss/security), so they're accepted, not blocking. The would-be fix
+  (a keypress-time remote check) is rejected for the same reasons as the bullet above.
+  Captured so the reasoning isn't lost.
 
 ## Community / contributor hygiene (devex-review) follow-ups
 

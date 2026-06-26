@@ -33,8 +33,8 @@ unbound by default (one less key taken); set `tmux_keys.home` to opt in.
 
 Active when the sidebar pane is focused. Navigation works on whatever row is
 highlighted; the action keys apply to the highlighted row's kind (project,
-workspace, or branch). The legend at the bottom of the pane is context-sensitive —
-it shows the keys that apply to the current row.
+workspace, or branch). The one-line footer shows the row's nav verb and the
+`?` gateway; press `?` for the full key map (the action keys live there).
 
 | Key | Action |
 |-----|--------|
@@ -51,10 +51,12 @@ it shows the keys that apply to the current row.
 | `r` | Rename the highlighted workspace (moves the worktree dir, keeps branch + PR). |
 | `d` | Remove the highlighted row — delete a workspace, or unregister a project (and close its sessions). Confirms first. |
 | `e` | Edit `config.yml` in `$EDITOR` (opens beside the home tree, returns you on quit). |
+| `?` | Show the full key map overlay (nav + actions + filter/prompt modes + the tmux keys that operate the sidebar). Any key closes it. |
 | `q` | Quit switchboard — tear down every `sb/` session. Confirms first. |
 
 The footer legend shows only the common keys for the highlighted row; `g`/`G` and
-the `Ctrl-N`/`Ctrl-P` movement aliases are unshown power-user shortcuts.
+the `Ctrl-N`/`Ctrl-P` movement aliases don't fit it — press `?` in the sidebar for
+the complete key map, the in-app home for every shortcut.
 
 Every name prompt (`n` create, `a` add local/clone, `r` rename) edits in raw mode:
 `Esc` (or `Ctrl-C`) cancels and returns to the tree with nothing created, `↵`

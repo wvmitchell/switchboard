@@ -7,6 +7,28 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.35.0] — `?` help overlay + one-line footer; cross-project PR badge fix (2026-06-26)
+
+### Added
+- **`?` help overlay (#62).** Press `?` in the sidebar for the full key map — the
+  discoverable home for the keys the footer can't fit: navigation (`g`/`G` jumps, `←`/`→`
+  resize, the `^N`/`^P` aliases), the selected-row actions, the filter- and prompt-mode
+  keys, and — resolved from your own `tmux list-keys` — the keys that operate the sidebar
+  (show/hide, and **your** pane-switch keys, the one step switchboard never binds itself).
+  A real keystroke closes it; background pokes (PR refresh, focus) pass through so it can't
+  be dismissed out from under you. Surfaced because a daily user never discovered `g`/`G`:
+  they were invisible in-app.
+
+### Changed
+- **The footer is now a single line (#62).** With the overlay holding the complete
+  reference, the footer drops its two action-key lines to one context-sensitive
+  `nav · ? help`, handing the tree two more rows. The `?` gateway is always shown so the
+  overlay stays discoverable (a help you must already know `?` to find would be circular).
+- **PR badges are keyed by `(project, branch)` (#66).** `Model#pr_for` looked PRs up by
+  bare branch name against a map merged across every project, so two registered repos
+  sharing a branch name could cross-render each other's PR badge on a branch row. The map
+  is now keyed per project, so a badge can't leak between repos.
+
 ## [0.34.4] — self-naming nudge: name it, don't ask (2026-06-26)
 
 ### Changed
