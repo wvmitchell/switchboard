@@ -52,10 +52,20 @@ module Switchboard
       auto_rename && placeholder && stop_hook_active == false
     end
 
-    # The standing instruction. "Once you understand what this work is" stops a
-    # premature name off the opening message; "don't end the session on a placeholder
-    # name" sets the deadline the Stop backstop then enforces; the collision aside
-    # covers the :branch_exists path.
+    # The standing instruction. The opt-in clause is the load-bearing part: the project
+    # turned `auto_rename` ON, so naming the workspace is the agent's JOB here, not a
+    # decision to surface to the user. Without that framing a helpful agent treats the
+    # name as the user's call and ASKS ("what should I call this?") — which drags the
+    # user into a chore they delegated AND, because the question ends the turn on a
+    # placeholder, makes them see the Stop backstop (a silent guard, not a prompt). So
+    # the message says outright: pick the name yourself, don't ask. The "you can rename
+    # again later" clause closes the loop — picking now is low-stakes because a user who
+    # wants a different name can just say so and the agent redoes it (rename is idempotent
+    # and safe).
+    #
+    # "Once you understand what this work is" stops a premature name off the opening
+    # message; "don't end the session on a placeholder name" sets the deadline the Stop
+    # backstop then enforces; the collision aside covers the :branch_exists path.
     #
     # The "safe while you're working here" clause preempts a real failure mode (#101):
     # a careful agent reasons that `switchboard rename` moves the worktree dir out from
@@ -65,12 +75,14 @@ module Switchboard
     # unless the nudge says so. (Distinct from the `cd` hint `switchboard rename` prints
     # on success: that's for AFTER a rename; this is what gets the agent to run it at all.)
     def message(leaf)
-      "#{leaf} is a placeholder name. Once you understand what this work is, run " \
-        "`switchboard rename <name>` to name the workspace and its branch (pick " \
-        "another if that name's taken). Renaming is safe while you're working here " \
-        "— switchboard re-links the old path, so the move won't strand this session. " \
-        "Don't end the session on a placeholder name — if you don't know the right " \
-        "name yet, rename the moment you do."
+      "#{leaf} is a placeholder name. This project opted into agent self-naming, so " \
+        "choosing the name is your job here — don't ask the user what to call it. Once " \
+        "you understand what this work is, run `switchboard rename <name>`, picking the " \
+        "name yourself from what the work actually is (pick another if that name's taken). " \
+        "Renaming is safe while you're working here — switchboard re-links the old path, " \
+        "so the move won't strand this session, and you can rename again later if the " \
+        "user wants something different. Don't end the session on a placeholder name — " \
+        "if you don't know the right name yet, rename the moment you do."
     end
 
     # The Stop-hook block reason. Imperative, because it fires exactly when the agent is

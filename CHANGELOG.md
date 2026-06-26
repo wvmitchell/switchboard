@@ -7,6 +7,19 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.34.4] — self-naming nudge: name it, don't ask (2026-06-26)
+
+### Changed
+- **The SessionStart self-naming nudge now tells the agent to pick the name itself, not to
+  ask the user (#92 follow-up).** With `auto_rename` on, naming the workspace is delegated to
+  the agent — but the old wording never said so, so a helpful agent surfaced it as a question
+  ("what should I call this?"). That drags the user into a chore they handed off and, because
+  the question ends the turn on a placeholder, exposes the **Stop backstop** — a silent guard
+  the user is normally never meant to see. `RenameNudge.message` now leads with the opt-in
+  framing ("This project opted into agent self-naming, so choosing the name is your job here —
+  don't ask the user what to call it") and notes the rename is redoable if the user later wants
+  a different name.
+
 ## [0.34.3] — rename nudge says renaming in place is safe (2026-06-26)
 
 ### Changed

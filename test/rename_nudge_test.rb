@@ -42,6 +42,15 @@ module Switchboard
       assert_includes m, "strand"
     end
 
+    # The opt-in framing: auto_rename is ON, so the agent must NAME the workspace
+    # itself, not ask the user (asking ends the turn on a placeholder and exposes the
+    # Stop backstop the user shouldn't normally see).
+    def test_message_tells_the_agent_to_pick_the_name_not_ask
+      m = RenameNudge.message("wandering-finch")
+      assert_includes m, "don't ask the user"
+      assert_includes m, "your job"
+    end
+
     def test_context_json_is_the_sessionstart_additional_context_shape
       out = JSON.parse(RenameNudge.context_json("calm-otter"))["hookSpecificOutput"]
       assert_equal "SessionStart", out["hookEventName"]
