@@ -55,13 +55,22 @@ module Switchboard
     # The standing instruction. "Once you understand what this work is" stops a
     # premature name off the opening message; "don't end the session on a placeholder
     # name" sets the deadline the Stop backstop then enforces; the collision aside
-    # covers the :branch_exists path. No `cd` reminder — `switchboard rename` already
-    # prints that hint on success.
+    # covers the :branch_exists path.
+    #
+    # The "safe while you're working here" clause preempts a real failure mode (#101):
+    # a careful agent reasons that `switchboard rename` moves the worktree dir out from
+    # under its own running shell and so DEFERS the rename to avoid stranding itself.
+    # That fear is false — Rename.perform leaves a bridge symlink at the old path
+    # (move_worktree bridge:) so the frozen cwd stays resolvable — but it's invisible
+    # unless the nudge says so. (Distinct from the `cd` hint `switchboard rename` prints
+    # on success: that's for AFTER a rename; this is what gets the agent to run it at all.)
     def message(leaf)
       "#{leaf} is a placeholder name. Once you understand what this work is, run " \
         "`switchboard rename <name>` to name the workspace and its branch (pick " \
-        "another if that name's taken). Don't end the session on a placeholder name " \
-        "— if you don't know the right name yet, rename the moment you do."
+        "another if that name's taken). Renaming is safe while you're working here " \
+        "— switchboard re-links the old path, so the move won't strand this session. " \
+        "Don't end the session on a placeholder name — if you don't know the right " \
+        "name yet, rename the moment you do."
     end
 
     # The Stop-hook block reason. Imperative, because it fires exactly when the agent is
@@ -71,8 +80,9 @@ module Switchboard
     def stop_message(leaf)
       "This workspace and its branch are still on the placeholder name `#{leaf}`. " \
         "Before you finish, name them: run `switchboard rename <name>` (pick another " \
-        "if that name's taken). If you truly can't name it yet, say why — otherwise " \
-        "rename now."
+        "if that name's taken). Renaming is safe right now — switchboard re-links the " \
+        "old path, so the move won't strand this session. If you truly can't name it " \
+        "yet, say why — otherwise rename now."
     end
 
     # The SessionStart stdout payload Claude reads (its `additionalContext` is merged

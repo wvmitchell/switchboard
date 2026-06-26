@@ -7,6 +7,19 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.34.3] — rename nudge says renaming in place is safe (2026-06-26)
+
+### Changed
+- **The self-naming nudge now reassures that renaming a live workspace is safe (#101).**
+  A careful agent reasoned (correctly in general, wrongly here) that `switchboard rename`
+  would move the worktree dir out from under its own running shell and strand the session,
+  so it **deferred** the rename — defeating the Stop backstop's "you can't miss it" intent.
+  The fear is false: `Rename.perform` leaves a bridge symlink at the old path so a frozen
+  cwd stays resolvable and the session is renamed in place, never restarted. Both nudge
+  messages (`RenameNudge.message` / `stop_message`) now carry one terse clause —
+  "switchboard re-links the old path, so the move won't strand this session" — and
+  `docs/reference-cli.md` states the same where an agent reads about the dir move.
+
 ## [0.34.2] — agent self-naming backstop + create-prompt hint (2026-06-26)
 
 ### Added

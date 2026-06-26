@@ -33,6 +33,15 @@ module Switchboard
       assert_includes m, "switchboard rename"
     end
 
+    # #101: the message must reassure that renaming a live workspace is safe — the
+    # bridge re-links the old path — or a careful agent defers the rename to avoid
+    # stranding its own shell.
+    def test_message_reassures_renaming_in_place_is_safe
+      m = RenameNudge.message("wandering-finch")
+      assert_includes m, "safe"
+      assert_includes m, "strand"
+    end
+
     def test_context_json_is_the_sessionstart_additional_context_shape
       out = JSON.parse(RenameNudge.context_json("calm-otter"))["hookSpecificOutput"]
       assert_equal "SessionStart", out["hookEventName"]
@@ -68,6 +77,14 @@ module Switchboard
       assert_equal "block", out["decision"]
       assert_includes out["reason"], "calm-otter"
       assert_includes out["reason"], "switchboard rename"
+    end
+
+    # #101: the Stop backstop reassures too — otherwise the agent talks around the
+    # block via the "say why" escape, deferring instead of renaming.
+    def test_stop_message_reassures_renaming_in_place_is_safe
+      m = RenameNudge.stop_message("calm-otter")
+      assert_includes m, "safe"
+      assert_includes m, "strand"
     end
   end
 end

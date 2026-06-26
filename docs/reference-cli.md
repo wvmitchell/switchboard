@@ -101,6 +101,12 @@ and its conversation survive. This is the verb for an **agent to (re)name its ow
 live workspace** once it knows what the work actually is — the sidebar's `r` key
 does the same from the tree.
 
+**Renaming mid-task is safe** — the dir move doesn't strand your running shell. The
+move leaves a symlink bridge at the old path (below), so a frozen cwd keeps
+resolving and the session is renamed in place, never restarted. So an agent should
+rename the moment it knows the name, not defer to the end to avoid moving its own
+directory.
+
 **It also renames the git branch** to match — `<branch_prefix>/<name>` (the dir
 stays the bare `<name>`) — but only when that's safe: the branch is still the
 auto-created one (its name still matches the old leaf) **and** it hasn't been
