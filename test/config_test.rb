@@ -31,7 +31,7 @@ module Switchboard
     end
 
     def test_scaffold_template_advertises_the_optional_knobs
-      %w[tmux_keys sounds session_command base prune_on_launch projects_root suggest_names].each do |knob|
+      %w[tmux_keys sounds session_command base prune_on_launch projects_root].each do |knob|
         assert_includes Config::SCAFFOLD_TEMPLATE, knob, "a fresh config should advertise #{knob}"
       end
     end
@@ -149,12 +149,6 @@ module Switchboard
       assert cfg({}).agent_state_hooks?
       assert cfg("agent_state_hooks" => true).agent_state_hooks?
       refute cfg("agent_state_hooks" => false).agent_state_hooks?
-    end
-
-    def test_suggest_names_on_by_default_off_only_when_false
-      assert cfg({}).suggest_names?
-      assert cfg("suggest_names" => true).suggest_names?
-      refute cfg("suggest_names" => false).suggest_names?
     end
 
     def test_prune_on_launch_on_by_default_off_only_when_false

@@ -1300,12 +1300,7 @@ module Switchboard
       project = @config.project(node.project)
       return unless project
 
-      # Prefill the prompt with a suggested name (#84) — the agent's pane title,
-      # then the first commit subject — so you rarely type a name. Snapshotted here
-      # (bare ↵ accepts it); editable; empty when suggestions are off / none found.
-      wt = Worktree.new(project: node.project, path: node.path, base: project["base_ref"])
-      newname = prompt_line("rename #{File.basename(node.path)} to",
-                            prefill: Rename.suggest(@config, wt, session: Tmux.session_name(wt)).first)
+      newname = prompt_line("rename #{File.basename(node.path)} to")
       return reload if blank_input?(newname)
 
       # The CLI warns these to stderr; the sidebar can't (stderr would paint over
@@ -1345,8 +1340,8 @@ module Switchboard
     # every name prompt cancels the same way. The hidden cursor is restored in an
     # ensure so a raise can't strand a visible block cursor; any read fault returns
     # nil (cancel), the same graceful-degrade contract the cooked version had.
-    def prompt_line(label, prefill: "")
-      buf = +(prefill || "") # a seeded buffer edits/submits normally; bare ↵ accepts it
+    def prompt_line(label)
+      buf = +"" # collects the typed text; bare ↵ ⇒ "" ⇒ blank_input? cancels
       draw_prompt(label, buf)
       loop do
         chunk = read_prompt_key

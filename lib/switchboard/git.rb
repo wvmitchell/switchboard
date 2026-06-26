@@ -234,21 +234,6 @@ module Switchboard
       blank?(base) ? ref : "#{base}...#{ref}"
     end
 
-    # The oldest non-merge commit subject on this branch since `base` (e.g.
-    # origin/main) — the "what is this work" signal for a rename suggestion (#84),
-    # used only when there's no agent pane title. LOCAL only (no fetch in this
-    # read path): an unknown/unfetched base or no commits yields "" -> nil, so it
-    # degrades to no candidate rather than the repo's first-ever commit. Uses
-    # base..HEAD (two-dot: HEAD's own commits past the merge-base), newest-last via
-    # --reverse so .first is the oldest.
-    def first_commit_subject(worktree, base)
-      return nil if blank?(base)
-
-      out = capture(worktree, "log", "--no-merges", "--reverse", "--format=%s", "#{base}..HEAD")
-      subject = out.lines.first&.chomp
-      subject unless blank?(subject)
-    end
-
     def blank?(str)
       str.nil? || str.empty?
     end

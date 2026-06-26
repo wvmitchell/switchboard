@@ -262,25 +262,12 @@ module Switchboard
       return warn("not inside a switchboard-managed worktree (cd into one first)") unless wt
       return warn("can't rename the primary checkout") if wt.primary
 
-      return print_suggestions(wt) if newname.nil? # no-arg: suggest, never rename (#84)
+      # No-arg: nothing to rename to. Print usage + the current name (the agent/user
+      # supplies the new name — switchboard no longer guesses one). Falsy ⇒ exit 1.
+      return warn(%(usage: switchboard rename <newname> (this workspace is "#{File.basename(wt.path)}"))) if newname.nil?
 
       sub = subpath_in(wt.path) # capture before the move so the cd hint is subdir-aware
       report_rename(Rename.perform(config, wt.project, wt.path, newname), sub)
-    end
-
-    # No-arg `switchboard rename` (issue #84): print suggested names for this
-    # workspace (the agent's pane title, then the first commit subject) and the
-    # command to apply one — it NEVER renames (the title drifts, so the suggestion
-    # is a proposal the agent/user picks). Exit 0 with suggestions (informational);
-    # falls back to usage (exit 1) when there's nothing to suggest.
-    def print_suggestions(wt)
-      names = Rename.suggest(config, wt, session: Tmux.session_of)
-      return warn("usage: switchboard rename <newname>") if names.empty?
-
-      puts "suggested names for this workspace:"
-      names.each { |n| puts "  #{n}" }
-      puts "rename with: switchboard rename <name>"
-      true
     end
 
     # Map a Rename::Result to output, returning true on success (false ⇒ `run`
@@ -626,7 +613,7 @@ module Switchboard
           switchboard refresh      re-fetch PR badges from gh (normally automatic)
           switchboard enable-hooks [P]   wire agent-state dots in a worktree (default: cwd)
           switchboard disable-hooks [P]  remove them from that worktree
-          switchboard rename [NAME]  rename the current workspace (dir + tmux session); no NAME suggests one
+          switchboard rename NAME    rename the current workspace (dir + tmux session)
           switchboard sound [done|waiting]  play a state's sound (try audio / pick sounds)
           switchboard prune        kill orphaned sb/ sessions (--dry-run / -n previews)
           switchboard quit         close ALL switchboard sessions (full teardown — kills the one you're in too)

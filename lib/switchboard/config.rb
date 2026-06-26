@@ -56,7 +56,6 @@ module Switchboard
       # session_command: ""                        # run on a worktree's first session (e.g. claude --dangerously-skip-permissions)
       # agent_state_hooks: true                    # auto-wire the agent-state dots on worktree create
       # prune_on_launch: true                      # prune orphaned sb/ sessions when landing on home
-      # suggest_names: true                        # rename suggests a name from the agent's pane title / first commit
 
       # Completion sounds (on by default): a built-in (train / chime, or train_1..3 /
       # chime_1..3), a file path, or a macOS system-sound name. enabled: false mutes all.
@@ -171,15 +170,6 @@ module Switchboard
     # survive a relaunch. On by default; set `prune_on_launch: false` to opt out.
     def prune_on_launch?
       @data.fetch("prune_on_launch", true) != false
-    end
-
-    # Whether rename offers an intelligent name suggestion — from the agent's pane
-    # title (Claude's conversation summary), falling back to the branch's first
-    # commit subject (#84). On by default; set `suggest_names: false` to turn off:
-    # the sidebar `r` prompt opens empty and no-arg `switchboard rename` just
-    # prints usage, so the user never has to invent a name unless they opt out.
-    def suggest_names?
-      @data.fetch("suggest_names", true) != false
     end
 
     # Optional prefix for new branches, e.g. "wvmitchell" -> wvmitchell/<name>.

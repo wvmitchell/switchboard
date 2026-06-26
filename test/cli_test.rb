@@ -433,27 +433,14 @@ module Switchboard
       dest
     end
 
-    # No-arg `switchboard rename` (#84): in a managed worktree it PRINTS suggestions
-    # (never renames); outside one it warns; with no candidates it falls to usage.
-    def test_rename_no_arg_prints_suggestions
-      wt = Worktree.new(project: "proj", path: "/x", primary: false)
+    # No-arg `switchboard rename`: nothing to rename to, so it warns usage (including
+    # the current workspace name) and exits non-zero — switchboard never guesses a name.
+    def test_rename_no_arg_warns_usage_with_the_current_name
+      wt = Worktree.new(project: "proj", path: "/x/alpha", primary: false)
       stub_method(CLI, :current_worktree, -> { wt }) do
-        stub_method(Rename, :suggest, ->(*, **) { %w[fix-tmux-status-bar issue-84-pane] }) do
-          out = capture { assert CLI.rename(nil) }
-          assert_includes out, "suggested names"
-          assert_includes out, "fix-tmux-status-bar"
-          assert_includes out, "rename with: switchboard rename"
-        end
-      end
-    end
-
-    def test_rename_no_arg_without_candidates_warns_usage
-      wt = Worktree.new(project: "proj", path: "/x", primary: false)
-      stub_method(CLI, :current_worktree, -> { wt }) do
-        stub_method(Rename, :suggest, ->(*, **) { [] }) do
-          err = capture_err { refute CLI.rename(nil) }
-          assert_match(/usage: switchboard rename/, err)
-        end
+        err = capture_err { refute CLI.rename(nil) }
+        assert_match(/usage: switchboard rename/, err)
+        assert_includes err, "alpha"
       end
     end
 

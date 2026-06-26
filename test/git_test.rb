@@ -27,24 +27,6 @@ module Switchboard
       assert_equal "main", Git.current_branch(temp_git_repo)
     end
 
-    # first_commit_subject: the oldest work commit's subject vs base, for the #84
-    # rename suggestion's git fallback. Local-only; degrades to nil.
-    def test_first_commit_subject_is_the_oldest_work_commit
-      repo = temp_git_repo("app")
-      git(repo, "worktree", "add", "-q", path("wt"), "-b", "feat")
-      File.write(path("wt", "a.txt"), "a"); git(path("wt"), "add", "-A"); git(path("wt"), "commit", "-qm", "Add the widget")
-      File.write(path("wt", "b.txt"), "b"); git(path("wt"), "add", "-A"); git(path("wt"), "commit", "-qm", "polish")
-      assert_equal "Add the widget", Git.first_commit_subject(path("wt"), "main")
-    end
-
-    def test_first_commit_subject_is_nil_without_commits_or_base
-      repo = temp_git_repo("app")
-      git(repo, "worktree", "add", "-q", path("wt"), "-b", "feat") # no commits beyond main
-      assert_nil Git.first_commit_subject(path("wt"), "main"), "no work commits -> nil"
-      assert_nil Git.first_commit_subject(path("wt"), nil), "blank base -> nil (no fetch, no first-ever commit)"
-      assert_nil Git.first_commit_subject(path("wt"), "origin/nope"), "unknown base -> nil"
-    end
-
     def test_move_worktree_moves_the_directory
       repo = temp_git_repo("app")
       git(repo, "worktree", "add", "-q", path("old"), "-b", "feature")

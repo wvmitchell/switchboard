@@ -1409,13 +1409,11 @@ module Switchboard
       sb.instance_variable_set(:@config, Config.new)
       flashed = nil
       reloaded = false
-      stub_method(Rename, :suggest, ->(*, **) { [] }) do
-        stub_method(sb, :prompt_line, ->(*, **) { "beta" }) do
-          stub_method(sb, :reload, -> { reloaded = true }) do
-            stub_method(sb, :flash, ->(msg) { flashed = msg }) do
-              stub_method(Rename, :perform, ->(*) { Rename::Result.new(:exists, "/wt/beta") }) do
-                sb.send(:rename)
-              end
+      stub_method(sb, :prompt_line, ->(*) { "beta" }) do
+        stub_method(sb, :reload, -> { reloaded = true }) do
+          stub_method(sb, :flash, ->(msg) { flashed = msg }) do
+            stub_method(Rename, :perform, ->(*) { Rename::Result.new(:exists, "/wt/beta") }) do
+              sb.send(:rename)
             end
           end
         end
@@ -1430,52 +1428,16 @@ module Switchboard
       sb = sidebar(nodes: [proj("app"), ws("alpha", path: "/wt/alpha")], cursor: 1)
       sb.instance_variable_set(:@config, Config.new)
       reloaded = false
-      stub_method(Rename, :suggest, ->(*, **) { [] }) do
-        stub_method(sb, :prompt_line, ->(*, **) { "beta" }) do
-          stub_method(sb, :reload, -> { reloaded = true }) do
-            stub_method(sb, :flash, ->(*) { flunk "no flash on a successful rename" }) do
-              stub_method(Rename, :perform, ->(*) { Rename::Result.new(:ok, "/wt/beta") }) do
-                sb.send(:rename)
-              end
-            end
-          end
-        end
-      end
-      assert reloaded
-    end
-
-    # The `r` prompt is prefilled with the top suggestion (#84) — editable, bare ↵
-    # accepts it. Also pins the suggest() contract: the node's resolved base_ref and
-    # its OWN session (not the current one) are passed, so the git fallback + pane
-    # read target the right workspace.
-    def test_rename_prefills_the_prompt_and_passes_the_node_context
-      File.write(Config.path, YAML.dump("base" => "origin/dev",
-                                        "projects" => [{ "name" => "app", "path" => "/x" }]))
-      sb = sidebar(nodes: [proj("app"), ws("alpha", path: "/wt/alpha")], cursor: 1)
-      sb.instance_variable_set(:@config, Config.new)
-      seen_prefill = :unset
-      seen_wt = nil
-      seen_session = nil
-      stub_method(Rename, :suggest, lambda { |_cfg, worktree, session:|
-        seen_wt = worktree
-        seen_session = session
-        %w[fix-tmux-status-bar other-cand]
-      }) do
-        stub_method(sb, :prompt_line, lambda { |_label, prefill: ""|
-          seen_prefill = prefill
-          nil # cancel after capturing → blank_input? → reload, no perform
-        }) do
-          stub_method(sb, :reload, -> {}) do
-            stub_method(Rename, :perform, ->(*) { flunk "cancelled before perform" }) do
+      stub_method(sb, :prompt_line, ->(*) { "beta" }) do
+        stub_method(sb, :reload, -> { reloaded = true }) do
+          stub_method(sb, :flash, ->(*) { flunk "no flash on a successful rename" }) do
+            stub_method(Rename, :perform, ->(*) { Rename::Result.new(:ok, "/wt/beta") }) do
               sb.send(:rename)
             end
           end
         end
       end
-      assert_equal "fix-tmux-status-bar", seen_prefill
-      assert_equal "/wt/alpha", seen_wt.path
-      assert_equal "origin/dev", seen_wt.base, "the resolved base_ref is passed for the git fallback"
-      assert_equal "sb/app/alpha", seen_session, "reads the node's session, not the current one"
+      assert reloaded
     end
 
     # rename_error maps each non-success status to a distinct message; success and

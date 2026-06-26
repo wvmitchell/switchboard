@@ -7,6 +7,21 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.32.1] — remove the pane-title rename suggestion (2026-06-26)
+
+### Removed
+- **The `rename` name suggestion (#84/#89) is gone (#93).** It harvested Claude's
+  pane title — falling back to the branch's first commit subject — into a suggested
+  workspace name. But that title is the harness's one-shot `ai-title`: generated once
+  from the opening message and never refreshed, so for any session that ran long or
+  pivoted the suggestion couldn't beat the branch name you already started with.
+  Removed `Rename.suggest` / `slugify_title`, `Tmux.agent_pane_title` /
+  `glyph_titled`, `Git.first_commit_subject`, and the `suggest_names` config knob.
+  The sidebar `r` prompt now opens empty, and no-arg `switchboard rename` prints
+  usage plus the current workspace name (it never guesses one). The manual rename
+  verb — `switchboard rename <name>` and the sidebar `r` key — is unchanged.
+  Agent-driven self-naming replaces the suggestion (see #92).
+
 ## [0.32.0] — suggest a workspace name from the agent's pane title (2026-06-25)
 
 ### Added

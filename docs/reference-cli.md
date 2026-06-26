@@ -94,7 +94,7 @@ switchboard-created worktrees get this automatically.
 Remove switchboard's hooks from a worktree's local settings (leaving any other
 settings intact). Defaults to the current worktree.
 
-### `switchboard rename [name]`
+### `switchboard rename <name>`
 Rename the workspace you're standing in: moves the worktree directory to `<name>`
 (the display leaf) and renames its `sb/` tmux session in place, so a running agent
 and its conversation survive. The git branch is left untouched (its PR link stays
@@ -106,14 +106,8 @@ It refuses to rename the primary/trunk checkout, a name that collapses to empty,
 or a name containing `/` (the leaf must be flat). It exits non-zero on any failure
 so `switchboard rename x && cd …` is safe to chain.
 
-**Run with no name to get a suggestion** (issue #84). switchboard prints candidate
-names — harvested from the agent's pane title (Claude sets it to a conversation
-summary), falling back to the branch's first commit subject — then the
-`switchboard rename <name>` line to apply one. It never renames on the no-arg form;
-the title drifts with the conversation, so the suggestion is a proposal you pick.
-The sidebar's `r` prompt is **prefilled** with the top suggestion (just press `↵` to
-accept, or edit it). Turn the whole thing off with `suggest_names: false` in
-config.yml — then `r` opens an empty prompt and no-arg `rename` just prints usage.
+Run with **no name** and it prints usage plus the current workspace name and exits
+non-zero — switchboard doesn't guess a name; you (or the agent) supply it.
 
 > **After a rename, `cd` into the new path.** The move leaves a symlink bridge at
 > the old path (so a running agent's hooks keep resolving), but your interactive
