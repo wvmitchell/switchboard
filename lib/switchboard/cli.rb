@@ -287,10 +287,13 @@ module Switchboard
         puts "already named #{File.basename(result.dest)}"
         true
       when :invalid
-        warn "invalid workspace name (letters, digits, . - _ only; no `/`)"
+        warn "invalid name — must be letters/digits/. - _ (no `/`) and a valid git branch name"
         false
       when :exists
         warn "already exists: #{result.dest}"
+        false
+      when :branch_exists
+        warn "a branch named #{File.basename(result.dest)} already exists — choose another name"
         false
       else # :failed
         warn "rename failed (git worktree move)"

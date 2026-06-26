@@ -1099,12 +1099,14 @@ module Switchboard
 
     # Prompt inline, create the worktree (quiet), then drop into it. Defaults to the
     # highlighted row (the `n` key); filter-mode ↵-on-a-project passes that header in.
-    # Esc/bare-↵ abort with nothing created (prompt_line + blank_input?, issue #68).
+    # Esc cancels (prompt_line ⇒ nil); a bare ↵ (⇒ "") is NOT a cancel — it makes a
+    # faker-named placeholder workspace you rename once you know the work (#94). So we
+    # gate on `name.nil?` here, NOT `blank_input?` (which would also catch the bare ↵).
     def create(node = current)
       return unless node
 
       name = prompt_line("new workspace in #{node.project}")
-      return reload if blank_input?(name)
+      return reload if name.nil?
 
       rows, = winsize
       print "\e[#{rows};1H\e[K\e[?25lcreating…"
@@ -1316,7 +1318,8 @@ module Switchboard
     def rename_error(result)
       case result.status
       when :exists  then "already exists: #{File.basename(result.dest)}"
-      when :invalid then "invalid name — letters, digits, . - _ only, no /"
+      when :branch_exists then "branch #{File.basename(result.dest)} already exists — pick another name"
+      when :invalid then "invalid name — letters/digits/. - _, no /, and a valid git branch"
       when :partial then "renamed the dir, but the tmux session rename failed — run prune"
       when :failed  then "rename failed (git worktree move)"
       end

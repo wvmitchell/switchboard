@@ -171,5 +171,73 @@ module Switchboard
       end
       assert File.directory?(path("wts", "proj", "foo-bar"))
     end
+
+    # --- branch sync (#94) ---------------------------------------------------
+
+    # When the branch is unpushed and still matches the leaf, rename renames it too,
+    # so the dir and branch stay in step (the whole point of #94).
+    def test_perform_syncs_the_branch_when_unpushed_and_in_sync
+      repo = temp_git_repo("proj")
+      old = add_worktree(repo, "old") # branch "old" == leaf, no remote
+      assert_equal :ok, Rename.perform(config_for(repo), "proj", old, "new").status
+      assert_equal "new", Git.current_branch(path("wts", "proj", "new"))
+      refute Git.branch_exists?(repo, "old"), "the old branch name is gone"
+    end
+
+    # The branch adopts the CURRENT branch_prefix on rename (prefix drift): a bare
+    # "old" branch becomes "wv/new".
+    def test_perform_applies_the_branch_prefix
+      repo = temp_git_repo("proj")
+      old = add_worktree(repo, "old")
+      File.write(Config.path, YAML.dump("worktree_root" => path("wts"), "branch_prefix" => "wv",
+                                        "projects" => [{ "name" => "proj", "path" => repo }]))
+      assert_equal :ok, Rename.perform(Config.new, "proj", old, "new").status
+      assert_equal "wv/new", Git.current_branch(path("wts", "proj", "new"))
+    end
+
+    # A pushed branch is left intact (renaming it would orphan its remote ref / PR),
+    # but the dir still moves.
+    def test_perform_leaves_a_pushed_branch
+      repo = temp_git_repo("proj", origin: true)
+      old = path("wts", "proj", "old")
+      git(repo, "worktree", "add", "--no-track", "-q", "-b", "old", old, "origin/main")
+      git(old, "push", "-q", "origin", "old") # offline push to the local bare origin
+      assert_equal :ok, Rename.perform(config_for(repo), "proj", old, "new").status
+      assert File.directory?(path("wts", "proj", "new")), "dir still moves"
+      assert Git.branch_exists?(repo, "old"), "the pushed branch is left intact"
+    end
+
+    # A branch the user switched away from the leaf is left alone (dir-only rename).
+    def test_perform_leaves_a_diverged_branch
+      repo = temp_git_repo("proj")
+      old = path("wts", "proj", "old")
+      git(repo, "worktree", "add", "-q", "-b", "feature-x", old) # branch != leaf
+      assert_equal :ok, Rename.perform(config_for(repo), "proj", old, "new").status
+      assert Git.branch_exists?(repo, "feature-x"), "a diverged branch is left alone"
+      refute Git.branch_exists?(repo, "new")
+    end
+
+    # A lingering branch at the target name ⇒ :branch_exists, and NOTHING moves
+    # (atomic-ish: the agent retries with a new name; no dir≠branch divergence).
+    def test_perform_branch_exists_moves_nothing
+      repo = temp_git_repo("proj")
+      git(repo, "branch", "new") # a lingering branch from a deleted workspace
+      old = add_worktree(repo, "old")
+      result = Rename.perform(config_for(repo), "proj", old, "new")
+      assert_equal :branch_exists, result.status
+      refute File.symlink?(old), "no bridge — the move never happened"
+      refute File.exist?(path("wts", "proj", "new")), "dest not created"
+      assert Git.branch_exists?(repo, "old"), "the old branch is untouched"
+    end
+
+    # A name git rejects as a branch fails clean before any move (when syncing).
+    def test_perform_invalid_branch_name_moves_nothing
+      repo = temp_git_repo("proj")
+      old = add_worktree(repo, "old")
+      result = Rename.perform(config_for(repo), "proj", old, "x.lock") # sanitizes ok, bad ref
+      assert_equal :invalid, result.status
+      refute File.exist?(path("wts", "proj", "x.lock")), "nothing moved"
+      assert Git.branch_exists?(repo, "old")
+    end
   end
 end

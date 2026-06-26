@@ -1364,6 +1364,24 @@ module Switchboard
       assert reloaded, "a cancelled create returns to the tree"
     end
 
+    # A bare ↵ (prompt_line ⇒ "") is NOT a cancel — it passes "" to Creator, which
+    # generates a faker placeholder name (#94). Esc (⇒ nil) still cancels above.
+    def test_create_with_a_bare_enter_makes_a_placeholder
+      sb = sidebar(nodes: [proj("app")], cursor: 0)
+      seen = :unset
+      stub_method(sb, :prompt_line, ->(*) { "" }) do
+        stub_method(Creator, :create, lambda { |_cfg, _project, name|
+          seen = name
+          nil # nil dest ⇒ no Tmux.go; reload closes out
+        }) do
+          stub_method(sb, :reload, -> {}) do
+            capture_stdout { sb.send(:create) } # swallow the "creating…" status line
+          end
+        end
+      end
+      assert_equal "", seen, "the empty name reaches Creator (which makes a placeholder)"
+    end
+
     def test_rename_aborts_when_the_prompt_is_cancelled
       File.write(Config.path, YAML.dump("projects" => [{ "name" => "app", "path" => "/x" }]))
       sb = sidebar(nodes: [proj("app"), ws("alpha", path: "/wt/alpha")], cursor: 1)
@@ -1445,6 +1463,7 @@ module Switchboard
     def test_rename_error_maps_each_status
       sb = sidebar
       assert_match(/already exists: beta/, sb.send(:rename_error, Rename::Result.new(:exists, "/wt/beta")))
+      assert_match(/branch beta already exists/, sb.send(:rename_error, Rename::Result.new(:branch_exists, "/wt/beta")))
       assert_match(/invalid name/,         sb.send(:rename_error, Rename::Result.new(:invalid, nil)))
       assert_match(/session rename failed/, sb.send(:rename_error, Rename::Result.new(:partial, "/wt/x")))
       assert_match(/rename failed/,        sb.send(:rename_error, Rename::Result.new(:failed, nil)))

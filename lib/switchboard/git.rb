@@ -121,6 +121,65 @@ module Switchboard
       capture(worktree, "rev-parse", "--abbrev-ref", "HEAD").strip
     end
 
+    # Rename a local branch in place (git branch -m). Works on a branch checked out
+    # in a linked worktree — git updates that worktree's HEAD to the new name. We use
+    # -m, never -M: -m REFUSES if the target already exists, so a collision can't
+    # silently clobber another branch (callers pre-check + map that to :branch_exists).
+    def rename_branch(repo, old, new)
+      return false if blank?(old) || blank?(new)
+
+      system("git", "-C", repo, "branch", "-m", old, new, out: File::NULL, err: File::NULL)
+    end
+
+    # A local branch by this name already exists. Used to pre-check a rename target
+    # before moving anything, so a collision fails clean (nothing renamed/moved).
+    def branch_exists?(repo, branch)
+      return false if blank?(branch)
+
+      system("git", "-C", repo, "show-ref", "--verify", "--quiet", "refs/heads/#{branch}",
+             out: File::NULL, err: File::NULL)
+    end
+
+    # Whether git would accept `name` as a branch (git check-ref-format --branch).
+    # Creator.sanitize keeps names git rejects (foo..bar, *.lock, trailing dots), so
+    # a rename target must be validated against git, not just the filesystem.
+    def valid_branch_name?(name)
+      return false if blank?(name)
+
+      system("git", "check-ref-format", "--branch", name, out: File::NULL, err: File::NULL)
+    end
+
+    # Whether `branch` looks PUSHED / tracked — the "renaming it would orphan a
+    # remote branch or PR" signal that gates rename's branch-sync (#94). True when a
+    # remote-tracking ref exists for it OR it has a configured upstream. We can't use
+    # `@{upstream}` alone: `git worktree add -b feat origin/main` would set feat's
+    # upstream to origin/main, marking every fresh worktree "pushed" — which is why
+    # Creator cuts branches with `--no-track`, so a configured upstream means a real
+    # `git push -u` / deliberate tracking, not the create-time default. Local-only
+    # (no fetch — rename stays offline); a branch pushed from another clone and never
+    # fetched here is the documented residual gap.
+    def pushed?(repo, branch)
+      return false if blank?(branch)
+
+      remote_tracking_ref?(repo, branch) || tracking_upstream?(repo, branch)
+    end
+
+    # A remote-tracking ref (refs/remotes/<remote>/<branch>) exists — set by a push
+    # (with or without -u) or a fetch. Checks every remote so a non-origin one counts.
+    def remote_tracking_ref?(repo, branch)
+      remotes(repo).any? do |remote|
+        system("git", "-C", repo, "rev-parse", "--verify", "--quiet", "refs/remotes/#{remote}/#{branch}",
+               out: File::NULL, err: File::NULL)
+      end
+    end
+
+    # The branch has a configured upstream (`<branch>@{upstream}` resolves). Addressed
+    # by name (not the current-branch-relative `@{upstream}`) so it's correct for any
+    # worktree's branch. Empty (no upstream) ⇒ false.
+    def tracking_upstream?(repo, branch)
+      !capture(repo, "rev-parse", "--symbolic-full-name", "#{branch}@{upstream}").strip.empty?
+    end
+
     # Every branch ever checked out in this worktree, newest first, deduped.
     # Read from the worktree's own HEAD reflog — the signal neither GUI uses.
     # `limit` caps the result (dedicated worktrees are short-lived, but the

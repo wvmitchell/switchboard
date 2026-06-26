@@ -81,5 +81,51 @@ module Switchboard
       config = config_for(temp_git_repo("proj", origin: true))
       capture_io { assert_nil Creator.create(config, "nope", "x") }
     end
+
+    # No name given -> a faker placeholder workspace + a real branch matching it (#94).
+    def test_create_with_blank_name_generates_a_placeholder
+      config = config_for(temp_git_repo("proj", origin: true))
+      dest = Creator.create(config, "proj", "")
+      refute_nil dest
+      leaf = File.basename(dest)
+      assert_match(/\A[a-z]+-[a-z]+\z/, leaf, "an adjective-noun placeholder leaf")
+      assert File.directory?(dest)
+      assert_equal leaf, Git.current_branch(dest), "branch matches the leaf (no prefix here)"
+    end
+
+    # A generated name already taken by a DIR is skipped; generation retries (#94).
+    def test_create_placeholder_retries_past_a_taken_dir
+      config = config_for(temp_git_repo("proj", origin: true))
+      Creator.create(config, "proj", "taken") # occupies dir + branch "taken"
+      names = %w[taken free]
+      stub_method(Placeholder, :generate, -> { names.shift }) do
+        dest = Creator.create(config, "proj", "")
+        assert_equal File.join(config.worktree_root, "proj", "free"), dest
+      end
+    end
+
+    # A generated name whose BRANCH exists (even with no dir) fails `worktree add`;
+    # generation retries to a free name rather than giving up (#94).
+    def test_create_placeholder_retries_past_a_branch_only_collision
+      repo = temp_git_repo("proj", origin: true)
+      config = config_for(repo)
+      git(repo, "branch", "branchonly") # a branch with no worktree dir
+      names = %w[branchonly free2]
+      stub_method(Placeholder, :generate, -> { names.shift }) do
+        dest = Creator.create(config, "proj", "")
+        assert_equal File.join(config.worktree_root, "proj", "free2"), dest
+      end
+    end
+
+    # The branch created off origin/main must NOT inherit it as an upstream
+    # (--no-track), so rename's pushed? gate (whose @{upstream} arm would otherwise
+    # see origin/main) doesn't misread a fresh worktree as pushed (#94).
+    def test_create_branch_has_no_upstream_and_reads_unpushed
+      config = config_for(temp_git_repo("proj", origin: true))
+      Creator.create(config, "proj", "fresh")
+      repo = config.project("proj")["path"]
+      refute Git.tracking_upstream?(repo, "fresh"), "--no-track ⇒ origin/main not inherited as upstream"
+      refute Git.pushed?(repo, "fresh"), "a freshly-created branch reads as not-pushed"
+    end
   end
 end

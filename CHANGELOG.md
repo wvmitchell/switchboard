@@ -7,6 +7,28 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.33.0] — placeholder workspace names + rename syncs the branch (2026-06-26)
+
+### Added
+- **Placeholder workspace names (#94).** Create a workspace from the sidebar (`n`)
+  without typing a name — a bare `↵` — and switchboard gives it a throwaway
+  *adjective-noun* name (e.g. `wandering-finch`) plus a matching branch, so you can
+  start working before you've decided what the work is. A generated name that
+  collides (dir or branch) just regenerates. (Esc still cancels; typing a name still
+  works as before.)
+
+### Changed
+- **`switchboard rename <name>` now renames the git branch too (#94).** It rebuilds
+  the branch as `<branch_prefix>/<name>` (the worktree dir stays the bare `<name>`),
+  so naming a workspace late still yields a clean, convention-correct branch. It only
+  syncs when safe: the branch must still be the auto-created one (its name still
+  matches the old leaf) **and** unpushed (no remote-tracking ref or configured
+  upstream — renaming a pushed branch would orphan its PR). A pushed or
+  hand-switched branch is left intact and only the dir moves. If a branch by the
+  target name already exists (a leftover from a deleted workspace), rename stops and
+  moves nothing — pick another name — so the dir and branch never diverge. New worktree
+  branches are cut with `--no-track` so they don't inherit the base as an upstream.
+
 ## [0.32.1] — remove the pane-title rename suggestion (2026-06-26)
 
 ### Removed

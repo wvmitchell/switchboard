@@ -97,17 +97,33 @@ settings intact). Defaults to the current worktree.
 ### `switchboard rename <name>`
 Rename the workspace you're standing in: moves the worktree directory to `<name>`
 (the display leaf) and renames its `sb/` tmux session in place, so a running agent
-and its conversation survive. The git branch is left untouched (its PR link stays
-intact). This is the verb for an **agent to (re)name its own live workspace** once
-it knows what the work actually is — the sidebar's `r` key does the same from the
-tree.
+and its conversation survive. This is the verb for an **agent to (re)name its own
+live workspace** once it knows what the work actually is — the sidebar's `r` key
+does the same from the tree.
 
-It refuses to rename the primary/trunk checkout, a name that collapses to empty,
-or a name containing `/` (the leaf must be flat). It exits non-zero on any failure
-so `switchboard rename x && cd …` is safe to chain.
+**It also renames the git branch** to match — `<branch_prefix>/<name>` (the dir
+stays the bare `<name>`) — but only when that's safe: the branch is still the
+auto-created one (its name still matches the old leaf) **and** it hasn't been
+pushed. A **pushed** branch (one with a remote-tracking ref, i.e. a likely PR) or
+a branch you switched yourself is left untouched and only the dir moves. So name a
+fresh workspace late and you get a clean, convention-correct branch; rename one
+that's already on a PR and the branch identity is preserved.
+
+It refuses to rename the primary/trunk checkout, a name that collapses to empty, a
+name containing `/` (the leaf must be flat), or a name git won't accept as a
+branch. If a branch by the target name **already exists** (a leftover from a
+deleted workspace) it stops with that message and moves nothing — pick another
+name. It exits non-zero on any failure so `switchboard rename x && cd …` is safe to
+chain.
 
 Run with **no name** and it prints usage plus the current workspace name and exits
 non-zero — switchboard doesn't guess a name; you (or the agent) supply it.
+
+> **New workspaces start with a placeholder name.** Create one from the sidebar
+> (`n`) without typing a name and switchboard gives it a throwaway
+> *adjective-noun* name (e.g. `wandering-finch`) and a matching branch — so you can
+> start working before you've decided what it is, then `rename` it (dir + branch)
+> once you know.
 
 > **After a rename, `cd` into the new path.** The move leaves a symlink bridge at
 > the old path (so a running agent's hooks keep resolving), but your interactive

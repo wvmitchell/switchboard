@@ -12,8 +12,10 @@ module Switchboard
   #
   #   :ok        moved + session renamed (or no session to rename — clientless)
   #   :unchanged the name didn't change (rename to the current leaf)
-  #   :invalid   the name sanitizes to empty, or still carries a "/" (see below)
+  #   :invalid   the name sanitizes to empty, carries a "/", or isn't a valid branch
   #   :exists    a real dir already sits at the target
+  #   :branch_exists a branch by the target name already exists (a lingering branch
+  #              from a deleted workspace) — nothing moved; pick another name (#94)
   #   :failed    the git worktree move failed (or the project is unknown)
   #   :partial   the dir moved but a *reachable* session's rename failed — the
   #              dir is the source of truth, so this is recoverable (prune reaps
@@ -38,21 +40,62 @@ module Switchboard
       # Same target ⇒ nothing to do. File.identical? also catches a case-only
       # rename (Old -> old) on a case-insensitive FS (macOS APFS), where the two
       # names ARE the same dir and git worktree move can't separate them — so it's
-      # "unchanged", not a collision or a failure.
+      # "unchanged", not a collision or a failure. (A case-only change therefore
+      # also doesn't sync the branch — an accepted edge; see #94.)
       return Result.new(:unchanged, dest) if dest == old_path || File.identical?(dest, old_path)
       # A real dir blocks the move; a stale rename-bridge symlink does not
       # (move_worktree clears it first), so only a non-symlink counts as taken.
       return Result.new(:exists, dest) if File.exist?(dest) && !File.symlink?(dest)
 
+      sync = sync_branch?(project["path"], old_path)
+      # All branch checks BEFORE any dir move / history migrate, so a collision or
+      # invalid name fails clean (nothing moved) and the agent can retry with another
+      # name. Branch is renamed FIRST so a branch failure aborts before we touch the
+      # dir or transcripts (#94).
+      if sync
+        new_branch = branch_for(config, name)
+        return Result.new(:invalid, dest) unless Git.valid_branch_name?(new_branch)
+        return Result.new(:branch_exists, dest) if Git.branch_exists?(project["path"], new_branch)
+        return Result.new(:failed, dest) unless Git.rename_branch(project["path"], sync, new_branch)
+      end
+
       # bridge: leave a symlink at the old path so a running agent's frozen
       # project dir keeps resolving and its hooks keep reporting (see move_worktree).
-      return Result.new(:failed, dest) unless Git.move_worktree(project["path"], old_path, dest, bridge: true)
+      unless Git.move_worktree(project["path"], old_path, dest, bridge: true)
+        # The dir move failed after the branch was renamed — put the branch back so
+        # the dir and branch can't diverge, then report the failure. Best-effort: if
+        # this rollback ALSO fails (a racing process took the old name), the dir keeps
+        # the old leaf on the new branch — a rare double-fault we accept rather than
+        # loop; a later rename sees the mismatch and just won't re-sync the branch.
+        Git.rename_branch(project["path"], branch_for(config, name), sync) if sync
+        return Result.new(:failed, dest)
+      end
 
       # Carry the agent's conversation history to the new path so `/resume` still
       # finds it after a restart — the cwd just changed out from under it (#42).
       ClaudeHistory.migrate(old_path, dest)
 
       Result.new(rename_session(project_name, old_path, dest), dest)
+    end
+
+    # The branch to rename, or false when the branch should be left alone. We sync
+    # the branch to match the new leaf only when it's still the auto-created branch
+    # (its basename equals the old leaf) AND it hasn't been pushed — renaming a
+    # pushed branch would orphan its remote ref / PR. `pushed?` checks a
+    # remote-tracking ref, NOT @{upstream} (worktree add auto-tracks the base) (#94).
+    def sync_branch?(repo, old_path)
+      branch = Git.current_branch(old_path)
+      return false if branch.empty?
+      return false unless File.basename(branch) == File.basename(old_path)
+      return false if Git.pushed?(repo, branch)
+
+      branch
+    end
+
+    # The convention-correct branch for a leaf: <branch_prefix>/<leaf>, or bare
+    # <leaf> when no prefix is configured. The workspace dir stays the bare leaf.
+    def branch_for(config, name)
+      [config.branch_prefix, name].compact.join("/")
     end
 
     # Rename the session in place (don't kill it) so a running agent and its

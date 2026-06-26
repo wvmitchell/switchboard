@@ -497,6 +497,15 @@ module Switchboard
       end
     end
 
+    def test_rename_reports_branch_exists_and_fails
+      stub_method(CLI, :current_worktree, -> { Worktree.new(project: "proj", path: "/x", primary: false) }) do
+        stub_method(Rename, :perform, ->(*) { Rename::Result.new(:branch_exists, "/wts/proj/taken") }) do
+          err = capture_err { refute CLI.rename("taken") }
+          assert_match(/branch named taken already exists/, err)
+        end
+      end
+    end
+
     def test_rename_reports_unchanged_and_succeeds
       stub_method(CLI, :current_worktree, -> { Worktree.new(project: "proj", path: "/x", primary: false) }) do
         stub_method(Rename, :perform, ->(*) { Rename::Result.new(:unchanged, "/wts/proj/old") }) do
@@ -559,7 +568,8 @@ module Switchboard
       stub_method(CLI, :current_worktree, -> { Worktree.new(project: "proj", path: "/x", primary: false) }) do
         stub_method(Rename, :perform, ->(*) { Rename::Result.new(:invalid, nil) }) do
           err = capture_err { refute CLI.rename("bad name") }
-          assert_match(/invalid workspace name/, err)
+          assert_match(/invalid name/, err)
+          assert_match(/valid git branch name/, err)
         end
       end
     end

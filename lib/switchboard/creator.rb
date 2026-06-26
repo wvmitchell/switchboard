@@ -7,37 +7,66 @@ module Switchboard
   module Creator
     module_function
 
+    PLACEHOLDER_TRIES = 5 # bounded retries past a generated name already taken
+
     # Returns the new worktree path, or nil on failure (message to stderr).
     def create(config, project_name, workspace_name)
       project = config.project(project_name)
       return warn("unknown project: #{project_name}") unless project
 
-      name = sanitize(workspace_name)
-      return warn("invalid workspace name") if name.empty?
-
+      base = project["base_ref"] # e.g. origin/main (global `base`, per-project override)
+      Git.fetch_base(project["path"], base) # make the base ref current first
       # Sanitize the project segment too: an explicit project name can carry
       # traversal (`switchboard add ../x …`), and File.join would otherwise let it
       # escape the worktree root just like an unsanitized workspace name would.
-      dest = File.join(config.worktree_root, sanitize(project_name), name)
+      root = File.join(config.worktree_root, sanitize(project_name))
+
+      # No name given -> a faker placeholder you rename once you know the work (#94).
+      # Retry past a name already taken by a dir OR a branch (a placeholder branch can
+      # outlive its dir), so a random name never just fails. Don't clear a bridge for a
+      # random name — it could be a live rename bridge; just try a different name.
+      if blank?(workspace_name)
+        PLACEHOLDER_TRIES.times do
+          name = Placeholder.generate
+          dest = File.join(root, name)
+          next if File.exist?(dest)
+          return enable_hooks(config, dest) if add_worktree(config, project, name, dest, base)
+        end
+        return warn("couldn't find a free placeholder name")
+      end
+
+      name = sanitize(workspace_name)
+      return warn("invalid workspace name") if name.empty?
+
+      dest = File.join(root, name)
       Git.clear_bridge(dest) # reclaim a stale rename bridge squatting the name
       return warn("already exists: #{dest}") if File.exist?(dest)
 
+      add_worktree(config, project, name, dest, base) ? enable_hooks(config, dest) : nil
+    end
+
+    # git worktree add for `name`'s branch off `base`. `--no-track` so a branch cut
+    # from a remote-tracking base (origin/main) does NOT inherit it as an upstream —
+    # so a configured upstream means a real `git push -u`, which is the signal
+    # rename's `pushed?` gate uses to leave a branch alone (#94). Returns whether it
+    # succeeded.
+    def add_worktree(config, project, name, dest, base)
       branch = [config.branch_prefix, name].compact.join("/")
-      base = project["base_ref"] # e.g. origin/main (global `base`, per-project override)
+      system("git", "-C", project["path"], "worktree", "add", "--no-track", "-b", branch, dest, base,
+             out: File::NULL, err: File::NULL)
+    end
 
-      Git.fetch_base(project["path"], base) # make the base ref current first
-      ok = system("git", "-C", project["path"], "worktree", "add", dest, "-b", branch, base,
-                  out: File::NULL, err: File::NULL)
-      return nil unless ok
-
-      # Scope agent-state hooks to this worktree (never global). Best-effort: a
-      # hook-wiring hiccup must never sink an otherwise-good worktree.
-      begin
-        Hook.enable(dest) if config.agent_state_hooks?
-      rescue StandardError
-        nil
-      end
+    # Scope agent-state hooks to this worktree (never global). Best-effort: a
+    # hook-wiring hiccup must never sink an otherwise-good worktree. Returns dest.
+    def enable_hooks(config, dest)
+      Hook.enable(dest) if config.agent_state_hooks?
       dest
+    rescue StandardError
+      dest
+    end
+
+    def blank?(str)
+      str.to_s.strip.empty?
     end
 
     # Filesystem- and branch-safe: spaces become dashes, the char class drops

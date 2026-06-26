@@ -270,5 +270,64 @@ module Switchboard
     def test_repo_slug_nil_without_origin
       assert_nil Pr.repo_slug(temp_git_repo("noremote"))
     end
+
+    # --- branch sync helpers (#94) -------------------------------------------
+
+    # rename_branch renames a branch checked out in a LINKED worktree (not a stub):
+    # the worktree must end up on the new branch.
+    def test_rename_branch_renames_a_worktree_checked_out_branch
+      repo = temp_git_repo("app")
+      wt = path("wt")
+      git(repo, "worktree", "add", "-q", wt, "-b", "old")
+      assert Git.rename_branch(repo, "old", "feature/new")
+      assert_equal "feature/new", Git.current_branch(wt), "the worktree follows the rename"
+    end
+
+    def test_rename_branch_refuses_when_the_target_exists
+      repo = temp_git_repo("app")
+      git(repo, "branch", "taken")
+      git(repo, "worktree", "add", "-q", path("wt"), "-b", "old")
+      refute Git.rename_branch(repo, "old", "taken"), "-m fails into an existing branch"
+      assert Git.branch_exists?(repo, "old"), "the source branch is untouched on refusal"
+    end
+
+    def test_branch_exists
+      repo = temp_git_repo("app")
+      git(repo, "branch", "here")
+      assert Git.branch_exists?(repo, "here")
+      refute Git.branch_exists?(repo, "absent")
+    end
+
+    def test_valid_branch_name
+      assert Git.valid_branch_name?("feature/auth")
+      refute Git.valid_branch_name?("foo..bar"), "git rejects double-dot"
+      refute Git.valid_branch_name?("foo.lock"), "git rejects a .lock suffix"
+      refute Git.valid_branch_name?(""), "blank is not valid"
+    end
+
+    # pushed? arm 1 — a remote-tracking ref: a --no-track branch off origin/main is
+    # NOT pushed, and becomes so after a push to the (local, offline) bare origin.
+    def test_pushed_via_remote_tracking_ref
+      repo = temp_git_repo("app", origin: true)
+      git(repo, "worktree", "add", "--no-track", "-b", "feat", path("wt"), "origin/main")
+      refute Git.pushed?(repo, "feat"), "a --no-track branch off origin/main is not pushed"
+
+      git(repo, "push", "-q", "origin", "feat") # offline: pushes to the local bare clone
+      assert Git.pushed?(repo, "feat"), "a remote-tracking ref now exists"
+    end
+
+    # pushed? arm 2 — a configured upstream with NO remote-tracking ref (a stale/
+    # set-upstream case): the @{upstream} arm catches it. This is why Creator uses
+    # --no-track (else a fresh branch would carry origin/main as upstream here).
+    def test_pushed_via_configured_upstream
+      repo = temp_git_repo("app")
+      git(repo, "branch", "feat")
+      refute Git.tracking_upstream?(repo, "feat"), "no upstream yet"
+      refute Git.pushed?(repo, "feat")
+
+      git(repo, "branch", "--set-upstream-to=main", "feat") # upstream config, no remote ref
+      assert Git.tracking_upstream?(repo, "feat")
+      assert Git.pushed?(repo, "feat"), "a configured @{upstream} counts as tracked"
+    end
   end
 end

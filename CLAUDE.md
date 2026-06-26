@@ -30,7 +30,7 @@ bin/switchboard doctor     # check that tmux/git/gh + config + install wiring ex
 bin/switchboard init       # create ~/.config/switchboard/config.yml (empty; grown by the add-project flow)
 bin/switchboard config     # open config.yml in $EDITOR (sidebar `e` does the same)
 bin/switchboard sidebar    # run the persistent sidebar standalone (normally tmux-spawned)
-bin/switchboard rename NAME # rename the current workspace from inside it (dir move + bridge + session rename + Claude `/resume` history carry); for the agent to (re)name its own live workspace (#42). No NAME prints usage + the current name (switchboard doesn't guess one)
+bin/switchboard rename NAME # rename the current workspace from inside it (dir move + bridge + session rename + Claude `/resume` history carry + the git branch when safe — see #94); for the agent to (re)name its own live workspace (#42). No NAME prints usage + the current name (switchboard doesn't guess one)
 bin/switchboard prune      # kill orphaned sb/ sessions (reconcile vs git worktrees; --dry-run/-n previews)
 bin/switchboard quit       # close ALL sb/ sessions (full teardown; current session last; clears agent state)
 bin/test                   # run the stdlib-Minitest suite (offline; bin/test <file> for one)
@@ -138,6 +138,21 @@ that "pokes" it with `C-l` (`poke-sidebar`). On the *creation* of a session
 resolved `session_command` (`Config#session_command_for`, global default +
 per-project override) into the window — this is the "how the agent starts" knob,
 e.g. `claude --dangerously-skip-permissions`. Empty ⇒ a plain shell, as before.
+
+**Workspace naming is deferred** (issue #94). Creating a worktree without a name
+(`n` in the sidebar, bare ↵) gives it a **placeholder** — a throwaway adjective-noun
+leaf from `Placeholder.generate` (`placeholder.rb`, a tiny in-repo word list, no
+gem) — and a matching branch, so you start work before naming it. `Creator.create`
+cuts the branch with `--no-track` so a branch off `origin/main` doesn't inherit it
+as an upstream (else the rename gate below would misread every fresh worktree as
+"pushed"); generated names retry past a dir/branch collision. `Rename.perform` then
+renames **both** the dir (bare `<name>`) and the branch (`<branch_prefix>/<name>`) —
+but only when the branch is **unsynced-safe**: still the auto-created branch (its
+basename still equals the old leaf) AND not pushed (`Git.pushed?` = a
+remote-tracking ref exists, NOT `@{upstream}`). A pushed/diverged branch is left
+intact (dir-only rename). All branch checks (`valid_branch_name?`, `branch_exists?`
+⇒ the `:branch_exists` result) run BEFORE any move, and the branch is renamed first,
+so a collision fails clean (nothing moved) and the agent retries with another name.
 
 **Sidebar visibility is per-session, applied to every window** (issue #24). The
 intent lives on the session as a tmux option (`@sb_sidebar` on/off; unset reads
