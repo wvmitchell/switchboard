@@ -30,7 +30,7 @@ module Switchboard
           name = Placeholder.generate
           dest = File.join(root, name)
           next if File.exist?(dest)
-          return enable_hooks(config, dest) if add_worktree(config, project, name, dest, base)
+          return enable_hooks(config, project_name, dest) if add_worktree(config, project, name, dest, base)
         end
         return warn("couldn't find a free placeholder name")
       end
@@ -42,7 +42,7 @@ module Switchboard
       Git.clear_bridge(dest) # reclaim a stale rename bridge squatting the name
       return warn("already exists: #{dest}") if File.exist?(dest)
 
-      add_worktree(config, project, name, dest, base) ? enable_hooks(config, dest) : nil
+      add_worktree(config, project, name, dest, base) ? enable_hooks(config, project_name, dest) : nil
     end
 
     # git worktree add for `name`'s branch off `base`. `--no-track` so a branch cut
@@ -56,10 +56,13 @@ module Switchboard
              out: File::NULL, err: File::NULL)
     end
 
-    # Scope agent-state hooks to this worktree (never global). Best-effort: a
-    # hook-wiring hiccup must never sink an otherwise-good worktree. Returns dest.
-    def enable_hooks(config, dest)
-      Hook.enable(dest) if config.agent_state_hooks?
+    # Wire the per-worktree Claude hooks (agent-state reporter + the #92 self-naming
+    # nudge), scoped to this worktree, never global. Enabled when EITHER dots or
+    # auto_rename is on — auto_rename resolved *per project* (auto_rename_for), so a
+    # project that opts in with the global off still gets the hook the runtime nudge
+    # needs. Best-effort: a hook-wiring hiccup must never sink an otherwise-good worktree.
+    def enable_hooks(config, project_name, dest)
+      Hook.enable(dest) if config.agent_state_hooks? || config.auto_rename_for(project_name)
       dest
     rescue StandardError
       dest

@@ -38,6 +38,50 @@ module Switchboard
       assert Hook.enabled?(worktree)
     end
 
+    # #92: SessionStart carries BOTH the agent-state reporter and the rename nudge.
+    def test_enable_adds_the_rename_nudge_alongside_the_reporter
+      Hook.enable(worktree)
+      cmds = commands_for(settings, "SessionStart")
+      assert(cmds.any? { |c| c.include?(Hook::NUDGE_MARK) }, "nudge command present")
+      assert(cmds.any? { |c| c.include?(Hook::MARK) }, "reporter command still present")
+    end
+
+    # Re-enable must not pile up duplicate SessionStart commands (ours? dedups both).
+    def test_enable_is_idempotent_for_both_sessionstart_commands
+      Hook.enable(worktree)
+      Hook.enable(worktree)
+      cmds = commands_for(settings, "SessionStart")
+      assert_equal 1, cmds.count { |c| c.include?(Hook::NUDGE_MARK) }, "no duplicate nudge"
+      assert_equal 1, cmds.count { |c| c.include?(Hook::MARK) }, "no duplicate reporter"
+    end
+
+    # disable strips the nudge too (ours? recognizes it), not just the reporter.
+    def test_disable_strips_the_nudge
+      Hook.enable(worktree)
+      Hook.disable(worktree)
+      refute Hook.enabled?(worktree)
+    end
+
+    # The baked binary path is Shellwords-escaped (it can contain spaces).
+    def test_nudge_command_escapes_the_binary_path
+      orig = ENV["SWITCHBOARD_BIN"]
+      ENV["SWITCHBOARD_BIN"] = "/has space/switchboard"
+      Hook.enable(worktree)
+      cmd = commands_for(settings, "SessionStart").find { |c| c.include?(Hook::NUDGE_MARK) }
+      assert_includes cmd, '/has\ space/switchboard rename-nudge'
+    ensure
+      orig ? ENV["SWITCHBOARD_BIN"] = orig : ENV.delete("SWITCHBOARD_BIN")
+    end
+
+    # The nudge invocation is guarded so a stale/missing baked bin path (a repo move)
+    # is a clean no-op at SessionStart, not a "command not found" on every session.
+    def test_nudge_command_is_guarded_against_a_missing_binary
+      Hook.enable(worktree)
+      cmd = commands_for(settings, "SessionStart").find { |c| c.include?(Hook::NUDGE_MARK) }
+      assert_includes cmd, "command -v", "presence-checks the binary before running it"
+      assert cmd.strip.end_with?("|| true"), "falls back to a 0 exit when absent"
+    end
+
     # The regression this guards: PreToolUse fires before the permission prompt,
     # so the dot can't clear once you answer. PostToolUse AND PostToolUseFailure
     # both fire after the granted tool runs — dropping either re-introduces a

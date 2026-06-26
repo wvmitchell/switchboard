@@ -7,6 +7,21 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.34.0] — the agent names its own workspace (2026-06-26)
+
+### Added
+- **Agent self-naming nudge (`auto_rename`, off by default) (#92).** Turn on
+  `auto_rename` (global or per-project) and switchboard plants a `SessionStart`
+  instruction in a worktree's Claude hooks telling the running agent to
+  `switchboard rename <name>` once it understands the work — naming the workspace
+  **and** its branch (see #94). It only fires while the workspace still has its
+  generated placeholder name (`Placeholder.generated?`), so it self-extinguishes the
+  moment the work is named; no on-disk marker. The instruction is advisory — the
+  agent names it when ready, or not at all — so nothing is renamed behind your back.
+  The whole thing replaces the stale pane-title *suggestion* removed in #93: the
+  agent, which has the live conversation, is the one source that's both smart and
+  current. Flip it on for existing worktrees with `switchboard enable-hooks`.
+
 ## [0.33.0] — placeholder workspace names + rename syncs the branch (2026-06-26)
 
 ### Added

@@ -19,5 +19,20 @@ module Switchboard
       names = Array.new(50) { Placeholder.generate }
       assert_operator names.uniq.size, :>, 1, "repeated calls don't return one fixed name"
     end
+
+    # generated? is #92's "still unnamed" signal — true only for our exact adj-noun shape.
+    def test_generated_recognizes_a_generated_name
+      assert Placeholder.generated?(Placeholder.generate)
+      assert Placeholder.generated?("#{Placeholder::ADJECTIVES.first}-#{Placeholder::NOUNS.first}")
+    end
+
+    def test_generated_rejects_non_placeholders
+      refute Placeholder.generated?("fix-auth"), "two tokens, not on the lists"
+      refute Placeholder.generated?(Placeholder::ADJECTIVES.first), "single token"
+      refute Placeholder.generated?("#{Placeholder::ADJECTIVES.first}-#{Placeholder::NOUNS.first}-x"), "three tokens"
+      refute Placeholder.generated?("#{Placeholder::ADJECTIVES.first}-notaword"), "adj on-list, noun off-list"
+      refute Placeholder.generated?(""), "empty"
+      refute Placeholder.generated?(nil), "nil"
+    end
   end
 end

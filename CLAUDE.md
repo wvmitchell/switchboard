@@ -207,7 +207,27 @@ worktree's local git excludes so it never dirties `git status`). The reporter
 script is materialized into the XDG **data** dir — an install-independent path
 that survives `brew upgrade` — and the hook command points there. New worktrees
 get this automatically (`Creator.create` → `Hook.enable`, gated on
-`agent_state_hooks?`); existing ones via `switchboard enable-hooks`.
+`agent_state_hooks?` **or** `auto_rename_for(project)` — resolved per project, so a
+project that opts into `auto_rename` with the global off still gets the hook the
+runtime nudge needs); existing ones via `switchboard enable-hooks`.
+
+### Agent self-naming nudge (issue #92)
+
+`Hook.enable` also plants a **second `SessionStart` command** beside the reporter:
+`switchboard rename-nudge` (re-invoking the binary, so it carries `NUDGE_MARK` and
+`Hook.ours?` recognizes both commands for idempotent merge / clean disable). It's
+`command -v`-guarded (`… && … rename-nudge || true`) so a baked bin path gone stale
+after a repo move is a silent no-op at session start, never a "command not found". When
+`auto_rename` is on (`Config#auto_rename?` / `auto_rename_for`, global + per-project,
+default off), that subcommand (`CLI#rename_nudge`) injects a `SessionStart`
+`additionalContext` instruction telling the running agent to `switchboard rename` the
+workspace once it understands the work — which (post-#94) names the dir and its branch.
+"Still unnamed" is **derived, not stored**: `Placeholder.generated?(leaf)` (the leaf is
+a generated `adjective-noun`) is the signal, so it self-clears on rename — no marker
+file. `RenameNudge.decide` is the pure gate (fires on `source ∈ {startup,resume,compact}`
+when on + placeholder); the subcommand resolves the worktree from the hook's stdin `cwd`
+(via `current_worktree`), and **always exits 0 with only the JSON or nothing on stdout**
+(a stray byte poisons Claude startup; the whole body is rescued to silence).
 
 ### Completion sounds (the audible twin)
 

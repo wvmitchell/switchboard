@@ -28,5 +28,16 @@ module Switchboard
     def generate
       "#{ADJECTIVES.sample}-#{NOUNS.sample}"
     end
+
+    # Whether `leaf` looks like a name WE generated — exactly "<adjective>-<noun>"
+    # with both halves on our lists. The inverse of `generate`. This is #92's "still
+    # unnamed" signal (a placeholder workspace the agent should rename), so it needs
+    # no on-disk marker: a real rename changes the leaf and this goes false. A user
+    # who happens to type an on-list adjective-noun reads as a placeholder — rare, and
+    # harmless (auto_rename is opt-in and the nudge self-gates).
+    def generated?(leaf)
+      adj, noun, extra = leaf.to_s.split("-", 3)
+      extra.nil? && ADJECTIVES.include?(adj) && NOUNS.include?(noun)
+    end
   end
 end

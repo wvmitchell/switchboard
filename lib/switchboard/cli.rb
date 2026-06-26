@@ -3,6 +3,7 @@
 require "yaml"
 require "fileutils"
 require "shellwords"
+require "json"
 
 module Switchboard
   # Command dispatch. The sidebar is the one navigator: the bare command (and
@@ -27,6 +28,7 @@ module Switchboard
       when "enable-hooks"      then enable_hooks(argv[1])
       when "disable-hooks"     then disable_hooks(argv[1])
       when "rename"            then exit(1) unless rename(argv[1])
+      when "rename-nudge"      then rename_nudge
       when "sound"             then play_sound(argv[1])
       when "sidebar"           then Sidebar.run
       when "poke-sidebar"      then Tmux.poke_current_sidebar
@@ -310,13 +312,50 @@ module Switchboard
       puts "  cd into the new path: cd #{Shellwords.escape(target)}"
     end
 
+    # Claude Code SessionStart hook entry (#92): when `auto_rename` is on and this
+    # workspace still has a generated placeholder name, print a SessionStart
+    # `additionalContext` instruction nudging the agent to `switchboard rename` it.
+    # Reads the event JSON (source + cwd) on stdin. The worktree is resolved from the
+    # hook's cwd (via `git rev-parse --show-toplevel`, so a subdir/bridge/moved path
+    # resolves) — NOT Dir.pwd, which the hook process doesn't reliably inherit.
+    #
+    # Two hard contracts (a hook runs on the critical path of every session start):
+    # ALWAYS exit 0, and print ONLY the JSON or nothing. A stray byte on stdout — a
+    # warning, a partial object, a backtrace — can poison Claude's startup even at
+    # exit 0, so the whole body is rescued to silence and nothing else writes stdout.
+    def rename_nudge
+      payload = parse_hook_stdin
+      cwd = payload["cwd"]
+      cwd = Dir.pwd unless cwd.is_a?(String) && !cwd.strip.empty?
+
+      wt = current_worktree(cwd)
+      return if wt.nil? || wt.primary # not a managed worktree, or the trunk checkout
+
+      leaf = File.basename(wt.path)
+      return unless RenameNudge.decide(auto_rename: config.auto_rename_for(wt.project),
+                                       placeholder: Placeholder.generated?(leaf),
+                                       source: payload["source"])
+
+      puts RenameNudge.context_json(leaf)
+    rescue StandardError
+      nil # a hook must never error a session start; emit nothing on any fault
+    end
+
+    # The SessionStart event JSON from stdin, or {} on anything empty/unreadable.
+    def parse_hook_stdin
+      raw = $stdin.read
+      raw.to_s.strip.empty? ? {} : (JSON.parse(raw) || {})
+    rescue StandardError
+      {}
+    end
+
     # The workspace the cwd is in, as a Worktree (project, path, primary), or nil
     # if cwd isn't inside any registered project's worktree. Reuses Model (same
     # tree the sidebar navigates). Both sides are realpath-normalized so a match
     # holds across macOS symlinked roots (/tmp, symlinked HOME); `primary` is
     # re-derived from realpath too, not trusted from Model's raw string compare.
-    def current_worktree
-      top = worktree_at(nil)
+    def current_worktree(at = nil)
+      top = worktree_at(at)
       real = top && real_path(top)
       return nil unless real
 

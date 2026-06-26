@@ -31,7 +31,7 @@ module Switchboard
     end
 
     def test_scaffold_template_advertises_the_optional_knobs
-      %w[tmux_keys sounds session_command base prune_on_launch projects_root].each do |knob|
+      %w[tmux_keys sounds session_command base prune_on_launch projects_root auto_rename].each do |knob|
         assert_includes Config::SCAFFOLD_TEMPLATE, knob, "a fresh config should advertise #{knob}"
       end
     end
@@ -149,6 +149,25 @@ module Switchboard
       assert cfg({}).agent_state_hooks?
       assert cfg("agent_state_hooks" => true).agent_state_hooks?
       refute cfg("agent_state_hooks" => false).agent_state_hooks?
+    end
+
+    def test_auto_rename_off_by_default_on_only_when_explicit_true
+      refute cfg({}).auto_rename?
+      refute cfg("auto_rename" => false).auto_rename?
+      assert cfg("auto_rename" => true).auto_rename?
+    end
+
+    # The global×project matrix: an explicit per-project value wins; absent inherits.
+    def test_auto_rename_for_resolution_matrix
+      proj = ->(extra) { { "projects" => [{ "name" => "p", "path" => "/p" }.merge(extra)] } }
+      # per-project false beats global true; per-project true beats global false
+      refute cfg(proj.call("auto_rename" => false).merge("auto_rename" => true)).auto_rename_for("p")
+      assert cfg(proj.call("auto_rename" => true).merge("auto_rename" => false)).auto_rename_for("p")
+      # no per-project key -> inherit the global
+      assert cfg(proj.call({}).merge("auto_rename" => true)).auto_rename_for("p")
+      refute cfg(proj.call({}).merge("auto_rename" => false)).auto_rename_for("p")
+      # nothing set anywhere -> off
+      refute cfg(proj.call({})).auto_rename_for("p")
     end
 
     def test_prune_on_launch_on_by_default_off_only_when_false

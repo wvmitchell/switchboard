@@ -117,6 +117,46 @@ module Switchboard
       end
     end
 
+    # Hooks (incl. the #92 nudge) are wired when auto_rename is on, even if the
+    # agent-state dots are off — so the nudge works without dots.
+    def test_create_wires_hooks_when_auto_rename_on_even_with_dots_off
+      File.write(Config.path, YAML.dump("worktree_root" => path("wts"),
+                                        "agent_state_hooks" => false, "auto_rename" => true,
+                                        "projects" => [{ "name" => "proj", "path" => temp_git_repo("proj", origin: true) }]))
+      dest = Creator.create(Config.new, "proj", "thing")
+      assert Hook.enabled?(dest), "hooks wired because auto_rename is on"
+    end
+
+    # A PER-PROJECT auto_rename:true (global off, dots off) must still wire the hook —
+    # else the runtime nudge (which resolves auto_rename_for(project)) never has a hook
+    # to fire from, and the project override silently does nothing.
+    def test_create_wires_hooks_for_a_per_project_auto_rename_opt_in
+      File.write(Config.path, YAML.dump("worktree_root" => path("wts"),
+                                        "agent_state_hooks" => false, "auto_rename" => false,
+                                        "projects" => [{ "name" => "proj", "auto_rename" => true,
+                                                         "path" => temp_git_repo("proj", origin: true) }]))
+      dest = Creator.create(Config.new, "proj", "thing")
+      assert Hook.enabled?(dest), "per-project auto_rename:true wires the hook even with global off"
+    end
+
+    # The inverse override: global auto_rename:true but this project opts OUT — no hook
+    # (with dots also off), matching what auto_rename_for resolves at runtime.
+    def test_create_skips_hooks_for_a_per_project_auto_rename_opt_out
+      File.write(Config.path, YAML.dump("worktree_root" => path("wts"),
+                                        "agent_state_hooks" => false, "auto_rename" => true,
+                                        "projects" => [{ "name" => "proj", "auto_rename" => false,
+                                                         "path" => temp_git_repo("proj", origin: true) }]))
+      dest = Creator.create(Config.new, "proj", "thing")
+      refute Hook.enabled?(dest), "per-project auto_rename:false skips the hook despite global on"
+    end
+
+    def test_create_skips_hooks_when_dots_and_auto_rename_both_off
+      File.write(Config.path, YAML.dump("worktree_root" => path("wts"), "agent_state_hooks" => false,
+                                        "projects" => [{ "name" => "proj", "path" => temp_git_repo("proj", origin: true) }]))
+      dest = Creator.create(Config.new, "proj", "thing")
+      refute Hook.enabled?(dest), "no hooks when both dots and auto_rename are off"
+    end
+
     # The branch created off origin/main must NOT inherit it as an upstream
     # (--no-track), so rename's pushed? gate (whose @{upstream} arm would otherwise
     # see origin/main) doesn't misread a fresh worktree as pushed (#94).

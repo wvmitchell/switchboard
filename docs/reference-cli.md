@@ -125,6 +125,12 @@ non-zero — switchboard doesn't guess a name; you (or the agent) supply it.
 > start working before you've decided what it is, then `rename` it (dir + branch)
 > once you know.
 
+> **Let the agent name it (opt-in).** With [`auto_rename`](reference-config.md#auto_rename)
+> on, a `SessionStart` hook tells the running agent to `switchboard rename` a
+> placeholder-named workspace once it understands the work — so you never name it by
+> hand. (`switchboard rename-nudge` is the internal subcommand that hook runs; not for
+> direct use.)
+
 > **After a rename, `cd` into the new path.** The move leaves a symlink bridge at
 > the old path (so a running agent's hooks keep resolving), but your interactive
 > shell's `pwd` still reports the old name. The command prints the exact `cd` to

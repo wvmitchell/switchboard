@@ -18,7 +18,8 @@ module Switchboard
   module Hook
     module_function
 
-    MARK = "sb-agent-hook" # identifies our entries for idempotent merge/removal
+    MARK = "sb-agent-hook" # identifies the agent-state reporter entries (idempotent merge/removal)
+    NUDGE_MARK = "rename-nudge" # identifies the #92 SessionStart self-naming nudge entry
 
     # Each Claude hook event mapped to the state it records (+ a tool matcher
     # where the event is tool-scoped). PreToolUse, PostToolUse, and
@@ -118,6 +119,18 @@ module Switchboard
         hooks[event] = strip_ours(hooks[event]) + [entry]
       end
 
+      # A second SessionStart command: the #92 self-naming nudge. It re-invokes
+      # switchboard (not the reporter script), so it carries NUDGE_MARK, and strip_ours
+      # above already cleared any prior copy (ours? matches it) — so this appends once
+      # and re-enable stays idempotent. Escape the binary path (it can contain spaces).
+      bin = Shellwords.escape(ENV["SWITCHBOARD_BIN"] || "switchboard")
+      # Guard the invocation: a baked bin path can go stale (a repo move/reinstall),
+      # and a SessionStart hook must never noisily fail. `command -v` (resolves an
+      # absolute path or the bare PATH fallback) turns a missing binary into a clean
+      # no-op (exit 0) instead of a "command not found" on every session start.
+      nudge = "command -v #{bin} >/dev/null 2>&1 && #{bin} rename-nudge || true"
+      hooks["SessionStart"] << { "hooks" => [{ "type" => "command", "command" => nudge }] }
+
       write_json(path, data)
       ignore_local_settings(worktree)
       path
@@ -143,7 +156,7 @@ module Switchboard
     def enabled?(worktree)
       data = read_json(settings_path(worktree))
       (data["hooks"] || {}).values.flatten.any? do |group|
-        Array(group["hooks"]).any? { |h| h["command"].to_s.include?(MARK) }
+        Array(group["hooks"]).any? { |h| ours?(h["command"]) }
       end
     rescue StandardError
       false
@@ -151,12 +164,19 @@ module Switchboard
 
     # --- internals -----------------------------------------------------------
 
+    # A hook command switchboard installed — the agent-state reporter OR the #92
+    # rename nudge. Both must be recognized so disable/idempotent-merge handle each.
+    def ours?(command)
+      s = command.to_s
+      s.include?(MARK) || s.include?(NUDGE_MARK)
+    end
+
     # Drop our entries from one event's groups, then any group left empty.
     def strip_ours(groups)
       Array(groups).map do |group|
         next group unless group.is_a?(Hash) && group["hooks"].is_a?(Array)
 
-        group.merge("hooks" => group["hooks"].reject { |h| h["command"].to_s.include?(MARK) })
+        group.merge("hooks" => group["hooks"].reject { |h| ours?(h["command"]) })
       end.reject { |group| group.is_a?(Hash) && Array(group["hooks"]).empty? }
     end
 

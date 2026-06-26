@@ -26,6 +26,7 @@ or `e` in the sidebar — both reload on save.
 | `branch_prefix` | string | _(none)_ | New branches become `<prefix>/<name>`. Empty/unset ⇒ bare `<name>`. |
 | `agent_state_hooks` | bool | `true` | Auto-wire per-worktree agent-state hooks on worktree create. |
 | `prune_on_launch` | bool | `true` | Prune orphaned `sb/` sessions when landing on the home session. |
+| `auto_rename` | bool | `false` | Nudge the agent to `switchboard rename` a placeholder-named workspace once it knows the work (a `SessionStart` hook). Per-project override wins. See [`auto_rename`](#auto_rename). |
 | `session_command` | string | _(none)_ | Command typed into a worktree's window the first time its session is created. Per-project override wins. |
 | `sounds` | map or `false` | _(on, built-ins)_ | Completion sounds. See [`sounds`](#sounds). |
 | `tmux_keys` | map | _(toggle `s`)_ | Which prefix keys switchboard binds. See [`tmux_keys`](#tmux_keys). |
@@ -42,6 +43,7 @@ base: origin/main                        # default ref new worktrees branch from
 branch_prefix: wvmitchell                # new branches become wvmitchell/<name>
 agent_state_hooks: true                  # auto-wire agent-state dots on create
 prune_on_launch: true                    # tidy orphaned sessions on landing home
+auto_rename: false                       # let the agent name a placeholder workspace (off by default)
 session_command: claude                  # run this on a worktree's first session
 sounds:
   enabled: true
@@ -58,6 +60,33 @@ projects:
     sounds:
       done: ~/sounds/celebrate.wav                          # per-project sound
 ```
+
+---
+
+## `auto_rename`
+
+Off by default. When on, switchboard plants a `SessionStart` instruction in each
+worktree's Claude hooks telling a running agent to `switchboard rename <name>` once it
+understands the work — naming the workspace **and** its branch. It only fires while the
+workspace still has its generated **placeholder** name (e.g. `wandering-finch`); the
+moment it's named, the nudge stops. The instruction is advisory (the agent renames when
+it's ready, or ignores it) — it never renames on its own.
+
+It's a global bool with a per-project override (like `session_command`): a per-project
+`auto_rename` wins over the global one, in either direction.
+
+```yaml
+auto_rename: true            # global default
+projects:
+  - name: myapp
+    path: ~/code/myapp
+    auto_rename: false       # ...but off for this one
+```
+
+**Turning it on for worktrees you already have:** the nudge is wired into a worktree's
+hooks at create time, so flip it on and run `switchboard enable-hooks` inside an
+existing worktree to add it there (new worktrees get it automatically). Requires
+`agent_state_hooks` OR `auto_rename` to be on for the hooks to wire at all.
 
 ---
 

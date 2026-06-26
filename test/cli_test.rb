@@ -618,6 +618,91 @@ module Switchboard
       end
     end
 
+    # --- rename-nudge (#92 SessionStart hook entry) --------------------------
+
+    # Write a sandboxed config and force `config` to re-read it (drop any memoized one).
+    def nudge_config(extra)
+      base = { "worktree_root" => path("wts"), "projects" => [{ "name" => "proj", "path" => "/p" }] }
+      File.write(Config.path, YAML.dump(base.merge(extra)))
+    end
+
+    # Run rename_nudge with a stubbed worktree + the given stdin, return captured stdout.
+    def run_nudge(worktree:, stdin:)
+      out = nil
+      stub_method(CLI, :current_worktree, ->(*) { worktree }) do
+        stub_method(CLI, :config, -> { Config.new }) do
+          with_stdin(StringIO.new(stdin)) { out = capture { CLI.rename_nudge } }
+        end
+      end
+      out
+    end
+
+    def placeholder_wt
+      Worktree.new(project: "proj", path: "/wts/proj/wandering-finch", primary: false)
+    end
+
+    def test_rename_nudge_emits_json_when_gated_on
+      nudge_config("auto_rename" => true)
+      out = run_nudge(worktree: placeholder_wt, stdin: '{"source":"resume","cwd":"/x"}')
+      ctx = JSON.parse(out)["hookSpecificOutput"]
+      assert_equal "SessionStart", ctx["hookEventName"]
+      assert_includes ctx["additionalContext"], "wandering-finch"
+    end
+
+    def test_rename_nudge_silent_when_auto_rename_off
+      nudge_config("auto_rename" => false)
+      assert_equal "", run_nudge(worktree: placeholder_wt, stdin: '{"source":"resume","cwd":"/x"}')
+    end
+
+    def test_rename_nudge_silent_when_not_a_placeholder
+      nudge_config("auto_rename" => true)
+      named = Worktree.new(project: "proj", path: "/wts/proj/fix-auth", primary: false)
+      assert_equal "", run_nudge(worktree: named, stdin: '{"source":"resume","cwd":"/x"}')
+    end
+
+    def test_rename_nudge_silent_on_clear_source
+      nudge_config("auto_rename" => true)
+      assert_equal "", run_nudge(worktree: placeholder_wt, stdin: '{"source":"clear","cwd":"/x"}')
+    end
+
+    def test_rename_nudge_silent_on_primary_checkout
+      nudge_config("auto_rename" => true)
+      prim = Worktree.new(project: "proj", path: "/p", primary: true)
+      assert_equal "", run_nudge(worktree: prim, stdin: '{"source":"resume","cwd":"/p"}')
+    end
+
+    def test_rename_nudge_silent_on_malformed_stdin
+      nudge_config("auto_rename" => true)
+      assert_equal "", run_nudge(worktree: placeholder_wt, stdin: "{ not json")
+      assert_equal "", run_nudge(worktree: placeholder_wt, stdin: "")
+    end
+
+    # The hard contract: a fault must never raise (would error a session start) and
+    # must leave stdout empty (a stray byte poisons Claude startup).
+    def test_rename_nudge_never_raises_and_stays_silent_on_a_fault
+      nudge_config("auto_rename" => true)
+      out = nil
+      stub_method(CLI, :current_worktree, ->(*) { raise "boom" }) do
+        with_stdin(StringIO.new('{"source":"resume","cwd":"/x"}')) { out = capture { CLI.rename_nudge } }
+      end
+      assert_equal "", out
+    end
+
+    # current_worktree(at) resolves from a given path (a subdir), via show-toplevel.
+    def test_current_worktree_resolves_from_a_given_subdir
+      repo = temp_git_repo("proj", origin: true)
+      File.write(Config.path, YAML.dump("worktree_root" => path("wts"),
+                                        "projects" => [{ "name" => "proj", "path" => repo }]))
+      dest = Creator.create(Config.new, "proj", "alpha")
+      sub = File.join(dest, "deep")
+      FileUtils.mkdir_p(sub)
+      wt = nil
+      stub_method(CLI, :config, -> { Config.new }) { wt = CLI.current_worktree(sub) }
+      refute_nil wt
+      assert_equal "alpha", File.basename(wt.path)
+      refute wt.primary
+    end
+
     def capture
       out = StringIO.new
       orig = $stdout

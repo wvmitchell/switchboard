@@ -56,6 +56,7 @@ module Switchboard
       # session_command: ""                        # run on a worktree's first session (e.g. claude --dangerously-skip-permissions)
       # agent_state_hooks: true                    # auto-wire the agent-state dots on worktree create
       # prune_on_launch: true                      # prune orphaned sb/ sessions when landing on home
+      # auto_rename: false                         # nudge the agent to rename a placeholder-named workspace once it knows the work
 
       # Completion sounds (on by default): a built-in (train / chime, or train_1..3 /
       # chime_1..3), a file path, or a macOS system-sound name. enabled: false mutes all.
@@ -170,6 +171,26 @@ module Switchboard
     # survive a relaunch. On by default; set `prune_on_launch: false` to opt out.
     def prune_on_launch?
       @data.fetch("prune_on_launch", true) != false
+    end
+
+    # Global agent self-naming switch — OFF unless explicitly true. When on,
+    # `Hook.enable` plants a SessionStart instruction telling a running agent to
+    # `switchboard rename` a still-placeholder-named workspace once it understands
+    # the work (#92). Invasive (auto-renames + injects context), so opt-in.
+    def auto_rename?
+      @data["auto_rename"] == true
+    end
+
+    # Resolved auto_rename for a project: an explicit per-project value wins over the
+    # global default (mirrors sounds). Boolean by VALUE, not Ruby truthiness — a
+    # per-project `false` overrides a global `true`, and vice-versa; absent inherits
+    # the global. Reads the already-parsed @data (a malformed config.yml was rescued
+    # to {} in load_data, so it inherits default-off — no second parse).
+    def auto_rename_for(project_name)
+      node = project_auto_rename_node(project_name)
+      return node == true unless node.nil?
+
+      auto_rename?
     end
 
     # Optional prefix for new branches, e.g. "wvmitchell" -> wvmitchell/<name>.
@@ -307,6 +328,15 @@ module Switchboard
 
       p = Array(@data["projects"]).find { |e| e.is_a?(Hash) && e["name"] == name }
       p&.key?("sounds") ? p["sounds"] : nil
+    end
+
+    # The project's raw `auto_rename` value, or nil when the project doesn't set the
+    # key (so auto_rename_for falls back to the global). nil vs false are distinct.
+    def project_auto_rename_node(name)
+      return nil unless name
+
+      p = Array(@data["projects"]).find { |e| e.is_a?(Hash) && e["name"] == name }
+      p&.key?("auto_rename") ? p["auto_rename"] : nil
     end
   end
 end
