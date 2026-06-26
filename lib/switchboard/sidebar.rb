@@ -1120,10 +1120,12 @@ module Switchboard
     # Esc cancels (prompt_line ⇒ nil); a bare ↵ (⇒ "") is NOT a cancel — it makes a
     # faker-named placeholder workspace you rename once you know the work (#94). So we
     # gate on `name.nil?` here, NOT `blank_input?` (which would also catch the bare ↵).
+    # The hint advertises that ↵ path — otherwise the auto-name ability is invisible
+    # behind the same "(esc cancel)" every other prompt shows (the others DO cancel on ↵).
     def create(node = current)
       return unless node
 
-      name = prompt_line("new workspace in #{node.project}")
+      name = prompt_line("new workspace in #{node.project}", hint: "↵ auto-name · esc")
       return reload if name.nil?
 
       rows, = winsize
@@ -1361,9 +1363,9 @@ module Switchboard
     # every name prompt cancels the same way. The hidden cursor is restored in an
     # ensure so a raise can't strand a visible block cursor; any read fault returns
     # nil (cancel), the same graceful-degrade contract the cooked version had.
-    def prompt_line(label)
+    def prompt_line(label, hint: "esc cancel")
       buf = +"" # collects the typed text; bare ↵ ⇒ "" ⇒ blank_input? cancels
-      draw_prompt(label, buf)
+      draw_prompt(label, buf, hint)
       loop do
         chunk = read_prompt_key
         return nil if chunk.nil? # read fault / dead pane: cancel
@@ -1371,7 +1373,7 @@ module Switchboard
         when :cancel then return nil
         when :submit then return buf.strip # bare ↵ ⇒ "" ⇒ blank_input? cancels too
         end
-        draw_prompt(label, buf)
+        draw_prompt(label, buf, hint)
       end
     rescue StandardError
       nil
@@ -1417,21 +1419,21 @@ module Switchboard
     end
 
     # Repaint the inline prompt on the bottom row and park a real cursor right after
-    # the typed text. An empty buffer shows a dim "(esc cancel)" hint advertising the
-    # escape hatch (issue #68); it clears the moment you type so a long name isn't
-    # crowded on the narrow pane. The caret column is set explicitly so the hint can
-    # trail the input without the caret jumping past it.
-    def draw_prompt(label, buf)
+    # the typed text. An empty buffer shows a dim hint advertising the escape hatch
+    # (issue #68) — and, for create, the bare-↵ auto-name path (#94); it clears the
+    # moment you type so a long name isn't crowded on the narrow pane. The caret column
+    # is set explicitly so the hint can trail the input without the caret jumping past it.
+    def draw_prompt(label, buf, hint_text = "esc cancel")
       rows, cols = winsize
       prefix = "#{label} › "
       # The hint must live INSIDE the width budget. Truncating only prefix+buf and
-      # tacking the hint on after let a long label + the 13-col hint overflow the
-      # 40-col pane; the 41st char auto-wrapped (DECAWM) on the bottom row and
-      # scrolled a stale prompt copy into scrollback every cancel→reopen (issue #80).
-      # Reserve the hint's display width so the whole line fits — a long label is
-      # clipped while empty and restored the moment you type (hint gone). Held plain
-      # for the width count; the dim SGR is applied only at print time.
-      hint   = buf.empty? ? " (esc cancel)" : ""
+      # tacking the hint on after let a long label + the hint overflow the 40-col pane;
+      # the 41st char auto-wrapped (DECAWM) on the bottom row and scrolled a stale
+      # prompt copy into scrollback every cancel→reopen (issue #80). Reserve the hint's
+      # display width so the whole line fits — a long label is clipped while empty (the
+      # hint always shows) and restored the moment you type (hint gone). Held plain for
+      # the width count; the dim SGR is applied only at print time.
+      hint   = buf.empty? ? " (#{hint_text})" : ""
       shown  = trunc(prefix + buf, cols - hint.length)
       print "\e[#{rows};1H\e[K#{shown}#{hint.empty? ? '' : "\e[2m#{hint}\e[0m"}"
       caret = [shown.length + 1, cols].min # 1-based, parked right after the visible input

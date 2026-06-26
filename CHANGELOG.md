@@ -7,6 +7,31 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.34.2] — agent self-naming backstop + create-prompt hint (2026-06-26)
+
+### Added
+- **Stop-hook rename backstop (#92).** The self-naming nudge no longer rests on a single
+  SessionStart plant (which fires before the agent knows anything, then never again — so
+  the moment it actually understands the work has no reminder). A `Stop` hook now catches
+  the agent as it tries to end a turn still on a placeholder name and blocks **once**
+  (guarded by Claude's `stop_hook_active`) with an imperative `switchboard rename`
+  reminder. Gated on an explicit `stop_hook_active == false` — fail-closed, so a missing
+  flag never traps the agent unable to stop — and self-clears the instant the workspace is
+  renamed (`Placeholder.generated?` ⇒ false).
+- **The create prompt advertises the bare-↵ auto-name path (#94).** Pressing `n` to make a
+  workspace now shows a `(↵ auto-name · esc)` hint instead of the same `(esc cancel)` every
+  other prompt shows, so the placeholder/auto-name shortcut is discoverable instead of
+  hidden behind a bare ↵.
+
+### Changed
+- **The `Stop` event is reported by one unified command, not a separate sh reporter.** Stop
+  hooks run in parallel with no ordering, so a standalone `done` reporter racing the
+  backstop's block could record a blocked (still-working) agent as `done` and ring a false
+  completion. The backstop now reports the state itself — `thinking` when it blocks, `done`
+  otherwise — with a stale-binary fallback to the sh reporter so `done` is never lost.
+  Re-enabling an existing worktree (`switchboard enable-hooks`) migrates it off the old
+  racing reporter.
+
 ## [0.34.1] — toggleable git diff counts (2026-06-26)
 
 ### Added

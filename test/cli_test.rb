@@ -627,14 +627,32 @@ module Switchboard
     end
 
     # Run rename_nudge with a stubbed worktree + the given stdin, return captured stdout.
-    def run_nudge(worktree:, stdin:)
+    # `args` selects the event path (e.g. ["--stop"] for the Stop backstop). The Stop
+    # path also reports agent state by spawning the sh reporter — stubbed to a no-op so
+    # tests stay offline and focused on the stdout (block decision) contract.
+    def run_nudge(worktree:, stdin:, args: [])
       out = nil
       stub_method(CLI, :current_worktree, ->(*) { worktree }) do
         stub_method(CLI, :config, -> { Config.new }) do
-          with_stdin(StringIO.new(stdin)) { out = capture { CLI.rename_nudge } }
+          stub_method(CLI, :report_stop_state, ->(*) {}) do
+            with_stdin(StringIO.new(stdin)) { out = capture { CLI.rename_nudge(args) } }
+          end
         end
       end
       out
+    end
+
+    # Capture the state the unified --stop path reports (stubbing the sh-reporter spawn).
+    def stop_reported_state(worktree:, stdin:)
+      reported = :none
+      stub_method(CLI, :current_worktree, ->(*) { worktree }) do
+        stub_method(CLI, :config, -> { Config.new }) do
+          stub_method(CLI, :report_stop_state, ->(s) { reported = s }) do
+            with_stdin(StringIO.new(stdin)) { capture { CLI.rename_nudge(["--stop"]) } }
+          end
+        end
+      end
+      reported
     end
 
     def placeholder_wt
@@ -675,6 +693,79 @@ module Switchboard
       nudge_config("auto_rename" => true)
       assert_equal "", run_nudge(worktree: placeholder_wt, stdin: "{ not json")
       assert_equal "", run_nudge(worktree: placeholder_wt, stdin: "")
+    end
+
+    # The Stop backstop (--stop): blocks the turn when the agent ends it still on a
+    # placeholder, feeding back an imperative rename reminder.
+    def test_rename_nudge_stop_emits_a_block_decision_when_gated_on
+      nudge_config("auto_rename" => true)
+      out = run_nudge(worktree: placeholder_wt, stdin: '{"stop_hook_active":false,"cwd":"/x"}', args: ["--stop"])
+      dec = JSON.parse(out)
+      assert_equal "block", dec["decision"]
+      assert_includes dec["reason"], "wandering-finch"
+    end
+
+    # The loop guard: once Claude has resumed from our block, --stop stays silent so the
+    # turn can end (block once, never nag).
+    def test_rename_nudge_stop_silent_once_stop_hook_active
+      nudge_config("auto_rename" => true)
+      assert_equal "", run_nudge(worktree: placeholder_wt,
+                                 stdin: '{"stop_hook_active":true,"cwd":"/x"}', args: ["--stop"])
+    end
+
+    # Self-clears on rename: a named workspace gets no Stop block.
+    def test_rename_nudge_stop_silent_when_not_a_placeholder
+      nudge_config("auto_rename" => true)
+      named = Worktree.new(project: "proj", path: "/wts/proj/fix-auth", primary: false)
+      assert_equal "", run_nudge(worktree: named, stdin: '{"stop_hook_active":false,"cwd":"/x"}', args: ["--stop"])
+    end
+
+    def test_rename_nudge_stop_silent_when_auto_rename_off
+      nudge_config("auto_rename" => false)
+      assert_equal "", run_nudge(worktree: placeholder_wt,
+                                 stdin: '{"stop_hook_active":false,"cwd":"/x"}', args: ["--stop"])
+    end
+
+    # Fail-closed end-to-end: a Stop payload missing stop_hook_active emits nothing (no
+    # block), matching the SessionStart path's silence on malformed/incomplete stdin.
+    def test_rename_nudge_stop_silent_when_flag_absent
+      nudge_config("auto_rename" => true)
+      assert_equal "", run_nudge(worktree: placeholder_wt, stdin: '{"cwd":"/x"}', args: ["--stop"])
+    end
+
+    # The unification: --stop is the Stop state reporter too. It reports `thinking` when
+    # it blocks (so a forced-to-continue agent never reads as `done`)...
+    def test_rename_nudge_stop_reports_thinking_when_blocking
+      nudge_config("auto_rename" => true)
+      assert_equal "thinking",
+                   stop_reported_state(worktree: placeholder_wt, stdin: '{"stop_hook_active":false,"cwd":"/x"}')
+    end
+
+    # ...and `done` when it doesn't block (here: a named workspace — a normal completion).
+    def test_rename_nudge_stop_reports_done_when_not_blocking
+      nudge_config("auto_rename" => true)
+      named = Worktree.new(project: "proj", path: "/wts/proj/fix-auth", primary: false)
+      assert_equal "done",
+                   stop_reported_state(worktree: named, stdin: '{"stop_hook_active":false,"cwd":"/x"}')
+    end
+
+    # Even a non-managed (nil) worktree still reports done on Stop — the dot depends on it
+    # (the state report is unconditional; only the block is gated).
+    def test_rename_nudge_stop_reports_done_for_an_unmanaged_worktree
+      nudge_config("auto_rename" => true)
+      assert_equal "done", stop_reported_state(worktree: nil, stdin: '{"stop_hook_active":false,"cwd":"/x"}')
+    end
+
+    # The correctness crux of the unification (the rest stub report_stop_state): the real
+    # write must land where AgentState reads it. report_stop_state spawns the same sh
+    # reporter, whose `pwd -P`/cksum key is computed from our inherited cwd — so a state
+    # written here must round-trip back through AgentState.scan as that worktree's state.
+    def test_report_stop_state_round_trips_through_agentstate
+      Hook.ensure_script
+      wt = path("wt")
+      FileUtils.mkdir_p(wt)
+      Dir.chdir(wt) { CLI.report_stop_state("thinking") }
+      assert_equal({ wt => :thinking }, AgentState.new.scan([wt]))
     end
 
     # The hard contract: a fault must never raise (would error a session start) and

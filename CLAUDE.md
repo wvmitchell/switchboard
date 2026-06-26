@@ -213,21 +213,48 @@ runtime nudge needs); existing ones via `switchboard enable-hooks`.
 
 ### Agent self-naming nudge (issue #92)
 
-`Hook.enable` also plants a **second `SessionStart` command** beside the reporter:
-`switchboard rename-nudge` (re-invoking the binary, so it carries `NUDGE_MARK` and
-`Hook.ours?` recognizes both commands for idempotent merge / clean disable). It's
-`command -v`-guarded (`… && … rename-nudge || true`) so a baked bin path gone stale
-after a repo move is a silent no-op at session start, never a "command not found". When
-`auto_rename` is on (`Config#auto_rename?` / `auto_rename_for`, global + per-project,
-default off), that subcommand (`CLI#rename_nudge`) injects a `SessionStart`
-`additionalContext` instruction telling the running agent to `switchboard rename` the
-workspace once it understands the work — which (post-#94) names the dir and its branch.
-"Still unnamed" is **derived, not stored**: `Placeholder.generated?(leaf)` (the leaf is
-a generated `adjective-noun`) is the signal, so it self-clears on rename — no marker
-file. `RenameNudge.decide` is the pure gate (fires on `source ∈ {startup,resume,compact}`
-when on + placeholder); the subcommand resolves the worktree from the hook's stdin `cwd`
+`Hook.enable` also wires the nudge into the agent-state hooks, re-invoking the binary (so
+the commands carry `NUDGE_MARK` and `Hook.ours?` recognizes them for idempotent merge /
+clean disable) and `command -v`-guarding the baked bin path so a stale path after a repo
+move degrades cleanly instead of erroring "command not found":
+
+- a **`SessionStart` command** (`rename-nudge`) — the **soft plant**, riding *beside* the
+  sh state reporter (`… && … rename-nudge || true`): when `auto_rename` is on
+  (`Config#auto_rename?` / `auto_rename_for`, global + per-project, default off),
+  `CLI#rename_nudge` injects a `SessionStart` `additionalContext` instruction telling the
+  agent to `switchboard rename` the workspace once it understands the work — which
+  (post-#94) names the dir and its branch. `RenameNudge.decide` is the pure gate (fires on
+  `source ∈ {startup,resume,compact}` when on + placeholder).
+- the **`Stop` command** — the **backstop**, and (deliberately) the Stop **state reporter
+  itself**. A SessionStart plant fires *before* the agent knows anything and then never
+  again, so the moment of maximum understanding (work done, about to walk away) has no
+  reminder — exactly how a real session here shipped a fix and left the workspace on its
+  placeholder. The Stop hook catches that moment. But Stop is kept **off the `EVENTS`
+  reporter list** on purpose: Stop hooks run in **parallel with no ordering**, so a plain
+  sh `done` reporter racing the block could record a blocked (still-working) agent as
+  `done` and ring a **false completion** (chime + attention-bold). So ONE command owns the
+  event — `if command -v switchboard; then switchboard rename-nudge --stop; else
+  <sh-reporter> done; fi` — and `CLI#rename_nudge_stop` reports the state ITSELF:
+  `thinking` when it blocks (accurate — the agent is about to keep going), `done` otherwise
+  (the normal completion), via the same sh reporter (`report_stop_state` →
+  `Hook.script_path`; the child inherits the hook's cwd so its cksum key matches the file
+  the other events write). State is reported for **every** hooked worktree (even
+  non-placeholder / `auto_rename`-off — the dot depends on it); only the block is gated.
+  The `else` fallback keeps `done` flowing if the binary is stale (the script path doesn't
+  need PATH); `if/then/else` not `&& ||` so a Ruby-side non-zero can't *also* fire the
+  fallback (double-write). The block payload is `RenameNudge.stop_json` (`decision: block`
+  + an imperative reason); `RenameNudge.decide_stop` gates it on an explicit
+  `stop_hook_active == false` — Claude's own loop guard — so it blocks **once per
+  stop-chain** (nudge, don't nag): the agent renames (then it never fires again) or, if it
+  genuinely can't yet, the second stop passes through. The `== false` is fail-closed: a
+  missing/garbled flag does NOT block, since a block on an absent flag would never see a
+  `true` to release it and could trap the agent unable to stop.
+
+Both self-clear the instant the workspace is renamed — "still unnamed" is **derived, not
+stored**: `Placeholder.generated?(leaf)` (the leaf is a generated `adjective-noun`) is the
+signal, no marker file. The subcommand resolves the worktree from the hook's stdin `cwd`
 (via `current_worktree`), and **always exits 0 with only the JSON or nothing on stdout**
-(a stray byte poisons Claude startup; the whole body is rescued to silence).
+(a stray byte poisons Claude even at exit 0; the whole body is rescued to silence).
 
 ### Completion sounds (the audible twin)
 

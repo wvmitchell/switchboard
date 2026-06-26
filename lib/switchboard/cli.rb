@@ -28,7 +28,7 @@ module Switchboard
       when "enable-hooks"      then enable_hooks(argv[1])
       when "disable-hooks"     then disable_hooks(argv[1])
       when "rename"            then exit(1) unless rename(argv[1])
-      when "rename-nudge"      then rename_nudge
+      when "rename-nudge"      then rename_nudge(argv.drop(1))
       when "sound"             then play_sound(argv[1])
       when "sidebar"           then Sidebar.run
       when "poke-sidebar"      then Tmux.poke_current_sidebar
@@ -312,21 +312,28 @@ module Switchboard
       puts "  cd into the new path: cd #{Shellwords.escape(target)}"
     end
 
-    # Claude Code SessionStart hook entry (#92): when `auto_rename` is on and this
-    # workspace still has a generated placeholder name, print a SessionStart
-    # `additionalContext` instruction nudging the agent to `switchboard rename` it.
-    # Reads the event JSON (source + cwd) on stdin. The worktree is resolved from the
-    # hook's cwd (via `git rev-parse --show-toplevel`, so a subdir/bridge/moved path
-    # resolves) — NOT Dir.pwd, which the hook process doesn't reliably inherit.
+    # Claude Code hook entry (#92): nudge the agent to `switchboard rename` while this
+    # workspace still has a generated placeholder name and `auto_rename` is on. Two events
+    # dispatch here, selected by `--stop`:
+    #   • SessionStart (no flag) — print an `additionalContext` instruction (the soft
+    #     plant), gated on the event source. Rides alongside the sh state reporter.
+    #   • Stop (`--stop`) — see rename_nudge_stop: this command IS the Stop state reporter
+    #     AND the backstop (the sh reporter is off the Stop event, hook.rb), so it can
+    #     report `thinking` when it blocks instead of a racing `done`.
+    # The worktree is resolved from the hook's cwd (via `git rev-parse --show-toplevel`,
+    # so a subdir/bridge/moved path resolves) — NOT Dir.pwd, which the hook process
+    # doesn't reliably inherit.
     #
-    # Two hard contracts (a hook runs on the critical path of every session start):
+    # Two hard contracts (a hook runs on the critical path of a session boundary):
     # ALWAYS exit 0, and print ONLY the JSON or nothing. A stray byte on stdout — a
-    # warning, a partial object, a backtrace — can poison Claude's startup even at
-    # exit 0, so the whole body is rescued to silence and nothing else writes stdout.
-    def rename_nudge
+    # warning, a partial object, a backtrace — can poison Claude even at exit 0, so the
+    # whole body is rescued to silence and nothing else writes stdout.
+    def rename_nudge(args = [])
       payload = parse_hook_stdin
       cwd = payload["cwd"]
       cwd = Dir.pwd unless cwd.is_a?(String) && !cwd.strip.empty?
+
+      return rename_nudge_stop(payload, cwd) if args.include?("--stop")
 
       wt = current_worktree(cwd)
       return if wt.nil? || wt.primary # not a managed worktree, or the trunk checkout
@@ -338,7 +345,47 @@ module Switchboard
 
       puts RenameNudge.context_json(leaf)
     rescue StandardError
-      nil # a hook must never error a session start; emit nothing on any fault
+      nil # a hook must never error a session boundary; emit nothing on any fault
+    end
+
+    # The Stop event, unified: report the agent state ourselves (the job the sh reporter
+    # does on every OTHER event) AND, when gated, block. Stop hooks run in parallel with
+    # no ordering, so we can't have a sibling sh reporter writing `done` while we block —
+    # it could record a forced-to-continue agent as finished and ring a false completion.
+    # So we report `thinking` when blocking (accurate — the agent IS about to keep going)
+    # and `done` otherwise. State is ALWAYS reported (every hooked worktree, even when not
+    # a placeholder / auto_rename off), since the dot depends on it. `stop_block_leaf` is
+    # fully rescued ⇒ any fault degrades to a plain `done`, never trapping the agent.
+    def rename_nudge_stop(payload, cwd)
+      leaf = stop_block_leaf(payload, cwd)
+      report_stop_state(leaf ? "thinking" : "done")
+      puts RenameNudge.stop_json(leaf) if leaf
+    end
+
+    # The placeholder leaf this Stop should block on, or nil if it should NOT block (the
+    # common case — and the safe default on any fault, so a glitch never blocks).
+    def stop_block_leaf(payload, cwd)
+      wt = current_worktree(cwd)
+      return nil if wt.nil? || wt.primary
+
+      leaf = File.basename(wt.path)
+      return nil unless RenameNudge.decide_stop(auto_rename: config.auto_rename_for(wt.project),
+                                                placeholder: Placeholder.generated?(leaf),
+                                                stop_hook_active: payload["stop_hook_active"])
+
+      leaf
+    rescue StandardError
+      nil
+    end
+
+    # Report agent state by running the SAME sh reporter every other event uses. The
+    # child inherits our cwd (the hook's invocation dir), so its `pwd -P`/cksum key
+    # matches the file the other events write — no Ruby-side key reproduction, and its
+    # stdout is suppressed so only our block JSON (if any) reaches Claude.
+    def report_stop_state(state)
+      system(Hook.script_path, state, out: File::NULL, err: File::NULL)
+    rescue StandardError
+      nil
     end
 
     # The SessionStart event JSON from stdin, or {} on anything empty/unreadable.

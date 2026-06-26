@@ -44,6 +44,9 @@ module Switchboard
       cmds = commands_for(settings, "SessionStart")
       assert(cmds.any? { |c| c.include?(Hook::NUDGE_MARK) }, "nudge command present")
       assert(cmds.any? { |c| c.include?(Hook::MARK) }, "reporter command still present")
+      # SessionStart gets the soft plant, NOT the Stop backstop — guards against a
+      # regression that wires --stop onto SessionStart (which still matches NUDGE_MARK).
+      assert(cmds.none? { |c| c.include?("--stop") }, "SessionStart nudge is the plain variant")
     end
 
     # Re-enable must not pile up duplicate SessionStart commands (ours? dedups both).
@@ -53,6 +56,38 @@ module Switchboard
       cmds = commands_for(settings, "SessionStart")
       assert_equal 1, cmds.count { |c| c.include?(Hook::NUDGE_MARK) }, "no duplicate nudge"
       assert_equal 1, cmds.count { |c| c.include?(Hook::MARK) }, "no duplicate reporter"
+    end
+
+    # #92 + unification: Stop hooks run in parallel with no ordering, so a separate sh
+    # reporter racing the blocking nudge could record a blocked (still-working) agent as
+    # `done`. So Stop carries ONE command — `rename-nudge --stop` reports the state itself
+    # (done, or thinking when it blocks), with a stale-binary fallback to the sh reporter.
+    def test_enable_gives_stop_one_unified_reporter_backstop_command
+      Hook.enable(worktree)
+      cmds = commands_for(settings, "Stop")
+      assert_equal 1, cmds.length, "Stop has exactly one command — no separate sh reporter to race"
+      assert_includes cmds.first, "rename-nudge --stop", "the unified reporter+backstop"
+      assert_includes cmds.first, "done", "...with a fallback that still records done if the binary is stale"
+    end
+
+    # Re-enable must not pile up duplicate Stop commands.
+    def test_enable_is_idempotent_for_the_stop_command
+      Hook.enable(worktree)
+      Hook.enable(worktree)
+      assert_equal 1, commands_for(settings, "Stop").length, "no duplicate Stop command on re-enable"
+    end
+
+    # Migration: a pre-unification settings file with a separate sh `done` reporter on
+    # Stop gets stripped on re-enable (the EVENTS loop no longer touches Stop), leaving
+    # only the unified command — so the false-completion race can't survive an upgrade.
+    def test_enable_strips_a_legacy_separate_stop_reporter
+      seed(JSON.generate("hooks" => { "Stop" => [
+                           { "hooks" => [{ "type" => "command", "command" => "#{Hook.script_path} done" }] }
+                         ] }))
+      Hook.enable(worktree)
+      cmds = commands_for(settings, "Stop")
+      assert_equal 1, cmds.length, "the legacy standalone sh Stop reporter is gone"
+      assert_includes cmds.first, "rename-nudge --stop"
     end
 
     # disable strips the nudge too (ours? recognizes it), not just the reporter.

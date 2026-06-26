@@ -33,13 +33,18 @@ module Switchboard
     # notification_type to tell a real "answer me" prompt — a permission request or
     # elicitation dialog (-> waiting/magenta) — from the idle timer and everything
     # else (-> done/green), which is NOT blocked.
+    #
+    # Stop is deliberately ABSENT here. Stop hooks run in PARALLEL with no ordering, so a
+    # plain sh `done` reporter racing the #92 blocking nudge could record a blocked
+    # (still-working) agent as `done` and ring a false completion. Instead Stop is wired
+    # in `enable` as ONE command that reports the state itself (`done`, or `thinking` when
+    # it blocks) — no sibling to race.
     EVENTS = [
       ["UserPromptSubmit",   "thinking", nil],
       ["PreToolUse",         "thinking", "*"],
       ["PostToolUse",        "thinking", "*"],
       ["PostToolUseFailure", "thinking", "*"],
       ["Notification",       "notify",   nil],
-      ["Stop",               "done",     nil],
       ["SessionStart",       "done",     nil]
     ].freeze
 
@@ -119,17 +124,29 @@ module Switchboard
         hooks[event] = strip_ours(hooks[event]) + [entry]
       end
 
-      # A second SessionStart command: the #92 self-naming nudge. It re-invokes
-      # switchboard (not the reporter script), so it carries NUDGE_MARK, and strip_ours
-      # above already cleared any prior copy (ours? matches it) — so this appends once
-      # and re-enable stays idempotent. Escape the binary path (it can contain spaces).
+      # The #92 self-naming nudge. Both forms re-invoke switchboard (so they carry
+      # NUDGE_MARK, recognized by ours? for idempotent merge / clean disable). Escape the
+      # binary path (it can contain spaces). `command -v`-guard a baked bin path that can
+      # go stale (a repo move/reinstall) so it's a clean no-op, never "command not found".
       bin = Shellwords.escape(ENV["SWITCHBOARD_BIN"] || "switchboard")
-      # Guard the invocation: a baked bin path can go stale (a repo move/reinstall),
-      # and a SessionStart hook must never noisily fail. `command -v` (resolves an
-      # absolute path or the bare PATH fallback) turns a missing binary into a clean
-      # no-op (exit 0) instead of a "command not found" on every session start.
-      nudge = "command -v #{bin} >/dev/null 2>&1 && #{bin} rename-nudge || true"
-      hooks["SessionStart"] << { "hooks" => [{ "type" => "command", "command" => nudge }] }
+      escaped_script = Shellwords.escape(script)
+
+      # SessionStart: a soft `additionalContext` plant, ALONGSIDE the sh reporter wired by
+      # the EVENTS loop above (they don't conflict — one prints, the other writes state).
+      hooks["SessionStart"] << { "hooks" => [{ "type" => "command",
+                                               "command" => "command -v #{bin} >/dev/null 2>&1 && #{bin} rename-nudge || true" }] }
+
+      # Stop: ONE command owns the event (the sh reporter is off EVENTS, see there) —
+      # `rename-nudge --stop` reports the state itself (`done`, or `thinking` when it
+      # blocks) so a forced continuation never reads as a finished turn. If the binary is
+      # stale, fall back to the direct sh reporter so `done` is still recorded (the script
+      # path doesn't depend on PATH). `if/then/else` not `&& ||` so a non-zero from the
+      # Ruby side can't also trigger the fallback (double-write). strip_ours clears any
+      # pre-unification sh Stop reporter (migration — the EVENTS loop no longer touches Stop).
+      stop_cmd = "if command -v #{bin} >/dev/null 2>&1; then #{bin} rename-nudge --stop; " \
+                 "else #{escaped_script} done; fi"
+      hooks["Stop"] = strip_ours(hooks["Stop"])
+      hooks["Stop"] << { "hooks" => [{ "type" => "command", "command" => stop_cmd }] }
 
       write_json(path, data)
       ignore_local_settings(worktree)
