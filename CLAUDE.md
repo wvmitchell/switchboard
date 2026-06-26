@@ -399,6 +399,18 @@ and `R` (`refresh_prs_now`) clears `@diffs` as the manual catch-all. `View.diff_
 (plain, for width math) / `diff_tag` (green adds / red dels) mirror the `pr_*` pair and
 abbreviate counts ≥1000 (`1.5k`) so a huge diff can't swallow the name in the pane.
 
+Whether a row shows a count at all is the one predicate `Sidebar#diff_visible?`, which
+folds two gates the render reads (`line`): the global **`diff_counts`** config knob
+(`Config#diff_counts?`, default on, the `agent_state_hooks?` shape — issue #88) and the
+**expanded-workspace** suppression (issue #90). When off, `refresh_diffs` early-returns
+`@diffs.clear` — no `git diff` shell-outs at all, not just a hidden label, and a live
+flip drops cached counts on the next reload. When a workspace expands into per-branch
+rows, the `ws` row's count would duplicate its active branch row right below it (the ws
+diffs HEAD == the active branch), so `diff_visible?` drops it on the `ws` row — the same
+`expanded` condition (now carried on the `Tree::Node`) that already drops the PR badge
+there. The redundant expanded-ws `git diff` is *computed* but never shown — keeping the
+mtime-gated cache logic untouched was the deliberate trade (issue #90, render-gate only).
+
 ### Type-to-filter (the deliberately un-shared one)
 
 `/` enters an in-sidebar incremental filter (issue #60) — fzf-style, but NOT the

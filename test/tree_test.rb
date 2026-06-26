@@ -117,6 +117,24 @@ module Switchboard
       end
     end
 
+    # The ws node carries `expanded` so the sidebar can suppress its diff count on
+    # an expanded workspace (#90) — same condition that drops the PR badge above.
+    def test_ws_node_carries_the_expanded_flag
+      model = FakeModel.new([project([wt(path: "/wt/a", branch: "feature")])])
+      stub_method(Git, :branch_history, ->(_path, limit:, cache: nil) { %w[feature main] }) do
+        ws = Tree.nodes(model).find { |n| n.kind == "ws" }
+        assert ws.expanded, "a multi-branch workspace row is flagged expanded"
+      end
+    end
+
+    def test_single_branch_ws_node_is_not_expanded
+      model = FakeModel.new([project([wt(path: "/wt/a", branch: "solo")])])
+      no_history do
+        ws = Tree.nodes(model).find { |n| n.kind == "ws" }
+        refute ws.expanded, "a single-branch workspace row is not expanded"
+      end
+    end
+
     def test_lineage_caps_at_max_branches_and_appends_current
       seen_limit = nil
       stub_method(Git, :branch_history, ->(_path, limit:, cache: nil) { seen_limit = limit; %w[x y] }) do

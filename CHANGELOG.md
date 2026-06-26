@@ -7,6 +7,24 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.34.1] — toggleable git diff counts (2026-06-26)
+
+### Added
+- **`diff_counts` config knob (#88).** A global boolean (default on) that turns the
+  `+adds −dels` row counts off. When `diff_counts: false`, the sidebar doesn't just
+  hide the label — `refresh_diffs` early-returns, so there are **no per-worktree
+  `git diff` shell-outs at all** (zero added work, as before #79). Resolves like the
+  other behavior toggles (`agent_state_hooks` / `prune_on_launch`); global-only by
+  design, a per-project override stays a follow-up. Documented in `reference-config.md`
+  and the README.
+
+### Changed
+- **The diff count no longer renders on an expanded workspace's name row (#90).** When
+  a workspace expands into per-branch rows, its HEAD count duplicated the active branch
+  row right below it. The count now shows on the branch rows only — the same `expanded`
+  condition that already drops the PR badge there. Both the toggle and this suppression
+  flow through one `Sidebar#diff_visible?` predicate.
+
 ## [0.34.0] — the agent names its own workspace (2026-06-26)
 
 ### Added

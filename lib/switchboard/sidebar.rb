@@ -522,6 +522,11 @@ module Switchboard
     # slot, base, or diffability clears instead of painting a ghost count. Fully
     # rescued — a diff fault never disturbs the dots or the paint.
     def refresh_diffs
+      # #88: counts off ⇒ no git diff shell-outs at all (not just a hidden label).
+      # clear (not a bare return) so a live flip to diff_counts:false drops any
+      # counts already cached, instead of leaving stale numbers until a respawn.
+      return @diffs.clear unless @config.diff_counts?
+
       @nodes.each do |n|
         next unless %w[ws br].include?(n.kind)
 
@@ -566,6 +571,19 @@ module Switchboard
     def diff_for(node)
       entry = @diffs[[node.path, node.branch, node.kind]]
       entry && entry.drop(2)
+    end
+
+    # The single place that decides whether a row shows a diff count. Folds in both
+    # the #88 global toggle and the #90 expanded-ws suppression: an expanded
+    # workspace's name row diffs HEAD (== its active branch), so the count would
+    # duplicate the active branch row right below it — show it on the branch rows
+    # only. Re-checks @config here (not just at refresh_diffs) so render hides the
+    # count the instant the toggle flips, before the next reload clears @diffs.
+    def diff_visible?(node)
+      return false unless @config.diff_counts?
+      return false unless %w[ws br].include?(node.kind)
+
+      !(node.kind == "ws" && node.expanded)
     end
 
     # announce_sounds: false on a catch-up scan (a sidebar waking from off-screen,
@@ -800,7 +818,7 @@ module Switchboard
       return unless ENV["SWITCHBOARD_BIN"]
 
       @config.projects.map { |p| p["name"] }.each { |name| maybe_refresh_prs(name) }
-      Tmux.notify("switchboard: refreshing PRs + diffs…")
+      Tmux.notify("switchboard: refreshing #{@config.diff_counts? ? 'PRs + diffs' : 'PRs'}…")
     rescue StandardError
       nil
     end
@@ -1615,7 +1633,7 @@ module Switchboard
       # #12"); reserve its plain width (plus a gap) so the name truncates to fit
       # rather than overrunning. Projects carry neither, so they get the full width.
       id = node.kind == "proj" ? "" : View.pr_identifier(node.pr)
-      counts = %w[ws br].include?(node.kind) ? diff_for(node) : nil
+      counts = diff_visible?(node) ? diff_for(node) : nil
       diff = View.diff_label(counts)
       right = [diff, id].reject(&:empty?).join("  ") # plain, for width math
       # Too narrow to seat name + diff + badge? Drop the diff first (the badge is the

@@ -57,6 +57,7 @@ module Switchboard
       # agent_state_hooks: true                    # auto-wire the agent-state dots on worktree create
       # prune_on_launch: true                      # prune orphaned sb/ sessions when landing on home
       # auto_rename: false                         # nudge the agent to rename a placeholder-named workspace once it knows the work
+      # diff_counts: true                          # show +adds −dels of each branch vs base on the workspace row
 
       # Completion sounds (on by default): a built-in (train / chime, or train_1..3 /
       # chime_1..3), a file path, or a macOS system-sound name. enabled: false mutes all.
@@ -191,6 +192,14 @@ module Switchboard
       return node == true unless node.nil?
 
       auto_rename?
+    end
+
+    # Whether the sidebar shows the +adds −dels diff count on each ws/br row.
+    # On by default; `diff_counts: false` hides it AND skips the per-worktree git
+    # diff entirely (zero added work, as before #79). Global only — a per-project
+    # override is a deliberate non-goal for now (#88).
+    def diff_counts?
+      @data.fetch("diff_counts", true) != false
     end
 
     # Optional prefix for new branches, e.g. "wvmitchell" -> wvmitchell/<name>.

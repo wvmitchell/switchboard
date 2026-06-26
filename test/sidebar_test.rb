@@ -671,6 +671,69 @@ module Switchboard
       refute_includes out, "\e[32m+4", "...uncolored under the bar, where color is stripped"
     end
 
+    # --- diff_visible? + toggle/expanded suppression (issues #88, #90) --------
+
+    def diff_off_config
+      File.write(Config.path, YAML.dump("diff_counts" => false, "projects" => []))
+      Config.new
+    end
+
+    def expanded_ws(name = "feature", path: "/wt/a", branch: "feature")
+      Tree::Node.new(kind: "ws", project: "app", path: path, name: name, branch: branch,
+                     expanded: true)
+    end
+
+    def test_diff_visible_truth_table
+      sb = sidebar # default config: diff_counts on
+      refute sb.send(:diff_visible?, proj("app")),    "projects never show a diff"
+      assert sb.send(:diff_visible?, ws("solo")),     "a single-branch ws shows its diff"
+      assert sb.send(:diff_visible?, br("feature")),  "branch rows show their diff"
+      refute sb.send(:diff_visible?, expanded_ws),    "an expanded ws drops it (the branch row owns it, #90)"
+    end
+
+    def test_diff_visible_is_false_for_every_row_when_diff_counts_off
+      sb = sidebar
+      sb.instance_variable_set(:@config, diff_off_config)
+      refute sb.send(:diff_visible?, ws("solo")),    "diff_counts:false hides ws counts (#88)"
+      refute sb.send(:diff_visible?, br("feature")), "diff_counts:false hides branch counts (#88)"
+    end
+
+    def test_refresh_diffs_is_a_noop_when_diff_counts_off
+      node = diff_ws
+      sb = sidebar(nodes: [node])
+      gd = head_log_gitdir
+      sb.instance_variable_set(:@branch_cache, { node.path => [gd, nil, nil, []] })
+      sb.instance_variable_set(:@config, diff_off_config)
+      sb.instance_variable_set(:@diffs, { [node.path, node.branch, node.kind] => [nil, false, 1, 1] })
+      calls = 0
+      stub_method(Git, :diff_counts, ->(*) { calls += 1; [2, 1] }) do
+        sb.send(:refresh_diffs)
+      end
+      assert_equal 0, calls, "diff_counts:false must skip the git diff shell-out entirely"
+      assert_empty sb.instance_variable_get(:@diffs), "and clear any counts already cached (live flip)"
+    end
+
+    def test_line_hides_the_diff_count_on_an_expanded_workspace_row
+      ws_node = expanded_ws
+      br_node = br("feature", active: true)
+      br_node[:path] = ws_node.path
+      sb = sidebar(nodes: [proj("app"), ws_node, br_node], focused: false)
+      sb.instance_variable_set(:@diffs, {
+        [ws_node.path, ws_node.branch, "ws"] => [nil, false, 22, 333],
+        [br_node.path, br_node.branch, "br"] => [nil, false, 22, 333]
+      })
+      refute_includes sb.send(:line, ws_node, false, 40), "+22", "the expanded ws name row drops the count"
+      assert_includes  sb.send(:line, br_node, false, 40), "+22", "the active branch row still shows it"
+    end
+
+    def test_line_hides_the_diff_count_when_diff_counts_off
+      node = ws("feature")
+      sb = sidebar(nodes: [proj("app"), node], focused: false)
+      sb.instance_variable_set(:@config, diff_off_config)
+      sb.instance_variable_set(:@diffs, { [node.path, node.branch, node.kind] => [nil, false, 22, 333] })
+      refute_includes sb.send(:line, node, false, 40), "+22", "diff_counts:false hides the count at render"
+    end
+
     # --- refresh_diffs: the off-paint diff cache (issue #79) ------------------
 
     # A real <gitdir>/logs/HEAD so refresh_diffs can stat a fresh mtime; returns gitdir.

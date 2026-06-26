@@ -45,7 +45,8 @@ diff count (green/red, just left of the badge), and the PR as a color-coded
 The diff count is the branch's **committed** work versus its base (`base...HEAD`),
 not your uncommitted working tree — the footer hint reads `+/− vs base` while a
 workspace or branch row is highlighted. A clean branch (nothing ahead of base)
-shows no count.
+shows no count. To turn the diff count off entirely, set `diff_counts: false` in
+your config (it also skips the per-worktree `git diff`).
 
 Keys (in the sidebar):
 
@@ -271,6 +272,7 @@ projects_root: ~/Programming             # where `a`/`clone` drop cloned repos
 base: origin/main                        # default ref new worktrees branch from
 branch_prefix: wvmitchell                # optional: new branches become wvmitchell/<name>
 agent_state_hooks: true                  # optional: auto-wire agent-state dots on create (default true)
+diff_counts: true                        # optional: show +adds −dels on each row (false hides it; default true)
 session_command: claude                  # optional: run this when a worktree's session is first created
 sounds:                                  # optional: completion sounds (on by default — see below)
   enabled: true                          #   set false to mute everything

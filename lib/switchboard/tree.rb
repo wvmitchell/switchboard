@@ -13,7 +13,7 @@ module Switchboard
 
     # Structured tree node — what the rendered sidebar draws.
     Node = Struct.new(:kind, :project, :path, :branch, :name, :pr, :dirty, :base, :active, :last,
-                      keyword_init: true)
+                      :expanded, keyword_init: true)
 
     # Flat, ordered list of Nodes: project header, its workspaces, and a
     # workspace's branches (when it has more than one).
@@ -26,10 +26,12 @@ module Switchboard
           # When a workspace expands into per-branch rows, the PR badge belongs on the
           # branch row that owns it. The current branch's PR is wt.pr, so showing it on
           # the workspace row too would render the same #number twice. A single-branch
-          # workspace keeps the badge on its row — the only place it can show.
+          # workspace keeps the badge on its row — the only place it can show. The diff
+          # count rides the same logic (#90): the sidebar suppresses it on an expanded
+          # ws row (the active branch row carries the identical base...HEAD count).
           list << Node.new(kind: "ws", project: project.name, path: wt.path, branch: wt.branch,
                            name: wt.display_name, pr: expanded ? nil : wt.pr, dirty: wt.dirty,
-                           base: wt.base)
+                           base: wt.base, expanded: expanded)
           next unless expanded
 
           branches.each_with_index do |branch, i|

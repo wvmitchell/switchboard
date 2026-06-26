@@ -27,6 +27,7 @@ or `e` in the sidebar — both reload on save.
 | `agent_state_hooks` | bool | `true` | Auto-wire per-worktree agent-state hooks on worktree create. |
 | `prune_on_launch` | bool | `true` | Prune orphaned `sb/` sessions when landing on the home session. |
 | `auto_rename` | bool | `false` | Nudge the agent to `switchboard rename` a placeholder-named workspace once it knows the work (a `SessionStart` hook). Per-project override wins. See [`auto_rename`](#auto_rename). |
+| `diff_counts` | bool | `true` | Show the `+adds −dels` diff count on each workspace/branch row. `false` hides it and skips the per-worktree `git diff` entirely. |
 | `session_command` | string | _(none)_ | Command typed into a worktree's window the first time its session is created. Per-project override wins. |
 | `sounds` | map or `false` | _(on, built-ins)_ | Completion sounds. See [`sounds`](#sounds). |
 | `tmux_keys` | map | _(toggle `s`)_ | Which prefix keys switchboard binds. See [`tmux_keys`](#tmux_keys). |
@@ -44,6 +45,7 @@ branch_prefix: wvmitchell                # new branches become wvmitchell/<name>
 agent_state_hooks: true                  # auto-wire agent-state dots on create
 prune_on_launch: true                    # tidy orphaned sessions on landing home
 auto_rename: false                       # let the agent name a placeholder workspace (off by default)
+diff_counts: true                        # show +adds −dels on each row (false skips the git diff)
 session_command: claude                  # run this on a worktree's first session
 sounds:
   enabled: true

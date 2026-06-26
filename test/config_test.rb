@@ -31,7 +31,7 @@ module Switchboard
     end
 
     def test_scaffold_template_advertises_the_optional_knobs
-      %w[tmux_keys sounds session_command base prune_on_launch projects_root auto_rename].each do |knob|
+      %w[tmux_keys sounds session_command base prune_on_launch projects_root auto_rename diff_counts].each do |knob|
         assert_includes Config::SCAFFOLD_TEMPLATE, knob, "a fresh config should advertise #{knob}"
       end
     end
@@ -174,6 +174,12 @@ module Switchboard
       assert cfg({}).prune_on_launch?
       assert cfg("prune_on_launch" => true).prune_on_launch?
       refute cfg("prune_on_launch" => false).prune_on_launch?
+    end
+
+    def test_diff_counts_on_by_default_off_only_when_false
+      assert cfg({}).diff_counts?
+      assert cfg("diff_counts" => true).diff_counts?
+      refute cfg("diff_counts" => false).diff_counts?
     end
 
     def test_session_command_global_is_nil_unless_set
