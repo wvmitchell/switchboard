@@ -7,6 +7,27 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.31.1] — carry the Claude `/resume` history across a rename (2026-06-25)
+
+### Fixed
+- **Renaming a workspace no longer orphans your Claude conversation.** Claude Code
+  keys each conversation transcript by the workspace's cwd
+  (`~/.claude/projects/<encoded-cwd>/`), so when `switchboard rename` moved the
+  worktree dir the cwd changed out from under it: mid-conversation kept working (the
+  running agent froze its project dir at the old path, and the worktree bridge kept
+  that resolvable), but after a restart `/resume` came up empty because every
+  transcript still sat under the old path's key (#42). Rename now carries the project
+  dir to the new key too (`ClaudeHistory`), mirroring `Git.move_worktree`: it moves the
+  real dir and leaves a symlink bridge so an in-flight session's appends keep landing
+  in the moved dir. The key is the canonicalized cwd (`pwd -P`) — symlinked ancestors
+  (macOS `/var`→`/private/var`, a symlinked `$HOME`) resolved the same way the agent
+  dots already do — so the carry works on symlinked roots, not just literal paths. An
+  existing target is merged into, never clobbered. Best-effort throughout: a failure
+  degrades to "history didn't move" rather than crashing the rename.
+- **`prune` now GCs the rename bridges left in `~/.claude/projects`.** The twin of the
+  worktree-bridge sweep (`Reconcile.reap_bridges`): `ClaudeHistory.reap_bridges` removes
+  a history bridge once it dangles (its transcript dir is gone), so they don't accumulate.
+
 ## [0.31.0] — `switchboard rename` from inside a workspace (2026-06-25)
 
 ### Added

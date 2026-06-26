@@ -30,7 +30,7 @@ bin/switchboard doctor     # check that tmux/git/gh + config + install wiring ex
 bin/switchboard init       # create ~/.config/switchboard/config.yml (empty; grown by the add-project flow)
 bin/switchboard config     # open config.yml in $EDITOR (sidebar `e` does the same)
 bin/switchboard sidebar    # run the persistent sidebar standalone (normally tmux-spawned)
-bin/switchboard rename NAME # rename the current workspace from inside it (dir move + bridge + session rename); for the agent to (re)name its own live workspace (#42)
+bin/switchboard rename NAME # rename the current workspace from inside it (dir move + bridge + session rename + Claude `/resume` history carry); for the agent to (re)name its own live workspace (#42)
 bin/switchboard prune      # kill orphaned sb/ sessions (reconcile vs git worktrees; --dry-run/-n previews)
 bin/switchboard quit       # close ALL sb/ sessions (full teardown; current session last; clears agent state)
 bin/test                   # run the stdlib-Minitest suite (offline; bin/test <file> for one)

@@ -79,7 +79,10 @@ module Switchboard
         end
       end
 
-      reap_bridges(parents) unless dry_run
+      unless dry_run
+        reap_bridges(parents)
+        ClaudeHistory.reap_bridges # GC the rename bridges migrate leaves in ~/.claude/projects
+      end
 
       orphaned = orphans(live, valid, prefixes, current: Tmux.session_of, now: now)
       orphaned.each { |name| Tmux.kill_session(name) } unless dry_run

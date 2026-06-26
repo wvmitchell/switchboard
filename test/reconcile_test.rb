@@ -164,6 +164,18 @@ module Switchboard
       refute File.symlink?(bridge), "prune reaps the dangling bridge"
     end
 
+    # Prune also GCs the Claude rename bridges migrate leaves in ~/.claude/projects
+    # (ClaudeHistory.reap_bridges), the twin of the worktree-bridge sweep above.
+    def test_prune_reaps_a_dangling_claude_history_bridge
+      setup_app_project
+      root = ENV["SWITCHBOARD_CLAUDE_PROJECTS_DIR"]
+      FileUtils.mkdir_p(root)
+      bridge = File.join(root, "old-key")
+      File.symlink(File.join(root, "gone"), bridge) # dangling bridge in the projects dir
+      run_prune([sess("sb/app/app"), sess("sb/app/feat")])
+      refute File.symlink?(bridge), "prune reaps the dangling Claude history bridge"
+    end
+
     # The primary checkout's parent is the dir holding the main repo — switchboard
     # doesn't own it. A dangling symlink there (never a bridge) must survive prune.
     def test_prune_does_not_sweep_the_main_repos_parent_dir

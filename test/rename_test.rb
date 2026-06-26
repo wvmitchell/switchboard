@@ -34,6 +34,26 @@ module Switchboard
       assert_equal File.realpath(dest), File.realpath(old), "the bridge resolves to the new dir"
     end
 
+    # The whole point of the rename surviving a restart: Claude's transcript dir,
+    # keyed by the (now-changed) cwd, is carried to the new path so `/resume` finds
+    # it (issue #42 follow-up).
+    def test_perform_carries_the_claude_history_to_the_new_path
+      repo = temp_git_repo("proj")
+      old = add_worktree(repo, "old")
+      # Claude keys by the canonicalized cwd; the worktree is real here, so on macOS
+      # (/var -> /private/var) the raw sandbox path and Claude's key differ — seed at
+      # the realpath key the running agent actually wrote under.
+      hist = File.join(ENV["SWITCHBOARD_CLAUDE_PROJECTS_DIR"], ClaudeHistory.encode(File.realpath(old)))
+      FileUtils.mkdir_p(hist)
+      File.write(File.join(hist, "s1.jsonl"), "turn\n")
+
+      assert_equal :ok, Rename.perform(config_for(repo), "proj", old, "new").status
+
+      dest_hist = File.join(ENV["SWITCHBOARD_CLAUDE_PROJECTS_DIR"],
+                            ClaudeHistory.encode(File.realpath(path("wts", "proj", "new"))))
+      assert File.exist?(File.join(dest_hist, "s1.jsonl")), "the transcript moved to the new key"
+    end
+
     def test_perform_unknown_project_is_failed
       config = config_for(temp_git_repo("proj"))
       assert_equal :failed, Rename.perform(config, "nope", path("x"), "new").status

@@ -35,6 +35,25 @@ and where to start.
 
 ## Rename / worktree-move (issue #42) follow-ups
 
+- **Claude history bridge: clobber-on-name-reuse race.** `ClaudeHistory.migrate`
+  (added in v0.31.1) carries the transcript dir and leaves a bridge `encode(old) ->
+  encode(new)` in `~/.claude/projects`. If you rename `A->B`, keep that agent running,
+  then reuse the freed name `A` for a NEW workspace, `clear_link(dst)` drops the A->B
+  bridge and the still-running B agent (if it reopens the transcript by path) then
+  appends into the new A's dir. *Why not now:* needs exact name reuse + a live
+  renamed-away agent reopening by path; very unlikely. *Start in:*
+  `ClaudeHistory.migrate` — only `clear_link(dst)` when the bridge is dangling, not
+  when it resolves to a live dir. Surfaced by Codex during the v0.31.1 review.
+
+- **Verify whether Claude reopens the transcript by path or holds an fd.** The
+  `ClaudeHistory` bridge only matters if a running agent re-derives
+  `projects/<encoded-cwd>/<id>.jsonl` by path on each append; if it holds an open fd,
+  the dir move is transparent and the bridge is harmless dead weight. Couldn't verify
+  Claude's internals from here, so the bridge is kept as cheap insurance. *Why low:*
+  worst case the bridge is a no-op. Resolving it would let us simplify (drop the bridge)
+  or confirm it's load-bearing (and then the clobber race above matters more).
+
+
 - **`clear_bridge` only deletes a *verified* bridge, not any symlink.**
   `Git.move_worktree` calls `clear_bridge(new_path)` to reclaim a stale rename
   bridge squatting the target; `clear_bridge` deletes *any* symlink at that path

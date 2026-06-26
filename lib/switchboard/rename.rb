@@ -48,6 +48,10 @@ module Switchboard
       # project dir keeps resolving and its hooks keep reporting (see move_worktree).
       return Result.new(:failed, dest) unless Git.move_worktree(project["path"], old_path, dest, bridge: true)
 
+      # Carry the agent's conversation history to the new path so `/resume` still
+      # finds it after a restart — the cwd just changed out from under it (#42).
+      ClaudeHistory.migrate(old_path, dest)
+
       Result.new(rename_session(project_name, old_path, dest), dest)
     end
 

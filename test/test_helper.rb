@@ -58,6 +58,7 @@ module Switchboard
       ENV["SWITCHBOARD_FULL_HEADER_FILE"] = path("full_header") # FullHeader toggle (full header on every session)
       ENV["SWITCHBOARD_WIDTH_FILE"]    = path("width")     # Width (shared sidebar pane width, ←/→ resize)
       ENV["SWITCHBOARD_CACHE_DIR"]     = path("cache")     # Pr cache (T3 seam)
+      ENV["SWITCHBOARD_CLAUDE_PROJECTS_DIR"] = path("claude-projects") # ClaudeHistory (rename carries /resume history)
 
       # Anything that reads $HOME / XDG / git-global must land in the sandbox —
       # Hook.ensure_script writes a reporter into XDG_DATA_HOME, Creator shells
