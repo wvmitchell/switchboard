@@ -120,7 +120,7 @@ tmux bindings/hooks go live — the CHANGELOG header says so.
 | tmux integration | `lib/switchboard/tmux.rb`, `switchboard.tmux` |
 | Install / keybindings | `lib/switchboard/installer.rb` |
 | Agent state / hooks | `lib/switchboard/agent_state.rb`, `hook.rb`, `agents.rb` |
-| Sounds / bold / collapse | `lib/switchboard/sound.rb`, `attention.rb`, `collapse.rb` |
+| Sounds / bold / collapse | `lib/switchboard/sound.rb`, `attention.rb`, `collapse.rb` (shared base: `keyed_marker_store.rb`) |
 | Git / PRs / reconcile | `lib/switchboard/git.rb`, `pr.rb`, `reconcile.rb` |
 
 See [docs/](docs/) for the full Diataxis documentation set.

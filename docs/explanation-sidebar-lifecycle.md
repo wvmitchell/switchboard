@@ -29,9 +29,14 @@ features pay this cost by keeping state on disk, one file per item:
 
 All three use the same atomic write (temp + rename) so a peer process's scan never
 reads a half-written file, and all three self-heal (a marker for a vanished
-worktree is GC'd). The difference: attention markers are cleared on `quit` (a
-transient "you haven't looked yet" flag), collapse folds are not (a durable view
-preference that should persist across restarts).
+worktree is GC'd). `Attention` and `Collapse` share that machinery as one module —
+`KeyedMarkerStore` (`keyed_marker_store.rb`): the crc32 file key, the atomic write,
+and the scan-with-GC live there once, and each store supplies only its own value and
+its keep-or-GC rule (Attention keys by worktree path and GCs when the dir is gone;
+Collapse keys by project name and GCs against the configured list). The difference
+between the two: attention markers are cleared on `quit` (a transient "you haven't
+looked yet" flag), collapse folds are not (a durable view preference that should
+persist across restarts).
 
 ## Sidebar visibility is per-session, applied to every window
 

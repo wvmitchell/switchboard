@@ -7,6 +7,20 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.35.4] — shared KeyedMarkerStore for Attention/Collapse (2026-06-26)
+
+### Changed
+- **`Attention` and `Collapse` now sit on a shared `KeyedMarkerStore`**
+  (`keyed_marker_store.rb`, #95). The two near-identical keyed-marker stores — crc32-keyed
+  files, atomic temp+rename writes, `scan`-with-GC — shared ~40 lines of copy-paste; that
+  machinery is now one module both delegate to, each caller supplying only its domain
+  (Attention's canonicalized-realpath value + `Dir.exist?` GC predicate; Collapse's project
+  name + config-membership predicate) via a `scan(dir) { |content| keep? }` block where a
+  falsy return GCs the marker. A pure no-behavior-change refactor — the existing
+  Attention/Collapse suites are untouched and green. `KeyedMarkerStore.dir` is total
+  (degrades to a tmpdir sibling) so a state-path failure can't crash the sidebar paint.
+  Sets up #107's per-workspace fold store as a near-trivial third instance.
+
 ## [0.35.2] — self-naming nudge steers toward fuller names (2026-06-26)
 
 ### Changed

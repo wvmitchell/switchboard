@@ -328,6 +328,16 @@ marked (`viewing?` skips it on the edge, and `locate` clears the marker the
 instant you switch in — bold gone on view, no input required). To keep that
 clearing correct, `reload` runs `locate` **before** `refresh_agents`.
 
+The atomic temp+rename write, the crc32 filename key, the XDG `state_dir`, and the
+`scan`-with-GC are not Attention's own machinery: they're the shared
+**`KeyedMarkerStore`** (`keyed_marker_store.rb`, issue #95) that both `Attention` and
+`Collapse` delegate to. Each caller supplies only its *domain* — Attention a
+canonicalized-realpath value and a `Dir.exist?` GC predicate, Collapse a project name
+and a config-membership predicate — as a `scan(dir) { |content| keep? }` block (a falsy
+return GCs that marker; `dir` is total so a state-path failure degrades, never crashes).
+`FullHeader`/`Width` deliberately stay **off** this base — single flag / single int,
+they'd only share "an XDG dir."
+
 ### Shared project collapse (the same multi-process trick)
 
 Folding a project header (▸/▾ on ↵) hides its workspace rows. `Collapse`
@@ -337,7 +347,8 @@ held in one process's `@collapsed` would leave every other pane — and every
 respawn (toggle off/on, a new window, a reconcile) — showing the project expanded.
 One file per collapsed project (name digest → name, `SWITCHBOARD_COLLAPSE_DIR` /
 `XDG_STATE_HOME`), so a toggle is a single atomic create/delete (`collapse` /
-`expand`) with no read-modify-write race, mirroring `Attention`. `rebuild`
+`expand`) with no read-modify-write race, mirroring `Attention` (both on the shared
+`KeyedMarkerStore` — see above). `rebuild`
 **hydrates** `@collapsed` from the store every reload (so a fold made in one window
 lands in the others on their next switch-in poke or while-visible scan);
 `toggle_collapse` writes through *and* updates the in-memory set for same-frame

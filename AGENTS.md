@@ -42,7 +42,7 @@ no build step.
 - **Config / registry:** `config.rb`
 - **tmux:** `tmux.rb`, `switchboard.tmux` · **install/keys:** `installer.rb`
 - **Agent presence:** `agent_state.rb`, `hook.rb`, `agents.rb`
-- **Sounds / bold / collapse:** `sound.rb`, `attention.rb`, `collapse.rb`
+- **Sounds / bold / collapse:** `sound.rb`, `attention.rb`, `collapse.rb` (the last two on the shared `keyed_marker_store.rb`)
 - **Git / PRs / reconcile:** `git.rb`, `pr.rb`, `reconcile.rb`
 
 ## Conventions
@@ -51,7 +51,9 @@ no build step.
   `Sidebar`, `AgentState` are classes (they hold state).
 - New worktree state belongs on disk (one file per item, atomic temp+rename, GC'd)
   because every window's sidebar is a separate process — see
-  [docs/explanation-sidebar-lifecycle.md](docs/explanation-sidebar-lifecycle.md).
+  [docs/explanation-sidebar-lifecycle.md](docs/explanation-sidebar-lifecycle.md). For
+  a keyed marker store (digest-named files), build on `KeyedMarkerStore`
+  (`keyed_marker_store.rb`) rather than re-rolling the write/scan/GC.
 
 ## Further reading
 
