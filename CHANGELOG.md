@@ -7,6 +7,21 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.37.2] — a new workspace no longer flashes as its panes resize on create (2026-06-27)
+
+### Fixed
+- **`n` now reveals a finished layout instead of a resize flash.** A new worktree's tmux
+  session was created **detached** with no size, so it was born at tmux's 80×24 default —
+  the moment you switched into it tmux resized the window to your client and every pane (the
+  freshly split sidebar, the just-started agent) visibly reflowed: the "creating" flash.
+  `ensure_session` now builds the session at the current window's size up front
+  (`new-session -x/-y`, read via `current_window_size`), so the switch shows the final layout
+  with nothing to move. Off-tmux (the exec-attach launch path) the size is unknown and
+  omitted — the attach sizes the window as before; a `0` dimension is dropped rather than
+  passed as `-x 0` (which tmux rejects with "width too small", which would turn a create that
+  used to succeed at the default into a no-op). Unit tests cover the parse, the argv assembly,
+  and the zero guard.
+
 ## [0.37.1] — a trailing slash on `branch_prefix` no longer breaks every create (2026-06-27)
 
 ### Fixed

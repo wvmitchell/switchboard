@@ -171,7 +171,7 @@ module Switchboard
       # process (a CLI switch and a sidebar in another pane are separate
       # processes) created the session first, new-session fails — and we must
       # NOT type the command into a session we didn't create, or it lands twice.
-      created = system("tmux", "new-session", "-d", "-s", name, "-c", dir, out: File::NULL, err: File::NULL)
+      created = system(*new_session_cmd(name, dir), out: File::NULL, err: File::NULL)
       system("tmux", "rename-window", "-t", name, "work", out: File::NULL, err: File::NULL)
       # Record the first-creation default (on) explicitly, so new windows in this
       # session inherit a sidebar via the after-new-window hook. Gated on `created`
@@ -179,6 +179,47 @@ module Switchboard
       # to create.
       set_sidebar_flag(name, "on") if created
       run_in_session(name, start) if start && created
+    end
+
+    # Build the `new-session` argv, sized to the current window when we can read
+    # it. A detached session created with no -x/-y is born at tmux's 80x24
+    # default, so the moment we switch a client into it tmux resizes the window
+    # to the client and EVERY pane (the freshly split sidebar, the just-started
+    # agent) visibly reflows — the "creating" flash. Building it at the final
+    # on-screen size up front means the switch reveals a finished layout with
+    # nothing to move. Off-tmux (the exec-attach launch path) the size is unknown
+    # and omitted: the attach sizes the window anyway, same as before. Only a
+    # POSITIVE pair is applied — a 0 dim (an openpty that came up 0x0, see the
+    # smoke client) makes `new-session -x 0` fail outright ("width too small"),
+    # which would turn a create that used to succeed at the 80x24 default into a
+    # no-op; fall back to that default instead.
+    def new_session_cmd(name, dir)
+      cmd = ["tmux", "new-session", "-d", "-s", name, "-c", dir]
+      w, h = current_window_size
+      cmd.push("-x", w.to_s, "-y", h.to_s) if w&.positive? && h&.positive?
+      cmd
+    end
+
+    # The on-screen size of the client's current window — the dimensions a
+    # session we create detached will be resized to the instant a client switches
+    # into it (see new_session_cmd). window_* (not client_*) because the client
+    # height includes the status line the window doesn't, so sizing to the window
+    # is an exact match — no off-by-the-status-bar reflow. [nil, nil] outside tmux
+    # so the caller falls back to tmux's default sizing.
+    def current_window_size
+      return [nil, nil] unless ENV["TMUX"]
+
+      parse_window_size(`tmux display-message -p '#\{window_width},#\{window_height}' 2>/dev/null`)
+    end
+
+    # Pure: a "W,H" reply parsed to [Integer, Integer], or [nil, nil] on an
+    # empty/garbled line. Split out (like parse_window_panes) so it's unit-testable
+    # without a server; a non-numeric field rescues to the nil pair, not a raise.
+    def parse_window_size(raw)
+      w, h = raw.to_s.strip.split(",")
+      [Integer(w, 10), Integer(h, 10)]
+    rescue StandardError
+      [nil, nil]
     end
 
     # Type a command into a freshly created session's window and run it — how

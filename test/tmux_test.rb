@@ -67,6 +67,49 @@ module Switchboard
       assert_nil Tmux.parse_window_panes("2 panes"), "a partial/garbled line is not a usable count"
     end
 
+    # --- parse_window_size / new_session_cmd: build a detached session at the
+    # client's size so switching into it never reflows 80x24 -> client (the
+    # "creating" flash). The parse is pure; the argv assembly is testable via the
+    # current_window_size seam.
+
+    def test_parse_window_size_reads_a_width_height_pair
+      assert_equal [220, 50], Tmux.parse_window_size("220,50\n")
+      assert_equal [80, 24], Tmux.parse_window_size("  80,24  ")
+    end
+
+    def test_parse_window_size_is_a_nil_pair_on_empty_or_garbled_input
+      assert_equal [nil, nil], Tmux.parse_window_size(""), "no reply -> unknown, fall back to default sizing"
+      assert_equal [nil, nil], Tmux.parse_window_size("220"), "a half pair is not a usable size"
+      assert_equal [nil, nil], Tmux.parse_window_size("x,y"), "a non-numeric reply rescues to the nil pair, never raises"
+    end
+
+    def test_new_session_cmd_sizes_the_session_to_the_current_window
+      stub_method(Tmux, :current_window_size, -> { [220, 50] }) do
+        cmd = Tmux.new_session_cmd("sb/app/x", "/wt/x")
+        assert_equal ["tmux", "new-session", "-d", "-s", "sb/app/x", "-c", "/wt/x", "-x", "220", "-y", "50"], cmd
+      end
+    end
+
+    def test_new_session_cmd_omits_the_size_when_unknown
+      # Off-tmux (no current window): no -x/-y, so the exec-attach path sizes the
+      # window on attach exactly as before.
+      stub_method(Tmux, :current_window_size, -> { [nil, nil] }) do
+        cmd = Tmux.new_session_cmd("sb/app/x", "/wt/x")
+        assert_equal ["tmux", "new-session", "-d", "-s", "sb/app/x", "-c", "/wt/x"], cmd
+      end
+    end
+
+    def test_new_session_cmd_omits_a_zero_dimension
+      # A 0 dim (an openpty that came up 0x0) would make `new-session -x 0` fail
+      # ("width too small") and create NOTHING — worse than the 80x24 default.
+      # Only a positive pair is applied; otherwise fall back to the default.
+      stub_method(Tmux, :current_window_size, -> { [0, 50] }) do
+        cmd = Tmux.new_session_cmd("sb/app/x", "/wt/x")
+        assert_equal ["tmux", "new-session", "-d", "-s", "sb/app/x", "-c", "/wt/x"], cmd,
+                     "a non-positive dimension is dropped, not passed as -x 0"
+      end
+    end
+
     # --- ensure_work_pane: only splits a shell when the sidebar is the SOLE pane
     # (#64 home self-heal / fall-home landing). The two short-circuits are the
     # testable guards; the actual split is a raw shell-out, covered by the smoke layer.
