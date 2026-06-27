@@ -448,6 +448,26 @@ and `R` (`refresh_prs_now`) clears `@diffs` as the manual catch-all. `View.diff_
 (plain, for width math) / `diff_tag` (green adds / red dels) mirror the `pr_*` pair and
 abbreviate counts ≥1000 (`1.5k`) so a huge diff can't swallow the name in the pane.
 
+**The counts and badges align into fixed columns** (issue #118). Column alignment is a
+property of the whole visible row set, not one row, so `line` can't size it alone — it
+used to flush-right a single `[diff, id]` block per node, which made the `+/−` and `#n`
+numbers staircase. `Sidebar#column_widths(@rows)` now measures three widths once per
+`render` — the `+adds` sub-column, the `−dels` sub-column, and the `#pr` column — over
+the **full `@rows`** (collapse-/filter-aware, NOT the on-screen slice, so columns hold
+while you scroll; folding a noisy project tightens them) and threads them into every
+`line`. Each cell `rjust`s into its column (`right_region` → `diff_cell` / `pad_cell`,
+padding off the *plain* width then wrapping ANSI, the `line` split): the `+adds` stack,
+the `−dels` stack, and the `#n` stay right-flush to the pane edge exactly as before. An
+absent cell becomes aligned blanks, not a gap that shifts its neighbor — so the #90
+expanded-ws suppression reads as clean empty columns. Single-row callers (tests) omit
+the threaded widths and fall back to the row's own widths, so a one-row column equals
+the row and the output is unchanged. The narrow-pane backstop still drops the *whole*
+diff column first (uniformly — `cols`/widths are shared across rows, so the decision is
+identical per row and the columns can never split), keeping `MIN_NAME_COLS` for the
+name; `←`/`→` (#78) change `cols` live, so the columns recompute each render. No on-disk
+shared state — each pane measures its own `@rows`, which is all that matters since you
+look at one pane at a time.
+
 Whether a row shows a count at all is the one predicate `Sidebar#diff_visible?`, which
 folds two gates the render reads (`line`): the global **`diff_counts`** config knob
 (`Config#diff_counts?`, default on, the `agent_state_hooks?` shape — issue #88) and the

@@ -1784,12 +1784,14 @@ module Switchboard
 
       visible = @rows[@offset, height].to_a
       @visible_rows = visible # the on-screen slice — pulsing? animates only for these
+      adds_w, dels_w, pr_w = column_widths(@rows) # fixed columns, measured once (#118)
       out = +"\e[H"
       head.each_with_index do |text, i|
         out << "\e[#{i + 1};1H\e[K#{text}" # header lines carry (and reset) their own ANSI
       end
       visible.each_with_index do |node, i|
-        out << "\e[#{top + i + 1};1H\e[K" << line(node, @offset + i == @cursor, cols)
+        active = @offset + i == @cursor
+        out << "\e[#{top + i + 1};1H\e[K" << line(node, active, cols, adds_w: adds_w, dels_w: dels_w, pr_w: pr_w)
       end
       # Erase rows left over from a previous, longer state (e.g. after a
       # collapse), then draw the footer hints on the bottom rows.
@@ -1864,22 +1866,64 @@ module Switchboard
       @offset = 0 if @offset.negative?
     end
 
-    def line(node, active, cols)
-      # The flush-right block is the diff count then the PR identifier ("+22 −333
-      # #12"); reserve its plain width (plus a gap) so the name truncates to fit
-      # rather than overrunning. Projects carry neither, so they get the full width.
+    # The three right-hand columns are a property of the whole visible row set,
+    # not a single row (#118), so they're measured once here and threaded into
+    # every line — letting the +adds, −dels, and #n numbers each stack into a
+    # straight column. Measured over the full @rows (collapse-/filter-aware), NOT
+    # the on-screen slice, so the columns stay put while you scroll instead of
+    # reflowing each keypress; folding a noisy project naturally tightens them.
+    # Projects carry no cells and so don't size the columns. Returns the adds /
+    # dels sub-column widths and the PR column width.
+    def column_widths(rows)
+      adds_w = dels_w = pr_w = 0
+      rows.each do |node|
+        next if node.kind == "proj"
+
+        pr_w = [pr_w, View.pr_identifier(node.pr).length].max
+        adds, dels = View.diff_parts(diff_visible?(node) ? diff_for(node) : nil)
+        adds_w = [adds_w, adds.to_s.length].max
+        dels_w = [dels_w, dels.to_s.length].max
+      end
+      [adds_w, dels_w, pr_w]
+    end
+
+    # The plain width the right region reserves: the diff column (the two sub-
+    # columns plus their separator, when both seat) then the PR column, with a
+    # 2-col gap between them only when both are present.
+    def region_width(diff_w, pr_w)
+      w = diff_w + pr_w
+      w += 2 if diff_w.positive? && pr_w.positive?
+      w
+    end
+
+    def line(node, active, cols, adds_w: nil, dels_w: nil, pr_w: nil)
+      # The flush-right region is the diff count then the PR identifier ("+22 −333
+      # #12"), each right-justified into a fixed column so they stack down the
+      # tree (#118). Reserve its plain width (plus a gap) so the name truncates to
+      # fit rather than overrunning.
       id = node.kind == "proj" ? "" : View.pr_identifier(node.pr)
       counts = diff_visible?(node) ? diff_for(node) : nil
-      diff = View.diff_label(counts)
-      right = [diff, id].reject(&:empty?).join("  ") # plain, for width math
-      # Too narrow to seat name + diff + badge? Drop the diff first (the badge is the
-      # more essential signal) so the row never overruns — reachable only on a
-      # hand-narrowed pane with a huge diff AND a long PR number.
-      if !diff.empty? && cols - right.length - 1 < MIN_NAME_COLS
-        diff = ""
-        right = id
+      adds, dels = View.diff_parts(counts) # plain "+22" / "−333", nil where zero
+
+      # Column widths are threaded from render; single-row callers (and tests)
+      # fall back to this row's own widths — a one-row column equals the row, so
+      # the output is unchanged. Projects carry neither, so they get the full width.
+      adds_w ||= adds.to_s.length
+      dels_w ||= dels.to_s.length
+      pr_w   ||= id.length
+      adds_w = dels_w = pr_w = 0 if node.kind == "proj"
+      diff_w = adds_w + dels_w + (adds_w.positive? && dels_w.positive? ? 1 : 0)
+
+      # Too narrow to seat name + diff + badge? Drop the whole diff column first —
+      # uniformly across rows, since cols/widths are shared, so the columns never
+      # split (the badge is the more essential signal). Reachable only on a hand-
+      # narrowed pane with a huge diff AND a long PR number.
+      region_w = region_width(diff_w, pr_w)
+      if diff_w.positive? && cols - region_w - 1 < MIN_NAME_COLS
+        adds_w = dels_w = diff_w = 0
+        region_w = region_width(diff_w, pr_w)
       end
-      left_cols = right.empty? ? cols : [cols - right.length - 1, 1].max
+      left_cols = region_w.zero? ? cols : [cols - region_w - 1, 1].max
       text = trunc(plain(node), left_cols)
 
       # The reverse-video cursor bar only when the sidebar is the focused pane;
@@ -1887,19 +1931,52 @@ module Switchboard
       # tugs at your eye while you're working in the pane beside it. The diff/badge
       # go plain here so they read under the inverted bar.
       if active && @focused
-        bar = right.empty? ? text : "#{text.ljust(left_cols)} #{right}"
+        right = right_region(counts, node.pr, adds_w, dels_w, pr_w, with_color: false)
+        bar = region_w.zero? ? text : "#{text.ljust(left_cols)} #{right}"
         return "\e[7m#{bar.ljust(cols)}\e[0m"
       end
 
       body = colored(node, text, current: node.kind == "ws" && node.path == @current_path)
-      return body if right.empty?
+      return body if region_w.zero?
 
-      # `colored` preserves `text`'s visible width, so pad off the plain length. The
-      # diff_tag rides `diff` (dropped above when the pane's too narrow), the pr_tag id.
-      right_colored = [diff.empty? ? "" : View.diff_tag(counts), View.pr_tag(node.pr)]
-                      .reject(&:empty?).join("  ")
-      pad = [cols - text.length - right.length, 1].max
+      # `colored` preserves `text`'s visible width, so pad off the plain region
+      # width (right_region pads each cell off its plain length, then wraps ANSI).
+      right_colored = right_region(counts, node.pr, adds_w, dels_w, pr_w, with_color: true)
+      pad = [cols - text.length - region_w, 1].max
       "#{body}#{' ' * pad}#{right_colored}"
+    end
+
+    # The fixed-width right region: [+adds][ ][−dels]  [#pr], each (sub)cell
+    # right-justified into its column so the numbers stack vertically (#118). An
+    # absent cell renders as aligned blanks, not a gap that shifts its neighbor.
+    # The plain cell text is re-derived from counts/pr here (not threaded) so the
+    # call sites pass only the source + the cross-row widths. with_color: false
+    # gives the plain form (width math / the reverse-video bar); true wraps ANSI —
+    # width math stays on the plain strings either way.
+    def right_region(counts, pr, adds_w, dels_w, pr_w, with_color:)
+      id = View.pr_identifier(pr)
+      cells = []
+      cells << diff_cell(counts, adds_w, dels_w, with_color: with_color) if adds_w.positive? || dels_w.positive?
+      cells << pad_cell(id, with_color ? View.pr_tag(pr) : id, pr_w) if pr_w.positive?
+      cells.join("  ")
+    end
+
+    # The diff column: the adds sub-cell and dels sub-cell, each right-justified
+    # into its sub-column (so +adds stack and −dels stack), joined by one space.
+    def diff_cell(counts, adds_w, dels_w, with_color:)
+      adds, dels = View.diff_parts(counts)
+      styled_adds, styled_dels = with_color ? View.diff_tag_parts(counts) : [adds, dels]
+      parts = []
+      parts << pad_cell(adds, styled_adds, adds_w) if adds_w.positive?
+      parts << pad_cell(dels, styled_dels, dels_w) if dels_w.positive?
+      parts.join(" ")
+    end
+
+    # Right-justify one cell into its column: pad off the PLAIN string's width,
+    # then emit the (possibly ANSI-wrapped) content — so color never throws the
+    # width off. An empty cell becomes width spaces (the aligned blank).
+    def pad_cell(text, styled, width)
+      (" " * [width - text.to_s.length, 0].max) + styled.to_s
     end
 
     # Plain (no color) — used for the highlighted row and as the base text. The

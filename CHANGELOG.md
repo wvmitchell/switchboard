@@ -7,6 +7,23 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.38.0] — diff counts and PR badges align into fixed columns (2026-06-27)
+
+### Changed
+- **The `+adds`, `−dels`, and `#pr` cells on each ws/br row now stack into straight,
+  right-justified columns** instead of a flush-right block that floated with each row's
+  widths (the old "staircase"). Column widths are a property of the whole visible row set,
+  so they're measured once per render (`Sidebar#column_widths` over the full `@rows`,
+  collapse-/filter-aware) and threaded into every `line`, which right-justifies each cell
+  into its column. The diff column is split into an **adds sub-column** and a **dels
+  sub-column**, each right-justified, so `+` numbers stack under `+` and `−` under `−`; the
+  PR numbers stay right-flush to the pane edge exactly as before. An absent cell renders as
+  aligned blanks rather than a gap that shifts its neighbour, so the #90 expanded-workspace
+  suppression now reads as clean empty columns. The narrow-pane backstop still drops the
+  whole diff column first (uniformly across rows, so the columns never split), keeping the
+  name its `MIN_NAME_COLS`. Per-process, no shared state — each pane sizes its own columns.
+  (#118)
+
 ## [0.37.3] — a split escape sequence can no longer open your repo on GitHub (2026-06-27)
 
 ### Fixed
@@ -35,7 +52,6 @@ tmux bindings/hooks go live — see the "Upgrading" section in the README.
   passed as `-x 0` (which tmux rejects with "width too small", which would turn a create that
   used to succeed at the default into a no-op). Unit tests cover the parse, the argv assembly,
   and the zero guard.
-
 ## [0.37.1] — a trailing slash on `branch_prefix` no longer breaks every create (2026-06-27)
 
 ### Fixed

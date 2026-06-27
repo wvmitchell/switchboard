@@ -47,8 +47,15 @@ module Switchboard
 
     # The same badge, colored. "" exactly when diff_label is "".
     def diff_tag(counts)
+      diff_tag_parts(counts).compact.join(" ")
+    end
+
+    # The adds / dels parts colored individually (nil where that side is zero),
+    # so the sidebar can right-justify each into its own sub-column (#118).
+    # diff_tag is just these joined.
+    def diff_tag_parts(counts)
       adds, dels = diff_parts(counts)
-      [colorize(adds, DIFF_COLORS[:add]), colorize(dels, DIFF_COLORS[:del])].compact.join(" ")
+      [colorize(adds, DIFF_COLORS[:add]), colorize(dels, DIFF_COLORS[:del])]
     end
 
     # ["+22", "−333"], each nil when that side is zero. Guards on Array so a

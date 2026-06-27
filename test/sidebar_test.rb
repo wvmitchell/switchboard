@@ -874,6 +874,181 @@ module Switchboard
       refute_includes out, "\e[32m+4", "...uncolored under the bar, where color is stripped"
     end
 
+    # --- line: fixed-column alignment (issue #118) ---------------------------
+    #
+    # The contract is now multi-row: columns are measured over the whole row set
+    # (column_widths) and threaded into each line, so the +adds / −dels / #pr
+    # numbers stack into straight, right-justified columns. These render a small
+    # set and assert the cells share their column rather than staircasing.
+
+    def set_diffs(sb, map) # node => [adds, dels]
+      diffs = map.each_with_object({}) do |(node, (a, d)), h|
+        h[[node.path, node.branch, node.kind]] = [nil, false, a, d]
+      end
+      sb.instance_variable_set(:@diffs, diffs)
+    end
+
+    # Render every row through line with the columns measured over @rows — the
+    # render path, minus raw I/O — returning the plain (de-ANSI'd) lines.
+    def lines_with_columns(sb, cols: 40)
+      adds_w, dels_w, pr_w = sb.send(:column_widths, rows_of(sb))
+      rows_of(sb).map do |n|
+        strip_ansi(sb.send(:line, n, false, cols, adds_w: adds_w, dels_w: dels_w, pr_w: pr_w))
+      end
+    end
+
+    # The column at which a token's right edge sits — the value that must match
+    # across rows for a cell to be "in a fixed column".
+    def ends_at(line, token) = line.index(token) + token.length
+
+    def open_pr(id) = { "identifier" => id, "status" => "open" }
+
+    def test_column_widths_measures_the_max_over_rows_ignoring_projects
+      a = ws("a", pr: open_pr("#9"))
+      b = ws("b", pr: open_pr("#1234"))
+      sb = sidebar(nodes: [proj("app"), a, b], focused: false)
+      set_diffs(sb, a => [22, 333], b => [5, 0])
+      adds_w, dels_w, pr_w = sb.send(:column_widths, rows_of(sb))
+      assert_equal "+22".length,   adds_w, "widest adds sub-column (+22)"
+      assert_equal "−333".length,  dels_w, "widest dels sub-column (−333)"
+      assert_equal "#1234".length, pr_w,   "widest PR (#1234); the project header doesn't count"
+    end
+
+    def test_pr_badges_share_a_fixed_right_edge
+      a = ws("a", pr: open_pr("#9"))
+      b = ws("b", pr: open_pr("#1234"))
+      sb = sidebar(nodes: [proj("app"), a, b], focused: false)
+      set_diffs(sb, a => [1, 1], b => [1, 1])
+      _, la, lb = lines_with_columns(sb)
+      assert_equal 40, la.rstrip.length, "the PR badge reaches the right edge of the pane"
+      assert_equal la.rstrip.length, lb.rstrip.length, "both PR badges share that right edge"
+      assert_equal ends_at(la, "#9"), ends_at(lb, "#1234"),
+                   "...right-justified into the column, not left-aligned"
+    end
+
+    def test_adds_and_dels_stack_into_right_justified_subcolumns
+      wide_adds = ws("a", pr: open_pr("#1")) # +1.2k −5
+      wide_dels = ws("b", pr: open_pr("#2")) # +5 −1.2k
+      sb = sidebar(nodes: [proj("app"), wide_adds, wide_dels], focused: false)
+      set_diffs(sb, wide_adds => [1234, 5], wide_dels => [5, 1234])
+      _, la, lb = lines_with_columns(sb)
+      assert_equal ends_at(la, "+1.2k"), ends_at(lb, "+5"),    "the +adds right edges align in their sub-column"
+      assert_equal ends_at(la, "−5"),    ends_at(lb, "−1.2k"), "the −dels right edges align in their sub-column"
+    end
+
+    def test_a_diff_only_row_keeps_its_diff_in_the_diff_column
+      with_pr = ws("a", pr: open_pr("#1234"))
+      no_pr   = ws("b") # has a diff, no PR
+      sb = sidebar(nodes: [proj("app"), with_pr, no_pr], focused: false)
+      set_diffs(sb, with_pr => [22, 333], no_pr => [22, 333])
+      _, la, lb = lines_with_columns(sb)
+      assert_equal 40, la.rstrip.length, "the PR row reaches the right edge"
+      assert_operator lb.rstrip.length, :<, la.rstrip.length,
+                      "the no-PR row's diff stays in the diff column — it never slides into PR territory"
+      assert_equal ends_at(la, "−333"), ends_at(lb, "−333"),
+                   "the diff column's right edge is fixed across both rows"
+    end
+
+    def test_a_bare_row_leaves_aligned_blanks_and_does_not_shift_its_neighbors
+      top  = ws("a", pr: open_pr("#12"))
+      bare = ws("a-longer-bare-name") # no diff, no PR
+      bot  = ws("c", pr: open_pr("#9"))
+      sb = sidebar(nodes: [proj("app"), top, bare, bot], focused: false)
+      set_diffs(sb, top => [1, 1], bot => [1, 1]) # bare has no @diffs entry
+      _, ltop, lbare, lbot = lines_with_columns(sb)
+      assert_equal ends_at(ltop, "#12"), ends_at(lbot, "#9"),
+                   "the PR column holds across the bare row between them"
+      adds_w, dels_w, pr_w = sb.send(:column_widths, rows_of(sb))
+      diff_w = adds_w + dels_w + (adds_w.positive? && dels_w.positive? ? 1 : 0)
+      left_cols = 40 - sb.send(:region_width, diff_w, pr_w) - 1
+      assert_operator lbare.rstrip.length, :<=, left_cols,
+                      "the bare row reserves blank cells — its name stays in the name column"
+    end
+
+    def test_narrow_pane_drops_the_diff_column_uniformly_keeping_pr_aligned
+      wide = ws("a", pr: open_pr("#123456"))
+      slim = ws("b", pr: open_pr("#9"))
+      sb = sidebar(nodes: [proj("app"), wide, slim], focused: false)
+      set_diffs(sb, wide => [9999, 9999], slim => [1, 1])
+      _, la, lb = lines_with_columns(sb, cols: 22)
+      refute_includes la, "+", "the diff column is dropped when the pane can't seat all three"
+      refute_includes lb, "+", "...dropped on every row, so the columns can't split"
+      assert_equal ends_at(la, "#123456"), ends_at(lb, "#9"), "the PR badges stay aligned after the drop"
+      assert_operator la.rstrip.length, :<=, 22, "nothing overruns the narrowed pane"
+    end
+
+    # A suppressed diff (expanded ws / diff_counts off) has a @diffs entry but
+    # diff_visible? is false, so it must NOT size the columns — else every row
+    # over-reserves and the whole tree shifts. Guards the #90 interaction at the
+    # column_widths layer (line-level suppression is covered separately).
+    def test_column_widths_ignores_a_suppressed_diff
+      exp = expanded_ws("multi", path: "/wt/m", branch: "feat")
+      small = ws("b", pr: open_pr("#1"))
+      sb = sidebar(nodes: [proj("app"), exp, small], focused: false)
+      set_diffs(sb, exp => [9999, 9999], small => [2, 3])
+      adds_w, dels_w, pr_w = sb.send(:column_widths, rows_of(sb))
+      assert_equal "+2".length, adds_w, "a suppressed (expanded) ws diff does not widen the adds column"
+      assert_equal "−3".length, dels_w, "...nor the dels column"
+      assert_equal "#1".length, pr_w,  "and its (nil) PR doesn't size the PR column"
+    end
+
+    # The focused reverse-video cursor bar is a separate render branch; it must
+    # land its columns at the same edges as the normal rows around it.
+    def test_focused_active_bar_aligns_with_the_other_rows
+      a = ws("a", pr: open_pr("#9"))
+      b = ws("b", pr: open_pr("#1234"))
+      sb = sidebar(nodes: [proj("app"), a, b], cursor: 1, focused: true)
+      set_diffs(sb, a => [1, 1], b => [1, 1])
+      adds_w, dels_w, pr_w = sb.send(:column_widths, rows_of(sb))
+      la = strip_ansi(sb.send(:line, a, true,  40, adds_w: adds_w, dels_w: dels_w, pr_w: pr_w))
+      lb = strip_ansi(sb.send(:line, b, false, 40, adds_w: adds_w, dels_w: dels_w, pr_w: pr_w))
+      assert_equal ends_at(la, "#9"), ends_at(lb, "#1234"),
+                   "the cursor bar's PR column lines up with the rows around it"
+    end
+
+    # The multi-PR-per-workspace path: branch rows carry their own diff/PR and
+    # must share the columns with a sibling ws, while the expanded ws name row
+    # above them renders aligned blanks (its diff/PR moved to the branch rows).
+    def test_branch_rows_share_the_columns_and_the_expanded_ws_blanks_them
+      exp = expanded_ws("multi", path: "/wt/m", branch: "feat")
+      act = br("feat", active: true)
+      act[:path] = exp.path
+      act[:pr] = open_pr("#1234")
+      sib = ws("solo", path: "/wt/s", pr: open_pr("#9"))
+      sb = sidebar(nodes: [proj("app"), exp, act, sib], focused: false)
+      set_diffs(sb, act => [22, 333], sib => [4, 5])
+      _, lexp, lact, lsib = lines_with_columns(sb)
+      assert_equal ends_at(lact, "#1234"), ends_at(lsib, "#9"),  "a branch row's PR aligns with a sibling ws"
+      assert_equal ends_at(lact, "−333"),  ends_at(lsib, "−5"),  "a branch row's dels align in the dels sub-column"
+      assert_operator lexp.rstrip.length, :<, lact.rstrip.length, "the expanded ws row blanks its diff/PR cells"
+    end
+
+    # With no PR anywhere, the diff column right-justifies to the pane edge with
+    # no dangling 2-col gap (the region_width gap is only reserved when both seat).
+    def test_a_diff_only_tree_right_justifies_to_the_edge
+      a = ws("a")
+      b = ws("b")
+      sb = sidebar(nodes: [proj("app"), a, b], focused: false)
+      set_diffs(sb, a => [22, 333], b => [4, 5])
+      _, la, lb = lines_with_columns(sb)
+      assert_equal 40, la.rstrip.length, "with no PR column the diff reaches the right edge (no trailing gap)"
+      assert_equal ends_at(la, "−333"), ends_at(lb, "−5"), "and the dels sub-column still aligns"
+    end
+
+    # pad_cell prepends PLAIN spaces to an already-ANSI-wrapped token, so color
+    # must survive being right-justified into a wider sub-column.
+    def test_columns_stay_colored_when_padded_in_a_multi_row_render
+      a = ws("a", pr: open_pr("#9"))
+      b = ws("b", pr: open_pr("#1234"))
+      sb = sidebar(nodes: [proj("app"), a, b], focused: false)
+      set_diffs(sb, a => [22, 333], b => [4, 5]) # b's +4/−5 are narrower → padded
+      adds_w, dels_w, pr_w = sb.send(:column_widths, rows_of(sb))
+      out = sb.send(:line, b, false, 40, adds_w: adds_w, dels_w: dels_w, pr_w: pr_w)
+      assert_includes out, "\e[32m+4\e[0m", "adds stay green even when padded into a wider sub-column"
+      assert_includes out, "\e[31m−5\e[0m", "dels stay red even when padded"
+      assert_includes out, "#1234",          "the PR badge is present"
+    end
+
     # --- diff_visible? + toggle/expanded suppression (issues #88, #90) --------
 
     def diff_off_config
