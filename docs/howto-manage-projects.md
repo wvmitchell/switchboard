@@ -58,11 +58,15 @@ The sidebar's `a` offers the same clone path interactively.
 
 ## Create a new worktree
 
-From the sidebar: highlight the project header, press `n`, type a workspace name.
+From the sidebar: highlight the project header and press `n`. No name prompt — it
+creates immediately.
 
 Switchboard fetches the base ref, cuts a new branch from it, creates the worktree
-under `<worktree_root>/<project>/<name>`, and switches you in. The branch is named
-`<name>`, or `<branch_prefix>/<name>` if you set `branch_prefix` in config.
+under `<worktree_root>/<project>/<name>`, and switches you in. The name is a
+throwaway placeholder (e.g. `wandering-finch`) you rename later with `r` (or let the
+agent name it — see [`switchboard rename`](reference-cli.md#switchboard-rename-name)); the
+branch is named `<name>`, or `<branch_prefix>/<name>` if you set `branch_prefix` in
+config.
 
 The new session runs the project's `session_command` (e.g. `claude`) on creation
 if you've set one — see [How-to: agent state & sounds](howto-agent-state-and-sounds.md)

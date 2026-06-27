@@ -126,8 +126,8 @@ Run with **no name** and it prints usage plus the current workspace name and exi
 non-zero — switchboard doesn't guess a name; you (or the agent) supply it.
 
 > **New workspaces start with a placeholder name.** Create one from the sidebar
-> (`n`) without typing a name and switchboard gives it a throwaway
-> *adjective-noun* name (e.g. `wandering-finch`) and a matching branch — so you can
+> (`n`) — no name prompt — and switchboard gives it a throwaway
+> *adjective-noun* name (e.g. `wandering-finch`) and a matching branch, so you can
 > start working before you've decided what it is, then `rename` it (dir + branch)
 > once you know.
 

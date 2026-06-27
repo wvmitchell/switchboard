@@ -139,10 +139,13 @@ resolved `session_command` (`Config#session_command_for`, global default +
 per-project override) into the window — this is the "how the agent starts" knob,
 e.g. `claude --dangerously-skip-permissions`. Empty ⇒ a plain shell, as before.
 
-**Workspace naming is deferred** (issue #94). Creating a worktree without a name
-(`n` in the sidebar, bare ↵) gives it a **placeholder** — a throwaway adjective-noun
-leaf from `Placeholder.generate` (`placeholder.rb`, a tiny in-repo word list, no
-gem) — and a matching branch, so you start work before naming it. `Creator.create`
+**Workspace naming is deferred** (issues #94, #114). `n` in the sidebar (and
+filter-mode ↵ on a project header) creates a worktree with **no name prompt** —
+one keystroke, you drop straight in. It gets a **placeholder** — a throwaway
+adjective-noun leaf from `Placeholder.generate` (`placeholder.rb`, a tiny in-repo
+word list, no gem) — and a matching branch, so you start work before naming it
+(`Sidebar#create` always passes a blank name to `Creator.create`; naming moved
+*after* creation — `r`, `switchboard rename`, or the agent nudge). `Creator.create`
 cuts the branch with `--no-track` so a branch off `origin/main` doesn't inherit it
 as an upstream (else the rename gate below would misread every fresh worktree as
 "pushed"); generated names retry past a dir/branch collision. `Rename.perform` then

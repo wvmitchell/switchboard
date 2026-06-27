@@ -1488,41 +1488,14 @@ module Switchboard
       assert_includes visible, "esc cancel", "...while still advertising the escape hatch"
     end
 
-    # create's custom hint advertises the bare-↵ auto-name path (#94) and, like the
-    # default hint, stays inside the pane (#80) — the label clips, the hint always shows.
-    def test_draw_prompt_renders_a_custom_hint_within_the_pane
-      sb = sidebar
-      out = capture_stdout { sb.send(:draw_prompt, "new workspace in app", "", "↵ auto-name · esc") }
-      visible = out.gsub(/\e\[[0-9;?]*[A-Za-z]/, "")
-      assert_includes visible, "auto-name", "the ↵ auto-name path is advertised (#94)"
-      assert_operator visible.length, :<=, 40, "...and still fits the pane (#80)"
-    end
-
-    # create aborts cleanly on a cancelled prompt: nothing built, just a reload back
-    # to the tree (no more killing the sidebar to back out — issue #68).
-    def test_create_aborts_when_the_prompt_is_cancelled
-      sb = sidebar(nodes: [proj("app")], cursor: 0)
-      reloaded = false
-      stub_method(sb, :prompt_line, ->(*) { nil }) do
-        stub_method(sb, :reload, -> { reloaded = true }) do
-          stub_method(Creator, :create, ->(*) { flunk "nothing is created on cancel" }) do
-            stub_method(Tmux, :go, ->(*, **) { flunk "no switch on cancel" }) do
-              sb.send(:create)
-            end
-          end
-        end
-      end
-      assert reloaded, "a cancelled create returns to the tree"
-    end
-
-    # A bare ↵ (prompt_line ⇒ "") is NOT a cancel — it passes "" to Creator, which
-    # generates a faker placeholder name (#94). Esc (⇒ nil) still cancels above.
-    def test_create_with_a_bare_enter_makes_a_placeholder
+    # `n` (and filter-mode ↵-on-a-project) auto-names instantly — no prompt. It hands
+    # Creator a BLANK name (⇒ a placeholder) and must never call prompt_line (#114).
+    def test_create_auto_names_without_prompting
       sb = sidebar(nodes: [proj("app")], cursor: 0)
       seen = :unset
-      stub_method(sb, :prompt_line, ->(*) { "" }) do
-        stub_method(Creator, :create, lambda { |_cfg, _project, name|
-          seen = name
+      stub_method(sb, :prompt_line, ->(*) { flunk "create must not prompt for a name (#114)" }) do
+        stub_method(Creator, :create, lambda { |_cfg, project, name|
+          seen = [project, name]
           nil # nil dest ⇒ no Tmux.go; reload closes out
         }) do
           stub_method(sb, :reload, -> {}) do
@@ -1530,24 +1503,21 @@ module Switchboard
           end
         end
       end
-      assert_equal "", seen, "the empty name reaches Creator (which makes a placeholder)"
+      assert_equal ["app", ""], seen, "create hands Creator the project + a blank name (⇒ placeholder)"
     end
 
-    # create tells prompt_line to advertise the bare-↵ auto-name path (#94); the other
-    # prompts (rename/add) keep the default "esc cancel" since ↵ cancels them.
-    def test_create_prompt_advertises_the_auto_name_path
+    # On a successful create, it drops you straight into the new worktree's session.
+    def test_create_drops_into_the_new_workspace
       sb = sidebar(nodes: [proj("app")], cursor: 0)
-      seen_hint = :unset
-      stub_method(sb, :prompt_line, lambda { |_label, hint: nil|
-        seen_hint = hint
-        nil # cancel so nothing is built
-      }) do
-        stub_method(sb, :reload, -> {}) do
-          sb.send(:create)
+      went_to = nil
+      stub_method(Creator, :create, ->(*) { "/wt/wandering-finch" }) do
+        stub_method(Tmux, :go, ->(wt, **) { went_to = wt.path }) do
+          stub_method(sb, :reload, -> {}) do
+            capture_stdout { sb.send(:create) } # swallow the "creating…" status line
+          end
         end
       end
-      assert_match(/auto-name/, seen_hint.to_s, "the create prompt advertises the ↵ auto-name path (#94)")
-      assert_match(/esc/, seen_hint.to_s, "...and still the escape hatch")
+      assert_equal "/wt/wandering-finch", went_to, "a created workspace is switched into"
     end
 
     def test_rename_aborts_when_the_prompt_is_cancelled

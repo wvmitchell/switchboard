@@ -43,7 +43,7 @@ workspace, or branch). The one-line footer shows the row's nav verb and the
 | `/` | Filter the tree — type to jump straight to a workspace by name. See [Filter mode](#filter-mode) below. |
 | `↵` (Enter) | On a workspace/branch row: switch to its tmux session (creating it if needed). On a project header: collapse/expand it. |
 | `a` | Add a project — register a local repo or clone a URL (a small prompt). |
-| `n` | Create a new worktree + branch in the highlighted project, and drop you in. |
+| `n` | Create a new worktree + branch in the highlighted project, and drop you in. No name prompt — it gets a throwaway placeholder name you rename later with `r` (or let the agent name it). |
 | `o` / `Ctrl-O` | Open the highlighted PR in the browser (`gh pr view --web`). |
 | `O` | Open the highlighted row's repo in the browser (`gh browse`). Works on every row kind, including the project header. Opens the repo at the row's branch when it has an open PR, otherwise the repo home (default branch). |
 | `R` | Refresh PR badges now (catch a PR merged/closed *on GitHub*). |
@@ -58,7 +58,7 @@ The footer legend shows only the common keys for the highlighted row; `g`/`G` an
 the `Ctrl-N`/`Ctrl-P` movement aliases don't fit it — press `?` in the sidebar for
 the complete key map, the in-app home for every shortcut.
 
-Every name prompt (`n` create, `a` add local/clone, `r` rename) edits in raw mode:
+Every name prompt (`a` add local/clone, `r` rename) edits in raw mode:
 `Esc` (or `Ctrl-C`) cancels and returns to the tree with nothing created, `↵`
 submits, `Backspace` edits. The prompt shows `(esc cancel)` until you start typing.
 
@@ -83,7 +83,7 @@ you have enough workspaces that scrolling to one is slow.
 | _(any printable key)_ | Append to the query. The rows narrow to fuzzy matches. |
 | `Backspace` | Delete the last query character — and backspacing past an empty query exits filter mode (same as `Esc`). |
 | `↑` / `↓` / `Ctrl-N` / `Ctrl-P` | Move the highlight (over matching workspaces *and* their project headers). |
-| `↵` (Enter) | On a **workspace**: switch to it. On a **project header**: create a new workspace there (a name prompt). Either way, leave filter mode. |
+| `↵` (Enter) | On a **workspace**: switch to it. On a **project header**: create a new workspace there (auto-named, no prompt). Either way, leave filter mode. |
 | `Esc` | Cancel — restore the full tree, no switch. |
 
 What it matches:

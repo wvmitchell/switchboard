@@ -7,6 +7,19 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.36.0] — `n` auto-creates, no name prompt (2026-06-26)
+
+### Changed
+- **`n` now creates a workspace instantly with a placeholder name — no name prompt.**
+  One keystroke instead of `n` → type → `↵`. Pressing `n` (and filter-mode `↵` on a
+  project header) hands `Creator.create` a blank name, which cuts a throwaway
+  `adjective-noun` placeholder dir + branch and drops you in. Naming moves to *after*
+  creation — `r`, `switchboard rename`, or the agent self-naming nudge — doubling down
+  on deferred naming (#94) and agent self-naming (#92). Someone who knows the name up
+  front trades the prompt for create-then-`r`; accepted as rare and covered by `r`.
+  The now-unused custom-hint plumbing on `prompt_line`/`draw_prompt` was removed (only
+  `create` used it; `a`/`r` keep the default `(esc cancel)` hint). (#114)
+
 ## [0.35.4] — shared KeyedMarkerStore for Attention/Collapse (2026-06-26)
 
 ### Changed
