@@ -51,6 +51,15 @@ module Switchboard
       assert_includes m, "your job"
     end
 
+    # The descriptiveness clause: without explicit length guidance the agent over-compresses
+    # (git-branch instinct + mimicry of the two-token placeholder), so the message must steer
+    # toward a fuller, hyphenated name.
+    def test_message_steers_toward_a_descriptive_name
+      m = RenameNudge.message("wandering-finch")
+      assert_includes m, "descriptive"
+      assert_includes m, "over-compress"
+    end
+
     def test_context_json_is_the_sessionstart_additional_context_shape
       out = JSON.parse(RenameNudge.context_json("calm-otter"))["hookSpecificOutput"]
       assert_equal "SessionStart", out["hookEventName"]
@@ -94,6 +103,11 @@ module Switchboard
       m = RenameNudge.stop_message("calm-otter")
       assert_includes m, "safe"
       assert_includes m, "strand"
+    end
+
+    # The backstop steers toward a fuller name too, for the agent that only reaches Stop.
+    def test_stop_message_steers_toward_a_descriptive_name
+      assert_includes RenameNudge.stop_message("calm-otter"), "descriptive"
     end
   end
 end

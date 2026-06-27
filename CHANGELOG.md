@@ -7,6 +7,16 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.35.2] — self-naming nudge steers toward fuller names (2026-06-26)
+
+### Changed
+- **The agent self-naming nudge now asks for a descriptive, few-word name.** The
+  SessionStart plant and the Stop backstop (`RenameNudge.message` / `stop_message`)
+  were silent on length, so the agent over-compressed — defaulting to two-token names
+  off its git-branch instinct and mimicry of the two-token `adjective-noun` placeholder
+  it was replacing. Both messages now name the shape they want (a few-word hyphenated
+  name, with a concrete example) and tell the agent not to over-compress.
+
 ## [0.35.1] — branch-row ↵ hint tells the truth (2026-06-26)
 
 ### Changed

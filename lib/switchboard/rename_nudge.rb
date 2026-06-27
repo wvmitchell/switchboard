@@ -67,6 +67,14 @@ module Switchboard
     # message; "don't end the session on a placeholder name" sets the deadline the Stop
     # backstop then enforces; the collision aside covers the :branch_exists path.
     #
+    # The descriptiveness clause is a deliberate counterweight. With NO length guidance the
+    # agent fills the vacuum with two compounding terseness priors — its git-branch instinct
+    # (the name becomes a branch, so kebab-case 1–2 tokens) and mimicry of the two-token
+    # `adjective-noun` placeholder it's literally replacing — and names far terser than is
+    # useful (the daily complaint: every name two words). So the message names the SHAPE it
+    # wants outright — a few-word hyphenated phrase, with a concrete example — rather than
+    # leaving length to instinct.
+    #
     # The "safe while you're working here" clause preempts a real failure mode (#101):
     # a careful agent reasons that `switchboard rename` moves the worktree dir out from
     # under its own running shell and so DEFERS the rename to avoid stranding itself.
@@ -78,7 +86,9 @@ module Switchboard
       "#{leaf} is a placeholder name. This project opted into agent self-naming, so " \
         "choosing the name is your job here — don't ask the user what to call it. Once " \
         "you understand what this work is, run `switchboard rename <name>`, picking the " \
-        "name yourself from what the work actually is (pick another if that name's taken). " \
+        "name yourself from what the work actually is — a descriptive, hyphenated name of " \
+        "a few words (e.g. `oauth-token-refresh`) beats a single terse word, so don't " \
+        "over-compress it (pick another if that name's taken). " \
         "Renaming is safe while you're working here — switchboard re-links the old path, " \
         "so the move won't strand this session, and you can rename again later if the " \
         "user wants something different. Don't end the session on a placeholder name — " \
@@ -91,8 +101,9 @@ module Switchboard
     # guard lets that second stop through regardless).
     def stop_message(leaf)
       "This workspace and its branch are still on the placeholder name `#{leaf}`. " \
-        "Before you finish, name them: run `switchboard rename <name>` (pick another " \
-        "if that name's taken). Renaming is safe right now — switchboard re-links the " \
+        "Before you finish, name them: run `switchboard rename <name>` — a descriptive " \
+        "few-word hyphenated name beats a terse one-word slug (pick another if that " \
+        "name's taken). Renaming is safe right now — switchboard re-links the " \
         "old path, so the move won't strand this session. If you truly can't name it " \
         "yet, say why — otherwise rename now."
     end
