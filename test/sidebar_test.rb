@@ -150,6 +150,114 @@ module Switchboard
       assert_equal 0, cursor_of(sb)
     end
 
+    # --- tokenize: the terminal-input grammar parser -------------------------
+    # The pure tokenizer behind handle. It replaced fixed-width slicing, which
+    # orphaned an escape sequence's final byte when a read split it — a focus-out
+    # `\e[O` cut after `\e[` left a bare `O` that dispatched as open_repo, throwing
+    # you to the repo on GitHub right after creating a workspace. tokenize parses by
+    # the real grammar and carries any incomplete trailing sequence instead.
+    def tok(str)  = Sidebar.tokenize(str.b).first.map(&:bytes)
+    def rest(str) = Sidebar.tokenize(str.b).last.bytes
+
+    def test_tokenize_splits_a_whole_focus_burst_into_clean_tokens
+      # 3 focus events, no boundary split: three complete CSIs, nothing carried.
+      assert_equal [[27, 91, 79], [27, 91, 79], [27, 91, 79]], tok("\e[O\e[O\e[O")
+      assert_empty rest("\e[O\e[O\e[O")
+    end
+
+    def test_tokenize_carries_an_incomplete_trailing_csi
+      # The old read capped at 8 bytes (not a multiple of 3) and split the 3rd event.
+      str = "\e[O\e[O\e["
+      assert_equal [[27, 91, 79], [27, 91, 79]], tok(str), "two whole focus-outs emit"
+      assert_equal [27, 91], rest(str), "the partial `\\e[` is carried, never orphaned"
+      # Prepending the carry to the next read reassembles the whole sequence.
+      assert_equal [[27, 91, 79]], tok("\e[O"), "carry + next byte => one focus-out"
+    end
+
+    def test_tokenize_never_emits_a_csi_final_byte_alone
+      # The crux of the bug: `O` only ever appears as a CSI final (focus-out) or an
+      # SS3 lead's byte, never on its own — so it can't be mistaken for open_repo.
+      assert_equal [[27, 79]], tok("\eO"),  "`\\eO` (SS3 lead) keeps the O with the esc"
+      assert_equal [[27, 79], [65]], tok("\eOA"), "SS3 arrow: O stays absorbed, A is harmless"
+      assert_equal [[79]], tok("O"), "a genuine standalone O is its own key (open_repo)"
+    end
+
+    def test_tokenize_emits_a_lone_trailing_esc_as_the_esc_key
+      # Carrying it would stall Esc (filter/prompt cancel) waiting for bytes that
+      # never come — terminals deliver a sequence's bytes together, so a lone `\e`
+      # is the key.
+      assert_equal [[27]], tok("\e")
+      assert_equal [[106], [27]], tok("j\e"), "a key then a bare Esc"
+    end
+
+    def test_tokenize_keeps_a_multibyte_csi_whole
+      # A modified arrow `\e[1;5C` is one token now (old slicing chopped it into
+      # stray bytes that could leak into the filter query).
+      assert_equal [[27, 91, 49, 59, 53, 67]], tok("\e[1;5C")
+      assert_equal [27, 91, 49, 59, 53], rest("\e[1;5"), "an unfinished one is carried"
+    end
+
+    def test_tokenize_recovers_a_control_key_after_a_split_csi
+      # If a carried `\e[` is followed by a control byte (not a valid CSI final
+      # 0x40-0x7E), the `\e[` is malformed — emit it inert and resume on the control
+      # byte so a real key still fires. Without this the `\f` Ctrl-L reload poke
+      # (and Enter, ^N, ^P, ^R) got swallowed into a junk token.
+      assert_equal [[27, 91], [12]], tok("\e[\f"), "Ctrl-L reload survives a split \\e["
+      assert_equal [[27, 91], [13]], tok("\e[\r"), "Enter survives too"
+    end
+
+    def test_tokenize_caps_the_carried_partial
+      # An unterminated param run is garbage — drop it instead of growing @pending
+      # without bound on a junk byte stream.
+      assert_empty rest("\e[" + (";" * 5000)), "a too-long partial CSI is dropped, not carried"
+      assert_equal [27, 91], rest("\e["), "a short partial is still carried normally"
+    end
+
+    # --- handle: dispatch across read boundaries (the open_repo bug) ----------
+    # The reported symptom: after `n` creates a workspace, the focus-event flurry
+    # from the session switch could land a stray `O` and open the repo on GitHub.
+    def test_handle_reassembles_a_focus_burst_split_across_two_reads
+      sb = sidebar(nodes: [proj("app"), ws("a")])
+      opened = false
+      sb.define_singleton_method(:open_repo) { opened = true }
+
+      stream = "\e[O\e[O\e[O".b # the old fixed read sliced this mid-sequence
+      sb.send(:handle, stream[0, 8]) # first read leaves a partial in @pending
+      assert_equal [27, 91], sb.instance_variable_get(:@pending).bytes, "partial carried"
+      sb.send(:handle, stream[8..]) # the remaining byte completes the carried sequence
+
+      refute opened, "the reassembled sequence is focus-out, never open_repo"
+      assert_empty sb.instance_variable_get(:@pending), "fully consumed"
+    end
+
+    # The mixed buffer the old 8-byte read mangled: a key then a focus burst, which
+    # offset the slicing so the cap fell on a `\e` and the next read began `[O`.
+    def test_handle_survives_a_key_then_a_focus_burst
+      sb = sidebar(nodes: [proj("app"), ws("a", path: "/wt/a")])
+      opened = false
+      sb.define_singleton_method(:open_repo) { opened = true }
+      sb.instance_variable_set(:@cursor, 1) # on the workspace row
+
+      sb.send(:handle, "j\e[O\e[O\e[O".b) # one read now (READ_BYTES), no boundary split
+      refute opened, "no stray O even when a key precedes the focus burst"
+    end
+
+    # A real capital-O still opens the repo, and a bare Esc still cancels filter
+    # mode immediately — the parser narrows nothing a user actually types.
+    def test_handle_leaves_genuine_O_and_bare_esc_intact
+      sb = sidebar(nodes: [proj("app"), ws("a")])
+      opened = false
+      sb.define_singleton_method(:open_repo) { opened = true }
+
+      sb.send(:handle, "O".b)
+      assert opened, "a real O keypress still opens the repo"
+
+      sb.send(:dispatch, "/") # enter filter mode (where bare Esc is meaningful)
+      refute_nil sb.instance_variable_get(:@filter)
+      sb.send(:handle, "\e".b)
+      assert_nil sb.instance_variable_get(:@filter), "bare Esc still cancels filter mode"
+    end
+
     # --- ? help overlay (issue #62) ------------------------------------------
 
     def help_of(sb) = sb.instance_variable_get(:@help)

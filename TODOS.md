@@ -115,6 +115,29 @@ and where to start.
   returns. Low priority — needs buffered/pasted input to trigger and nothing destructive
   results.
 
+- **Esc-timeout to close the `\e`|`[O` escape split (accepted).** `Sidebar.tokenize`
+  carries an incomplete CSI across reads, but a sequence split BEFORE its `[` (a read
+  ending on a lone `\e`, the next starting `[O`) flushes the `\e` as Esc and re-orphans
+  the `O` → open_repo — the very symptom the tokenizer exists to prevent. *Why accepted,
+  not fixed:* it needs tmux to fragment a 3-byte focus event across reads, which it
+  doesn't (it writes the sequence in one `write`, and `READ_BYTES` reads it whole), so
+  it's unreachable in practice — the original deterministic bug was the fixed 8-byte read
+  cap, now gone. Closing it for good means carrying a lone `\e` too, which stalls the Esc
+  key (filter/prompt cancel) unless the run loop grows a short Esc-timeout to disambiguate
+  bare-Esc from a sequence head. That timing complexity in an already-intricate loop isn't
+  worth defending an input tmux can't produce. *Start in:* `Sidebar#run` (a deadline flush
+  when `@pending == "\e"`) + `tokenize` (return a lone trailing `\e` as remainder). Only
+  worth it if we ever stop trusting the producer to write sequences atomically.
+
+- **Unify the name-prompt reader onto `tokenize`.** `Sidebar#edit_buffer` (the inline
+  `r`/`n` name prompt, `sidebar.rb`) still slices escapes at a fixed 3 bytes, the same
+  shape the main loop's `handle` had before the tokenizer. *Why low:* the prompt already
+  reads 1024 bytes and no destructive key is bound during a name edit, so a split sequence
+  there just drops a stray char into the name you can see and backspace — not a footgun
+  like the open-repo orphan was. *Start in:* `Sidebar#edit_buffer` — route it through
+  `self.class.tokenize` so both readers share one grammar. Pure cleanup; do it next time
+  the prompt path is touched.
+
 ## Sidebar off-screen-work (architecture-review) follow-ups
 
 - **Tighten off-screen detection (zoom + bare-attach).** After the visibility-aware

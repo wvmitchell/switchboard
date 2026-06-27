@@ -7,6 +7,20 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.37.3] — a split escape sequence can no longer open your repo on GitHub (2026-06-27)
+
+### Fixed
+- **Creating a workspace no longer sometimes throws you to the repo on GitHub.** The
+  sidebar read keys in a fixed 8-byte chunk and sliced escape sequences at a fixed 3
+  bytes. 8 isn't a multiple of 3, so the focus-event flurry tmux sends on a session
+  switch (3 events = 9 bytes) got capped mid-sequence, orphaning the trailing byte of a
+  focus-out `\e[O` — a bare `O`, which is the "open repo" key. So right after `n` created
+  a workspace, you'd land on GitHub. Input is now read in a larger chunk and parsed by the
+  real terminal grammar (`Sidebar.tokenize`): an incomplete escape sequence is carried to
+  the next read and reassembled instead of having its final byte read alone as a key. A
+  malformed CSI no longer swallows a following control key (the `\f` reload poke, Enter,
+  ^N/^P/^R), and the carry is length-capped so a junk byte stream can't grow it unbounded.
+
 ## [0.37.2] — a new workspace no longer flashes as its panes resize on create (2026-06-27)
 
 ### Fixed

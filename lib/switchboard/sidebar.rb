@@ -76,6 +76,13 @@ module Switchboard
     BRANCH_FG = "\e[90m"         # branch rows: bright-black, a theme-relative dim (#23)
     RELOAD_CONFIG_BYTE = "\x12"  # C-r: the dedicated post-edit "re-read config" poke (Tmux.poke_sidebar_of)
     WIDTH_STEP = 2               # cols per ←/→ press; bounds live in Width (issue #78)
+    READ_BYTES = 1024            # per read: large enough that a normal input burst (a held
+                                 # key-repeat, a switch's focus-event flurry) is never capped
+                                 # mid-sequence — so the tokenizer only ever carries a genuine
+                                 # producer-fragmented tail, not one we sliced ourselves
+    CSI_MAX = 32                 # longest partial CSI tokenize will carry across reads; real
+                                 # CSIs are short, so a longer param run is garbage — drop it
+                                 # rather than let @pending grow unbounded on a junk byte stream
     MIN_NAME_COLS = 3            # below this many cols left for the name, drop the diff
                                  # badge so a row never overruns the pane (issue #79)
 
@@ -258,6 +265,9 @@ module Switchboard
       @pane_switch_keys = nil # the user's tmux select-pane keys, shown in the ? overlay;
                            # resolved once lazily on first help open (a tmux shell-out),
                            # then memoized so the paint loop never re-queries (issue #62)
+      @pending = +""       # an incomplete escape sequence split across reads, carried
+                           # to the next one and reassembled by tokenize (see handle) —
+                           # so a sequence's final byte is never read alone as a key
     end
 
     def run
@@ -952,27 +962,83 @@ module Switchboard
     # cleanly instead of busy-spinning forever on a dead pty; nil when select woke
     # us spuriously with nothing to read (treated as no key).
     def read_key
-      $stdin.read_nonblock(8)
+      $stdin.read_nonblock(READ_BYTES)
     rescue EOFError
       :eof
     rescue IO::WaitReadable
       nil
     end
 
-    # A fast key-repeat (holding j) delivers several bytes in one read, so
-    # process the buffer token by token (escape sequences are 3 bytes). A
-    # stop-token (quit ⇒ dispatch returns false) ends the loop NOW: never
-    # dispatch the rest of the buffer past it, so a key buffered after a
-    # confirmed `q` can't fall through into another action.
+    # Split a read into whole key tokens and dispatch each. A read can deliver many
+    # keys at once (a held key-repeat, or the flurry of focus events tmux sends the
+    # sidebar pane as it loses focus during a session switch). The original bug was
+    # read_key's fixed 8-byte read (not a multiple of 3) slicing a multi-event
+    # buffer: three focus events = 9 bytes, capped at 8, left a bare `O` (the tail
+    # of focus-out `\e[O`) that dispatched as the open-repo key — you'd land on
+    # GitHub right after creating a workspace. READ_BYTES (1024) removes that cap
+    # for any realistic burst; tokenize is the structural backstop, parsing by the
+    # real terminal grammar and carrying any sequence that still straddles a read
+    # boundary in @pending so a final byte is never read alone as a key.
+    #
+    # A stop-token (quit ⇒ dispatch returns false) ends the loop NOW: never dispatch
+    # the rest of the buffer past it, so a key buffered after a confirmed `q` can't
+    # fall through into another action.
     def handle(buf)
-      return true if buf.nil? || buf.empty?
-
-      buf = buf.dup
-      until buf.empty?
-        token = buf.start_with?("\e") ? buf.slice!(0, 3) : buf.slice!(0, 1)
-        return false unless dispatch(token)
-      end
+      tokens, @pending = self.class.tokenize(@pending + buf.to_s)
+      tokens.each { |t| return false unless dispatch(t) }
       true
+    end
+
+    # Pure terminal-input tokenizer: returns [complete tokens, trailing incomplete
+    # sequence]. The grammar it recognizes (the only escapes a tmux pane delivers):
+    #
+    #   \e [ <param/intermediate 0x20-0x3F>* <final 0x40-0x7E>   CSI: arrows, focus (\e[I/\e[O)
+    #   \e <any other byte>                                      Alt / SS3 lead (2-byte token)
+    #   \e        (alone at the end of the buffer)               the Esc key
+    #   <byte>                                                   a plain key
+    #
+    # An incomplete CSI (`\e[…` with no final byte yet) is returned as the remainder
+    # rather than emitted, so its final byte can never be read alone as a key. `\e`
+    # plus any non-`[` byte is consumed TOGETHER (a 2-byte token), so the `O` in an
+    # SS3 `\eO…` can't escape alone either. A lone trailing `\e` is emitted as the
+    # Esc key, not carried: terminals write a sequence's bytes as one unit, so a `\e`
+    # with nothing after it is the key — and carrying it would stall Esc (filter /
+    # prompt cancel) waiting for bytes that never come. The one case this leaves open
+    # is a CSI split BEFORE its `[` (a read ending on a lone `\e`, the next starting
+    # `[O`): the `\e` flushes as Esc and the `O` could re-orphan. That needs tmux to
+    # fragment a 3-byte focus event across reads — it doesn't (it writes the sequence
+    # in one go, and READ_BYTES reads it whole) — so it's unreachable here; closing
+    # it for good would mean an Esc-timeout in the run loop, not worth the timing.
+    def self.tokenize(buf)
+      tokens = []
+      i = 0
+      n = buf.bytesize
+      while i < n
+        if buf.getbyte(i) != 0x1b            # plain key byte
+          tokens << buf.byteslice(i, 1)
+          i += 1
+        elsif i + 1 >= n                      # lone trailing \e -> the Esc key
+          tokens << buf.byteslice(i, 1)
+          i += 1
+        elsif buf.getbyte(i + 1) != 0x5b      # \e + non-'[' -> Alt / SS3 lead, kept whole
+          tokens << buf.byteslice(i, 2)
+          i += 2
+        else                                  # CSI: \e[ params/intermediates, then a final byte
+          j = i + 2
+          j += 1 while j < n && (0x20..0x3f).cover?(buf.getbyte(j))
+          if j >= n # final byte not here yet -> carry the partial, but cap it: no real
+            partial = buf.byteslice(i, n - i) # CSI runs long, so an unterminated param run
+            return [tokens, partial.bytesize <= CSI_MAX ? partial : +""] # is garbage, drop+resync
+          elsif (0x40..0x7e).cover?(buf.getbyte(j)) # a valid final byte: emit the whole CSI
+            tokens << buf.byteslice(i, j - i + 1)
+            i = j + 1
+          else # byte j is neither param nor final -> malformed: emit \e[… WITHOUT it and
+            tokens << buf.byteslice(i, j - i) # resume on byte j, so a real key (a control
+            i = j                             # byte like \r/\f after a split \e[) still fires
+          end
+        end
+      end
+      [tokens, +""]
     end
 
     def dispatch(key)
