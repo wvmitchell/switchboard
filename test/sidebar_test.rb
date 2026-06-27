@@ -963,9 +963,12 @@ module Switchboard
     # action-key tail: it's a SINGLE line — the context-sensitive nav verb plus the
     # ? help gateway — so it never reflows on cursor move and hands the tree two rows.
 
+    # A branch row opens the SAME workspace session as its ws row (never a branch
+    # checkout — that's a footgun under a live agent), so it reads NAV_WS too, not a
+    # "switch" verb implying a checkout it doesn't do.
     def test_footer_is_one_line_nav_plus_help_per_row_kind
       nodes = [proj("app"), ws("a"), br("feat")]
-      [[0, Sidebar::NAV_PROJ], [1, Sidebar::NAV_WS], [2, Sidebar::NAV_BR]].each do |cursor, nav|
+      [[0, Sidebar::NAV_PROJ], [1, Sidebar::NAV_WS], [2, Sidebar::NAV_WS]].each do |cursor, nav|
         sb = sidebar(nodes: nodes, cursor: cursor)
         foot = sb.send(:footer)
         assert_equal 1, foot.size, "the footer is a single line for every kind (no reflow)"

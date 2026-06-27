@@ -8,7 +8,7 @@ module Switchboard
   # The persistent, rendered tree sidebar (no fzf). Lives in a narrow tmux
   # pane, repaints on a short interval to keep agent-activity dots live, and
   # navigates with ↑/↓ (or ^N/^P — j/k are NOT movers, so they're free to type
-  # into the filter). ↵ switches to a workspace (or collapses a project);
+  # into the filter). ↵ opens a workspace's session (or collapses a project);
   # / filters the tree by name for a direct jump (in-sidebar, not the old fzf
   # popup — see "/ filter mode" below); a adds a project (register a local repo,
   # or clone one); n creates a worktree inline then drops you in; d removes the
@@ -94,7 +94,11 @@ module Switchboard
 
     NAV_PROJ   = "↑↓ move · ↵ open/collapse"
     NAV_WS     = "↑↓ move · ↵ open"
-    NAV_BR     = "↑↓ move · ↵ switch"
+    # No NAV_BR: a branch row's ↵ opens its workspace's session — the SAME session
+    # as the ws row (one session per worktree, keyed on path not branch), never a
+    # branch checkout (swapping branches under a working agent is a footgun). So it
+    # shares NAV_WS's honest "open"; a "switch" label would imply a checkout it
+    # never does — and shouldn't.
 
     # The `?` help overlay's static key map (issue #62) — [key, description] rows,
     # where a row with an empty key is a section heading. The footer teaches only
@@ -110,7 +114,7 @@ module Switchboard
       ["g  G", "top · bottom"],
       ["←  →", "narrow · widen pane"],
       ["", "open"],
-      ["↵", "switch · collapse"],
+      ["↵", "open · collapse"],
       ["/", "filter by name"],
       ["", "the selected row"],
       ["a", "add a project"],
@@ -1585,11 +1589,8 @@ module Switchboard
       return filter_footer if @filter
       return ["a add a project · ? help"] unless current # empty tree: invite the first project
 
-      nav = case current.kind
-            when "proj" then NAV_PROJ
-            when "br"   then NAV_BR
-            else             NAV_WS
-            end
+      # ws AND br both open the worktree session, so they read alike (NAV_WS).
+      nav = current.kind == "proj" ? NAV_PROJ : NAV_WS
       ["#{@home ? HOME_TITLE : nav} · ? help"]
     end
 

@@ -7,6 +7,16 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.35.1] — branch-row ↵ hint tells the truth (2026-06-26)
+
+### Changed
+- **A branch row's `↵` footer/help hint now says "open", not "switch".** Pressing `↵` on
+  an expanded branch row opens its workspace's session — the *same* session as the
+  workspace row (one session per worktree, keyed on path, not branch), and deliberately
+  never checks out the branch (swapping branches under a working agent is a footgun). The
+  old "switch" label implied a checkout it never did. The branch row now reads the
+  workspace verb (`open`), and the `?` overlay's `↵` line matches.
+
 ## [0.35.0] — `?` help overlay + one-line footer; cross-project PR badge fix (2026-06-26)
 
 ### Added
