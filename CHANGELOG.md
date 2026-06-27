@@ -7,6 +7,18 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.36.1] — slim the README into an inviting overview (2026-06-26)
+
+### Changed
+- **The README is now a glanceable overview, not a second copy of the docs.** It had
+  grown to ~450 lines that re-documented install internals, housekeeping (with a raw
+  shell teardown snippet), the full `config.yml` reference, the agent-state/hooks and
+  sound internals, a keybindings deep-dive, and the whole CLI usage table — all of which
+  the Diataxis [`docs/`](docs/README.md) set already covers in depth. It's now ~115 lines:
+  a value-first hook, a concrete picture of the sidebar tree, a three-command quickstart,
+  the five-key core loop (`a`/`n`/`↵`/`/`/`?`), and a clean hand-off to the docs — a more
+  inviting first impression ahead of going open source. No behavior change; docs only.
+
 ## [0.36.0] — `n` auto-creates, no name prompt (2026-06-26)
 
 ### Changed
