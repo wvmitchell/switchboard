@@ -67,6 +67,31 @@ a subprocess (e.g. `Reconcile.orphans`, `Installer.rebind_ops`,
 `CLI.orphan_sidebar_count`). Follow that pattern: keep the decision pure, test it
 directly, and stub the one I/O seam.
 
+### The real-tmux smoke layer (issue #104)
+
+The offline suite is the inner loop, but a stubbed tmux can't exercise the bugs
+that actually bite — the lifecycle ones (pane recycling, hook firing, split/kill
+timing, attach/detach). Those live in a separate **real-tmux smoke layer** under
+`test/smoke/`, run by its own runner:
+
+```sh
+bin/test-smoke                 # boots a real tmux server, drives the real binary end-to-end
+```
+
+It's deliberately **out of `bin/test`** (which globs `test/*_test.rb`, non-recursive)
+so the fast offline suite stays the inner loop, and it has its own **blocking** CI
+job. `SmokeCase` (`test/smoke/smoke_helper.rb`) subclasses `SandboxTest` to reuse the
+env wall-off verbatim, then boots an isolated server (a **short** `TMUX_TMPDIR` +
+the default socket — macOS caps unix socket paths, and bare-`tmux` must reach the
+same server inside panes and in subcommands), attaches a real client via the stdlib
+`PTY` (so the sidebar actually renders — an unattached server reads
+`session_attached=0` and stays dormant), and drives the real binary. Every assertion
+polls via `wait_until` (never sleep-then-assert), the PTY master is drained (so
+backpressure can't stall the client), and a socket-path guard refuses any destructive
+op that isn't pointed at the throwaway socket. Needs a real `tmux`; it skips locally
+when absent, but `SMOKE_REQUIRE_TMUX=1` (set in CI) makes a missing tmux a hard error
+so the gate can't silently no-op.
+
 ## Code conventions
 
 - Every file starts with `# frozen_string_literal: true`.

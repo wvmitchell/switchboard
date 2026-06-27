@@ -21,3 +21,23 @@ jobs:
         with:
           ruby-version: ${{ matrix.ruby }}
       - run: ruby bin/test
+
+  # The real-tmux smoke layer (issue #104): boots an actual tmux server on an isolated
+  # socket and drives the real binary through the create -> switch -> toggle -> new-window
+  # -> close-pane -> quit lifecycle — the bug class the stubbed offline suite structurally
+  # can't reach (#64 is the regression guard). A separate, BLOCKING job: real-tmux is too
+  # slow for the inner loop, but a lifecycle regression should still turn the build red.
+  # SMOKE_REQUIRE_TMUX=1 so a missing tmux fails loudly instead of silently passing.
+  smoke:
+    runs-on: ubuntu-latest
+    name: smoke (real tmux)
+    env:
+      SMOKE_REQUIRE_TMUX: "1"
+      TERM: xterm-256color
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y tmux
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+      - run: ruby bin/test-smoke

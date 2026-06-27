@@ -48,6 +48,7 @@ module Switchboard
       # never strands you on a bare shell (e.g. the post-delete fallback).
       set_sidebar_flag(HOME, "on")
       ensure_home
+      ensure_work_pane(HOME) # if home's work pane was closed, re-grow one so we never land on a wedged (sidebar-only) home (#64)
       sidebar = window_sidebar_pane(HOME)
       # Focus the tree before switch, so the exec/attach path keeps it too.
       system("tmux", "select-pane", "-t", sidebar, out: File::NULL, err: File::NULL) if sidebar
@@ -542,6 +543,47 @@ module Switchboard
 
       tty = `tmux display-message -p -t #{Shellwords.escape(pane)} '#\{pane_tty}' 2>/dev/null`.strip
       tty.empty? ? nil : tty
+    end
+
+    # The pane count of the window containing `pane`, or nil when tmux gives no usable
+    # answer (no/empty/garbled reply). nil is "unknown" — distinct from a real count —
+    # so callers treat it as "don't act," the same transient-miss rule owns_pane? uses:
+    # never self-terminate (or restructure) a window on a flaky shell-out. Drives the
+    # #64 lone-pane check, where a confirmed 1 means the work sibling closed and the
+    # sidebar would otherwise wedge the window full-width.
+    def window_panes(pane)
+      return nil unless pane
+
+      parse_window_panes(`tmux display-message -p -t #{Shellwords.escape(pane)} '#\{window_panes}' 2>/dev/null`)
+    end
+
+    # Pure: a tmux count reply parsed to an Integer, or nil on an empty/garbled line.
+    # Split out so the transient-miss parse is unit-testable without a server (the same
+    # pure-helper pattern as count_sidebar_panes / sb_sessions). A non-numeric reply
+    # (a stray warning, a non-UTF-8 byte) rescues to nil, not a raise — degrade, never
+    # crash, and "unknown" reads as "don't act."
+    def parse_window_panes(raw)
+      out = raw.to_s.strip
+      out.empty? ? nil : Integer(out, 10)
+    rescue StandardError
+      nil
+    end
+
+    # Guarantee the session's active window isn't sidebar-only: if the sidebar is the
+    # SOLE pane (its work sibling was closed), split a fresh shell beside it so it's
+    # never wedged full-width (#64). Idempotent — a window that already has a work pane
+    # short-circuits (window_panes != 1), so repeated calls are cheap no-ops. Used for
+    # the home self-heal (a closed home work pane re-grows one, keeping the anchor
+    # alive) and by go_home, so falling-home never lands on a wedged home. Returns the
+    # new pane id, or nil when nothing was spawned.
+    def ensure_work_pane(session, dir = nil)
+      pane = window_sidebar_pane(session)
+      return unless pane && window_panes(pane) == 1
+
+      dir ||= window_work_dir(session) || home_dir
+      work = `tmux split-window -h -d -P -F '#\{pane_id}' -t #{Shellwords.escape(session)} -c #{Shellwords.escape(dir)} 2>/dev/null`.strip
+      pin(pane) # the split reflows the row; re-assert the sidebar's fixed width
+      work.empty? ? nil : work
     end
 
     ARROW_GLYPHS = { "Up" => "↑", "Down" => "↓", "Left" => "←", "Right" => "→" }.freeze

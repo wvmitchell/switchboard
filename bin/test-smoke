@@ -1,0 +1,39 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Runner for the REAL-tmux smoke layer (issue #104) — the integration twin of `bin/test`.
+# Deliberately SEPARATE from the offline inner loop: `bin/test` globs `test/*_test.rb`
+# (non-recursive), so these `test/smoke/*_test.rb` files never run there. They boot an
+# actual tmux server on an isolated socket and drive the real binary end-to-end, so they
+# need `tmux` and are slower — kept out of the fast default suite on purpose.
+#
+#   bin/test-smoke                 # the whole smoke layer
+#   bin/test-smoke -n /close/      # minitest flags pass straight through
+#
+# Needs a real tmux. With no tmux on PATH it SKIPS (exit 0) so a tmux-less dev box isn't a
+# hard failure — UNLESS SMOKE_REQUIRE_TMUX=1 (set by CI), where a missing tmux is a hard
+# error, so the blocking CI gate can't silently pass having run nothing.
+test_dir  = File.expand_path("../test", __dir__)
+smoke_dir = File.join(test_dir, "smoke")
+$LOAD_PATH.unshift(test_dir, smoke_dir)
+
+tmux = system("command -v tmux >/dev/null 2>&1")
+unless tmux
+  if ENV["SMOKE_REQUIRE_TMUX"] == "1"
+    warn "bin/test-smoke: tmux not found but SMOKE_REQUIRE_TMUX=1 — the smoke layer must run here"
+    exit 1
+  end
+  warn "bin/test-smoke: real-tmux smoke layer skipped (tmux not found on PATH)"
+  exit 0
+end
+
+file_args = ARGV.select { |a| a.end_with?("_test.rb") }
+ARGV.replace(ARGV - file_args) # leave only minitest flags for autorun
+
+files = if file_args.empty?
+          Dir[File.join(smoke_dir, "*_test.rb")].sort
+        else
+          file_args.map { |f| File.exist?(f) ? f : File.join(smoke_dir, File.basename(f)) }
+        end
+
+files.each { |f| require File.expand_path(f) }

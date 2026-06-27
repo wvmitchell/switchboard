@@ -388,6 +388,7 @@ module Switchboard
     # to ask the loop to exit (we no longer own our pane), true otherwise.
     def tick
       return false unless owns_pane? # disowned -> stop ticking; the loop exits us
+      return false if lone_pane_handled # #64: work sibling died -> don't wedge (workspace exits, home self-heals)
 
       visible = Tmux.visible?(ENV["TMUX_PANE"])
       # Off screen we're never focused, so skip the focused? shell-out entirely —
@@ -435,6 +436,38 @@ module Switchboard
 
       now = Tmux.pane_tty(ENV["TMUX_PANE"])
       now.nil? || now == @pane_tty
+    end
+
+    # #64: a window is work-pane + sidebar (a split). Close the work pane and the
+    # sidebar is the SOLE pane — tmux forces it full-width and it stays open, wedging
+    # the window. Neither existing exit path covers "alive but my sibling died" (:eof is
+    # our OWN pty; owns_pane? is a recycled %id). On a CONFIRMED lone pane: from a
+    # workspace, fall home (go_home — consistent with the delete/remove flows) and ask
+    # the loop to EXIT so the wedged window closes; from HOME, self-heal in place (spawn
+    # a fresh work shell) and KEEP running, since exiting would kill the anchor and a
+    # full-width home sidebar messes up the UI. Acts ONLY on a confirmed count of 1 — a
+    # nil/!=1 reply keeps us running (the file's degrade-never-self-terminate-on-a-flaky-
+    # shell-out house rule, like owns_pane?). Returns true when it asked the loop to exit.
+    # Polled by tick (backstop, within REFRESH) and run on focus-in for a within-a-frame reap.
+    def lone_pane_handled
+      return false unless Tmux.window_panes(ENV["TMUX_PANE"]) == 1 # confirmed sole pane (rare; the common path stops here)
+
+      if @home
+        # Self-heal THIS window in place: split a fresh work shell beside OUR pane (NOT the
+        # session's active window — a lone home sidebar can be in an inactive window, which
+        # ensure_work_pane(HOME) would heal wrong / loop on). Non-disruptive (no client
+        # switch), so it's safe to run off-screen too.
+        Tmux.ensure_work_pane(ENV["TMUX_PANE"])
+        false # keep running — the anchor survives
+      elsif Tmux.visible?(ENV["TMUX_PANE"])
+        # Only the ON-SCREEN workspace sidebar falls home: go_home switch-clients the whole
+        # client, so doing it from an off-screen pane would yank you off the window you're
+        # actually working in. Sampled live (not @visible, which is stale here in tick).
+        Tmux.go_home # land on the navigator (go_home guarantees home has a work pane)
+        true         # -> tick/dispatch exits the loop -> our pane closes -> the wedged window closes
+      else
+        false # off-screen lone workspace sidebar: leave it; focus-in reaps it when you return
+      end
     end
 
     private
@@ -967,7 +1000,7 @@ module Switchboard
       when "g"                 then @cursor = 0
       when "G"                 then @cursor = [@rows.size - 1, 0].max # clamp: empty tree → 0, not -1
       when "?"                 then show_help # the full key map overlay (issue #62)
-      when "\e[I"              then focus_in        # tmux focus-in: on screen + light cursor bar
+      when "\e[I"              then return false if focus_in # focus-in: light cursor; #64 fast reap may exit the loop
       when "\e[O"              then @focused = false # tmux focus-out: drop it
       when "q"                 then return quit # q: tear down ALL switchboard sessions
       end
@@ -1000,6 +1033,11 @@ module Switchboard
       set_visible(true)
       reload(announce_sounds: false) if reappeared
       cursor_to_current # going back to the sidebar selects the workspace you're in
+      # #64 fast reap: we may have just gained focus BECAUSE our work sibling closed and
+      # we became the lone (active) pane. Check now so the wedge is caught within a frame
+      # instead of up to one REFRESH tick. Returns true (=> dispatch exits the loop) only
+      # in the workspace fall-home case; a normal focus-in (work pane still there) is false.
+      lone_pane_handled
     end
 
     def move(delta)

@@ -50,6 +50,41 @@ module Switchboard
       assert_equal 0, Tmux.count_sidebar_panes("")
     end
 
+    # --- parse_window_panes: the pure count parse behind the #64 lone-pane check.
+    # A confirmed integer drives the "am I the only pane?" decision; anything
+    # empty/garbled is "unknown" -> nil -> the caller keeps running (degrade, never
+    # self-terminate on a flaky shell-out — the owns_pane? house rule).
+
+    def test_parse_window_panes_reads_a_count
+      assert_equal 1, Tmux.parse_window_panes("1\n")
+      assert_equal 2, Tmux.parse_window_panes("  2  ")
+    end
+
+    def test_parse_window_panes_is_nil_on_empty_or_garbled_input
+      assert_nil Tmux.parse_window_panes(""), "no reply (no server / dead pane) -> unknown"
+      assert_nil Tmux.parse_window_panes("\n")
+      assert_nil Tmux.parse_window_panes("nonsense"), "a non-numeric reply rescues to nil, never raises"
+      assert_nil Tmux.parse_window_panes("2 panes"), "a partial/garbled line is not a usable count"
+    end
+
+    # --- ensure_work_pane: only splits a shell when the sidebar is the SOLE pane
+    # (#64 home self-heal / fall-home landing). The two short-circuits are the
+    # testable guards; the actual split is a raw shell-out, covered by the smoke layer.
+
+    def test_ensure_work_pane_noops_when_a_work_pane_already_exists
+      stub_method(Tmux, :window_sidebar_pane, ->(*) { "%1" }) do
+        stub_method(Tmux, :window_panes, ->(*) { 2 }) do # already has a work sibling
+          assert_nil Tmux.ensure_work_pane("sb/home"), "a healthy window is left untouched"
+        end
+      end
+    end
+
+    def test_ensure_work_pane_noops_when_there_is_no_sidebar_pane
+      stub_method(Tmux, :window_sidebar_pane, ->(*) { nil }) do
+        assert_nil Tmux.ensure_work_pane("sb/home"), "nothing to sit a work pane beside"
+      end
+    end
+
     # --- work_dir: the pure pane-cwd pick (drives the sidebar's -c) -----------
     # spawn_sidebar pins the sidebar pane's cwd to the worktree by reading the
     # window's work-pane path; if it picked the client's path instead the "you

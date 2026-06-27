@@ -7,6 +7,30 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.36.2] — real-tmux smoke test layer; the sidebar stops wedging on a closed work pane (2026-06-27)
+
+### Added
+- **A real-tmux smoke test layer (`bin/test-smoke`, issue #104).** The offline suite stubs
+  every tmux call — right for unit tests, but structurally blind to the bugs that actually
+  bite: the lifecycle ones (pane recycling, hook firing, split/kill timing, attach/detach).
+  The new `test/smoke/` layer boots a real tmux server on an isolated socket, attaches a real
+  client via the stdlib `PTY` (so the sidebar actually renders instead of staying dormant),
+  sources the real `switchboard.tmux` hooks, and drives the real binary end-to-end through the
+  create → switch → toggle → new-window → close-pane → rename → prune → quit lifecycle. It's
+  deliberately out of `bin/test` (the fast offline suite stays the inner loop) and runs as its
+  own blocking CI job. A socket-path guard refuses any destructive op not pointed at the
+  throwaway server, so the harness can never touch your real `sb/` sessions.
+
+### Fixed
+- **The sidebar no longer wedges the window full-width when you close the work pane (#64).** A
+  window is work-pane + sidebar (a split); closing the work pane left the sidebar the sole pane,
+  which tmux forces to full width and keeps open. The sidebar now detects "I'm the only pane"
+  (a confirmed `window_panes == 1`, degrade-safe like the recycled-`%id` guard — a flaky reply
+  never self-terminates it): from a workspace it falls home and exits so the wedged window
+  closes; from the home anchor it self-heals in place by re-growing a work shell beside the
+  tree. It reaps within a frame on focus-in, and an off-screen sidebar never yanks the client
+  home.
+
 ## [0.36.1] — slim the README into an inviting overview (2026-06-26)
 
 ### Changed

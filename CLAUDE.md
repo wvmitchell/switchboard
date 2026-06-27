@@ -12,7 +12,13 @@ dependencies**: everything is stdlib plus shelling out to `tmux`, `git`, and
 `bin/test test/installer_test.rb`. Every test runs **offline**: `SandboxTest`
 (`test/test_helper.rb`) walls off real state — config, XDG dirs, git global,
 `HOME`, `TMUX` — into a tmpdir, and its `temp_git_repo` helper spins up throwaway
-repos for the git-backed tests (tmux/gh shell-outs are stubbed). See `README.md`
+repos for the git-backed tests (tmux/gh shell-outs are stubbed). A second,
+opt-in **real-tmux smoke layer** (`test/smoke/`, run by `bin/test-smoke`, its own
+blocking CI job — issue #104) boots an actual tmux server on an isolated socket and
+drives the real binary through the create→switch→toggle→new-window→close-pane→quit
+lifecycle — the bug class the stub can't reach (`SmokeCase` subclasses `SandboxTest`,
+attaches a stdlib-`PTY` client so the sidebar renders, polls via `wait_until`); it's
+kept OUT of `bin/test` so the offline suite stays the inner loop. See `README.md`
 for the user-facing feature tour, and `docs/` for the full Diataxis documentation
 set. The explanation docs (`docs/explanation-architecture.md`,
 `explanation-agent-presence.md`, `explanation-sidebar-lifecycle.md`) are the
@@ -34,6 +40,7 @@ bin/switchboard rename NAME # rename the current workspace from inside it (dir m
 bin/switchboard prune      # kill orphaned sb/ sessions (reconcile vs git worktrees; --dry-run/-n previews)
 bin/switchboard quit       # close ALL sb/ sessions (full teardown; current session last; clears agent state)
 bin/test                   # run the stdlib-Minitest suite (offline; bin/test <file> for one)
+bin/test-smoke             # run the real-tmux smoke layer (boots a server; needs tmux; out of bin/test — #104)
 ```
 
 Setup is one command: `git clone && bin/switchboard install` (`Installer`,

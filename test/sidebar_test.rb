@@ -2027,6 +2027,110 @@ module Switchboard
       refute called, "owns_pane? short-circuits without a tmux call when @pane_tty is nil"
     end
 
+    # #64: when the work pane closes, the sidebar is left the SOLE pane and tmux wedges it
+    # full-width. The lone-pane check catches "alive but my sibling died" — a confirmed
+    # window_panes == 1. From a workspace it falls home and asks the loop to exit (so the
+    # wedged window closes); from home it self-heals in place (spawns a work shell) and
+    # keeps running (the anchor survives). Acts ONLY on a confirmed 1, like owns_pane?.
+
+    def test_tick_falls_home_and_exits_when_a_visible_workspace_sidebar_is_the_lone_pane
+      sb = sidebar(nodes: [proj("app"), ws("a", path: "/wt/a")]) # @home defaults to nil (a workspace)
+      went_home = false
+      stub_method(Tmux, :window_panes, ->(*) { 1 }) do # confirmed sole pane
+        stub_method(Tmux, :visible?, ->(*) { true }) do # on screen -> falling home is the right move
+          stub_method(Tmux, :go_home, -> { went_home = true }) do
+            stub_method(Tmux, :ensure_work_pane, ->(*) { flunk "a workspace falls home, it does not self-heal in place" }) do
+              refute sb.send(:tick), "a lone workspace sidebar asks the loop to exit"
+            end
+          end
+        end
+      end
+      assert went_home, "...and falls home first so you land on the navigator"
+    end
+
+    # An OFF-SCREEN lone workspace sidebar must NOT fall home: go_home switch-clients the whole
+    # client, so reaping from an off-screen pane would yank the user off the window they're
+    # actually working in. It stays put and is reaped by focus-in when you switch back to it.
+    def test_tick_does_not_yank_an_off_screen_lone_workspace_sidebar_home
+      sb = sidebar(nodes: [proj("app"), ws("a", path: "/wt/a")])
+      sb.instance_variable_set(:@visible, false)
+      stub_method(Tmux, :window_panes, ->(*) { 1 }) do # lone...
+        stub_method(Tmux, :visible?, ->(*) { false }) do # ...but off screen
+          stub_method(Tmux, :go_home, -> { flunk "an off-screen lone sidebar must not switch-client the user away" }) do
+            assert sb.send(:tick), "off-screen lone workspace sidebar keeps running (focus-in reaps it on return)"
+          end
+        end
+      end
+    end
+
+    def test_tick_self_heals_home_and_keeps_running_when_home_is_the_lone_pane
+      sb = sidebar(nodes: [proj("app")])
+      sb.instance_variable_set(:@home, true)   # this is home's sidebar
+      sb.instance_variable_set(:@visible, false)
+      healed = false
+      stub_method(Tmux, :window_panes, ->(*) { 1 }) do
+        stub_method(Tmux, :ensure_work_pane, ->(*) { healed = true }) do
+          stub_method(Tmux, :go_home, -> { flunk "home self-heals in place — it never falls home into itself" }) do
+            stub_method(Tmux, :visible?, ->(*) { false }) do
+              assert sb.send(:tick), "home's lone sidebar keeps running (the anchor survives)"
+            end
+          end
+        end
+      end
+      assert healed, "...after re-growing a work shell beside the tree"
+    end
+
+    def test_tick_keeps_running_on_a_transient_window_panes_miss
+      sb = sidebar(nodes: [proj("app"), ws("a", path: "/wt/a")])
+      sb.instance_variable_set(:@visible, false)
+      stub_method(Tmux, :window_panes, ->(*) { nil }) do # unknown != confirmed-1
+        stub_method(Tmux, :go_home, -> { flunk "a nil count is not proof of a lone pane — don't fall home" }) do
+          stub_method(Tmux, :visible?, ->(*) { false }) do
+            assert sb.send(:tick), "a flaky window_panes keeps us running, like owns_pane?"
+          end
+        end
+      end
+    end
+
+    def test_tick_keeps_running_when_a_work_pane_is_still_present
+      sb = sidebar(nodes: [proj("app"), ws("a", path: "/wt/a")])
+      sb.instance_variable_set(:@visible, false)
+      stub_method(Tmux, :window_panes, ->(*) { 2 }) do # sidebar + a live work pane
+        stub_method(Tmux, :go_home, -> { flunk "two panes is not lone — keep running" }) do
+          stub_method(Tmux, :visible?, ->(*) { false }) do
+            assert sb.send(:tick), "a window with a work pane is healthy"
+          end
+        end
+      end
+    end
+
+    # Focus-in is the FAST reap (#64): when the work pane closes the sidebar gains focus
+    # (it became the active pane), so tmux sends focus-in. Catching the lone pane here
+    # closes the wedge within a frame instead of up to one REFRESH tick.
+    def test_focus_in_signals_loop_exit_when_the_work_sibling_just_closed
+      sb = sidebar(nodes: [proj("app"), ws("a", path: "/wt/a")])
+      sb.instance_variable_set(:@visible, true) # already on screen -> focus_in won't reload
+      went_home = false
+      stub_method(Tmux, :window_panes, ->(*) { 1 }) do
+        stub_method(Tmux, :visible?, ->(*) { true }) do # focus-in means we're on screen
+          stub_method(Tmux, :go_home, -> { went_home = true }) do
+            refute sb.send(:dispatch, "\e[I"), "a lone-pane focus-in tells the loop to exit"
+          end
+        end
+      end
+      assert went_home
+    end
+
+    def test_focus_in_is_a_normal_keep_running_focus_when_a_work_pane_remains
+      sb = sidebar(nodes: [proj("app"), ws("a", path: "/wt/a")])
+      sb.instance_variable_set(:@visible, true)
+      stub_method(Tmux, :window_panes, ->(*) { 2 }) do
+        stub_method(Tmux, :go_home, -> { flunk "an ordinary focus-in must not fall home" }) do
+          assert sb.send(:dispatch, "\e[I"), "navigating back to the sidebar keeps running"
+        end
+      end
+    end
+
     # read_key separates a closed pane (EOF) from a spurious wakeup (nothing ready):
     # the run loop turns :eof into a clean exit so a dead pane can't busy-spin forever.
     def test_read_key_signals_eof_when_the_stream_is_closed
