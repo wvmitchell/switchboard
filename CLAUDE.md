@@ -230,7 +230,8 @@ move degrades cleanly instead of erroring "command not found":
 
 - a **`SessionStart` command** (`rename-nudge`) — the **soft plant**, riding *beside* the
   sh state reporter (`… && … rename-nudge || true`): when `auto_rename` is on
-  (`Config#auto_rename?` / `auto_rename_for`, global + per-project, default off),
+  (`Config#auto_rename?` / `auto_rename_for`, global + per-project, default on since #114
+  made placeholders the only create path),
   `CLI#rename_nudge` injects a `SessionStart` `additionalContext` instruction telling the
   agent to `switchboard rename` the workspace once it understands the work — which
   (post-#94) names the dir and its branch. `RenameNudge.decide` is the pure gate (fires on

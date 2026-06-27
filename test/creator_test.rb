@@ -151,7 +151,8 @@ module Switchboard
     end
 
     def test_create_skips_hooks_when_dots_and_auto_rename_both_off
-      File.write(Config.path, YAML.dump("worktree_root" => path("wts"), "agent_state_hooks" => false,
+      File.write(Config.path, YAML.dump("worktree_root" => path("wts"),
+                                        "agent_state_hooks" => false, "auto_rename" => false,
                                         "projects" => [{ "name" => "proj", "path" => temp_git_repo("proj", origin: true) }]))
       dest = Creator.create(Config.new, "proj", "thing")
       refute Hook.enabled?(dest), "no hooks when both dots and auto_rename are off"

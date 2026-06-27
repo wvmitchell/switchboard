@@ -151,10 +151,10 @@ module Switchboard
       refute cfg("agent_state_hooks" => false).agent_state_hooks?
     end
 
-    def test_auto_rename_off_by_default_on_only_when_explicit_true
-      refute cfg({}).auto_rename?
-      refute cfg("auto_rename" => false).auto_rename?
+    def test_auto_rename_on_by_default_off_only_when_false
+      assert cfg({}).auto_rename?
       assert cfg("auto_rename" => true).auto_rename?
+      refute cfg("auto_rename" => false).auto_rename?
     end
 
     # The global×project matrix: an explicit per-project value wins; absent inherits.
@@ -166,8 +166,8 @@ module Switchboard
       # no per-project key -> inherit the global
       assert cfg(proj.call({}).merge("auto_rename" => true)).auto_rename_for("p")
       refute cfg(proj.call({}).merge("auto_rename" => false)).auto_rename_for("p")
-      # nothing set anywhere -> off
-      refute cfg(proj.call({})).auto_rename_for("p")
+      # nothing set anywhere -> on (inherits the global default)
+      assert cfg(proj.call({})).auto_rename_for("p")
     end
 
     def test_prune_on_launch_on_by_default_off_only_when_false

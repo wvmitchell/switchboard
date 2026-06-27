@@ -26,7 +26,7 @@ or `e` in the sidebar — both reload on save.
 | `branch_prefix` | string | _(none)_ | New branches become `<prefix>/<name>`. Empty/unset ⇒ bare `<name>`. |
 | `agent_state_hooks` | bool | `true` | Auto-wire per-worktree agent-state hooks on worktree create. |
 | `prune_on_launch` | bool | `true` | Prune orphaned `sb/` sessions when landing on the home session. |
-| `auto_rename` | bool | `false` | Nudge the agent to `switchboard rename` a placeholder-named workspace once it knows the work (a `SessionStart` hook). Per-project override wins. See [`auto_rename`](#auto_rename). |
+| `auto_rename` | bool | `true` | Nudge the agent to `switchboard rename` a placeholder-named workspace once it knows the work (a `SessionStart` hook). `false` opts out. Per-project override wins. See [`auto_rename`](#auto_rename). |
 | `diff_counts` | bool | `true` | Show the `+adds −dels` diff count on each workspace/branch row. `false` hides it and skips the per-worktree `git diff` entirely. |
 | `session_command` | string | _(none)_ | Command typed into a worktree's window the first time its session is created. Per-project override wins. |
 | `sounds` | map or `false` | _(on, built-ins)_ | Completion sounds. See [`sounds`](#sounds). |
@@ -44,7 +44,7 @@ base: origin/main                        # default ref new worktrees branch from
 branch_prefix: wvmitchell                # new branches become wvmitchell/<name>
 agent_state_hooks: true                  # auto-wire agent-state dots on create
 prune_on_launch: true                    # tidy orphaned sessions on landing home
-auto_rename: false                       # let the agent name a placeholder workspace (off by default)
+auto_rename: true                        # let the agent name a placeholder workspace (on by default)
 diff_counts: true                        # show +adds −dels on each row (false skips the git diff)
 session_command: claude                  # run this on a worktree's first session
 sounds:
@@ -67,12 +67,14 @@ projects:
 
 ## `auto_rename`
 
-Off by default. When on, switchboard plants a `SessionStart` instruction in each
-worktree's Claude hooks telling a running agent to `switchboard rename <name>` once it
-understands the work — naming the workspace **and** its branch. It only fires while the
-workspace still has its generated **placeholder** name (e.g. `wandering-finch`); the
-moment it's named, the nudge stops. The instruction is advisory (the agent renames when
-it's ready, or ignores it) — it never renames on its own.
+On by default. switchboard plants a `SessionStart` instruction (plus a `Stop` backstop)
+in each worktree's Claude hooks telling a running agent to `switchboard rename <name>`
+once it understands the work — naming the workspace **and** its branch. This completes
+deferred naming: since `n` only ever creates placeholders, the agent names them so you
+don't have to. It only fires while the workspace still has its generated **placeholder**
+name (e.g. `wandering-finch`); the moment it's named, the nudge stops. The instruction is
+advisory (the agent renames when it's ready, or ignores it) — it never renames on its own.
+Set `auto_rename: false` to opt out; the placeholder then stays until you rename it with `r`.
 
 It's a global bool with a per-project override (like `session_command`): a per-project
 `auto_rename` wins over the global one, in either direction.

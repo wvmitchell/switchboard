@@ -56,7 +56,7 @@ module Switchboard
       # session_command: ""                        # run on a worktree's first session (e.g. claude --dangerously-skip-permissions)
       # agent_state_hooks: true                    # auto-wire the agent-state dots on worktree create
       # prune_on_launch: true                      # prune orphaned sb/ sessions when landing on home
-      # auto_rename: false                         # nudge the agent to rename a placeholder-named workspace once it knows the work
+      # auto_rename: true                          # nudge the agent to rename a placeholder-named workspace once it knows the work
       # diff_counts: true                          # show +adds −dels of each branch vs base on the workspace row
 
       # Completion sounds (on by default): a built-in (train / chime, or train_1..3 /
@@ -174,19 +174,21 @@ module Switchboard
       @data.fetch("prune_on_launch", true) != false
     end
 
-    # Global agent self-naming switch — OFF unless explicitly true. When on,
-    # `Hook.enable` plants a SessionStart instruction telling a running agent to
-    # `switchboard rename` a still-placeholder-named workspace once it understands
-    # the work (#92). Invasive (auto-renames + injects context), so opt-in.
+    # Global agent self-naming switch — ON by default. When on, `Hook.enable` plants a
+    # SessionStart instruction (and a Stop backstop) telling a running agent to
+    # `switchboard rename` a still-placeholder-named workspace once it understands the
+    # work (#92). Now that `n` only ever creates placeholders (#114), the agent naming
+    # them is the default that completes deferred naming. Set `auto_rename: false` to
+    # opt out — the placeholder then stays until you rename it yourself with `r`.
     def auto_rename?
-      @data["auto_rename"] == true
+      @data.fetch("auto_rename", true) != false
     end
 
     # Resolved auto_rename for a project: an explicit per-project value wins over the
     # global default (mirrors sounds). Boolean by VALUE, not Ruby truthiness — a
     # per-project `false` overrides a global `true`, and vice-versa; absent inherits
     # the global. Reads the already-parsed @data (a malformed config.yml was rescued
-    # to {} in load_data, so it inherits default-off — no second parse).
+    # to {} in load_data, so it inherits default-on — no second parse).
     def auto_rename_for(project_name)
       node = project_auto_rename_node(project_name)
       return node == true unless node.nil?

@@ -7,6 +7,20 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.37.0] — `auto_rename` is on by default (2026-06-26)
+
+### Changed
+- **Agent self-naming (`auto_rename`) now defaults on.** With #114 making `n` create
+  placeholders the *only* way, something has to name them — so the agent does, by default.
+  When on, each new worktree's Claude hooks plant a `SessionStart` nudge (and a `Stop`
+  backstop) telling the agent to `switchboard rename` once it understands the work, naming
+  the dir and its branch; it self-clears the moment the workspace is named. This is a pure
+  runtime-behavior flip: the nudge commands were already wired into every worktree (they
+  ride the agent-state hooks, which already default on — `Hook.enable` writes them
+  unconditionally), they were just dormant while `auto_rename` resolved false. Set
+  `auto_rename: false` (global or per-project) to opt out — the placeholder then stays
+  until you rename it yourself with `r`. Non-Claude agents are unaffected. (#114 follow-up)
+
 ## [0.36.2] — real-tmux smoke test layer; the sidebar stops wedging on a closed work pane (2026-06-27)
 
 ### Added
