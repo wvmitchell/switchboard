@@ -205,9 +205,13 @@ module Switchboard
     end
 
     # Optional prefix for new branches, e.g. "wvmitchell" -> wvmitchell/<name>.
+    # Switchboard owns the separator (`[prefix, name].join("/")`), so a trailing
+    # slash the user types — "wvmitchell/" — would otherwise build "wvmitchell//<name>",
+    # an INVALID git ref that fails every `worktree add` (create) and `branch -m`
+    # (rename) silently. Strip surrounding slashes so the prefix is just the prefix.
     def branch_prefix
-      prefix = @data["branch_prefix"]
-      prefix.to_s.empty? ? nil : prefix
+      prefix = @data["branch_prefix"].to_s.gsub(%r{\A/+|/+\z}, "")
+      prefix.empty? ? nil : prefix
     end
 
     # Default ref new worktrees branch from. Global, overridable per project.

@@ -145,6 +145,17 @@ module Switchboard
       assert_equal "wvmitchell", cfg("branch_prefix" => "wvmitchell").branch_prefix
     end
 
+    # A user-typed surrounding slash must be stripped — switchboard owns the
+    # separator, so "wvmitchell/" would otherwise build the invalid ref
+    # "wvmitchell//<name>" and silently break every create + rename.
+    def test_branch_prefix_strips_surrounding_slashes
+      assert_equal "wvmitchell", cfg("branch_prefix" => "wvmitchell/").branch_prefix
+      assert_equal "wvmitchell", cfg("branch_prefix" => "wvmitchell//").branch_prefix
+      assert_equal "wvmitchell", cfg("branch_prefix" => "/wvmitchell/").branch_prefix
+      assert_equal "team/wvmitchell", cfg("branch_prefix" => "team/wvmitchell/").branch_prefix
+      assert_nil cfg("branch_prefix" => "/").branch_prefix
+    end
+
     def test_agent_state_hooks_on_by_default_off_only_when_false
       assert cfg({}).agent_state_hooks?
       assert cfg("agent_state_hooks" => true).agent_state_hooks?

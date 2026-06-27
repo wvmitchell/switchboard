@@ -30,6 +30,17 @@ module Switchboard
       assert_equal "wv/thing", Git.current_branch(dest)
     end
 
+    # A trailing slash on the prefix used to build "wv//thing" — an invalid git ref
+    # that failed `worktree add` silently, so create returned nil ("couldn't find a
+    # free placeholder name" on the auto-name path). The prefix is now normalized.
+    def test_create_tolerates_a_trailing_slash_on_branch_prefix
+      File.write(Config.path, YAML.dump("worktree_root" => path("wts"), "branch_prefix" => "wv/",
+                                        "projects" => [{ "name" => "proj", "path" => temp_git_repo("proj", origin: true) }]))
+      dest = Creator.create(Config.new, "proj", "thing")
+      refute_nil dest, "a trailing-slash prefix must not break create"
+      assert_equal "wv/thing", Git.current_branch(dest), "the branch has a single separator, not wv//thing"
+    end
+
     # The headline bug: a traversal name must be neutralized, not honored.
     def test_create_neutralizes_path_traversal
       config = config_for(temp_git_repo("proj", origin: true))

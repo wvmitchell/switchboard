@@ -7,6 +7,19 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.37.1] — a trailing slash on `branch_prefix` no longer breaks every create (2026-06-27)
+
+### Fixed
+- **`branch_prefix` now tolerates a surrounding slash.** Switchboard owns the separator
+  (`[prefix, name].join("/")`), so a user-typed `branch_prefix: "wvmitchell/"` built the
+  branch `wvmitchell//<name>` — an **invalid git ref**. `git worktree add` rejected it
+  (stderr is swallowed), so *every* `n` failed, and the auto-name path reported the
+  misleading "couldn't find a free placeholder name" — pointing at the wrong thing
+  entirely. `r` rename hit the same ref the same way. `Config#branch_prefix` now strips
+  leading/trailing slashes (`"wvmitchell/"` ⇒ `wvmitchell/<name>`), fixing create and
+  rename at one point. A config unit test and a creator integration test (which actually
+  cuts a worktree through a trailing-slash prefix) lock it.
+
 ## [0.37.0] — `auto_rename` is on by default (2026-06-26)
 
 ### Changed
