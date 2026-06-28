@@ -40,6 +40,7 @@ workspace, or branch). The one-line footer shows the row's nav verb and the
 |-----|--------|
 | `↑` / `↓` / `Ctrl-N` / `Ctrl-P` / `j` / `k` | Move the highlight down/up (across projects, workspaces, and a workspace's branch rows). Arrow, emacs, and vi spellings all work. In filter mode `j`/`k` type into the query instead — there movement is arrows / `Ctrl-N` / `Ctrl-P` only. |
 | `g` / `G` | Jump to the top / bottom of the tree. |
+| `←` / `→` | Narrow / widen the sidebar pane (2 cols per press; hold to resize smoothly). The width is shared across every window's sidebar and survives a restart. Inert in filter mode. |
 | `/` | Filter the tree — type to jump straight to a workspace by name. See [Filter mode](#filter-mode) below. |
 | `↵` (Enter) | On a workspace/branch row: switch to its tmux session (creating it if needed). On a project header: collapse/expand it. |
 | `a` | Add a project — register a local repo or clone a URL (a small prompt). |
@@ -129,6 +130,7 @@ These are internal; you never type them. See
 
 ## Related
 
+- [Reference: reading the sidebar](reference-sidebar.md) — what every dot, badge, and mark these keys act on means.
 - [Reference: config](reference-config.md#tmux_keys) — the `tmux_keys` schema.
 - [How-to: keybindings](howto-keybindings.md) — change the toggle key, bind home.
 - [Reference: CLI](reference-cli.md) — `doctor` reports a bad or clobbered binding.

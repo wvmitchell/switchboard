@@ -3,8 +3,8 @@
 The single most useful thing the sidebar shows is a small dot beside each
 workspace telling you whether an agent there is **thinking**, **done**, or
 **waiting** for you. This explains how switchboard knows that, why it uses two
-different mechanisms to find out, and why the same signal drives three separate
-features (the dot, the completion sound, the bold name).
+different mechanisms to find out, and how the same signal fans out — to the dot,
+the completion sound, the bold name, even the PR-badge and diff-count refresh.
 
 For how to turn the exact signal on, see
 [How-to: agent state & sounds](howto-agent-state-and-sounds.md). For the field
@@ -101,23 +101,26 @@ self-heals the next time any worktree is enabled. New worktrees switchboard
 creates get hooks automatically (`Creator.create` → `Hook.enable`, gated on
 `agent_state_hooks?`); existing ones via `switchboard enable-hooks`.
 
-## One edge, three consumers
+## One edge, four consumers
 
 When a worktree's hook state newly enters a resting state (`:done`/`:waiting`),
-that's a *completion edge*. Three features ride the exact same edge
-(`Sidebar.completion_edges`), and the order they run in matters
-(`Sidebar#on_agent_edges`):
+that's a *completion edge*. Four features ride the exact same edge
+(`Sidebar.completion_edges`), in one place (`Sidebar#on_agent_edges`):
 
-1. **PR refresh** runs first — an agent finishing a turn is the best moment to
-   re-fetch its PR badge.
-2. **Completion sound** (`sound.rb`) plays second, fully rescued so a sound fault
-   can never starve the PR trigger.
-3. **Bold-until-viewed** (`attention.rb`) marks the workspace name bold.
+1. **Bold-until-viewed** (`attention.rb`) marks the workspace name bold — on
+   every scan, since which process noticed doesn't matter (see below).
+2. **PR refresh** re-fetches the badge — an agent finishing a turn is the best
+   moment to catch a push.
+3. **Diff-count refresh** repaints the row's `+adds −dels` — a finished turn
+   likely just committed.
+4. **Completion sound + sparkle** (`sound.rb`) play last, fully rescued so a
+   sound fault can never starve the refreshes above, and gated so only the
+   sidebar you're watching rings (a catch-up scan re-baselines silently).
 
 The state cursor (`@prev_hook_states`) advances in an `ensure`, so a fault in any
 consumer can't corrupt the next edge diff.
 
-All three ride the *hook* signal only, not the coarse activity fallback — because
+The completion-edge consumers ride the *hook* signal only, not the coarse activity fallback — because
 the capture-hash flips `:thinking ⇄ :done` every few seconds and would fire on
 noise. So observation-only agents show a dot but make no sound and trigger no
 badge refresh on completion.
@@ -170,6 +173,7 @@ so the spinner reads the same on any background.
 
 ## Related
 
+- [Reference: reading the sidebar](reference-sidebar.md) — the dot glyphs, the sparkle, and the bold name as they render in the row.
 - [How-to: agent state & sounds](howto-agent-state-and-sounds.md) — enable hooks, pick sounds.
 - [Explanation: sidebar lifecycle](explanation-sidebar-lifecycle.md) — why state is multi-process on disk.
 - [Reference: config](reference-config.md#sounds) — the `sounds` and `agent_state_hooks` knobs.

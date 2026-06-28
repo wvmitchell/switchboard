@@ -54,8 +54,10 @@ Pr  ────┘   (project    (ordered      (hand-rolled ANSI TUI in a
 
 - **`Model`** (`model.rb`) assembles the `project → worktree` tree from `Config`
   + `Git` + cached `Pr` data. A `Worktree` knows its branch (live HEAD, from git),
-  its PR badge, whether it's dirty, and whether it's the project's primary
-  checkout.
+  its PR badge, and whether it's the project's primary checkout. (The struct also
+  carries a dirty flag, but the sidebar builds the model `with_dirty: false` — 16
+  per-worktree `git status` calls would be too slow on the synchronous paint, so
+  dirty is left unread.)
 - **`Tree.nodes`** (`tree.rb`) flattens that into an ordered list of `Node`
   structs: a project header, its workspaces, and — for a workspace that has held
   more than one branch — inline branch rows. The branch history comes from the

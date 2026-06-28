@@ -88,10 +88,18 @@ away.
 
 ## Rename a workspace
 
-Highlight a workspace, press `r`, type the new name. Switchboard moves the
-worktree directory (keeping the branch and PR intact) and leaves a temporary
-bridge symlink behind so a *running* agent in that worktree keeps reporting state
-through the move. The bridge is reaped automatically once it's no longer needed.
+Highlight a workspace, press `r`, type the new name (or run `switchboard rename
+<name>` from inside it). Switchboard moves the worktree directory to the new name
+and **renames the branch to match** (`<branch_prefix>/<name>`) — unless the branch
+has been pushed or you switched it yourself, in which case the branch is left
+intact and only the directory moves. It leaves a temporary bridge symlink behind
+so a *running* agent in that worktree keeps reporting state through the move; the
+bridge is reaped automatically once it's no longer needed.
+
+New workspaces start with a throwaway placeholder name (that's all `n` makes), so
+renaming is the normal last step — and with `auto_rename` on (the default) the
+agent does it for you once it understands the work. See
+[`switchboard rename`](reference-cli.md#switchboard-rename-name).
 
 ## Remove a workspace or unregister a project
 

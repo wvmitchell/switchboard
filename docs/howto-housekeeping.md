@@ -53,8 +53,9 @@ switchboard quit
 
 Closes *all* `sb/` sessions — the one you're in last, so nothing is orphaned —
 and clears every agent-state file (so a torn-down agent doesn't read as still
-working). Your config, projects, and view preferences (folded projects) survive;
-`switchboard` brings it all back.
+working). Your config, projects, and durable view preferences (folded projects,
+the full-header toggle, and the pane width) survive; `switchboard` brings it all
+back.
 
 The sidebar's `q` does the same with a confirm prompt.
 

@@ -7,6 +7,36 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.38.1] — fill documentation gaps from recent features (2026-06-27)
+
+### Added
+- **`docs/reference-sidebar.md` ("Reading the sidebar")** — a new reference for the
+  sidebar's visual vocabulary, which had no single home: the agent-state dots and the
+  completion sparkle, the `»` current-workspace pointer, the bold-yellow "needs attention"
+  name, the `+adds −dels` diff counts (committed `base...HEAD`, green/red, `1.5k`
+  abbreviation, fixed columns), the `#pr` badge colours (open/draft/merged/closed), the
+  `▸`/`▾` collapse glyphs, and the wordmark-vs-full header. Linked from the docs index, the
+  tutorial, the keybindings reference, and the agent-presence explanation.
+
+### Fixed
+- **The tutorial described a name prompt that no longer exists.** Step 4 told you to press
+  `n` and "type a name"; since #119 `n` creates a placeholder with no prompt. Rewrote it to
+  the real flow (instant placeholder, rename later with `r` or let `auto_rename` name it).
+- **`explanation-architecture` claimed the sidebar surfaces a worktree's dirty state.** The
+  `Worktree` struct carries a dirty flag, but the sidebar builds the model `with_dirty:
+  false` (16 per-worktree `git status` calls would be too slow on the synchronous paint), so
+  it's never read. Corrected to say so.
+
+### Changed
+- **`reference-keybindings`** now lists `←`/`→` to resize the sidebar pane (#82) — present in
+  the in-app `?` overlay but missing from the reference table.
+- **`explanation-agent-presence`** updated from "three consumers" to **four** on the
+  completion edge (the diff-count refresh rides it alongside the bold mark, PR refresh, and
+  sound/sparkle).
+- **`howto-manage-projects`** rename section now says `rename` syncs the branch name too when
+  it's unsynced-safe (not just the directory); **`howto-housekeeping`** notes `quit` also
+  preserves the full-header toggle and pane width, not only folded projects.
+
 ## [0.38.0] — diff counts and PR badges align into fixed columns (2026-06-27)
 
 ### Changed

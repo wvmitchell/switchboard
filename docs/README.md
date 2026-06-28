@@ -24,6 +24,8 @@ depth behind it.
   `doctor`.
 
 ### 📖 Reference — the precise facts
+- [Reading the sidebar](reference-sidebar.md) — every dot, badge, diff count, and
+  mark the tree draws, and what each one means.
 - [The `switchboard` command](reference-cli.md) — every subcommand, argument, and
   flag.
 - [`config.yml`](reference-config.md) — every field, type, default, and resolution
@@ -41,7 +43,8 @@ depth behind it.
 
 ## By audience
 
-- **New users** → the [tutorial](tutorial-getting-started.md), then the
+- **New users** → the [tutorial](tutorial-getting-started.md), then
+  [reading the sidebar](reference-sidebar.md) and the
   [how-tos](howto-manage-projects.md).
 - **Power users** → the [reference](reference-cli.md) docs and
   [keybindings](howto-keybindings.md).

@@ -80,13 +80,22 @@ header — the canonical trunk is never shown as a switch target.)
 
 ## Step 4: Create a new worktree
 
-Highlight your project header with the arrow keys, then press **`n`**. Type a name for
-the new workspace — say `try-switchboard` — and press Enter.
+Highlight your project header with the arrow keys, then press **`n`**. That's the
+whole gesture — no name prompt. Switchboard creates the worktree immediately and
+drops you in.
 
-Switchboard cuts a new branch from your base ref (`origin/main` by default,
-fetching it first so it's current), creates a git worktree under
-`~/switchboard/worktrees/<project>/try-switchboard`, and **switches you into a
-fresh tmux session** for it. You're now sitting in the new worktree's shell.
+It cuts a new branch from your base ref (`origin/main` by default, fetching it
+first so it's current), creates a git worktree under
+`~/switchboard/worktrees/<project>/<name>`, and **switches you into a fresh tmux
+session** for it. You're now sitting in the new worktree's shell.
+
+The name is a throwaway **placeholder** — a random `adjective-noun` like
+`wandering-finch` — so you can start working before you've decided what the work
+is. Name it once you know: press `r` on its row, or run `switchboard rename
+<name>` from inside it (it renames the branch to match too). With `auto_rename` on
+(the default), the agent you start here even renames it for you once it
+understands the task. See
+[How-to: manage projects](howto-manage-projects.md#rename-a-workspace).
 
 That's the core loop: `n` makes work, `↵` switches between it. (Once you've got a
 pile of workspaces, press `/` and type a few letters of a name to jump straight to
@@ -136,6 +145,7 @@ up. All without leaving the keyboard.
 
 Where to go next:
 
+- [Reference: reading the sidebar](reference-sidebar.md) — every dot, badge, and mark you just saw.
 - [How-to: manage projects](howto-manage-projects.md) — add, clone, rename, remove.
 - [How-to: agent state & sounds](howto-agent-state-and-sounds.md) — tune the dots and sounds.
 - [How-to: keybindings](howto-keybindings.md) — remap `prefix-s`, bind a home key.
