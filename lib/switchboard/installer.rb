@@ -2,6 +2,8 @@
 
 require "fileutils"
 require "shellwords"
+require_relative "marker_block"
+require_relative "codex_hook"
 
 module Switchboard
   # Stands switchboard up from a fresh clone: a `switchboard` symlink on PATH
@@ -101,16 +103,65 @@ module Switchboard
 
     # --- install -------------------------------------------------------------
 
-    def install(no_tmux: false, print_tmux: false, conf: nil)
+    def install(no_tmux: false, print_tmux: false, conf: nil, codex_hooks: nil)
       puts "switchboard install"
       step_symlink
       wire_tmux(no_tmux: no_tmux, print_tmux: print_tmux, conf: conf)
       step_init
+      step_codex_hooks(codex_hooks)
       warn_path
       warn_tmux_version
       key = Config.new.tmux_key("toggle")
       puts "\nDone — run `switchboard` (or `sb`) from any shell to start; press prefix-#{key} to toggle the sidebar inside tmux."
       puts "(If the key doesn't respond yet, reload tmux: `tmux source-file <your conf>`.)"
+    end
+
+    # Codex can't discover project-local hooks in linked worktrees, so its agent-state
+    # hooks ship as ONE block in the user's global `~/.codex/config.toml`. Writing the
+    # user's global config is opt-in: ask (default no on a non-tty / `--no-codex-hooks`).
+    # `consent`: nil ⇒ prompt, true ⇒ yes (`--codex-hooks`), false ⇒ skip.
+    def step_codex_hooks(consent)
+      return unless codex_present?
+
+      # Already opted in → re-ensure the block (idempotent + byte-stable, so codex's
+      # hash-keyed `/hooks` trust survives) so `install` doubles as a repair path: it
+      # refreshes a block left stale by an upgrade or a moved reporter script. No re-prompt
+      # — consent was given when it was first added.
+      return report_codex_install(CodexHook.install_global, reensure: true) if CodexHook.installed?
+      return if consent == false
+
+      ok_to_write = consent || prompt_yes?("Install codex hooks globally for agent status monitoring? Writes a managed block to #{CodexHook.config_path}.")
+      unless ok_to_write
+        note "codex hooks skipped — re-run `install --codex-hooks` to opt in later"
+        return
+      end
+
+      report_codex_install(CodexHook.install_global, reensure: false)
+    end
+
+    def report_codex_install(result, reensure:)
+      case result
+      when :collision then bad "codex hooks: #{CodexHook.config_path} already has its own [hooks] — left untouched"
+      when :corrupt   then bad "codex hooks: post-write sanity failed — restored your config"
+      when nil        then bad "codex hooks: couldn't write #{CodexHook.config_path}"
+      else
+        ok(reensure ? "codex hooks re-ensured (global): #{CodexHook.config_path}" : "codex hooks installed: #{CodexHook.config_path}")
+        note "one-time: run `/hooks` in codex and trust the switchboard hooks (or start codex with --dangerously-bypass-hook-trust)" unless reensure
+      end
+    end
+
+    def codex_present?
+      File.directory?(File.expand_path(ENV["CODEX_HOME"] || "~/.codex")) ||
+        system("command -v codex >/dev/null 2>&1")
+    end
+
+    # Default NO on a non-tty (a scripted/CI install must never silently touch global
+    # config); an explicit `--codex-hooks` flag bypasses this via `consent: true`.
+    def prompt_yes?(question)
+      return false unless $stdin.tty?
+
+      print "#{question} [y/N] "
+      $stdin.gets&.strip&.downcase&.start_with?("y") || false
     end
 
     def step_symlink
@@ -193,8 +244,18 @@ module Switchboard
       puts "switchboard uninstall"
       unlink_symlink
       unwire_tmux(conf)
+      step_codex_unhooks
       teardown_live
       puts "\nDone. Your config (#{Config.path}) and agent state were left untouched."
+    end
+
+    # Remove the global codex [hooks] block (the one place codex delivery is global). The
+    # per-worktree disable-hooks deliberately leaves it; full teardown removes it.
+    def step_codex_unhooks
+      return unless CodexHook.installed?
+
+      CodexHook.remove_global
+      ok "removed global codex hooks from #{CodexHook.config_path}"
     end
 
     def unlink_symlink
@@ -446,50 +507,16 @@ module Switchboard
       false
     end
 
+    # The marked-region file surgery lives in MarkerBlock (shared with CodexHook); here
+    # we only supply the tmux marks + the inner content (the note + the run-shell line).
     def with_block(body)
-      body += "\n" unless body.empty? || body.end_with?("\n")
-      "#{body}#{BEGIN_MARK}\n#{NOTE_MARK}\n#{marker_line}\n#{END_MARK}\n"
+      MarkerBlock.build(body, BEGIN_MARK, END_MARK, "#{NOTE_MARK}\n#{marker_line}")
     end
 
-    def strip_block(body)
-      body.gsub(/^#{Regexp.escape(BEGIN_MARK)}\n.*?^#{Regexp.escape(END_MARK)}\n?/m, "")
-    end
-
-    # First-write-only backup: never overwrite a known-good .bak on a re-run.
-    def backup(conf)
-      bak = "#{conf}.bak"
-      FileUtils.cp(conf, bak) unless File.exist?(bak)
-    end
-
-    # Write via temp-file + rename so the user's tmux.conf update is atomic: a
-    # crash or ENOSPC mid-write leaves the old file intact, never a truncated
-    # one (and never a half-written marker block). Rename is atomic within a dir.
-    #
-    # Symlink-aware: when `path` is a symlink (a tmux.conf stowed into a dotfiles
-    # repo, say), write THROUGH it to the file it points at, so the link itself
-    # survives. Renaming onto the symlink would replace it with a detached
-    # regular-file copy — silently decoupling ~/.tmux.conf from the repo it links
-    # into, so a later `git pull` in the dotfiles never reaches the live config.
-    # The temp lands beside the resolved target, keeping the rename within one dir.
-    def atomic_write(path, content)
-      dest = real_target(path)
-      tmp = "#{dest}.#{Process.pid}.sb-tmp"
-      File.write(tmp, content)
-      File.rename(tmp, dest)
-    end
-
-    # Follow a symlink chain to the real file it ultimately points at, so writes
-    # go through the link rather than clobbering it. A non-symlink path is
-    # returned unchanged; a dangling link still resolves to its intended target
-    # (the write can create it). Cycle-guarded against a pathological link loop.
-    def real_target(path)
-      seen = {}
-      while File.symlink?(path) && !seen[path]
-        seen[path] = true
-        path = File.absolute_path(File.readlink(path), File.dirname(path))
-      end
-      path
-    end
+    def strip_block(body)      = MarkerBlock.strip(body, BEGIN_MARK, END_MARK)
+    def backup(conf)           = MarkerBlock.backup(conf)
+    def atomic_write(p, c)     = MarkerBlock.atomic_write(p, c)
+    def real_target(path)      = MarkerBlock.real_target(path)
 
     def reload(conf)
       system("tmux", "source-file", conf, out: File::NULL, err: File::NULL) if ENV["TMUX"]

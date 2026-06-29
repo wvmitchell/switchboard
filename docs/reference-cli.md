@@ -25,28 +25,37 @@ Attach the persistent home session explicitly. Home maps to no worktree (it live
 in `$HOME`), carries its own sidebar, and is the stable launch + settings base.
 Landing here also prunes orphaned `sb/` sessions unless `prune_on_launch: false`.
 
-### `switchboard install [--no-tmux] [--print-tmux] [--tmux-conf PATH]`
-Stand switchboard up from a fresh clone. Idempotent. Three steps:
+### `switchboard install [--no-tmux] [--print-tmux] [--tmux-conf PATH] [--codex-hooks] [--no-codex-hooks]`
+Stand switchboard up from a fresh clone. Idempotent. Four steps:
 
 1. Symlink `switchboard` (and the `sb` alias) into `~/.local/bin` (or
    `$SWITCHBOARD_BIN_DIR`).
 2. Add one marker-delimited line to the tmux.conf tmux actually loads, sourcing
    the self-locating `switchboard.tmux` fragment (binds the keys + sets the hooks).
 3. Scaffold an annotated starter config if none exists.
+4. Offer to install the global **Codex** agent-state hooks — a marker-delimited
+   `[hooks]` block in `~/.codex/config.toml` (codex can't discover project-local
+   hooks in linked worktrees, so its hooks are global, not per-worktree). Prompts
+   for consent; default no on a non-tty. After installing, run `/hooks` in codex
+   once to trust them (or start codex with `--dangerously-bypass-hook-trust`).
 
 | Flag | Effect |
 |------|--------|
 | `--no-tmux` | Skip the tmux.conf edit (symlink + config only). |
 | `--print-tmux` | Print the tmux line instead of writing it. |
 | `--tmux-conf PATH` | Target a specific tmux.conf instead of the auto-detected one. |
+| `--codex-hooks` | Install the global codex hooks block without prompting. |
+| `--no-codex-hooks` | Skip the codex hooks block (no prompt). |
 
-Backs up the target tmux.conf to `.bak` before its first edit. See
-[How-to: keybindings](howto-keybindings.md) for the wiring it installs.
+Backs up the target tmux.conf (and `~/.codex/config.toml`) to `.bak` before its
+first edit. See [How-to: keybindings](howto-keybindings.md) for the wiring it
+installs.
 
 ### `switchboard uninstall [--tmux-conf PATH]`
 Reverse `install`: remove both symlinks, the tmux marker block, the bound keys,
-the three hook slots, and the `@switchboard-*` tmux options (also live-unbinds in
-a running server). Your config and agent state are left untouched.
+the three hook slots, the `@switchboard-*` tmux options (also live-unbinds in
+a running server), and the global codex `[hooks]` block from `~/.codex/config.toml`
+if present. Your config and agent state are left untouched.
 
 ### `switchboard init`
 Create an empty (annotated) config if none exists. No-op with a message if one
@@ -84,18 +93,21 @@ local signal). `--poke PANE` is used internally by the sidebar to redraw a
 specific pane.
 
 ### `switchboard enable-hooks [path]`
-Wire exact agent-state hooks into a single worktree, for every supported agent —
-Claude (`<worktree>/.claude/settings.local.json`) and Codex
-(`<worktree>/.codex/hooks.json`) — scoped to that worktree, never your global
-`~/.claude` / `~/.codex`. Each file is dormant until that agent runs there, so a
-Claude-only worktree just carries an unused Codex file. Defaults to the worktree
-you're standing in; pass a path to target another. Restart `claude` or `codex`
-there to pick them up — Codex loads project hooks only once the project layer is
-**trusted** (`/hooks`). New switchboard-created worktrees get this automatically.
+Wire exact agent-state hooks for the **Claude** worktree adapter
+(`<worktree>/.claude/settings.local.json`) — scoped to that worktree, never your
+global `~/.claude`. Defaults to the worktree you're standing in; pass a path to
+target another. Restart `claude` there to pick them up. New switchboard-created
+worktrees get this automatically.
+
+Codex is **not** wired here: it can't discover project-local hooks in a linked
+worktree, so its hooks ship as one global block in `~/.codex/config.toml`,
+installed once via `switchboard install --codex-hooks` (or the install prompt).
+`enable-hooks` re-ensures that global block if it's already present.
 
 ### `switchboard disable-hooks [path]`
-Remove switchboard's hooks from a worktree (both adapters), leaving any other
-settings intact. Defaults to the current worktree.
+Remove switchboard's Claude hooks from a worktree, leaving any other settings
+intact. Defaults to the current worktree. (The global codex block is deliberately
+left — it's not per-worktree; `switchboard uninstall` removes it.)
 
 ### `switchboard rename <name>`
 Rename the workspace you're standing in: moves the worktree directory to `<name>`

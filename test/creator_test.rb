@@ -135,9 +135,9 @@ module Switchboard
                                         "agent_state_hooks" => false, "auto_rename" => true,
                                         "projects" => [{ "name" => "proj", "path" => temp_git_repo("proj", origin: true) }]))
       dest = Creator.create(Config.new, "proj", "thing")
-      # create wires EVERY adapter (AgentHooks), not just Claude — assert both.
       assert ClaudeHook.enabled?(dest), "claude hook wired because auto_rename is on"
-      assert CodexHook.enabled?(dest), "codex hook wired because auto_rename is on"
+      # Codex is GLOBAL now (Installer-managed) — create never writes a per-worktree file.
+      refute File.exist?(File.join(dest, ".codex", "hooks.json")), "no per-worktree codex file on create"
     end
 
     # A PER-PROJECT auto_rename:true (global off, dots off) must still wire the hook —
@@ -150,7 +150,7 @@ module Switchboard
                                                          "path" => temp_git_repo("proj", origin: true) }]))
       dest = Creator.create(Config.new, "proj", "thing")
       assert ClaudeHook.enabled?(dest), "per-project auto_rename:true wires the claude hook even with global off"
-      assert CodexHook.enabled?(dest), "per-project auto_rename:true wires the codex hook too"
+      refute File.exist?(File.join(dest, ".codex", "hooks.json")), "no per-worktree codex file on create"
     end
 
     # The inverse override: global auto_rename:true but this project opts OUT — no hook
@@ -162,7 +162,7 @@ module Switchboard
                                                          "path" => temp_git_repo("proj", origin: true) }]))
       dest = Creator.create(Config.new, "proj", "thing")
       refute ClaudeHook.enabled?(dest), "per-project auto_rename:false skips the claude hook despite global on"
-      refute CodexHook.enabled?(dest), "per-project auto_rename:false skips the codex hook too"
+      refute File.exist?(File.join(dest, ".codex", "hooks.json")), "no per-worktree codex file"
     end
 
     def test_create_skips_hooks_when_dots_and_auto_rename_both_off
@@ -171,7 +171,7 @@ module Switchboard
                                         "projects" => [{ "name" => "proj", "path" => temp_git_repo("proj", origin: true) }]))
       dest = Creator.create(Config.new, "proj", "thing")
       refute ClaudeHook.enabled?(dest), "no claude hook when both dots and auto_rename are off"
-      refute CodexHook.enabled?(dest), "no codex hook when both dots and auto_rename are off"
+      refute File.exist?(File.join(dest, ".codex", "hooks.json")), "no per-worktree codex file"
     end
 
     # The branch created off origin/main must NOT inherit it as an upstream

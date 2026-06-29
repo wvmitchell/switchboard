@@ -90,6 +90,27 @@ module Switchboard
       assert File.exist?(file), "a mid-write read is skipped this cycle, never deleted"
     end
 
+    # Age GC (the global codex hook writes a file per dir codex runs in): a file whose dir
+    # STILL exists but is older than STALE_GC is reaped, so non-switchboard dirs don't pile
+    # up forever on the dir-exists GC alone.
+    def test_a_stale_file_whose_dir_still_exists_is_reaped
+      wt = worktree
+      write_hook("done", wt, name: "old", epoch: Time.now.to_i - (AgentState::STALE_GC + 60))
+      file = File.join(dir, "old")
+      no_processes { AgentState.new.scan([wt]) }
+      refute File.exist?(file), "a dir-exists file past STALE_GC is deleted"
+    end
+
+    # The carve-out: `age >` (not `.abs`) means a FUTURE-epoch / backward-clock file is not
+    # reaped as stale — else a clock step would wrongly delete a just-written report.
+    def test_a_future_epoch_file_is_not_reaped_as_stale
+      wt = worktree
+      write_hook("thinking", wt, name: "future", epoch: Time.now.to_i + 100_000)
+      file = File.join(dir, "future")
+      no_processes { AgentState.new.scan([wt]) }
+      assert File.exist?(file), "a future-epoch file is not treated as stale"
+    end
+
     def test_process_fallback_reports_done_when_no_hook
       wt = worktree
       stub_method(Agents, :active, ->(_paths) { Set[wt] }) do

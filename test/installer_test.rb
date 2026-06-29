@@ -516,6 +516,86 @@ module Switchboard
       assert_nil Installer.parse_version(nil)
     end
 
+    # --- codex hooks (the consented global block; CODEX_HOME sandboxed) -------
+    # codex_present? is stubbed so the suite is deterministic on a machine without codex.
+
+    def codex_home!
+      ENV["CODEX_HOME"] = path("codexhome")
+      FileUtils.mkdir_p(ENV["CODEX_HOME"])
+    end
+
+    def with_codex(&blk) = stub_method(Installer, :codex_present?, -> { true }, &blk)
+
+    def test_step_codex_hooks_skips_when_codex_absent
+      codex_home!
+      stub_method(Installer, :codex_present?, -> { false }) do
+        silently { Installer.step_codex_hooks(true) } # even explicit yes is a no-op
+      end
+      refute CodexHook.installed?, "no codex on the box ⇒ nothing written"
+    end
+
+    def test_step_codex_hooks_writes_with_explicit_consent
+      codex_home!
+      with_codex { silently { Installer.step_codex_hooks(true) } }
+      assert CodexHook.installed?, "--codex-hooks writes the global block"
+    end
+
+    def test_step_codex_hooks_skips_on_explicit_decline
+      codex_home!
+      with_codex { silently { Installer.step_codex_hooks(false) } }
+      refute CodexHook.installed?, "--no-codex-hooks never writes"
+    end
+
+    # The CI-safety guarantee: consent nil + non-tty ⇒ default NO (prints "skipped"),
+    # never silently writes global config.
+    def test_step_codex_hooks_defaults_no_on_non_tty
+      codex_home!
+      out = with_codex do
+        stub_method(Installer, :prompt_yes?, ->(_q) { false }) do
+          silently { Installer.step_codex_hooks(nil) }
+        end
+      end
+      refute CodexHook.installed?, "a non-tty prompt defaults to no"
+      assert_match(/skipped/, out)
+    end
+
+    # install doubles as a repair path: an already-installed block is re-ensured (no
+    # re-prompt), so a stale block / missing reporter self-heals.
+    def test_step_codex_hooks_reensures_an_installed_block
+      codex_home!
+      CodexHook.install_global
+      reensured = false
+      with_codex do
+        stub_method(CodexHook, :install_global, lambda {
+          reensured = true
+          CodexHook.config_path
+        }) do
+          out = silently { Installer.step_codex_hooks(nil) } # nil consent, but installed ⇒ re-ensure
+          assert_match(/re-ensured/, out)
+        end
+      end
+      assert reensured, "install re-ensures an already-installed block"
+    end
+
+    def test_prompt_yes_defaults_false_without_a_tty
+      # The test runner's stdin isn't a tty, which is exactly the scripted/CI case.
+      refute Installer.prompt_yes?("write global config?")
+    end
+
+    # uninstall strips the global codex block (the one place codex delivery is global),
+    # while leaving any foreign config content intact.
+    def test_uninstall_removes_the_global_codex_block
+      codex_home!
+      File.write(CodexHook.config_path, %(model = "gpt-5.5"\n))
+      with_codex { CodexHook.install_global }
+      assert CodexHook.installed?
+      conf = path("tmux.conf")
+      File.write(conf, "# mine\n")
+      silently { Installer.uninstall(conf: conf) }
+      refute CodexHook.installed?, "uninstall removed the codex block"
+      assert_includes File.read(CodexHook.config_path), %(model = "gpt-5.5"), "foreign config kept"
+    end
+
     private
 
     # Swallow the install/uninstall progress output and return it as a string.

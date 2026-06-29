@@ -5,15 +5,20 @@ require "fileutils"
 require "shellwords"
 
 module Switchboard
-  # The shared engine behind every per-agent hook adapter (`ClaudeHook` for Claude,
-  # `CodexHook` for Codex). Claude and Codex happen to read the SAME hook-config
-  # shape — `{"hooks": {<Event>: [{"matcher"?, "hooks": [{"type":"command","command"}]}]}}`
-  # — into different files (`.claude/settings.local.json` vs `.codex/hooks.json`),
-  # so the merge-safe enable/disable/strip, the materialized sh reporter, and the
-  # #92 rename-nudge/Stop wiring all live here ONCE. An adapter supplies only its
-  # delivery file (a worktree-relative path) and its event→state map; everything
-  # else is identical. (Same delegation shape as `KeyedMarkerStore`: callers pass
-  # their domain, the base owns the machinery.)
+  # The shared engine behind the hook adapters. What BOTH agents share lives here ONCE:
+  # the command STRINGS (`command_entries` — the state reporter per event, the #92
+  # SessionStart nudge, the unified Stop), the materialized sh reporter (`SCRIPT`), and the
+  # nudge/Stop logic. Drift between two agents' Stop logic would be a silent bug, so it has
+  # one home.
+  #
+  # The PER-WORKTREE machinery below — `enable`/`disable`/`enabled?`, the merge-safe JSON
+  # strip, the `info/exclude` wiring — serves ONLY `ClaudeHook` (Claude's
+  # `.claude/settings.local.json`, the JSON shape
+  # `{"hooks": {<Event>: [{"matcher"?, "hooks": [{"type":"command","command"}]}]}}`).
+  # `CodexHook` does NOT use it: codex can't discover project-local hooks in a linked
+  # worktree, so it serializes `command_entries` to TOML and writes ONE global
+  # `~/.codex/config.toml` block itself (see `CodexHook`). So the shared seam is
+  # `command_entries`, not the file machinery.
   #
   # State flows out as files under the state dir (see AgentState); the sidebar
   # reads those. The reporter script is embedded here so distribution carries no
@@ -96,6 +101,39 @@ module Switchboard
       File.join(worktree, settings_rel)
     end
 
+    # The ordered hook commands switchboard wires for an agent: a state reporter per
+    # `events` entry, the #92 SessionStart nudge, and the unified Stop. Returned as
+    # `{event:, matcher:, command:}` so each delivery serializes it its own way —
+    # HookFile to per-worktree JSON (Claude), CodexHook to the global `~/.codex/config.toml`
+    # block (Codex). The command STRINGS are identical across agents, so they live here
+    # ONCE (drift between two agents' Stop logic would be a silent bug), and stay
+    # byte-stable so Codex's hash-keyed `/hooks` trust survives a re-ensure.
+    #
+    # `guard` is an optional sh test prepended to every command as `<guard>; <cmd>`.
+    # Codex passes the nested-agent guard (so a `/codex` under Claude doesn't report);
+    # Claude passes nothing — it legitimately runs with CLAUDECODE set (it IS Claude).
+    def command_entries(events, script, bin, guard: "")
+      esc = Shellwords.escape(script)  # XDG data path can contain a space
+      binesc = Shellwords.escape(bin)  # bin path can contain a space
+      pre = guard.empty? ? "" : "#{guard}; "
+      entries = events.map do |event, state, matcher|
+        { event: event, matcher: matcher, command: "#{pre}#{esc} #{state}" }
+      end
+      # SessionStart nudge: a soft additionalContext plant beside the reporter. `command -v`
+      # guards a baked bin path that can go stale (repo move / reinstall) → clean no-op.
+      entries << { event: "SessionStart", matcher: nil,
+                   command: "#{pre}command -v #{binesc} >/dev/null 2>&1 && #{binesc} rename-nudge || true" }
+      # Stop: ONE command owns the event. `rename-nudge --stop` reports the state itself
+      # (`done`, or `thinking` when it blocks); a stale binary falls back to the sh reporter
+      # so `done` still lands. `if/then/else` (not `&& ||`) so a Ruby non-zero can't also
+      # fire the fallback. Agents run Stop hooks in PARALLEL, so a sibling sh reporter could
+      # race the blocking nudge → false completion; hence one command, no sibling.
+      entries << { event: "Stop", matcher: nil,
+                   command: "#{pre}if command -v #{binesc} >/dev/null 2>&1; then #{binesc} rename-nudge --stop; " \
+                            "else #{esc} done; fi" }
+      entries
+    end
+
     # Add our hooks to a worktree's local agent settings (merge-safe — leaves any
     # settings already there untouched) and keep the file out of git status.
     # `events` is the adapter's [event, state, matcher] map; `settings_rel` its file.
@@ -105,45 +143,16 @@ module Switchboard
       data = load_settings(path)
       hooks = (data["hooks"] ||= {})
 
-      # Idempotent RESET first: clear every switchboard-owned entry across ALL events
-      # (not just the ones this adapter re-adds), so a re-enable never duplicates a
-      # reporter, nudge, or Stop — independent of which events the adapter declares.
-      # (Appending below without this would double the SessionStart nudge / Stop for an
-      # adapter whose EVENTS omit those events.)
+      # Idempotent RESET first: clear every switchboard-owned entry across ALL events so a
+      # re-enable never duplicates a reporter/nudge/Stop, independent of which events this
+      # adapter declares (appending without this would double SessionStart/Stop).
       hooks.each_key { |event| hooks[event] = strip_ours(hooks[event]) }
 
-      # Escape the reporter path (it lives under XDG data home, which can contain a
-      # space) — symmetric with the binary/Stop-fallback escaping below; an
-      # unescaped path would split and the dot would silently never update.
-      escaped_script = Shellwords.escape(script)
-      events.each do |event, state, matcher|
-        entry = { "hooks" => [{ "type" => "command", "command" => "#{escaped_script} #{state}" }] }
-        entry["matcher"] = matcher if matcher
-        (hooks[event] ||= []) << entry
+      command_entries(events, script, ENV["SWITCHBOARD_BIN"] || "switchboard").each do |e|
+        group = { "hooks" => [{ "type" => "command", "command" => e[:command] }] }
+        group["matcher"] = e[:matcher] if e[:matcher]
+        (hooks[e[:event]] ||= []) << group
       end
-
-      # The #92 self-naming nudge. Both forms re-invoke switchboard (so they carry
-      # NUDGE_MARK, recognized by ours? for idempotent merge / clean disable). Escape the
-      # binary path (it can contain spaces). `command -v`-guard a baked bin path that can
-      # go stale (a repo move/reinstall) so it's a clean no-op, never "command not found".
-      bin = Shellwords.escape(ENV["SWITCHBOARD_BIN"] || "switchboard")
-
-      # SessionStart: a soft `additionalContext` plant, ALONGSIDE the sh reporter wired by
-      # the events loop above (they don't conflict — one prints, the other writes state).
-      (hooks["SessionStart"] ||= []) << { "hooks" => [{ "type" => "command",
-                                                        "command" => "command -v #{bin} >/dev/null 2>&1 && #{bin} rename-nudge || true" }] }
-
-      # Stop: ONE command owns the event (the sh reporter is off `events`, see the adapter) —
-      # `rename-nudge --stop` reports the state itself (`done`, or `thinking` when it
-      # blocks) so a forced continuation never reads as a finished turn. If the binary is
-      # stale, fall back to the direct sh reporter so `done` is still recorded (the script
-      # path doesn't depend on PATH). `if/then/else` not `&& ||` so a non-zero from the
-      # Ruby side can't also trigger the fallback (double-write). Agents run Stop hooks in
-      # PARALLEL with no ordering, so a sibling sh `done` reporter could race a blocking
-      # nudge and ring a false completion — hence one command, no sibling.
-      stop_cmd = "if command -v #{bin} >/dev/null 2>&1; then #{bin} rename-nudge --stop; " \
-                 "else #{escaped_script} done; fi"
-      (hooks["Stop"] ||= []) << { "hooks" => [{ "type" => "command", "command" => stop_cmd }] }
 
       # Drop any event left empty by the reset (had only switchboard entries, not re-added).
       hooks.reject! { |_event, groups| groups.empty? }

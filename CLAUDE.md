@@ -53,7 +53,10 @@ and scaffolds a config (an **annotated template** — `Config::SCAFFOLD_TEMPLATE
 whose only uncommented keys are `worktree_root` + `projects`, so it parses to
 `default_data` while showing every optional knob commented out; comments are
 stripped on the first `add_project` YAML.dump rewrite, after the new user has read
-them). The fragment runs `switchboard tmux-bind` (which
+them). Finally it offers to install the **global codex hooks** block — opt-in,
+prompted (`--codex-hooks` / `--no-codex-hooks` skip the prompt; default no on a
+non-tty), since it writes the user's personal `~/.codex/config.toml` (see the
+agent-state-dots section). The fragment runs `switchboard tmux-bind` (which
 binds the configured keys — see keybindings below) and sets three indexed hooks:
 `client-session-changed[99]` (poke the now-visible sidebar to reload on a session
 switch), `after-new-window[99]` (give a new window its own sidebar when the session
@@ -61,7 +64,8 @@ is showing one — see per-session visibility below), and `session-window-change
 (poke the sidebar on a same-session *window* switch, which isn't a session change —
 `poke-window`, gated to `sb/` sessions so the global hook no-ops elsewhere). All
 steps are idempotent and reversed by `uninstall` (which clears all three hook slots
-— `Installer::HOOK_SLOTS` — plus the bound keys and `@switchboard-*` options). `doctor` reports whether
+— `Installer::HOOK_SLOTS` — plus the bound keys, the `@switchboard-*` options, and the
+global codex `[hooks]` block). `doctor` reports whether
 those hooks are **live** in the running server, not just present in config (they
 go stale after a `git pull` until tmux reloads). `doctor` also flags **orphaned
 sidebar processes** — a `switchboard sidebar` that outlived its pane — by diffing
@@ -96,7 +100,8 @@ that skips rbenv.
 Useful env overrides when running locally without disturbing real state:
 `SWITCHBOARD_CONFIG` (config path), `SWITCHBOARD_STATE_DIR` (agent-state files),
 `SWITCHBOARD_ATTENTION_DIR` (bold "needs attention" markers),
-`XDG_DATA_HOME`/`XDG_STATE_HOME` (reporter script + state dirs).
+`XDG_DATA_HOME`/`XDG_STATE_HOME` (reporter script + state dirs), `CODEX_HOME` (the
+global codex `config.toml` the codex hooks block is written into — sandboxed in tests).
 
 ## Architecture
 
@@ -211,30 +216,65 @@ presence signals** per worktree:
    by hashing `tmux capture-pane` between scans. This can't distinguish
    "waiting" from "done".
 
-Hooks are wired **per worktree, never globally**, through a **per-agent adapter**
-registry `AgentHooks` (`agent_hooks.rb`): `ClaudeHook` (`claude_hook.rb`) for Claude
-(`<worktree>/.claude/settings.local.json`) and `CodexHook` (`codex_hook.rb`) for
-Codex (`<worktree>/.codex/hooks.json`). Both agents read the SAME hook-JSON shape,
-so the merge-safe enable/disable, the reporter, and the rename-nudge/Stop wiring
-live once in the shared engine `HookFile` (`hook_file.rb`); an adapter declares only
-its delivery file (`SETTINGS_REL`) + its `EVENTS` map. `enable` merges into the
-agent's local file (adding it to the worktree's git excludes so it never dirties
-`git status`); the reporter script is materialized once into the XDG **data** dir —
-shared by every adapter, the state-file format is agent-neutral, install-independent
-so it survives `brew upgrade`. Codex's map differs where the agents differ: no
-`Notification` event, so its `waiting` rides `PermissionRequest` (best-effort —
-suppressed only by a session command that bypasses *all* approval gates), and Codex
-loads project hooks only once the project layer is **trusted** (`doctor` flags that
-per adapter; a present file isn't proof the dot moves). `AgentHooks.enable` fans out
-to **every** adapter, so a new worktree carries both files (each dormant until that
-agent runs there). New worktrees get this automatically (`Creator.create` →
-`AgentHooks.enable`, gated on `agent_state_hooks?` **or** `auto_rename_for(project)` —
-resolved per project, so a project that opts into `auto_rename` with the global off
+Hooks reach each agent through a **per-agent adapter** registry `AgentHooks`
+(`agent_hooks.rb`): `ClaudeHook` (`claude_hook.rb`) and `CodexHook` (`codex_hook.rb`).
+Both agents read the SAME hook-config shape, so the command STRINGS, the reporter, and
+the rename-nudge/Stop wiring live once in the shared engine `HookFile` (`hook_file.rb`,
+`command_entries`). What **differs is the delivery target**, and the two agents land on
+opposite sides of it — the subtle, hard-won part:
+
+- **Claude is per-worktree.** `ClaudeHook` merges into
+  `<worktree>/.claude/settings.local.json` (declaring its `SETTINGS_REL` + `EVENTS`),
+  on top of your settings, adding the file to the worktree's git excludes so it never
+  dirties `git status`; global `~/.claude` is untouched. This is the only entry in
+  `AgentHooks::ADAPTERS`, so `enable`/`disable` and `Creator.create` fan out over it.
+- **Codex is global.** Codex 0.142.x does NOT discover project-local
+  `<worktree>/.codex/hooks.json` in a *linked* git worktree (its project-hook discovery
+  doesn't follow the `.git`-file → common-dir indirection), and switchboard is nothing
+  but linked worktrees — so the per-worktree file was **dead on arrival** (v0.39.0's
+  codex feature never fired in practice). A CONFIG-level hook isn't project-discovered,
+  so it fires everywhere. So `CodexHook` writes ONE marker-delimited `[hooks]` block into
+  `~/.codex/config.toml` (`CODEX_HOME`-aware) via the shared `MarkerBlock`
+  (`marker_block.rb`, extracted from the tmux.conf surgery — atomic temp+rename,
+  symlink-aware, first-write `.bak`, the same `# >>> … >>>` markers). The block is
+  emitted as TOML **basic** strings (double-quote, escape `\`/`"`; literal single-quote
+  strings would break on an apostrophe path). It covers every worktree at once, so
+  there's nothing per-worktree to wire; `AgentState` only renders tracked worktrees, so
+  the block firing for non-switchboard codex sessions is inert (an **age-based GC**,
+  `AgentState::STALE_GC`, reaps the resulting stray state files the dir-exists GC alone
+  would keep forever).
+
+Because the codex block lives in the user's personal global config, `Installer`
+writes it **only with consent** (`step_codex_hooks`): `install` prompts (default NO on a
+non-tty, so a scripted install never silently touches it), `--codex-hooks` /
+`--no-codex-hooks` decide up front. `uninstall` strips the block; the per-worktree
+`disable-hooks` deliberately leaves it. `AgentHooks.enabled?` / `enabled_adapters` fold
+in `CodexHook.installed?` so the global block counts as "on" for every worktree, and
+`doctor` reports Claude per-worktree + the global codex block + the trust note.
+
+Two consequences of codex being global:
+- **Trust.** Codex runs no hook until `/hooks`-approved (or `--dangerously-bypass-hook-trust`).
+  The approval is keyed by the command HASH in codex's state sqlite — NOT the block — so
+  a re-`install_global` preserves trust AS LONG AS the commands stay byte-stable
+  (deterministic paths + fixed event order; why `command_entries` is centralized). A
+  present block isn't proof the dot moves; `doctor` flags the caveat.
+- **Nesting (#130).** A global hook fires for EVERY codex, including a nested `codex exec`
+  (a `/codex` under Claude). A `GUARD` (`[ -n "$CLAUDECODE" ] || [ -n
+  "$CLAUDE_CODE_SESSION_ID" ] && exit 0`, equal-precedence left-assoc sh) prefixes every
+  command and suppresses the reporter when a Claude-Code parent is detected; a top-level
+  codex switchboard launches into a plain tmux shell carries neither marker, so it fires.
+
+Codex's `EVENTS` map also differs where the agents differ: no `Notification` event, so
+its `waiting` rides `PermissionRequest` (best-effort — suppressed by a session command
+that bypasses *all* approval gates). New worktrees get the Claude hook automatically
+(`Creator.create` → `AgentHooks.enable`, gated on `agent_state_hooks?` **or**
+`auto_rename_for(project)` — so a project opting into `auto_rename` with the global off
 still gets the hook the runtime nudge needs); existing ones via `switchboard
-enable-hooks`. The runtime contract (project-local files fire once trusted, the
-`PreToolUse`→`PostToolUse` ordering, `stop_hook_active` flips `true` after a block so
-the nudge blocks once not forever) is verified against real Codex by the opt-in
-`test/smoke/codex_hook_smoke_test.rb` (`SWITCHBOARD_CODEX_SMOKE=1`).
+enable-hooks`. Codex needs no per-worktree step. The runtime contract — the global block
+fires in a LINKED worktree (the bug-fix crux), the `PreToolUse`→`PostToolUse` ordering,
+the nesting guard's direction — is verified against real Codex by the opt-in
+`test/smoke/codex_hook_smoke_test.rb` (`SWITCHBOARD_CODEX_SMOKE=1`); the guard's sh
+precedence is pinned offline by `codex_hook_test`'s runtime guard test.
 
 ### Agent self-naming nudge (issue #92)
 
@@ -588,9 +628,9 @@ never crash).
 ### Conventions
 
 - Every file starts with `# frozen_string_literal: true`.
-- Stateless helpers are `module_function` modules (`ClaudeHook`, `Tmux`, `Installer`,
-  …); only `Model`, `Config`, `Sidebar`, and `AgentState` are classes (they hold
-  state).
+- Stateless helpers are `module_function` modules (`ClaudeHook`, `CodexHook`,
+  `MarkerBlock`, `Tmux`, `Installer`, …); only `Model`, `Config`, `Sidebar`, and
+  `AgentState` are classes (they hold state).
 - All shell-outs escape args with `Shellwords` and swallow stderr; failures
   degrade gracefully (return `[]`/`{}`/`nil`) rather than crash the UI.
 - Code is meant to be self-documenting; the existing comments explain *why* a

@@ -3,10 +3,17 @@
 require_relative "test_helper"
 
 module Switchboard
-  # AgentHooks is the per-agent adapter registry: enable/disable/probe fan out over
-  # ADAPTERS so the create / enable-hooks / disable-hooks / doctor call sites stay
-  # agent-agnostic. The consumer side (AgentState) is already agent-blind.
+  # AgentHooks wires the PER-WORKTREE adapters (just Claude) and surfaces the GLOBAL
+  # codex block's status. Codex isn't wired per worktree — it can't discover project
+  # hooks in linked worktrees, so it lives in one consented ~/.codex/config.toml block
+  # (Installer-managed). CODEX_HOME is sandboxed so the real ~/.codex is untouched.
   class AgentHooksTest < SandboxTest
+    def setup
+      super
+      ENV["CODEX_HOME"] = path("codexhome")
+      FileUtils.mkdir_p(ENV["CODEX_HOME"])
+    end
+
     def worktree
       @worktree ||= begin
         wt = path("wt")
@@ -15,48 +22,50 @@ module Switchboard
       end
     end
 
-    def test_registers_claude_and_codex_adapters
-      assert_equal [ClaudeHook, CodexHook], AgentHooks::ADAPTERS
+    def test_per_worktree_adapters_are_claude_only
+      assert_equal [ClaudeHook], AgentHooks::ADAPTERS
     end
 
-    def test_enable_wires_every_adapter
+    def test_enable_wires_claude_per_worktree
       AgentHooks.enable(worktree)
-      assert ClaudeHook.enabled?(worktree), "claude adapter wired"
-      assert CodexHook.enabled?(worktree), "codex adapter wired"
+      assert ClaudeHook.enabled?(worktree), "claude wired per worktree"
     end
 
-    def test_disable_clears_every_adapter
+    def test_disable_clears_claude_per_worktree
       AgentHooks.enable(worktree)
       AgentHooks.disable(worktree)
       refute ClaudeHook.enabled?(worktree)
-      refute CodexHook.enabled?(worktree)
+    end
+
+    def test_enabled_is_true_when_claude_is_on
+      ClaudeHook.enable(worktree)
+      assert AgentHooks.enabled?(worktree)
+    end
+
+    # The global codex block counts as enabled for EVERY worktree (it covers them all).
+    def test_enabled_counts_the_global_codex_block
       refute AgentHooks.enabled?(worktree)
+      CodexHook.install_global
+      assert AgentHooks.enabled?(worktree), "global codex block ⇒ enabled? everywhere"
     end
 
-    def test_enabled_is_true_when_any_adapter_is_on
-      ClaudeHook.enable(worktree) # claude only
-      assert AgentHooks.enabled?(worktree), "any adapter on ⇒ enabled?"
-    end
-
-    # enabled_adapters returns only the live subset (this feeds doctor's per-adapter line).
-    def test_enabled_adapters_returns_the_live_subset
-      assert_empty AgentHooks.enabled_adapters(worktree), "none wired yet"
-      CodexHook.enable(worktree) # codex only
-      assert_equal [CodexHook], AgentHooks.enabled_adapters(worktree)
+    # Feeds doctor: per-worktree claude + global codex.
+    def test_enabled_adapters_includes_claude_per_worktree_and_codex_global
+      assert_empty AgentHooks.enabled_adapters(worktree), "nothing wired yet"
+      CodexHook.install_global
+      assert_equal [CodexHook], AgentHooks.enabled_adapters(worktree), "global codex shows even with no per-worktree claude"
       ClaudeHook.enable(worktree)
       assert_equal [ClaudeHook, CodexHook], AgentHooks.enabled_adapters(worktree)
     end
 
-    # One adapter raising a NON-Corrupt error (an IO failure HookFile doesn't rescue)
-    # must not abort the fan-out and leave the other unwired, nor propagate to the
-    # caller (enable-hooks has no outer rescue). It warns and carries on.
+    # A per-worktree adapter raising (a non-Corrupt IO error HookFile doesn't rescue) must
+    # not abort the fan-out nor crash the caller (enable-hooks has no outer rescue).
     def test_enable_isolates_a_failing_adapter
       err = capture_io do
         stub_method(ClaudeHook, :enable, ->(*) { raise "boom" }) do
-          AgentHooks.enable(worktree)
+          AgentHooks.enable(worktree) # warns, does not raise
         end
       end[1]
-      assert CodexHook.enabled?(worktree), "codex still wired despite claude raising"
       assert_match(/claude hook enable failed/, err)
     end
   end

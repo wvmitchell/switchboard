@@ -24,7 +24,7 @@ or `e` in the sidebar — both reload on save.
 | `projects_root` | path | `~/Programming` | Where `a`/`clone` drop fetched repos: `<root>/<name>`. |
 | `base` | git ref | `origin/main` | Default ref new worktrees branch from. Per-project `base` overrides it. |
 | `branch_prefix` | string | _(none)_ | New branches become `<prefix>/<name>`. Empty/unset ⇒ bare `<name>`. |
-| `agent_state_hooks` | bool | `true` | Auto-wire per-worktree agent-state hooks on worktree create. |
+| `agent_state_hooks` | bool | `true` | Auto-wire the per-worktree Claude agent-state hook on worktree create. (Codex hooks are global — installed once via `install --codex-hooks`, not per worktree.) |
 | `prune_on_launch` | bool | `true` | Prune orphaned `sb/` sessions when landing on the home session. |
 | `auto_rename` | bool | `true` | Nudge the agent to `switchboard rename` a placeholder-named workspace once it knows the work (a `SessionStart` hook). `false` opts out. Per-project override wins. See [`auto_rename`](#auto_rename). |
 | `diff_counts` | bool | `true` | Show the `+adds −dels` diff count on each workspace/branch row. `false` hides it and skips the per-worktree `git diff` entirely. |

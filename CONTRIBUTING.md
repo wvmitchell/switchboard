@@ -92,6 +92,16 @@ op that isn't pointed at the throwaway socket. Needs a real `tmux`; it skips loc
 when absent, but `SMOKE_REQUIRE_TMUX=1` (set in CI) makes a missing tmux a hard error
 so the gate can't silently no-op.
 
+A second opt-in smoke, `test/smoke/codex_hook_smoke_test.rb`
+(`SWITCHBOARD_CODEX_SMOKE=1`), drives **real codex** through the delivery path no unit
+test can reach: it installs the global `[hooks]` block into a sandbox `CODEX_HOME`
+(auth borrowed from the real `~/.codex`, which it never touches), adds a **linked** git
+worktree, runs `codex exec` headlessly there, and asserts the resting state lands where
+`AgentState` reads it — the standing regression guard that codex's config-level hooks
+still fire in a linked worktree (the bug per-worktree `.codex/hooks.json` couldn't
+clear). The #130 nested-agent guard is covered offline by `codex_hook_test`'s runtime
+guard test. Needs `codex` on PATH + auth + network, and spends tokens.
+
 ## Code conventions
 
 - Every file starts with `# frozen_string_literal: true`.
@@ -144,7 +154,8 @@ tmux bindings/hooks go live — the CHANGELOG header says so.
 | The sidebar TUI | `lib/switchboard/sidebar.rb` |
 | tmux integration | `lib/switchboard/tmux.rb`, `switchboard.tmux` |
 | Install / keybindings | `lib/switchboard/installer.rb` |
-| Agent state / hooks | `lib/switchboard/agent_state.rb`, `agents.rb`; per-agent adapters `claude_hook.rb` (Claude) + `codex_hook.rb` (Codex) over shared base `hook_file.rb`, behind registry `agent_hooks.rb` |
+| Marker-block surgery (tmux.conf + `~/.codex/config.toml`) | `lib/switchboard/marker_block.rb` |
+| Agent state / hooks | `lib/switchboard/agent_state.rb`, `agents.rb`; adapters `claude_hook.rb` (Claude, per-worktree) + `codex_hook.rb` (Codex, global `~/.codex/config.toml` block) over shared base `hook_file.rb`, behind registry `agent_hooks.rb` |
 | Sounds / bold / collapse | `lib/switchboard/sound.rb`, `attention.rb`, `collapse.rb` (shared base: `keyed_marker_store.rb`) |
 | Git / PRs / reconcile | `lib/switchboard/git.rb`, `pr.rb`, `reconcile.rb` |
 

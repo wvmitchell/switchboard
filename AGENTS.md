@@ -40,8 +40,8 @@ no build step.
 - **Dispatch:** `lib/switchboard/cli.rb`
 - **Data model → tree → TUI:** `model.rb` → `tree.rb` → `sidebar.rb`
 - **Config / registry:** `config.rb`
-- **tmux:** `tmux.rb`, `switchboard.tmux` · **install/keys:** `installer.rb`
-- **Agent presence:** `agent_state.rb`, `agents.rb`; per-agent hook adapters `claude_hook.rb` (Claude) + `codex_hook.rb` (Codex) on shared base `hook_file.rb`, behind registry `agent_hooks.rb`
+- **tmux / global config blocks:** `tmux.rb`, `switchboard.tmux` · **install/keys:** `installer.rb` · **marker-block surgery:** `marker_block.rb`
+- **Agent presence:** `agent_state.rb`, `agents.rb`; hook adapters `claude_hook.rb` (Claude, per-worktree) + `codex_hook.rb` (Codex, global block in `~/.codex/config.toml`) on shared base `hook_file.rb`, behind registry `agent_hooks.rb`
 - **Sounds / bold / collapse:** `sound.rb`, `attention.rb`, `collapse.rb` (the last two on the shared `keyed_marker_store.rb`)
 - **Git / PRs / reconcile:** `git.rb`, `pr.rb`, `reconcile.rb`
 

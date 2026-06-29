@@ -78,8 +78,19 @@ module Switchboard
       Installer.install(
         no_tmux: args.include?("--no-tmux"),
         print_tmux: args.include?("--print-tmux"),
-        conf: flag_value(args, "--tmux-conf")
+        conf: flag_value(args, "--tmux-conf"),
+        codex_hooks: codex_hooks_flag(args)
       )
+    end
+
+    # --codex-hooks ⇒ yes, --no-codex-hooks ⇒ skip, neither ⇒ prompt (Installer decides).
+    # The opt-OUT wins if both are passed — never silently write global config on a
+    # contradictory invocation.
+    def codex_hooks_flag(args)
+      return false if args.include?("--no-codex-hooks")
+      return true if args.include?("--codex-hooks")
+
+      nil
     end
 
     def uninstall(args)
@@ -233,19 +244,26 @@ module Switchboard
     def enable_hooks(path = nil)
       worktree = worktree_at(path) or return warn("not inside a git worktree (pass a path)")
 
-      AgentHooks.enable(worktree)
+      AgentHooks.enable(worktree) # claude, per-worktree
       puts "enabled agent-state hooks in #{worktree}"
       puts "  reporter: #{HookFile.script_path}"
-      puts "  claude: #{ClaudeHook.settings_path(worktree)}"
-      puts "  codex:  #{CodexHook.settings_path(worktree)}"
-      puts "  restart `claude` or `codex` here (or /hooks) to pick them up."
+      puts "  claude: #{ClaudeHook.settings_path(worktree)} — restart `claude` here (or /hooks) to pick it up"
+      # Codex is GLOBAL (one ~/.codex/config.toml block — codex can't see project hooks in
+      # linked worktrees). Re-ensure it if already opted in (self-heal); else point at install.
+      if CodexHook.installed?
+        CodexHook.install_global
+        puts "  codex:  #{CodexHook.config_path} (global) — run `/hooks` in codex to approve"
+      else
+        puts "  codex:  not enabled — `switchboard install --codex-hooks` adds the global block"
+      end
     end
 
     def disable_hooks(path = nil)
       worktree = worktree_at(path) or return warn("not inside a git worktree (pass a path)")
 
-      AgentHooks.disable(worktree)
+      AgentHooks.disable(worktree) # claude, per-worktree
       puts "disabled agent-state hooks in #{worktree}"
+      puts "  (codex hooks are global — `switchboard uninstall` removes them)" if CodexHook.installed?
     end
 
     # The worktree root for a path (or cwd) — what agent hooks treat as the project.
@@ -673,33 +691,27 @@ module Switchboard
       format("  %s %s", ok ? "\e[32m✓\e[0m" : "\e[31m✗\e[0m", msg)
     end
 
-    # Agent-state hooks are per-worktree, so report the materialized reporter and
-    # whether the worktree you're standing in is wired up — per adapter, since a
-    # present file isn't proof the agent will load it (Codex needs the project
-    # layer trusted), so a bare "enabled" line is false confidence.
+    # Report the materialized reporter, then claude (per-worktree) and codex (global)
+    # status. A present hook file/block isn't proof the agent runs it — Codex needs a
+    # one-time `/hooks` trust — so a bare "enabled" line would be false confidence.
     def doctor_hooks
       script = HookFile.script_path
       puts(File.exist?(script) ? "  \e[32m✓\e[0m agent-state reporter: #{script}" : "  \e[33m–\e[0m agent-state reporter not materialized yet (created on first worktree/enable-hooks)")
       here = worktree_at(nil)
       return unless here
 
-      enabled = AgentHooks.enabled_adapters(here)
-      if enabled.empty?
-        puts "  \e[33m–\e[0m hooks off here (observation fallback) — `switchboard enable-hooks`"
-        return
+      AgentHooks::ADAPTERS.each do |adapter| # claude, per-worktree
+        on = adapter.enabled?(here)
+        puts(on ? "  \e[32m✓\e[0m #{adapter.label} hooks here: #{adapter.settings_path(here)}"
+                : "  \e[33m–\e[0m #{adapter.label} hooks off here — `switchboard enable-hooks`")
       end
 
-      puts "  \e[32m✓\e[0m hooks enabled here: #{here}"
-      AgentHooks::ADAPTERS.each do |adapter|
-        mark = enabled.include?(adapter) ? "\e[32m✓\e[0m" : "\e[33m–\e[0m"
-        puts "      #{mark} #{adapter.label}: #{adapter.settings_path(here)}"
+      if CodexHook.installed? # codex, global
+        puts "  \e[32m✓\e[0m codex hooks (global): #{CodexHook.config_path}"
+        puts "      \e[33mnote\e[0m codex runs them only once trusted — run `/hooks` in codex (or start with --dangerously-bypass-hook-trust) if dots don't show"
+      else
+        puts "  \e[33m–\e[0m codex hooks (global) not installed — `switchboard install --codex-hooks`"
       end
-      # The file existing ≠ Codex running the hook: project-local hooks load only
-      # once the project layer is trusted. Flag it so green here never reads as
-      # "dots will appear" when they won't.
-      return unless enabled.include?(CodexHook)
-
-      puts "      \e[33mnote\e[0m codex loads project hooks only once trusted — run `/hooks` in codex if dots don't show"
     end
 
     def help

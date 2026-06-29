@@ -3,12 +3,12 @@
 require_relative "hook_file"
 
 module Switchboard
-  # The Claude adapter. Teaches Claude Code to report agent state to the sidebar
-  # WITHOUT touching the user's global ~/.claude config: hooks are scoped per
-  # worktree via `<worktree>/.claude/settings.local.json` (Claude merges it on top
-  # of user settings). All the merge/strip/reporter machinery lives in `HookFile`;
-  # this module declares only Claude's delivery file and its event→state map
-  # (mirror of `CodexHook`).
+  # The Claude adapter — the per-worktree one. Teaches Claude Code to report agent state
+  # to the sidebar WITHOUT touching the user's global ~/.claude config: hooks are scoped
+  # per worktree via `<worktree>/.claude/settings.local.json` (Claude merges it on top of
+  # user settings). All the merge/strip/reporter machinery lives in `HookFile`; this module
+  # declares only Claude's delivery file (`SETTINGS_REL`) and its event→state map. (Codex
+  # diverges — it delivers a single global `~/.codex/config.toml` block; see `CodexHook`.)
   module ClaudeHook
     module_function
 

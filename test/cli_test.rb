@@ -264,27 +264,59 @@ module Switchboard
 
     # --- doctor: per-adapter hook status (#110) ---
 
-    # With hooks wired, doctor breaks status out per adapter and flags the Codex
-    # trust caveat (a present file isn't proof Codex will load it until trusted).
-    def test_doctor_hooks_lists_each_adapter_and_the_codex_trust_note
+    # doctor splits status into claude (per-worktree) and codex (global), and flags the
+    # codex trust caveat (a present block isn't proof codex runs it until /hooks-trusted).
+    def test_doctor_hooks_reports_claude_per_worktree_and_codex_global
+      ENV["CODEX_HOME"] = path("codexhome")
+      FileUtils.mkdir_p(ENV["CODEX_HOME"])
       repo = temp_git_repo
-      AgentHooks.enable(repo)
+      AgentHooks.enable(repo)  # claude, per-worktree
+      CodexHook.install_global # codex, global block
       out = Dir.chdir(repo) { capture { CLI.doctor_hooks } }
-      assert_includes out, "hooks enabled here"
-      # match on the rel-path suffix — doctor prints the realpath'd worktree
-      # (git rev-parse resolves /var → /private/var on macOS).
-      assert_match(%r{claude: .*/\.claude/settings\.local\.json}, out)
-      assert_match(%r{codex: .*/\.codex/hooks\.json}, out)
+      assert_match(%r{claude hooks here: .*/\.claude/settings\.local\.json}, out)
+      assert_match(%r{codex hooks \(global\): .*/config\.toml}, out)
       assert_includes out, "trusted", "codex trust caveat shown"
       assert_includes out, "/hooks"
     end
 
-    # No adapter wired → the observation-fallback line, and no trust note.
-    def test_doctor_hooks_reports_off_when_no_adapter_is_wired
+    # Nothing wired → claude off here + codex global not installed, no trust note.
+    def test_doctor_hooks_reports_off_when_nothing_is_wired
+      ENV["CODEX_HOME"] = path("codexhome")
+      FileUtils.mkdir_p(ENV["CODEX_HOME"])
       repo = temp_git_repo
       out = Dir.chdir(repo) { capture { CLI.doctor_hooks } }
-      assert_includes out, "hooks off here"
+      assert_includes out, "claude hooks off here"
+      assert_includes out, "codex hooks (global) not installed"
       refute_includes out, "trusted"
+    end
+
+    # enable-hooks wires claude per-worktree and POINTS AT install for codex when the global
+    # block is absent; once the block exists it self-heals (re-ensures) and says "(global)".
+    def test_enable_hooks_reports_codex_global_state
+      ENV["CODEX_HOME"] = path("codexhome")
+      FileUtils.mkdir_p(ENV["CODEX_HOME"])
+      repo = temp_git_repo
+      out = Dir.chdir(repo) { capture { CLI.enable_hooks } }
+      assert_match(%r{claude: .*/\.claude/settings\.local\.json}, out)
+      assert_match(/codex:.*not enabled/, out)
+
+      CodexHook.install_global
+      out2 = Dir.chdir(repo) { capture { CLI.enable_hooks } }
+      assert_match(/codex:.*\(global\)/, out2)
+    end
+
+    # disable-hooks clears claude per-worktree; the "codex is global — uninstall removes it"
+    # note appears ONLY when the global block is installed (so it's not misleading otherwise).
+    def test_disable_hooks_notes_codex_is_global_only_when_installed
+      ENV["CODEX_HOME"] = path("codexhome")
+      FileUtils.mkdir_p(ENV["CODEX_HOME"])
+      repo = temp_git_repo
+      out = Dir.chdir(repo) { capture { CLI.disable_hooks } }
+      refute_match(/codex hooks are global/, out)
+
+      CodexHook.install_global
+      out2 = Dir.chdir(repo) { capture { CLI.disable_hooks } }
+      assert_match(/codex hooks are global/, out2)
     end
 
     # --- prune / quit (Reconcile + Tmux stubbed so no real tmux is touched) ---

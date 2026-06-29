@@ -20,6 +20,7 @@ module Switchboard
   class AgentState
     STATES = %w[thinking done waiting].freeze
     PRESENCE_TTL = 900 # seconds a hook report counts as a live agent
+    STALE_GC = 86_400 # seconds; a still-existing-dir state file older than this is reaped (global codex hook hygiene)
 
     # Hook-derived states from the last scan (path => state), excluding the
     # coarse activity fallback. The sidebar's PR-refresh edge trigger reads this
@@ -106,6 +107,15 @@ module Switchboard
 
         key = real(cwd)
         age = now - epoch.to_i
+        # Age-based GC: the global codex hook reports from EVERY dir codex runs in (not
+        # just switchboard worktrees), so an existing-dir file long past use would linger
+        # forever on the dir-exists GC alone. Drop anything older than STALE_GC. `age >`
+        # (not `.abs`) so a future-epoch/backward-clock file isn't reaped as stale.
+        if age > STALE_GC
+          File.delete(file)
+          next
+        end
+
         h[key] = [state.to_sym, age] if !h.key?(key) || age < h[key][1]
       rescue StandardError
         next

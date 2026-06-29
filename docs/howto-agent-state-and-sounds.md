@@ -21,41 +21,49 @@ You get *something* for free and *something better* by opting in:
   pane and infers busy-vs-idle. Works for any agent, installs nothing. It can't
   tell "waiting" from "done".
 - **Hooks (exact).** Claude Code and Codex report their state precisely, so you
-  get the magenta "waiting on you" dot and accurate done/thinking. Scoped per
-  worktree (`.claude/settings.local.json` for Claude, `.codex/hooks.json` for
-  Codex) — it never touches your global `~/.claude` or `~/.codex`. For Codex the
-  magenta "waiting" dot rides its permission gates, so it shows whenever the agent
-  blocks on you for approval; a session command that bypasses *all* approvals
-  won't surface it.
+  get the magenta "waiting on you" dot and accurate done/thinking. Delivery splits
+  by agent: **Claude** is scoped per worktree (`.claude/settings.local.json`,
+  never your global `~/.claude`); **Codex** is one global block in
+  `~/.codex/config.toml`, because codex can't discover project-local hooks in a
+  linked worktree (and switchboard worktrees are all linked). For Codex the magenta
+  "waiting" dot rides its permission gates, so it shows whenever the agent blocks on
+  you for approval; a session command that bypasses *all* approvals won't surface it.
 
-## Enable exact hooks in a worktree
+## Enable exact hooks
 
-Worktrees switchboard *creates* get hooks automatically (when
-`agent_state_hooks` is on, the default). For a worktree you made elsewhere, run
-this once from inside it:
+**Claude (per worktree).** Worktrees switchboard *creates* get the Claude hook
+automatically (when `agent_state_hooks` is on, the default). For a worktree you
+made elsewhere, run this once from inside it, then restart `claude` so it picks it
+up:
 
 ```sh
 switchboard enable-hooks
 ```
 
-Then restart `claude` (or `codex`) in that worktree so it picks them up. Codex
-loads project-local hooks only once the project layer is **trusted** — run
-`/hooks` in codex if the dot stays coarse. (`enable-hooks` wires both adapters;
-each is dormant until that agent runs there, so a Claude-only worktree just
-carries an unused `.codex/hooks.json`.) To undo:
+To undo for that worktree: `switchboard disable-hooks`.
+
+**Codex (once, globally).** Codex hooks live in one block in your global
+`~/.codex/config.toml`, so they're installed once — with your consent — not per
+worktree. `switchboard install` offers it (or run it up front):
 
 ```sh
-switchboard disable-hooks
+switchboard install --codex-hooks     # or just answer the install prompt
 ```
 
-**Verify:** `switchboard doctor` reports `hooks enabled here` for the worktree
-you're standing in, breaks the status out per adapter (claude / codex), and
-prints the reporter script path. Start an agent and watch the dot become precise.
+Codex won't run the hooks until you **trust** them: run `/hooks` in codex once and
+approve the switchboard hooks (or start codex with `--dangerously-bypass-hook-trust`).
+After that the dots flow for every worktree. `switchboard uninstall` removes the
+block (the per-worktree `disable-hooks` leaves it — it's global).
+
+**Verify:** `switchboard doctor` shows the Claude hook status for the worktree
+you're standing in *and* the global codex block status (plus the `/hooks` trust
+note), and prints the reporter script path. Start an agent and watch the dot
+become precise.
 
 ### Turn off auto-wiring on new worktrees
 
-If you don't want switchboard touching `.claude/settings.local.json` or
-`.codex/hooks.json` on create, set in `config.yml`:
+If you don't want switchboard touching `.claude/settings.local.json` on create,
+set in `config.yml`:
 
 ```yaml
 agent_state_hooks: false
@@ -119,17 +127,21 @@ without looking.
 
 ## Sounds and hooks are linked
 
-Sounds ride the **same per-worktree hooks** as the exact dots. So a worktree needs
-hooks enabled to make sound — automatic on switchboard-created worktrees, or
-`switchboard enable-hooks` in an existing one. Observation-only agents show a dot
-but stay silent (the coarse signal is too noisy to ring on).
+Sounds ride the **same hooks** as the exact dots. So a worktree needs hooks
+enabled to make sound — for Claude that's automatic on switchboard-created
+worktrees or `switchboard enable-hooks` in an existing one; for Codex it's the
+one-time global install above. Observation-only agents show a dot but stay silent
+(the coarse signal is too noisy to ring on).
 
 ## Troubleshooting
 
 - **No sound at all.** Check `switchboard doctor` for "audio player" — with none
   on PATH, sounds stay silent by design. Install one (`afplay` ships with macOS).
-- **Dot never goes magenta (waiting).** That state only comes from hooks. Run
-  `switchboard enable-hooks` in the worktree and restart the agent.
+- **Dot never goes magenta (waiting).** That state only comes from hooks. For
+  Claude, run `switchboard enable-hooks` in the worktree and restart it; for Codex,
+  install the global block (`switchboard install --codex-hooks`) and `/hooks`-trust
+  it. (Codex's waiting also needs a permission gate to fire — a bypass-all session
+  command suppresses it.)
 - **Sounds fire twice.** Usually an orphaned sidebar process — `switchboard
   doctor` flags it. See [Explanation: sidebar lifecycle](explanation-sidebar-lifecycle.md).
 - **A stale dot after `quit`.** `quit` clears agent state, so this shouldn't

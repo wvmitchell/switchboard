@@ -7,6 +7,37 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.39.1] — Codex hooks actually fire (the linked-worktree fix) (2026-06-29)
+
+### Fixed
+- **Codex agent-state hooks now fire in switchboard worktrees (#110, #130).** v0.39.0
+  delivered Codex's hooks as a per-worktree `<worktree>/.codex/hooks.json`, but Codex
+  0.142.x does **not** discover project-local hooks in a *linked* git worktree — and every
+  switchboard workspace is a linked worktree, so the feature never fired in practice (it
+  degraded silently to the coarse process/activity fallback). Codex delivery now ships as
+  **one marker-delimited `[hooks]` block in your global `~/.codex/config.toml`**, which is
+  config-level (not project-discovered) and so fires everywhere, including linked worktrees.
+
+### Added
+- **Consented global codex-hooks install.** `switchboard install` offers to write the
+  global block (prompted; default no on a non-tty), or decide up front with
+  `--codex-hooks` / `--no-codex-hooks`. `uninstall` removes it; `install` re-ensures an
+  existing block so it doubles as a repair path. After installing, run `/hooks` in codex
+  once to trust the hooks (or start codex with `--dangerously-bypass-hook-trust`).
+- **Nested-codex guard (#130).** A global hook fires for every codex, including a nested
+  `codex exec` under a `/codex` running inside Claude Code. Every command is prefixed with a
+  `CLAUDECODE`/`CLAUDE_CODE_SESSION_ID` guard that suppresses the reporter under a Claude
+  parent, so a subagent's codex doesn't report presence up to switchboard.
+
+### Changed
+- **Hook delivery split by agent.** Claude stays per-worktree
+  (`.claude/settings.local.json`); Codex becomes the global, consented,
+  Installer-managed block. The shared command strings, reporter, and rename-nudge/Stop
+  wiring are centralized in `HookFile.command_entries`; the marker-block file surgery
+  (atomic, symlink-aware, mode-preserving) is extracted to a shared `MarkerBlock` used by
+  both the tmux.conf line and the codex config block. An age-based GC reaps the stray
+  state files the global hook leaves in non-switchboard codex dirs.
+
 ## [0.39.0] — Codex gets the exact agent-state experience (#110) (2026-06-27)
 
 ### Added
