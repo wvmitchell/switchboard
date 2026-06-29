@@ -118,6 +118,130 @@ module Switchboard
              "rebuild picks up the full-header flag another sidebar wrote"
     end
 
+    # --- z: global branch fold (issue #107) ----------------------------------
+    #
+    # A multi-branch workspace + a single-branch sibling, mirroring Tree.nodes:
+    # the expanded ws carries NO pr (the active branch row owns the badge, #90),
+    # the active branch row carries it, and folding restores it to the ws row.
+    def multi_branch_tree
+      exp = expanded_ws("multi", path: "/wt/m", branch: "feat")
+      act = br("feat", active: true); act[:path] = exp.path; act[:pr] = open_pr("#1234")
+      old = br("old", last: true);    old[:path] = exp.path
+      sib = ws("solo", path: "/wt/s", pr: open_pr("#9"))
+      [proj("app"), exp, act, old, sib]
+    end
+
+    def folded_ws_of(sb, path = "/wt/m") = rows_of(sb).find { |n| n.kind == "ws" && n.path == path }
+
+    def test_z_folds_every_branch_row_and_writes_through_to_the_store
+      sb = sidebar(nodes: multi_branch_tree)
+      assert_equal %w[proj ws br br ws], rows_of(sb).map(&:kind), "expanded: the branch rows are present"
+      sb.send(:toggle_branch_fold)
+      assert_equal %w[proj ws ws], rows_of(sb).map(&:kind), "folded: every branch row hidden, the ws rows remain"
+      assert BranchFold.folded?, "the fold persists to the shared store"
+      sb.send(:toggle_branch_fold)
+      assert_equal %w[proj ws br br ws], rows_of(sb).map(&:kind), "unfolding brings the branch rows back"
+      refute BranchFold.folded?, "unfold clears the shared store"
+    end
+
+    def test_a_folded_multi_branch_ws_shows_its_own_badge_again
+      sb = sidebar(nodes: multi_branch_tree)
+      sb.send(:toggle_branch_fold)
+      folded = folded_ws_of(sb)
+      refute folded.expanded, "the folded ws renders as not-expanded, so its own diff/PR badge shows"
+      assert_equal "#1234", folded.pr["identifier"], "it stands in for its active branch's PR"
+      assert sb.send(:diff_visible?, folded), "and #90's expanded-row suppression no longer hides its diff"
+    end
+
+    def test_a_folded_ws_shows_the_hidden_branch_count_cue
+      sb = sidebar(nodes: multi_branch_tree)
+      sb.send(:toggle_branch_fold)
+      folded = folded_ws_of(sb)
+      assert_equal 2, folded.folded, "two branch rows are tucked away"
+      assert_includes strip_ansi(sb.send(:plain, folded)), "▸2", "the plain cue shows the hidden-branch count"
+      colored = sb.send(:colored, folded, sb.send(:plain, folded))
+      assert_includes colored, "\e[2m ▸2\e[0m", "the colored cue is dimmed"
+    end
+
+    def test_a_single_branch_ws_is_unchanged_by_the_fold
+      sb = sidebar(nodes: multi_branch_tree)
+      sb.send(:toggle_branch_fold)
+      solo = folded_ws_of(sb, "/wt/s")
+      assert_nil solo.folded, "a single-branch ws gets no fold clone / no cue"
+      assert_equal "", sb.send(:fold_cue, solo)
+    end
+
+    def test_folding_from_a_branch_row_lands_the_cursor_on_its_workspace
+      sb = sidebar(nodes: multi_branch_tree, cursor: 2) # on the active branch row (path /wt/m)
+      sb.send(:toggle_branch_fold)
+      landed = current_node(sb)
+      assert_equal "ws", landed.kind
+      assert_equal "/wt/m", landed.path, "z from a branch row re-anchors onto its workspace, not an unrelated row"
+    end
+
+    def test_z_folds_all_workspaces_at_once_regardless_of_cursor
+      m1 = expanded_ws("one", path: "/wt/1", branch: "a")
+      a1 = br("a", active: true); a1[:path] = "/wt/1"; a1[:pr] = open_pr("#1")
+      b1 = br("b", last: true);   b1[:path] = "/wt/1"
+      m2 = expanded_ws("two", path: "/wt/2", branch: "c")
+      c2 = br("c", active: true); c2[:path] = "/wt/2"; c2[:pr] = open_pr("#2")
+      d2 = br("d", last: true);   d2[:path] = "/wt/2"
+      sb = sidebar(nodes: [proj("app"), m1, a1, b1, m2, c2, d2], cursor: 0) # cursor on the project header
+      assert_equal 4, rows_of(sb).count { |n| n.kind == "br" }
+      sb.send(:toggle_branch_fold)
+      assert_equal 0, rows_of(sb).count { |n| n.kind == "br" }, "one z folds every workspace's branches, wherever the cursor is"
+      assert_equal [2, 2], rows_of(sb).select { |n| n.kind == "ws" }.map(&:folded), "both workspaces show their hidden-branch counts"
+    end
+
+    def test_dispatch_routes_z_to_the_branch_fold_toggle
+      sb = sidebar(nodes: multi_branch_tree)
+      sb.send(:dispatch, "z")
+      assert sb.instance_variable_get(:@fold_branches), "z flips the in-memory fold flag"
+      assert BranchFold.folded?, "and writes through to the shared store"
+    end
+
+    def test_rebuild_hydrates_the_branch_fold_flag_from_the_shared_store
+      repo = temp_git_repo("app")
+      File.write(Config.path, YAML.dump("projects" => [{ "name" => "app", "path" => repo }]))
+      BranchFold.fold # as if another window's sidebar pressed z
+
+      sb = sidebar(nodes: [])
+      sb.instance_variable_set(:@config, Config.new)
+      sb.send(:rebuild)
+      assert sb.instance_variable_get(:@fold_branches),
+             "rebuild picks up the branch-fold flag another sidebar wrote"
+    end
+
+    # The #118 alignment invariant must hold for a folded ws even at the minimum
+    # pane width: a 2-digit diff + 4-digit PR gives left_cols=5, where the " ▸N"
+    # cue would otherwise push colored past `text` and staircase the columns. The
+    # cue is dropped when there's no room; the row must never overrun the pane.
+    def test_a_folded_ws_never_overruns_at_the_minimum_pane_width
+      sb = sidebar(nodes: multi_branch_tree, focused: false)
+      sb.send(:toggle_branch_fold)
+      folded = folded_ws_of(sb)
+      sb.instance_variable_set(:@diffs, { [folded.path, folded.branch, "br"] => [nil, false, 22, 33] })
+      aw, dw, pw = sb.send(:column_widths, rows_of(sb))
+      line = sb.send(:line, folded, false, Width::MIN, adds_w: aw, dels_w: dw, pr_w: pw)
+      assert_operator strip_ansi(line).length, :<=, Width::MIN,
+                      "a folded ws row never overruns the pane (the cue yields before the badge columns)"
+    end
+
+    # A folded ws stands in for its active branch, so its diff reads the "br" cache
+    # entry (which takes the #90 merged-bypass), NOT the nil-pr "ws" entry that can
+    # go stale after a merge. Distinct values prove which key it reads.
+    def test_a_folded_ws_reads_its_active_branch_diff_entry
+      sb = sidebar(nodes: multi_branch_tree)
+      sb.send(:toggle_branch_fold)
+      folded = folded_ws_of(sb)
+      sb.instance_variable_set(:@diffs, {
+        [folded.path, folded.branch, "ws"] => [nil, false, 99, 99], # the stale nil-pr ws entry
+        [folded.path, folded.branch, "br"] => [nil, true, 0, 0]     # the merged-healed active-branch entry
+      })
+      assert_equal [0, 0], sb.send(:diff_for, folded),
+                   "a folded ws reads its active branch's healed br diff, not the stale ws entry"
+    end
+
     def test_enter_on_a_workspace_switches_to_it_threading_the_session_command
       # Pin that switch() threads the project's resolved session_command into
       # Tmux.go(start:), not just the worktree.

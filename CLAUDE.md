@@ -441,6 +441,40 @@ existence is read (never the contents), no temp+rename dance is needed (unlike
 feedback. Like the folds it is a **durable view preference** — NOT cleared on
 `quit`.
 
+### Global branch fold (issue #107 — the project-fold trick, one level down)
+
+A workspace that has held multiple branches expands into inline branch rows
+(`Tree.nodes` / `Git.branch_history` — the multiple-PRs-per-workspace case). Those
+rows are useful occasionally and noise usually, so `z` folds **every** workspace's
+branch rows at once — tree-wide, regardless of the cursor (the user wanted one
+"toggle branches" key, not a per-row fold). It is therefore modeled like
+`FullHeader`, NOT like `Collapse`: a **single global existence-flag** marker file
+(`BranchFold`, `branch_fold.rb`; `SWITCHBOARD_BRANCH_FOLD_FILE` / `XDG_STATE_HOME`),
+**on disk** for the same multi-process reason — only a shared flag folds every
+window's pane alike (and survives a respawn). Default **off** ⇒ branches show, as
+before #107, so nothing changes until you press `z`. `rebuild` **hydrates**
+`@fold_branches` every reload; `toggle_branch_fold` writes through *and* flips the
+in-memory flag for same-frame feedback, then re-anchors the cursor onto the row it
+was on by path (folding from a branch row lands you on its workspace). Like the
+other folds it is a **durable view preference** — NOT cleared on `quit`.
+
+The fold itself is a cheap **`recompute_rows` row transform** (`visible_tree`), NOT
+a rebuild — so `z` is instant and, crucially, the delicate `Tree` / console / #90
+diff-suppression logic stays **untouched**. When folded, `visible_tree` drops every
+`br` row and replaces each expanded ws row with a shallow **clone** marked
+`expanded: false` carrying its **active branch's PR** (precomputed in `fold_lookup`
+from the branch rows it's hiding) and a `folded:` count. That clone renders through
+the *existing* gates with no special-casing: `expanded: false` un-suppresses its own
+diff/PR badge (the #90 suppression only bites while the branches are visible), the
+restored `pr` shows the badge, and the diff cache hits the same `[path, branch,
+"ws"]` entry `refresh_diffs` already computes. `@nodes` is left intact (rebuild
+reuses it; `console`/`refresh_diffs` still iterate the original tree, so the PR
+count and diff cache are unchanged — the clone lives only in `@rows`). The dim `▸N`
+cue (`fold_cue`) trails the folded ws name in both `plain` and `colored`, its width
+reserved off the name budget so the two render paths stay the same visible width
+(the `line`/right-region alignment depends on it). Filter mode is unaffected — it
+already excludes branch rows.
+
 ### Sidebar width (the same trick, holding a number)
 
 The sidebar pane was a hardcoded 40 cols (`Tmux::SIDEBAR_WIDTH`) that

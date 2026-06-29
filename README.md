@@ -70,7 +70,7 @@ Everything happens from inside the sidebar:
 `a` to make a project, `n` to make work, `↵` to move between it — all without
 leaving the keyboard. Forgot a key? Press `?`. That's the whole muscle memory;
 the [full key map](docs/reference-keybindings.md) has the rest (rename, delete,
-open PR, resize, jump to top/bottom, …).
+open PR, resize, fold branches, jump to top/bottom, …).
 
 ## Launching your agent
 

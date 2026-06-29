@@ -11,9 +11,12 @@ module Switchboard
     # short-lived, but we never want a runaway list.
     MAX_BRANCHES = 8
 
-    # Structured tree node — what the rendered sidebar draws.
+    # Structured tree node — what the rendered sidebar draws. `folded` is never set
+    # by Tree.nodes (stays nil): the sidebar sets it on a folded-workspace clone when
+    # the global `z` branch-fold is on (issue #107), to the count of branch rows tucked
+    # away — render reads it for the dim `▸N` cue.
     Node = Struct.new(:kind, :project, :path, :branch, :name, :pr, :dirty, :base, :active, :last,
-                      :expanded, keyword_init: true)
+                      :expanded, :folded, keyword_init: true)
 
     # Flat, ordered list of Nodes: project header, its workspaces, and a
     # workspace's branches (when it has more than one).

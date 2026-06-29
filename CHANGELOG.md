@@ -7,6 +7,22 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.40.0] — fold every workspace's branch rows with `z` (#107) (2026-06-29)
+
+### Added
+- **`z` — a global "toggle branches" key (#107).** A workspace that has held more than
+  one branch expands into inline branch-history rows; that's useful occasionally and noise
+  usually. `z` now folds **every** workspace's branch rows at once — tree-wide, regardless
+  of where the cursor is — and `z` again brings them back. A folded multi-branch workspace
+  collapses to a single row that shows its **own** diff/PR badge again (the expanded-row
+  suppression from #90 only applies while the branches are visible) plus a dim `▸N` cue
+  marking how many branches are tucked away.
+- The fold is a **durable, shared-on-disk view preference** (`BranchFold`, a single
+  existence-flag marker beside the project folds — the same shape as the `H` full-header
+  toggle), so every window's sidebar folds alike, it survives a respawn, and it is **not**
+  cleared on `q`. Default is unfolded, so nothing changes until you press `z`. The `?` help
+  overlay and the keybindings reference document it.
+
 ## [0.39.1] — Codex hooks actually fire (the linked-worktree fix) (2026-06-29)
 
 ### Fixed

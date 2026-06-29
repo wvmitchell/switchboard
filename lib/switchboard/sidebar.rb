@@ -133,6 +133,7 @@ module Switchboard
       ["", "anywhere"],
       ["e", "edit settings"],
       ["R", "refresh PR badges"],
+      ["z", "fold · unfold branches"],
       ["H", "toggle full header"],
       ["?", "this help"],
       ["q", "quit all sessions"],
@@ -229,6 +230,10 @@ module Switchboard
       @full_header = false # H: seat the full home-style header on EVERY session.
                            # Hydrated from the shared on-disk store (FullHeader) on
                            # every rebuild, so all windows agree and a respawn keeps it
+      @fold_branches = false # z: fold EVERY workspace's branch-history rows tree-wide
+                           # (issue #107). A single global flag (BranchFold), hydrated on
+                           # every rebuild like @full_header, so all windows fold alike and
+                           # a respawn keeps it; off ⇒ branches show, as before #107
       @ticks = 0
       @pulse = 0           # animation frame counter (spinner cycle + blink phase)
       @sparkles = {}       # worktree path => @pulse deadline of an active completion
@@ -535,6 +540,7 @@ module Switchboard
       # momentarily fails to build doesn't lose its fold).
       @collapsed = Collapse.collapsed(@config.projects.map { |p| p["name"] })
       @full_header = FullHeader.enabled? # shared toggle: full header on every session
+      @fold_branches = BranchFold.folded? # shared toggle: fold every workspace's branches (#107)
       # Shared pane width: a ←/→ resize in any window lands here. Skip the hydrate
       # while a local resize is pending uncommitted (@resized): a rebuild triggered
       # mid-burst (a C-l/C-r token following a ←/→ in the same read) would otherwise
@@ -558,8 +564,59 @@ module Switchboard
     # here — ↵ on a header creates a new workspace in that project, ↵ on a workspace
     # switches to it (see switch_to_filtered).
     def recompute_rows
-      @rows = @filter ? filtered_rows : @nodes.reject { |n| n.kind != "proj" && @collapsed.include?(n.project) }
+      @rows = @filter ? filtered_rows : visible_tree
       @cursor = @cursor.clamp(0, [@rows.size - 1, 0].max)
+    end
+
+    # The normal (non-filter) rows: the full tree, minus the children of collapsed
+    # projects, and — when the global `z` branch-fold is on (issue #107) — minus
+    # every workspace's branch-history rows, each multi-branch workspace folded down
+    # to a single row. Folding is a cheap row transform (like project collapse), NOT
+    # a rebuild, so `z` is instant and the careful Tree / #90 diff-suppression logic
+    # is untouched: a folded ws row is a shallow clone marked NOT expanded (so its own
+    # diff/PR badge shows again — #90's suppression only bites while the branches are
+    # visible) carrying the active branch's PR and the hidden-branch count for the cue.
+    def visible_tree
+      active_pr, counts = fold_lookup
+      rows = []
+      @nodes.each do |n|
+        next if n.kind != "proj" && @collapsed.include?(n.project) # collapsed project hides its children
+        next if n.kind == "br" && @fold_branches                   # folded: hide every branch row
+        rows << (foldable_ws?(n) ? fold_ws(n, active_pr[n.path], counts[n.path]) : n)
+      end
+      rows
+    end
+
+    # Per-workspace [active-branch PR, branch-row count], precomputed once from the
+    # branch nodes we're about to hide — what a folded ws row needs to stand in for
+    # its active branch (the restored badge) and to show the `▸N` cue. Empty unless
+    # folding, so the expanded tree pays nothing.
+    def fold_lookup
+      active_pr = {}
+      counts = Hash.new(0)
+      if @fold_branches
+        @nodes.each do |n|
+          next unless n.kind == "br"
+
+          counts[n.path] += 1
+          active_pr[n.path] = n.pr if n.active
+        end
+      end
+      [active_pr, counts]
+    end
+
+    # A ws row whose branch rows are currently folded away (global `z` on AND it has
+    # more than one branch). foldable_ws? gates the clone; fold_ws builds it.
+    def foldable_ws?(node)
+      @fold_branches && node.kind == "ws" && node.expanded
+    end
+
+    # A shallow clone of a folded multi-branch ws row: NOT expanded (so the render
+    # gates show its own diff/PR badge again), carrying its active branch's PR and the
+    # hidden-branch count (`folded`) for the dim `▸N` cue. A copy so @nodes is left
+    # intact (rebuild reuses it; the @diffs cache keys on path/branch/kind, unchanged).
+    def fold_ws(node, pr, count)
+      node.class.new(**node.to_h.merge(expanded: false, pr: pr, folded: count))
     end
 
     # Filter rows: walk the tree and, per project, emit its header plus its matching
@@ -675,8 +732,18 @@ module Switchboard
 
     # The cached [adds, dels] for a row, or nil. Drops the leading [mtime, resting?]
     # the gate keys on. ws/br only — projects never have a diff.
+    #
+    # A folded multi-branch ws (the fold_ws clone, marked by `folded`) stands in for
+    # its active branch, so it reads that branch's cached diff (keyed "br"), NOT its
+    # own "ws" entry. The values are identical (base...HEAD == base...active-branch),
+    # but only the "br" entry takes the #90 MERGED/CLOSED bypass: refresh_diffs derives
+    # the "ws" entry's resting flag from the expanded ws node, whose pr is nil, so it
+    # misses the bypass that zeros a merged branch when origin fast-forwards past it
+    # without moving logs/HEAD. Reading "br" makes a folded ws self-heal on merge
+    # exactly like the unfolded branch row does (R is still the manual catch-all).
     def diff_for(node)
-      entry = @diffs[[node.path, node.branch, node.kind]]
+      kind = node.folded ? "br" : node.kind
+      entry = @diffs[[node.path, node.branch, kind]]
       entry && entry.drop(2)
     end
 
@@ -1057,6 +1124,7 @@ module Switchboard
       when "o", "\x0F"         then open_pr # open the PR in the browser (o / ^O)
       when "O"                 then open_repo # open the row's repo (branch if it has an open PR, else default)
       when "H"                 then toggle_full_header # seat the full header on every session (shared toggle)
+      when "z"                 then toggle_branch_fold # fold/unfold every workspace's branches (shared toggle, #107)
       when "R"                 then refresh_prs_now # force a PR-badge refresh (external merge/close)
       when "d"                 then remove
       when "r"                 then rename
@@ -1142,6 +1210,23 @@ module Switchboard
     def toggle_full_header
       @full_header = !@full_header
       @full_header ? FullHeader.enable : FullHeader.disable
+    end
+
+    # z: fold/unfold EVERY workspace's branch-history rows tree-wide (issue #107).
+    # Global, regardless of the cursor. Like the project fold and the full-header
+    # toggle it writes through to the shared store (BranchFold) so every other
+    # window's sidebar picks it up on its next reload, and flips the in-memory flag
+    # for same-frame feedback. Unlike those it DOES recompute_rows — folding changes
+    # which rows are visible. The cursor then re-anchors to the row it was on by path:
+    # folding from a branch row lands you on that workspace's row (the branch rows it
+    # shared a path with are gone), so `z` doesn't jump you somewhere unrelated.
+    def toggle_branch_fold
+      here = current&.path
+      @fold_branches = !@fold_branches
+      @fold_branches ? BranchFold.fold : BranchFold.unfold
+      recompute_rows
+      i = @rows.index { |n| n.path == here } if here
+      @cursor = i if i
     end
 
     def switch(node)
@@ -1992,9 +2077,18 @@ module Switchboard
         # reads expanded (▾); the ▸ collapsed glyph only applies to the normal tree.
         folded = @filter.nil? && @collapsed.include?(node.project)
         "#{folded ? '▸' : '▾'} #{node.project}"
-      when "ws"   then "#{pointer(node.path)} #{ws_glyph(node.path)} #{node.name}"
+      when "ws"   then "#{pointer(node.path)} #{ws_glyph(node.path)} #{node.name}#{fold_cue(node)}"
       else             "     #{node.last ? '└' : '├'}#{node.active ? '●' : ' '}#{node.branch}"
       end
+    end
+
+    # The " ▸N" cue trailing a folded multi-branch workspace's name — N branch rows
+    # tucked away by the global `z` fold (issue #107). "" for every other row (folded
+    # is only set on a fold_ws clone). Plain here for width math; colored() wraps it
+    # in the dim SGR, reserving this same width off the name budget so the two paths
+    # stay the same visible width (the line()/right-region alignment depends on it).
+    def fold_cue(node)
+      node.folded ? " ▸#{node.folded}" : ""
     end
 
     # The bare (uncolored) "you are here" gutter pointer for a workspace path —
@@ -2010,7 +2104,16 @@ module Switchboard
       when "proj" then "\e[1m#{text}\e[0m"
       when "ws"
         dot = sparkling?(node.path) ? SPARKLE_COLORED[(@pulse / 2) % SPARKLE_COLORED.size] : dot_for(@agents[node.path])
-        name = trunc(node.name.to_s, [text.length - 4, 1].max)
+        # The " ▸N" fold cue is appended ONLY when its full width was reserved off the
+        # name budget (budget >= 1 ⇒ ≥1 name col left after the cue). At a very narrow
+        # pane the budget floors and there's no room: drop the cue so colored's visible
+        # width matches plain's `text` (== the pre-#107 no-cue width) instead of
+        # overrunning and staircasing the #118 diff/PR columns. The cue returns as the
+        # pane widens; the common case is unchanged (budget large, cue always shows).
+        cue = fold_cue(node)
+        budget = text.length - 4 - cue.length
+        cue = "" if budget < 1
+        name = trunc(node.name.to_s, [budget, 1].max)
         ptr = " "
         if current
           ptr  = "#{BRAND}#{CURRENT_MARK}\e[0m"  # "you are here" pointer — bold-cyan, switchboard's signature accent
@@ -2018,7 +2121,7 @@ module Switchboard
         elsif @attention.include?(node.path)
           name = "\e[1;33m#{name}\e[0m"          # unviewed completion — bold yellow until you look (the current row is never marked)
         end
-        "#{ptr} #{dot} #{name}"
+        "#{ptr} #{dot} #{name}#{cue.empty? ? '' : "\e[2m#{cue}\e[0m"}" # dim ▸N cue last, its width already reserved
       else "#{BRANCH_FG}#{text}\e[0m"
       end
     end

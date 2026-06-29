@@ -63,7 +63,10 @@ Three row kinds, indented by depth:
   read from its HEAD reflog. Drawn with a `├`/`└` tree connector; a filled `●`
   before the branch name marks the branch **checked out right now**. `↵` on any
   of them switches to that one shared session — switchboard navigates you there,
-  it doesn't check the branch out.
+  it doesn't check the branch out. Press [`z`](reference-keybindings.md) to fold
+  these rows away tree-wide: each multi-branch workspace then shows just its own
+  row, its diff/PR badge restored and a dim `▸N` marking the N hidden branches.
+  `z` again unfolds. The fold is shared on disk and durable across restarts.
 
 ---
 

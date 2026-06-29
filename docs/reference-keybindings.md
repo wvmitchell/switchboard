@@ -48,6 +48,7 @@ workspace, or branch). The one-line footer shows the row's nav verb and the
 | `o` / `Ctrl-O` | Open the highlighted PR in the browser (`gh pr view --web`). |
 | `O` | Open the highlighted row's repo in the browser (`gh browse`). Works on every row kind, including the project header. Opens the repo at the row's branch when it has an open PR, otherwise the repo home (default branch). |
 | `R` | Refresh PR badges now (catch a PR merged/closed *on GitHub*). |
+| `z` | Fold / unfold **every** workspace's branch-history rows at once — tree-wide, regardless of where the cursor is. A folded multi-branch workspace collapses to a single row that shows its own diff/PR badge plus a dim `▸N` cue (N branches tucked away). A shared on-disk view preference, so all sessions follow and it survives restarts. |
 | `H` | Toggle the full header (wordmark + greeting + console + rule) on **every** session, not just home. A shared on-disk view preference, so all sessions follow and it survives restarts. |
 | `r` | Rename the highlighted workspace (moves the worktree dir, keeps branch + PR). |
 | `d` | Remove the highlighted row — delete a workspace, or unregister a project (and close its sessions). Confirms first. |
@@ -69,6 +70,14 @@ workspace that has held more than one branch expands into inline branch rows
 (read from its HEAD reflog) you move between with the same `↑`/`↓`. Those rows are
 history with their PR badges — `↵` on any of them switches to that one worktree's
 session (they all share it); switchboard doesn't check the branch out for you.
+
+When those branch rows pile up, `z` folds them: one keypress collapses **every**
+workspace's branches at once (the whole tree, wherever the cursor sits), and `z`
+again brings them back. It's the "usually I don't want to see all the branches,
+occasionally I do" switch — a folded workspace shows just its own row, its diff/PR
+badge restored and a dim `▸N` marking how many branches are hidden. The fold is a
+durable, shared-on-disk view preference (like the full header and the pane width),
+so every window agrees and it survives restarts; it is *not* cleared on `q`.
 
 The canonical trunk checkout (the project's primary worktree) is never shown as a
 switch target.

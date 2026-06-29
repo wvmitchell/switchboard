@@ -38,6 +38,14 @@ between the two: attention markers are cleared on `quit` (a transient "you haven
 looked yet" flag), collapse folds are not (a durable view preference that should
 persist across restarts).
 
+The same on-disk reasoning covers the **global toggles** that aren't per-item, so
+they skip the keyed store for a single flag file: the full header (`H` →
+`FullHeader`), the global branch fold (`z` → `BranchFold`, which folds *every*
+workspace's branch-history rows tree-wide — issue #107), and the pane width
+(`←`/`→` → `Width`). Each is one shared file every window's sidebar reads, so a
+flip in one pane shows in all of them and survives a respawn — and like the collapse
+folds, all three are durable view preferences, **not** cleared on `quit`.
+
 ## Sidebar visibility is per-session, applied to every window
 
 The intent "show the sidebar" lives on the *session* as a tmux option
