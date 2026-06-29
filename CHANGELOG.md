@@ -7,6 +7,25 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.41.0] — user-configurable in-sidebar keybindings (#108) (2026-06-29)
+
+### Added
+- **`sidebar_keys:` — remap the keys *inside* the sidebar (#108).** The in-pane sibling of
+  #15's `tmux_keys:`. Map an **action** to a key (`new_workspace: c`, `delete: x`, …) rather
+  than a raw byte, so the config records intent. The full action list is in the keybindings
+  reference and the `?` overlay; omit an action to keep its default. Editing via `e` re-binds
+  live on save.
+- A single `Keymap` source of truth (an ordered action enum) now feeds the `dispatch` loop,
+  the `?` help overlay, and `doctor` — so the shown keys can never drift from what actually
+  fires. The overlay and footer render *your* keys, not the defaults.
+
+### Changed
+- Values are a **single printable character**, which reserves every structural key for free
+  (`↵`, `Esc`, `Backspace`, the arrows, the resize `←`/`→`, and the `^N`/`^P`/`^O` movement
+  aliases stay fixed — a remap can't shadow them, and movement can't be locked out). An
+  invalid value or a clash (two actions on one key) degrades to defaults and is reported by
+  `switchboard doctor`; nothing crashes.
+
 ## [0.40.0] — fold every workspace's branch rows with `z` (#107) (2026-06-29)
 
 ### Added

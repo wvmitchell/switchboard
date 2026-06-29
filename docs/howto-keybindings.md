@@ -1,8 +1,8 @@
 # How to customize keybindings
 
-Change which tmux prefix key shows the sidebar, and bind an optional one-key jump
-to the home session. For the full key surface, see
-[Reference: keybindings](reference-keybindings.md).
+Change which tmux prefix key shows the sidebar, bind an optional one-key jump to
+the home session, and remap the keys *inside* the sidebar. For the full key
+surface, see [Reference: keybindings](reference-keybindings.md).
 
 ## Prerequisites
 
@@ -50,6 +50,36 @@ tmux_keys:
 
 Leave the `home` line out entirely to keep it unbound.
 
+## Change the in-sidebar keys
+
+The keys you press *inside* the sidebar (move, create, rename, …) are remapped
+under `sidebar_keys`, by **action name** rather than raw key — so the config says
+intent, not bytes:
+
+```yaml
+sidebar_keys:
+  new_workspace: c    # press c (not n) to create a workspace
+  delete: x           # press x (not d) to remove a row
+  down: j             # (the default — listed here only as an example)
+```
+
+The action names are in
+[Reference: keybindings](reference-keybindings.md#sidebar-keys) (the **Action**
+column). Omit an action to keep its default.
+
+**Each value is a single printable character.** That rule reserves the structural
+keys for free: `↵` (the context action), `Esc`, `Backspace`, the arrows, the
+resize `←`/`→`, and the `Ctrl-N`/`Ctrl-P`/`Ctrl-O` aliases are all non-printable, so
+a remap can never shadow them. The movement *letters* `j`/`k` are remappable; the
+arrow and `Ctrl-N`/`Ctrl-P` aliases beside them always move regardless.
+
+**It takes effect on save** — editing config from inside the sidebar (`e`) re-reads
+`sidebar_keys` immediately, and the `?` overlay then shows your actual keys. (A
+config edited by hand *outside* switchboard is picked up on the next reload.)
+
+**Verify:** open the `?` overlay — the remapped key shows in place of the default.
+Or run `switchboard doctor`, which confirms `sidebar_keys: N remapped, no clashes`.
+
 ## The one exception: a fresh install needs a tmux reload
 
 Editing `tmux_keys` from a running switchboard rebinds live. But two cases need
@@ -81,9 +111,14 @@ in the running server — the "prefix-s stopped working after a `git pull`" case
   recorded what it displaced. Choose another key if you want the old one back.
 - **A malformed config.** switchboard falls back to default keys and keeps
   running; `doctor` reports the parse error and the file to fix.
+- **A sidebar key didn't change.** Run `switchboard doctor`. If it says the value
+  "isn't a single printable key", you used more than one character (or a named
+  key) — `sidebar_keys` takes exactly one printable char. If it says the key
+  "clashes with" another action, two actions resolved to the same key; the loser
+  is left unbound (its arrow/ctrl aliases still work). Pick a free key.
 
 ## Related
 
-- [Reference: keybindings](reference-keybindings.md) — the full key tables.
-- [Reference: config](reference-config.md#tmux_keys) — the `tmux_keys` schema and key tokens.
+- [Reference: keybindings](reference-keybindings.md) — the full key tables (and the `sidebar_keys` action names).
+- [Reference: config](reference-config.md#tmux_keys) — the [`tmux_keys`](reference-config.md#tmux_keys) and [`sidebar_keys`](reference-config.md#sidebar_keys) schemas.
 - [Reference: CLI](reference-cli.md) — `install`, `config`, `doctor`.

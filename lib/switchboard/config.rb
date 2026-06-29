@@ -72,6 +72,16 @@ module Switchboard
       #   toggle: s
       #   home: S
 
+      # In-sidebar keys, remapped by ACTION -> key (each a single character; omit an
+      # action to keep its default). Structural keys are fixed (↵, Esc, Backspace,
+      # arrows, ^n/^p). Actions: down up top bottom filter add_project new_workspace
+      # open_pr open_repo rename delete edit_config refresh_prs toggle_branch_fold
+      # toggle_full_header help quit. `switchboard doctor` flags clashes.
+      # sidebar_keys:
+      #   down: j
+      #   up: k
+      #   new_workspace: c
+
       projects: []   # grown by `a` in the sidebar or `switchboard add <name> <path>`
     YAML
 
@@ -262,6 +272,24 @@ module Switchboard
 
       s = value.strip
       !s.empty? && !s.match?(/['"\s\x00-\x1f]/)
+    end
+
+    # The raw configured key for an in-sidebar action (issue #108), or nil when
+    # `sidebar_keys:` is absent or doesn't set this action. doctor uses it to show
+    # "you set X, fell back to Y". Keyed by the action's string name ("down").
+    def raw_sidebar_key(action)
+      keys = @data["sidebar_keys"]
+      keys.is_a?(Hash) ? keys[action.to_s] : nil
+    end
+
+    # A usable in-sidebar key: a single printable ASCII char (0x20-0x7E). Unlike
+    # the tmux keys — where tmux is the authority and named keys (NPage, F1) are
+    # valid — the sidebar reads raw stdin bytes, so a binding must be exactly one
+    # byte it can compare against a keystroke. Requiring printable also RESERVES
+    # every structural sequence for free (↵, Esc, arrows, ^N/^P, the pokes are all
+    # non-printable), so a remap can never shadow them.
+    def valid_sidebar_key?(value)
+      value.is_a?(String) && value.bytesize == 1 && value.getbyte(0).between?(0x20, 0x7E)
     end
 
     def projects

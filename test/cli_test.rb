@@ -477,6 +477,34 @@ module Switchboard
       assert_includes out, "replaced a prior binding: send-keys hi"
     end
 
+    # --- doctor: sidebar_keys rows (issue #108) -------------------------------
+
+    def test_doctor_is_silent_about_sidebar_keys_by_default
+      assert_equal "", capture { CLI.send(:doctor_sidebar_keys) }, "no remap -> nothing to report"
+    end
+
+    def test_doctor_confirms_a_clean_remap
+      File.write(Config.path, YAML.dump("sidebar_keys" => { "new_workspace" => "c", "delete" => "x" }))
+      out = capture { CLI.send(:doctor_sidebar_keys) }
+      assert_includes out, "sidebar_keys: 2 remapped, no clashes"
+    end
+
+    def test_doctor_flags_an_invalid_sidebar_key
+      File.write(Config.path, YAML.dump("sidebar_keys" => { "rename" => "foo" }))
+      out = capture { CLI.send(:doctor_sidebar_keys) }
+      assert_includes out, "sidebar_keys.rename"
+      assert_includes out, "isn't a single printable key"
+      assert_includes out, "using \"r\"", "names the default it fell back to"
+    end
+
+    def test_doctor_flags_a_sidebar_key_collision
+      File.write(Config.path, YAML.dump("sidebar_keys" => { "delete" => "j" })) # j == down's default
+      out = capture { CLI.send(:doctor_sidebar_keys) }
+      assert_includes out, "sidebar_keys.delete"
+      assert_includes out, "clashes with down"
+      assert_includes out, "left unbound"
+    end
+
     # --- switchboard rename (issue #42) -------------------------------------
 
     # Config registering proj -> repo, plus a linked worktree at wts/proj/<leaf>.

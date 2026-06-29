@@ -659,6 +659,39 @@ nothing's detected. It `String#scrub`s the raw output first — a non-ASCII bind
 a non-UTF-8 locale could otherwise raise mid-regex and crash the render (degrade,
 never crash).
 
+### Configurable in-sidebar keys (issue #108 — extending #15 to the TUI keys)
+
+The keys the sidebar's own input loop handles (`j`/`k`, `n`, `d`, `/`, `?`, …) are
+user-remappable via a `sidebar_keys:` config map — the in-pane sibling of #15's
+`tmux_keys:`. The single source of truth is `Keymap` (`keymap.rb`, a
+`module_function` module): an ordered `ACTIONS` enum where each `Action` carries its
+symbol name, its remappable `default` key, and the **fixed structural aliases**
+(arrows / `^N`/`^P` / `^O`) that always also trigger it. ONE enum feeds three
+consumers so they can never drift: `Sidebar#dispatch` (key→action), the `?` overlay
+(`Keymap.help_rows`, action→shown-key), and `doctor`.
+
+The hard-won split: **only printable single chars are configurable**
+(`Config#valid_sidebar_key?` = one byte `0x20–0x7E`, *not* the permissive
+`valid_tmux_key?` — here switchboard, not tmux, is the authority, and it compares raw
+stdin bytes). That one rule **reserves every structural sequence for free** — `↵` (the
+context action), `Esc`, `Backspace`, the resize `←`/`→`, the C-l/C-r pokes, focus
+in/out are all non-printable, so a remap can't shadow them and they stay a literal
+`case` in `dispatch` ahead of the keymap lookup. It also means a configured key can
+never collide with a fixed alias (printable vs non-printable are disjoint), so
+collisions are only ever printable-vs-printable.
+
+Resolution (`Keymap.resolve_with_collisions`, the shared core of `bindings` /
+`dispatch_map` / `collisions`) is deterministic by ACTIONS order, **first-claim-wins**:
+a later action whose resolved key is already taken drops to **unbound** (nil) +
+a `doctor` report — never a double-bind. Because the structural aliases are added to
+`dispatch_map` unconditionally and outside that contest, a collided-away letter still
+leaves movement working (`↓`/`^N` regardless of `j`) — you can't lock yourself out.
+Same graceful-degrade posture as the rest of config: an invalid value falls back to
+the default, a malformed file falls back to all defaults + `load_error`. `Sidebar`
+hydrates `@keymap` (key→action, for dispatch) and `@bindings` (action→key, for the
+overlay + footer hints) in `initialize` and re-resolves them every `rebuild`, so an
+`e` config edit (`reload_config_and_rebuild` → `reload` → `rebuild`) re-binds live.
+
 ### Conventions
 
 - Every file starts with `# frozen_string_literal: true`.

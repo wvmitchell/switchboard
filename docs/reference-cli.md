@@ -178,9 +178,10 @@ working). Works outside tmux. The sidebar's `q` does the same (with a confirm).
 ### `switchboard doctor`
 Check the install and report anything off: `tmux`/`git`/`gh` on PATH, config
 present + parseable, PATH symlinks, tmux wiring (bound keys + hooks, and whether
-they're *live* in the running server vs only in config), `gh` auth + per-project
-badge staleness, audio player + sound resolution, orphaned sessions, and orphaned
-sidebar processes. Read-only. The first place to look when something's off.
+they're *live* in the running server vs only in config), a bad or clashing
+`sidebar_keys` remap, `gh` auth + per-project badge staleness, audio player +
+sound resolution, orphaned sessions, and orphaned sidebar processes. Read-only.
+The first place to look when something's off.
 
 ### `switchboard version` (aliases: `-v`, `--version`)
 Print the version (`switchboard X.Y.Z`).

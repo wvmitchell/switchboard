@@ -31,7 +31,7 @@ module Switchboard
     end
 
     def test_scaffold_template_advertises_the_optional_knobs
-      %w[tmux_keys sounds session_command base prune_on_launch projects_root auto_rename diff_counts].each do |knob|
+      %w[tmux_keys sidebar_keys sounds session_command base prune_on_launch projects_root auto_rename diff_counts].each do |knob|
         assert_includes Config::SCAFFOLD_TEMPLATE, knob, "a fresh config should advertise #{knob}"
       end
     end
@@ -367,6 +367,41 @@ module Switchboard
       refute c.valid_tmux_key?("a'b"), "single quote"
       refute c.valid_tmux_key?(1), "non-string"
       refute c.valid_tmux_key?(nil), "nil"
+    end
+
+    # --- sidebar_keys: configurable in-sidebar keys (issue #108) ---------------
+
+    def test_raw_sidebar_key_returns_unvalidated_value
+      c = cfg("sidebar_keys" => { "new_workspace" => "c", "rename" => "foo" })
+      assert_equal "c", c.raw_sidebar_key("new_workspace")
+      assert_equal "foo", c.raw_sidebar_key("rename"), "raw (even invalid) value for doctor to show"
+      assert_nil c.raw_sidebar_key("delete"), "unset action -> nil"
+      assert_nil cfg({}).raw_sidebar_key("delete"), "no sidebar_keys block -> nil"
+    end
+
+    def test_raw_sidebar_key_accepts_symbol_or_string_action
+      c = cfg("sidebar_keys" => { "quit" => "x" })
+      assert_equal "x", c.raw_sidebar_key(:quit), "Keymap passes symbols; Config normalizes"
+      assert_equal "x", c.raw_sidebar_key("quit")
+    end
+
+    def test_raw_sidebar_key_when_block_not_a_hash
+      assert_nil cfg("sidebar_keys" => "nonsense").raw_sidebar_key("quit")
+    end
+
+    def test_valid_sidebar_key_predicate
+      c = cfg({})
+      assert c.valid_sidebar_key?("j"), "single printable ASCII char"
+      assert c.valid_sidebar_key?("/")
+      assert c.valid_sidebar_key?("?")
+      assert c.valid_sidebar_key?(" "), "space is a printable single byte"
+      refute c.valid_sidebar_key?("jk"), "more than one char (a named key) is rejected"
+      refute c.valid_sidebar_key?(""), "empty"
+      refute c.valid_sidebar_key?("\t"), "control char (non-printable)"
+      refute c.valid_sidebar_key?("\e"), "Esc is reserved structurally"
+      refute c.valid_sidebar_key?("é"), "multi-byte char is rejected"
+      refute c.valid_sidebar_key?(1), "non-string"
+      refute c.valid_sidebar_key?(nil), "nil"
     end
 
     # --- malformed config degrades instead of crashing (decision #5) -----------

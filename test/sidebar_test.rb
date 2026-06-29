@@ -274,6 +274,106 @@ module Switchboard
       assert_equal 0, cursor_of(sb)
     end
 
+    # --- configurable in-sidebar keys (issue #108) ---------------------------
+    # dispatch keys off the resolved @keymap (built in initialize from @config),
+    # so a sidebar_keys remap re-binds the tree's keys. The structural aliases
+    # (arrows / ^N / ^P / ^O) and reserved sequences (↵) are never remappable.
+
+    def test_dispatch_honors_a_remapped_movement_key
+      File.write(Config.path, YAML.dump("sidebar_keys" => { "down" => "x" }))
+      sb = sidebar(nodes: [proj("app"), ws("a"), ws("b")])
+      sb.send(:dispatch, "x")
+      assert_equal 1, cursor_of(sb), "the remapped key moves down"
+      sb.send(:dispatch, "j")
+      assert_equal 1, cursor_of(sb), "the freed default no longer moves"
+      sb.send(:dispatch, "\e[B")
+      assert_equal 2, cursor_of(sb), "the ↓ arrow alias still moves, remap or not"
+    end
+
+    def test_dispatch_honors_a_remapped_action_key
+      File.write(Config.path, YAML.dump("sidebar_keys" => { "toggle_branch_fold" => "f" }))
+      sb = sidebar(nodes: multi_branch_tree)
+      sb.send(:dispatch, "f")
+      assert sb.instance_variable_get(:@fold_branches), "the remapped key fires the action"
+      refute_equal :toggle_branch_fold, sb.instance_variable_get(:@keymap)["z"], "the old default is freed"
+    end
+
+    def test_dispatch_ignores_a_freed_or_unbound_key
+      File.write(Config.path, YAML.dump("sidebar_keys" => { "down" => "x" })) # frees j
+      sb = sidebar(nodes: [proj("app"), ws("a"), ws("b")])
+      assert sb.send(:dispatch, "j"), "an unbound printable key is a harmless no-op (loop lives)"
+      assert_equal 0, cursor_of(sb), "and does nothing"
+    end
+
+    def test_reserved_structural_keys_are_not_remappable
+      # A printable override can't shadow Enter — valid_sidebar_key? forbids
+      # binding to non-printables, so the structural ↵ case still runs.
+      File.write(Config.path, YAML.dump("sidebar_keys" => { "new_workspace" => "c" }))
+      sb = sidebar(nodes: [proj("app"), ws("a", path: "/wt/a")], cursor: 1)
+      sb.instance_variable_set(:@config, Config.new)
+      switched = nil
+      stub_method(Tmux, :go, ->(worktree, start:) { switched = worktree.path }) do
+        sb.send(:dispatch, "\r")
+      end
+      assert_equal "/wt/a", switched, "↵ still switches regardless of any remap"
+    end
+
+    def test_help_overlay_reflects_a_remapped_key
+      File.write(Config.path, YAML.dump("sidebar_keys" => { "new_workspace" => "c" }))
+      sb = sidebar(nodes: [proj("app")])
+      stub_method(Tmux, :pane_switch_keys, -> { [] }) do
+        lines = sb.send(:help_lines, 40).map { |l| strip_ansi(l) }
+        assert(lines.any? { |l| l.include?("new workspace") && l.start_with?("c") },
+               "the overlay advertises the configured key, not the default n")
+      end
+    end
+
+    def test_footer_help_hint_reflects_a_remapped_help_key
+      File.write(Config.path, YAML.dump("sidebar_keys" => { "help" => "x" }))
+      sb = sidebar(nodes: [proj("app"), ws("a")], cursor: 1)
+      assert_includes sb.send(:footer)[0], "x help", "the persistent gateway shows the configured help key"
+    end
+
+    def test_footer_empty_tree_invite_reflects_a_remapped_add_key
+      File.write(Config.path, YAML.dump("sidebar_keys" => { "add_project" => "p" }))
+      assert_includes sidebar(nodes: []).send(:footer)[0], "p add a project"
+    end
+
+    # Drift guard: an action added to Keymap::ACTIONS with no matching `when`
+    # arm in dispatch_action resolves in @keymap and is advertised in help/footer,
+    # but pressing its key silently does nothing — a dead, advertised key. Pin
+    # that every action has a dispatch arm (issue #108).
+    def test_dispatch_action_handles_every_keymap_action
+      src = File.read(File.expand_path("../lib/switchboard/sidebar.rb", __dir__))
+      body = src[/def dispatch_action\b.*?\n    end\n/m]
+      refute_nil body, "located the dispatch_action method body"
+      Keymap::ACTIONS.each do |a|
+        assert_includes body, ":#{a.name}",
+                        "dispatch_action has no arm for :#{a.name} (ACTIONS/dispatch drift — its key would be a dead no-op)"
+      end
+    end
+
+    # The headline "edit sidebar_keys via `e`, re-binds live" path: rebuild
+    # re-resolves the keymap from the (possibly just-edited) @config, mirroring
+    # the shared-store hydration tests. Without resolve_keymap in rebuild this
+    # would not pick up the edit.
+    def test_rebuild_reresolves_the_keymap_after_a_config_edit
+      repo = temp_git_repo("app")
+      File.write(Config.path, YAML.dump("projects" => [{ "name" => "app", "path" => repo }]))
+      sb = sidebar(nodes: [])
+      sb.instance_variable_set(:@config, Config.new)
+      sb.send(:rebuild)
+      assert_equal :new_workspace, sb.instance_variable_get(:@keymap)["n"], "default n binds before the edit"
+
+      # as an `e` edit + Ctrl-R reload would: rewrite config, swap the fresh Config, rebuild
+      File.write(Config.path, YAML.dump("projects" => [{ "name" => "app", "path" => repo }],
+                                        "sidebar_keys" => { "new_workspace" => "c" }))
+      sb.instance_variable_set(:@config, Config.new)
+      sb.send(:rebuild)
+      assert_equal :new_workspace, sb.instance_variable_get(:@keymap)["c"], "rebuild re-binds to the edited key"
+      assert_nil sb.instance_variable_get(:@keymap)["n"], "the freed default no longer binds"
+    end
+
     # --- tokenize: the terminal-input grammar parser -------------------------
     # The pure tokenizer behind handle. It replaced fixed-width slicing, which
     # orphaned an escape sequence's final byte when a read split it — a focus-out

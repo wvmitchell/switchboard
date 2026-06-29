@@ -31,6 +31,7 @@ or `e` in the sidebar — both reload on save.
 | `session_command` | string | _(none)_ | Command typed into a worktree's window the first time its session is created. Per-project override wins. |
 | `sounds` | map or `false` | _(on, built-ins)_ | Completion sounds. See [`sounds`](#sounds). |
 | `tmux_keys` | map | _(toggle `s`)_ | Which prefix keys switchboard binds. See [`tmux_keys`](#tmux_keys). |
+| `sidebar_keys` | map | _(defaults)_ | Remap the keys *inside* the sidebar, by action name. See [`sidebar_keys`](#sidebar_keys). |
 | `projects` | list | `[]` | The project registry. See [`projects`](#projects). |
 
 Paths accept `~` and are expanded. Unknown keys are ignored.
@@ -54,6 +55,9 @@ sounds:
 tmux_keys:
   toggle: s                              # prefix-s shows/hides the sidebar
   home: S                                # prefix-S jumps to the home session
+sidebar_keys:
+  new_workspace: c                       # press c (not n) to create a workspace
+  delete: x                              # press x (not d) to remove a row
 projects:
   - name: myapp
     path: ~/code/myapp
@@ -164,6 +168,50 @@ carry two actions; the toggle wins) and `doctor` reports the collision.
 
 ---
 
+## `sidebar_keys`
+
+Remap the keys you press *inside* the sidebar (issue #108), by **action name**
+rather than raw key — the config records intent, not bytes. Omit an action to keep
+its default. See [Reference: keybindings](reference-keybindings.md#sidebar-keys)
+for the full action list and [How-to: keybindings](howto-keybindings.md#change-the-in-sidebar-keys).
+
+```yaml
+sidebar_keys:
+  new_workspace: c   # press c (not n) to create a workspace
+  delete: x          # press x (not d) to remove a row
+  down: j            # (default; shown only as an example)
+```
+
+| Action | Default | Action | Default |
+|--------|---------|--------|---------|
+| `down` | `j` | `open_repo` | `O` |
+| `up` | `k` | `rename` | `r` |
+| `top` | `g` | `delete` | `d` |
+| `bottom` | `G` | `edit_config` | `e` |
+| `filter` | `/` | `refresh_prs` | `R` |
+| `add_project` | `a` | `toggle_branch_fold` | `z` |
+| `new_workspace` | `n` | `toggle_full_header` | `H` |
+| `open_pr` | `o` | `help` | `?` |
+| | | `quit` | `q` |
+
+Each value is a **single printable character** (`0x20`–`0x7E`). That rule reserves
+every structural key for free — `↵`, `Esc`, `Backspace`, the arrows, the resize
+`←`/`→`, and the `Ctrl-N`/`Ctrl-P`/`Ctrl-O` aliases are non-printable, so a remap can
+never shadow them. An invalid value (more than one char, a named key, a non-string)
+falls back to the action's default, and `doctor` flags it.
+
+If two actions resolve to the same key, the earlier one (in the table order above)
+keeps it and the later is **left unbound** — but its fixed aliases still fire, so
+you can't lose movement (`↓`/`↑`/`Ctrl-N`/`Ctrl-P` work even if `j`/`k` collide away).
+`doctor` reports the clash. Everything degrades to defaults and keeps running;
+nothing crashes.
+
+Editing `sidebar_keys` from inside the sidebar (`e`) re-binds on save; the `?`
+overlay then shows your actual keys (it always renders from the resolved map, so it
+never drifts from a remap).
+
+---
+
 ## `projects`
 
 The registry: which repos switchboard scans for worktrees. A project needs only
@@ -225,6 +273,6 @@ state without touching your real config — the same walls the test suite uses (
 ## Related
 
 - [Reference: CLI](reference-cli.md) — every command that reads or writes this config.
-- [Reference: keybindings](reference-keybindings.md) — `tmux_keys` and the sidebar keys.
+- [Reference: keybindings](reference-keybindings.md) — `tmux_keys` and `sidebar_keys`, with the action names.
 - [How-to: manage projects](howto-manage-projects.md) — grow the `projects` list.
 - [Explanation: architecture](explanation-architecture.md) — why the config is just a registry.

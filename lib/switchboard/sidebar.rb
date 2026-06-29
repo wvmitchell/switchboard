@@ -107,47 +107,12 @@ module Switchboard
     # shares NAV_WS's honest "open"; a "switch" label would imply a checkout it
     # never does — and shouldn't.
 
-    # The `?` help overlay's static key map (issue #62) — [key, description] rows,
-    # where a row with an empty key is a section heading. The footer teaches only
-    # the common keys for the highlighted row (fixed at three lines, full at the pin
-    # width); this is the complete reference and the discoverable home for the keys
-    # the footer can't fit (g/G jumps, ←/→ resize, the ^N/^P aliases, the mode keys).
-    # Top-loaded with navigation — a short pane drops the tail, not the top. The
-    # tmux-layer keys that operate the sidebar (prefix-toggle/home) are appended at
-    # render time from config (tmux_help_rows), since they're resolved, not static.
-    HELP = [
-      ["", "navigate"],
-      ["↑ ↓  ^n ^p  j k", "move"],
-      ["g  G", "top · bottom"],
-      ["←  →", "narrow · widen pane"],
-      ["", "open"],
-      ["↵", "open · collapse"],
-      ["/", "filter by name"],
-      ["", "the selected row"],
-      ["a", "add a project"],
-      ["n", "new workspace (auto-named)"],
-      ["o  ^o", "open its PR"],
-      ["O", "open its repo"],
-      ["r", "rename workspace"],
-      ["d", "delete · remove"],
-      ["", "anywhere"],
-      ["e", "edit settings"],
-      ["R", "refresh PR badges"],
-      ["z", "fold · unfold branches"],
-      ["H", "toggle full header"],
-      ["?", "this help"],
-      ["q", "quit all sessions"],
-      ["", "filter mode  (/)"],
-      ["↵", "open · create"],
-      ["Esc", "cancel"],
-      ["Bksp", "trim · exit when empty"],
-      ["", "name prompts"],
-      ["↵", "submit"],
-      ["Esc", "cancel"],
-      ["Bksp · ^u", "erase · clear"],
-      ["", "diff counts"],
-      ["+/−", "committed diff vs base"]
-    ].freeze
+    # The `?` overlay's key map is built at render time from the resolved bindings
+    # (Keymap.help_rows, issue #108) so the shown keys can never drift from what
+    # dispatch honors — [key, description] rows, a blank key marking a section
+    # heading. Top-loaded with navigation, so a short pane drops the tail, not the
+    # top. The tmux-layer keys that operate the sidebar (prefix-toggle/home) are
+    # appended from config (tmux_help_rows), resolved, not static.
     HELP_KEY_COLS = 6 # key column width; longer combos (move/prefix rows) overflow it
 
     # Synthetic byte sequences that arrive on stdin without a keypress — the C-l
@@ -209,6 +174,7 @@ module Switchboard
 
     def initialize
       @config = Config.new
+      resolve_keymap      # @keymap (key->action) + @bindings (action->key); re-run each rebuild (#108)
       @cursor = 0
       @offset = 0
       @nodes = []          # full tree
@@ -534,6 +500,7 @@ module Switchboard
     def rebuild
       @model = Model.new(@config, with_dirty: false)
       @nodes = Tree.nodes(@model, branch_cache: @branch_cache)
+      resolve_keymap # re-read sidebar_keys so an `e` config edit re-binds the tree keys (#108)
       # Hydrate folds from the shared on-disk store so every window's sidebar
       # agrees and a respawned pane keeps them. GC against the configured project
       # names (the stable registry, not the git-built tree, so a project that
@@ -555,6 +522,14 @@ module Switchboard
         @width = new_width
       end
       recompute_rows
+    end
+
+    # Resolve the configurable in-sidebar keys (issue #108) from @config into the
+    # two views the rest of the sidebar reads: @keymap (key -> action, what
+    # dispatch keys off) and @bindings (action -> key, what the ? overlay and
+    # footer show). Re-run on every rebuild so an `e` config edit re-binds live.
+    def resolve_keymap
+      @keymap, @bindings = Keymap.resolve(@config) # single pass: key->action + action->key
     end
 
     # Visible rows. Normally: all nodes, minus the children of collapsed projects.
@@ -1112,31 +1087,47 @@ module Switchboard
       return help_key(key) if @help     # ? overlay is open: a real key closes it, pokes pass through
       return filter_key(key) if @filter # / filter mode swallows the normal bindings
 
+      # Structural sequences first: reserved keys with their own control flow that
+      # are NOT user-remappable (issue #108) — the resize arrows, the ↵ context-
+      # action, the C-l/C-r pokes, focus in/out. They're non-printable, so a
+      # printable sidebar_keys override (Config#valid_sidebar_key?) can never
+      # shadow them; checking them up front keeps that explicit.
       case key
-      when "\e[B", "\x0E", "j" then move(1)   # down (↓ / ^N / j)
-      when "\e[A", "\x10", "k" then move(-1)  # up   (↑ / ^P / k)
-      when "\e[C"              then resize(WIDTH_STEP)  # → widen the pane (issue #78)
-      when "\e[D"              then resize(-WIDTH_STEP) # ← narrow the pane
-      when "/"                 then start_filter # type-to-filter the tree (issue #60)
-      when "\r", "\n"          then enter
-      when "a"                 then add
-      when "n"                 then create
-      when "o", "\x0F"         then open_pr # open the PR in the browser (o / ^O)
-      when "O"                 then open_repo # open the row's repo (branch if it has an open PR, else default)
-      when "H"                 then toggle_full_header # seat the full header on every session (shared toggle)
-      when "z"                 then toggle_branch_fold # fold/unfold every workspace's branches (shared toggle, #107)
-      when "R"                 then refresh_prs_now # force a PR-badge refresh (external merge/close)
-      when "d"                 then remove
-      when "r"                 then rename
-      when "e"                 then edit_config
-      when "\f"                then reload_and_refresh # Ctrl-L (hook poke on switch)
-      when RELOAD_CONFIG_BYTE  then reload_config_and_rebuild # Ctrl-R (post-edit reload)
-      when "g"                 then @cursor = 0
-      when "G"                 then @cursor = [@rows.size - 1, 0].max # clamp: empty tree → 0, not -1
-      when "?"                 then show_help # the full key map overlay (issue #62)
-      when "\e[I"              then return false if focus_in # focus-in: light cursor; #64 fast reap may exit the loop
-      when "\e[O"              then @focused = false # tmux focus-out: drop it
-      when "q"                 then return quit # q: tear down ALL switchboard sessions
+      when "\e[C"             then resize(WIDTH_STEP)  # → widen the pane (issue #78)
+      when "\e[D"             then resize(-WIDTH_STEP) # ← narrow the pane
+      when "\r", "\n"         then enter
+      when "\f"               then reload_and_refresh # Ctrl-L (hook poke on switch)
+      when RELOAD_CONFIG_BYTE then reload_config_and_rebuild # Ctrl-R (post-edit reload)
+      when "\e[I"             then return false if focus_in # focus-in: light cursor; #64 fast reap may exit the loop
+      when "\e[O"             then @focused = false # tmux focus-out: drop it
+      else                         return dispatch_action(key)
+      end
+      true
+    end
+
+    # The configurable arm of dispatch (issue #108): resolve the key to an action
+    # via @keymap (its default, a sidebar_keys override, or a fixed alias like
+    # ↓/^N/^O), then fire it. An unbound key is a no-op. Returns false only when
+    # quit tears everything down (so the run loop exits); true otherwise.
+    def dispatch_action(key)
+      case @keymap[key]
+      when :down               then move(1)
+      when :up                 then move(-1)
+      when :top                then @cursor = 0
+      when :bottom             then @cursor = [@rows.size - 1, 0].max # clamp: empty tree → 0, not -1
+      when :filter             then start_filter # type-to-filter the tree (issue #60)
+      when :add_project        then add
+      when :new_workspace      then create
+      when :open_pr            then open_pr # open the PR in the browser
+      when :open_repo          then open_repo # open the row's repo (branch if it has an open PR, else default)
+      when :rename             then rename
+      when :delete             then remove
+      when :edit_config        then edit_config
+      when :refresh_prs        then refresh_prs_now # force a PR-badge refresh (external merge/close)
+      when :toggle_branch_fold then toggle_branch_fold # fold/unfold every workspace's branches (#107)
+      when :toggle_full_header then toggle_full_header # seat the full header on every session
+      when :help               then show_help # the full key map overlay (issue #62)
+      when :quit               then return quit # q: tear down ALL switchboard sessions
       end
       true
     end
@@ -1772,11 +1763,28 @@ module Switchboard
     # (fresh install) shows the first-project invite in place of nav.
     def footer
       return filter_footer if @filter
-      return ["a add a project · ? help"] unless current # empty tree: invite the first project
+      # empty tree: invite the first project (the add key resolved live, #108)
+      return ["#{key_hint(:add_project)} add a project · #{help_hint}"] unless current
 
       # ws AND br both open the worktree session, so they read alike (NAV_WS).
       nav = current.kind == "proj" ? NAV_PROJ : NAV_WS
-      ["#{@home ? HOME_TITLE : nav} · ? help"]
+      ["#{@home ? HOME_TITLE : nav} · #{help_hint}"]
+    end
+
+    # The persistent "? help" gateway, the ? resolved from the live bindings so a
+    # remapped help key shows correctly (issue #108).
+    def help_hint
+      "#{key_hint(:help)} help"
+    end
+
+    # An action's resolved key for a footer hint, falling back to its default when
+    # the binding was collision-dropped (doctor reports the clash) so the hint
+    # never shows a blank. This DELIBERATELY diverges from the `?` overlay, which
+    # shows a `—` for a dropped binding (Keymap.help_rows): the one-line footer
+    # prefers a non-blank best-effort key, while the overlay + doctor are the
+    # authoritative surfaces for the rare misconfigured-collision case.
+    def key_hint(action)
+      @bindings[action] || Keymap::DEFAULTS[action]
     end
 
     # The filter-mode legend: the live query, then the in-mode keys. j/k are query
@@ -1912,13 +1920,14 @@ module Switchboard
       help_lines(cols).first([rows - 1, 0].max)
     end
 
-    # Format HELP (+ the resolved tmux rows) into rendered lines: the wordmark, then
-    # each section as a blank separator + bold heading, and each key row as
-    # `key.ljust(HELP_KEY_COLS)  desc`. trunc runs on the PLAIN string BEFORE the ANSI
-    # is wrapped on, so truncation can never cut an escape sequence (the line() pattern).
+    # Format the key map (Keymap.help_rows, built from the live @bindings so the
+    # shown keys never drift — issue #108) plus the resolved tmux rows into rendered
+    # lines: the wordmark, then each section as a blank separator + bold heading, and
+    # each key row as `key.ljust(HELP_KEY_COLS)  desc`. trunc runs on the PLAIN string
+    # BEFORE the ANSI is wrapped on, so truncation can never cut an escape (line()).
     def help_lines(cols)
       out = ["#{BRAND}#{trunc(WORDMARK, cols)}\e[0m"]
-      (HELP + tmux_help_rows).each do |key, desc|
+      (Keymap.help_rows(@bindings) + tmux_help_rows).each do |key, desc|
         if key.empty?
           out << "" << "#{BRAND}#{trunc(desc, cols)}\e[0m" # blank separator, then the heading
         else

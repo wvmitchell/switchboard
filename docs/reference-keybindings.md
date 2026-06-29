@@ -2,8 +2,10 @@
 
 Two key surfaces: the **tmux prefix keys** switchboard binds (to summon the
 sidebar or jump home), and the **keys inside the sidebar** (to navigate and act
-on the tree). The tmux keys are configurable via `tmux_keys`; the sidebar keys
-are fixed.
+on the tree). Both are configurable: the tmux keys via
+[`tmux_keys`](reference-config.md#tmux_keys), the sidebar keys via
+[`sidebar_keys`](reference-config.md#sidebar_keys) (issue #108). A handful of
+structural keys inside the sidebar stay fixed — see [Sidebar keys](#sidebar-keys).
 
 ---
 
@@ -36,25 +38,38 @@ highlighted; the action keys apply to the highlighted row's kind (project,
 workspace, or branch). The one-line footer shows the row's nav verb and the
 `?` gateway; press `?` for the full key map (the action keys live there).
 
-| Key | Action |
-|-----|--------|
-| `↑` / `↓` / `Ctrl-N` / `Ctrl-P` / `j` / `k` | Move the highlight down/up (across projects, workspaces, and a workspace's branch rows). Arrow, emacs, and vi spellings all work. In filter mode `j`/`k` type into the query instead — there movement is arrows / `Ctrl-N` / `Ctrl-P` only. |
-| `g` / `G` | Jump to the top / bottom of the tree. |
-| `←` / `→` | Narrow / widen the sidebar pane (2 cols per press; hold to resize smoothly). The width is shared across every window's sidebar and survives a restart. Inert in filter mode. |
-| `/` | Filter the tree — type to jump straight to a workspace by name. See [Filter mode](#filter-mode) below. |
-| `↵` (Enter) | On a workspace/branch row: switch to its tmux session (creating it if needed). On a project header: collapse/expand it. |
-| `a` | Add a project — register a local repo or clone a URL (a small prompt). |
-| `n` | Create a new worktree + branch in the highlighted project, and drop you in. No name prompt — it gets a throwaway placeholder name you rename later with `r` (or let the agent name it). |
-| `o` / `Ctrl-O` | Open the highlighted PR in the browser (`gh pr view --web`). |
-| `O` | Open the highlighted row's repo in the browser (`gh browse`). Works on every row kind, including the project header. Opens the repo at the row's branch when it has an open PR, otherwise the repo home (default branch). |
-| `R` | Refresh PR badges now (catch a PR merged/closed *on GitHub*). |
-| `z` | Fold / unfold **every** workspace's branch-history rows at once — tree-wide, regardless of where the cursor is. A folded multi-branch workspace collapses to a single row that shows its own diff/PR badge plus a dim `▸N` cue (N branches tucked away). A shared on-disk view preference, so all sessions follow and it survives restarts. |
-| `H` | Toggle the full header (wordmark + greeting + console + rule) on **every** session, not just home. A shared on-disk view preference, so all sessions follow and it survives restarts. |
-| `r` | Rename the highlighted workspace (moves the worktree dir, keeps branch + PR). |
-| `d` | Remove the highlighted row — delete a workspace, or unregister a project (and close its sessions). Confirms first. |
-| `e` | Edit `config.yml` in `$EDITOR` (opens beside the home tree, returns you on quit). |
-| `?` | Show the full key map overlay (nav + actions + filter/prompt modes + the tmux keys that operate the sidebar). Any key closes it. |
-| `q` | Quit switchboard — tear down every `sb/` session. Confirms first. |
+The **Default** column is what ships; the **Action** column is the name you put
+under [`sidebar_keys`](reference-config.md#sidebar_keys) to remap it (e.g.
+`new_workspace: c`). The `?` overlay always shows your *actual* keys, so it never
+drifts from a remap.
+
+| Default | Action | What it does |
+|---------|--------|--------------|
+| `↑` / `↓` / `Ctrl-N` / `Ctrl-P` / `j` / `k` | `down` / `up` | Move the highlight down/up (across projects, workspaces, and a workspace's branch rows). Arrow, emacs, and vi spellings all work; only the `j`/`k` letters are remappable (the `↑`/`↓`/`Ctrl-N`/`Ctrl-P` aliases are fixed). In filter mode `j`/`k` type into the query instead. |
+| `g` / `G` | `top` / `bottom` | Jump to the top / bottom of the tree. |
+| `←` / `→` | _(fixed)_ | Narrow / widen the sidebar pane (2 cols per press; hold to resize smoothly). The width is shared across every window's sidebar and survives a restart. Inert in filter mode. |
+| `/` | `filter` | Filter the tree — type to jump straight to a workspace by name. See [Filter mode](#filter-mode) below. |
+| `↵` (Enter) | _(fixed)_ | On a workspace/branch row: switch to its tmux session (creating it if needed). On a project header: collapse/expand it. |
+| `a` | `add_project` | Add a project — register a local repo or clone a URL (a small prompt). |
+| `n` | `new_workspace` | Create a new worktree + branch in the highlighted project, and drop you in. No name prompt — it gets a throwaway placeholder name you rename later with `r` (or let the agent name it). |
+| `o` / `Ctrl-O` | `open_pr` | Open the highlighted PR in the browser (`gh pr view --web`). Only the `o` letter is remappable; `Ctrl-O` is a fixed alias. |
+| `O` | `open_repo` | Open the highlighted row's repo in the browser (`gh browse`). Works on every row kind, including the project header. Opens the repo at the row's branch when it has an open PR, otherwise the repo home (default branch). |
+| `R` | `refresh_prs` | Refresh PR badges now (catch a PR merged/closed *on GitHub*). |
+| `z` | `toggle_branch_fold` | Fold / unfold **every** workspace's branch-history rows at once — tree-wide, regardless of where the cursor is. A folded multi-branch workspace collapses to a single row that shows its own diff/PR badge plus a dim `▸N` cue (N branches tucked away). A shared on-disk view preference, so all sessions follow and it survives restarts. |
+| `H` | `toggle_full_header` | Toggle the full header (wordmark + greeting + console + rule) on **every** session, not just home. A shared on-disk view preference, so all sessions follow and it survives restarts. |
+| `r` | `rename` | Rename the highlighted workspace (moves the worktree dir, keeps branch + PR). |
+| `d` | `delete` | Remove the highlighted row — delete a workspace, or unregister a project (and close its sessions). Confirms first. |
+| `e` | `edit_config` | Edit `config.yml` in `$EDITOR` (opens beside the home tree, returns you on quit). |
+| `?` | `help` | Show the full key map overlay (nav + actions + filter/prompt modes + the tmux keys that operate the sidebar). Any key closes it. |
+| `q` | `quit` | Quit switchboard — tear down every `sb/` session. Confirms first. |
+
+A `sidebar_keys` value is a **single printable character**. That rule is what
+keeps the structural keys reserved: `↵`, `Esc`, `Backspace`, the arrows, and the
+`Ctrl-N`/`Ctrl-P`/`Ctrl-O` aliases are all non-printable, so a remap can never land
+on one. `switchboard doctor` flags an invalid value or a clash (two actions on one
+key) — the loser is left unbound, but its arrow/ctrl aliases still work, so you can
+never lock yourself out of movement. See
+[How-to: keybindings](howto-keybindings.md#change-the-in-sidebar-keys).
 
 The footer legend shows only the common keys for the highlighted row; `g`/`G` and
 the `Ctrl-N`/`Ctrl-P` movement aliases don't fit it — press `?` in the sidebar for
@@ -140,6 +155,6 @@ These are internal; you never type them. See
 ## Related
 
 - [Reference: reading the sidebar](reference-sidebar.md) — what every dot, badge, and mark these keys act on means.
-- [Reference: config](reference-config.md#tmux_keys) — the `tmux_keys` schema.
-- [How-to: keybindings](howto-keybindings.md) — change the toggle key, bind home.
-- [Reference: CLI](reference-cli.md) — `doctor` reports a bad or clobbered binding.
+- [Reference: config](reference-config.md#tmux_keys) — the `tmux_keys` and [`sidebar_keys`](reference-config.md#sidebar_keys) schemas.
+- [How-to: keybindings](howto-keybindings.md) — change the toggle key, bind home, remap the sidebar keys.
+- [Reference: CLI](reference-cli.md) — `doctor` reports a bad or clobbered binding, and a bad sidebar-key remap.

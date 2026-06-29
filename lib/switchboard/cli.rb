@@ -487,11 +487,40 @@ module Switchboard
       exists = Config.exist?
       puts row(exists, exists ? "config: #{Config.path}" : "no config — run `switchboard install`")
       doctor_install
+      doctor_sidebar_keys
       doctor_hooks
       doctor_prs
       doctor_sounds
       doctor_sessions
       doctor_orphan_sidebars
+    end
+
+    # Surface a bad `sidebar_keys` remap (issue #108) so a binding that didn't take
+    # isn't a silent mystery — the sidebar degrades to defaults rather than erroring,
+    # so doctor is where it shows. Two cases: a value that isn't a single printable
+    # key (fell back to the default), and an action whose key clashes with another's
+    # (the loser is left unbound — its arrow/ctrl aliases still fire). Silent for the
+    # default layout (nothing remapped); a clean customization gets one confirming row.
+    def doctor_sidebar_keys
+      # Capture [action, raw] pairs in one lookup each, skipping unset actions.
+      overridden = Keymap::ACTIONS.filter_map do |a|
+        raw = config.raw_sidebar_key(a.name)
+        [a, raw] unless raw.nil?
+      end
+      return if overridden.empty?
+
+      ok = true
+      overridden.each do |a, raw|
+        next if config.valid_sidebar_key?(raw)
+
+        ok = false
+        puts "  \e[33m–\e[0m sidebar_keys.#{a.name} #{raw.inspect} isn't a single printable key — using #{a.default.inspect}"
+      end
+      Keymap.collisions(config).each do |c|
+        ok = false
+        puts "  \e[33m–\e[0m sidebar_keys.#{c[:action]} (#{c[:key].inspect}) clashes with #{c[:winner]} — left unbound; its arrow/ctrl aliases still work"
+      end
+      puts row(true, "sidebar_keys: #{overridden.size} remapped, no clashes") if ok
     end
 
     # PR badges come from gh and are cached on disk; the sidebar degrades SILENTLY if
