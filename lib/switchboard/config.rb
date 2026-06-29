@@ -174,7 +174,7 @@ module Switchboard
       @data.fetch("prune_on_launch", true) != false
     end
 
-    # Global agent self-naming switch — ON by default. When on, `Hook.enable` plants a
+    # Global agent self-naming switch — ON by default. When on, `AgentHooks.enable` plants a
     # SessionStart instruction (and a Stop backstop) telling a running agent to
     # `switchboard rename` a still-placeholder-named workspace once it understands the
     # work (#92). Now that `n` only ever creates placeholders (#114), the agent naming

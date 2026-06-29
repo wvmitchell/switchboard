@@ -95,7 +95,7 @@ so the gate can't silently no-op.
 ## Code conventions
 
 - Every file starts with `# frozen_string_literal: true`.
-- **Stateless helpers are `module_function` modules** (`Hook`, `Tmux`,
+- **Stateless helpers are `module_function` modules** (`ClaudeHook`, `Tmux`,
   `Installer`, `Git`, `Pr`, `Reconcile`, `Creator`, `Registrar`, `Sound`,
   `Attention`, `Collapse`, …). Only `Model`, `Config`, `Sidebar`, and
   `AgentState` are classes — they hold state. Don't make a class for something
@@ -144,7 +144,7 @@ tmux bindings/hooks go live — the CHANGELOG header says so.
 | The sidebar TUI | `lib/switchboard/sidebar.rb` |
 | tmux integration | `lib/switchboard/tmux.rb`, `switchboard.tmux` |
 | Install / keybindings | `lib/switchboard/installer.rb` |
-| Agent state / hooks | `lib/switchboard/agent_state.rb`, `hook.rb`, `agents.rb` |
+| Agent state / hooks | `lib/switchboard/agent_state.rb`, `agents.rb`; per-agent adapters `claude_hook.rb` (Claude) + `codex_hook.rb` (Codex) over shared base `hook_file.rb`, behind registry `agent_hooks.rb` |
 | Sounds / bold / collapse | `lib/switchboard/sound.rb`, `attention.rb`, `collapse.rb` (shared base: `keyed_marker_store.rb`) |
 | Git / PRs / reconcile | `lib/switchboard/git.rb`, `pr.rb`, `reconcile.rb` |
 

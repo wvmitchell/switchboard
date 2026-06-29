@@ -135,7 +135,9 @@ module Switchboard
                                         "agent_state_hooks" => false, "auto_rename" => true,
                                         "projects" => [{ "name" => "proj", "path" => temp_git_repo("proj", origin: true) }]))
       dest = Creator.create(Config.new, "proj", "thing")
-      assert Hook.enabled?(dest), "hooks wired because auto_rename is on"
+      # create wires EVERY adapter (AgentHooks), not just Claude — assert both.
+      assert ClaudeHook.enabled?(dest), "claude hook wired because auto_rename is on"
+      assert CodexHook.enabled?(dest), "codex hook wired because auto_rename is on"
     end
 
     # A PER-PROJECT auto_rename:true (global off, dots off) must still wire the hook —
@@ -147,7 +149,8 @@ module Switchboard
                                         "projects" => [{ "name" => "proj", "auto_rename" => true,
                                                          "path" => temp_git_repo("proj", origin: true) }]))
       dest = Creator.create(Config.new, "proj", "thing")
-      assert Hook.enabled?(dest), "per-project auto_rename:true wires the hook even with global off"
+      assert ClaudeHook.enabled?(dest), "per-project auto_rename:true wires the claude hook even with global off"
+      assert CodexHook.enabled?(dest), "per-project auto_rename:true wires the codex hook too"
     end
 
     # The inverse override: global auto_rename:true but this project opts OUT — no hook
@@ -158,7 +161,8 @@ module Switchboard
                                         "projects" => [{ "name" => "proj", "auto_rename" => false,
                                                          "path" => temp_git_repo("proj", origin: true) }]))
       dest = Creator.create(Config.new, "proj", "thing")
-      refute Hook.enabled?(dest), "per-project auto_rename:false skips the hook despite global on"
+      refute ClaudeHook.enabled?(dest), "per-project auto_rename:false skips the claude hook despite global on"
+      refute CodexHook.enabled?(dest), "per-project auto_rename:false skips the codex hook too"
     end
 
     def test_create_skips_hooks_when_dots_and_auto_rename_both_off
@@ -166,7 +170,8 @@ module Switchboard
                                         "agent_state_hooks" => false, "auto_rename" => false,
                                         "projects" => [{ "name" => "proj", "path" => temp_git_repo("proj", origin: true) }]))
       dest = Creator.create(Config.new, "proj", "thing")
-      refute Hook.enabled?(dest), "no hooks when both dots and auto_rename are off"
+      refute ClaudeHook.enabled?(dest), "no claude hook when both dots and auto_rename are off"
+      refute CodexHook.enabled?(dest), "no codex hook when both dots and auto_rename are off"
     end
 
     # The branch created off origin/main must NOT inherit it as an upstream

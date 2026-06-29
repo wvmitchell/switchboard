@@ -84,15 +84,18 @@ local signal). `--poke PANE` is used internally by the sidebar to redraw a
 specific pane.
 
 ### `switchboard enable-hooks [path]`
-Wire exact agent-state hooks into a single worktree's local settings
-(`<worktree>/.claude/settings.local.json`), scoped to that worktree — never your
-global `~/.claude`. Defaults to the worktree you're standing in; pass a path to
-target another. Restart `claude` there (or `/hooks`) to pick them up. New
-switchboard-created worktrees get this automatically.
+Wire exact agent-state hooks into a single worktree, for every supported agent —
+Claude (`<worktree>/.claude/settings.local.json`) and Codex
+(`<worktree>/.codex/hooks.json`) — scoped to that worktree, never your global
+`~/.claude` / `~/.codex`. Each file is dormant until that agent runs there, so a
+Claude-only worktree just carries an unused Codex file. Defaults to the worktree
+you're standing in; pass a path to target another. Restart `claude` or `codex`
+there to pick them up — Codex loads project hooks only once the project layer is
+**trusted** (`/hooks`). New switchboard-created worktrees get this automatically.
 
 ### `switchboard disable-hooks [path]`
-Remove switchboard's hooks from a worktree's local settings (leaving any other
-settings intact). Defaults to the current worktree.
+Remove switchboard's hooks from a worktree (both adapters), leaving any other
+settings intact. Defaults to the current worktree.
 
 ### `switchboard rename <name>`
 Rename the workspace you're standing in: moves the worktree directory to `<name>`

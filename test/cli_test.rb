@@ -262,6 +262,31 @@ module Switchboard
       refute_includes sw_line, "optional shorthand"
     end
 
+    # --- doctor: per-adapter hook status (#110) ---
+
+    # With hooks wired, doctor breaks status out per adapter and flags the Codex
+    # trust caveat (a present file isn't proof Codex will load it until trusted).
+    def test_doctor_hooks_lists_each_adapter_and_the_codex_trust_note
+      repo = temp_git_repo
+      AgentHooks.enable(repo)
+      out = Dir.chdir(repo) { capture { CLI.doctor_hooks } }
+      assert_includes out, "hooks enabled here"
+      # match on the rel-path suffix — doctor prints the realpath'd worktree
+      # (git rev-parse resolves /var → /private/var on macOS).
+      assert_match(%r{claude: .*/\.claude/settings\.local\.json}, out)
+      assert_match(%r{codex: .*/\.codex/hooks\.json}, out)
+      assert_includes out, "trusted", "codex trust caveat shown"
+      assert_includes out, "/hooks"
+    end
+
+    # No adapter wired → the observation-fallback line, and no trust note.
+    def test_doctor_hooks_reports_off_when_no_adapter_is_wired
+      repo = temp_git_repo
+      out = Dir.chdir(repo) { capture { CLI.doctor_hooks } }
+      assert_includes out, "hooks off here"
+      refute_includes out, "trusted"
+    end
+
     # --- prune / quit (Reconcile + Tmux stubbed so no real tmux is touched) ---
 
     def report(reachable: true, sb_count: 0, orphans: [])
@@ -761,7 +786,7 @@ module Switchboard
     # reporter, whose `pwd -P`/cksum key is computed from our inherited cwd — so a state
     # written here must round-trip back through AgentState.scan as that worktree's state.
     def test_report_stop_state_round_trips_through_agentstate
-      Hook.ensure_script
+      HookFile.ensure_script
       wt = path("wt")
       FileUtils.mkdir_p(wt)
       Dir.chdir(wt) { CLI.report_stop_state("thinking") }

@@ -93,10 +93,12 @@ and where to start.
 - **Watch-while-working freshness for hook-less agents.** The agent-completion
   refresh trigger (T1) fires only on the *hook* signal (`AgentState#last_hook_states`),
   because the coarse activity fallback flips `:thinking ⇄ :done` every 3s and
-  would fire on noise. So codex/aider worktrees (or Claude before
+  would fire on noise. So hook-less worktrees (Aider, or Claude/Codex before
   `enable-hooks`) get badge freshness from navigation + the backstop, not the
-  live edge. If you run non-Claude agents and want their badges as live as
-  Claude's, add a presence-precise signal for them rather than leaning on the
+  live edge. (Codex now has exact hooks too — #110 — so an *enabled* Codex
+  worktree already rides the live edge; this is about agents with no hook
+  surface.) If you run a hook-less agent and want its badges as live as a hooked
+  one's, add a presence-precise signal for it rather than leaning on the
   capture-hash. Start in `agent_state.rb` (`activity`) and the T1 wiring in
   `sidebar.rb` (`refresh_prs_on_agent_edges`).
 

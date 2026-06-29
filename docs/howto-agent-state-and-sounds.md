@@ -8,7 +8,7 @@ agent finishes or asks for input. For *why* it works this way, see
 
 - switchboard installed and a worktree to work in. See the
   [tutorial](tutorial-getting-started.md).
-- For exact dots: Claude Code. Other agents (Codex, Aider) get a coarser
+- For exact dots: Claude Code or Codex. Other agents (Aider) get a coarser
   observed dot with zero setup.
 - For sounds: an audio player on PATH — `afplay` (macOS, built in) or
   `paplay`/`aplay`/`ffplay` (Linux).
@@ -20,9 +20,13 @@ You get *something* for free and *something better* by opting in:
 - **Observation (default, zero-config).** Switchboard watches the agent's tmux
   pane and infers busy-vs-idle. Works for any agent, installs nothing. It can't
   tell "waiting" from "done".
-- **Hooks (exact).** Claude Code reports its state precisely, so you get the
-  magenta "waiting on you" dot and accurate done/thinking. Scoped per worktree —
-  it never touches your global `~/.claude`.
+- **Hooks (exact).** Claude Code and Codex report their state precisely, so you
+  get the magenta "waiting on you" dot and accurate done/thinking. Scoped per
+  worktree (`.claude/settings.local.json` for Claude, `.codex/hooks.json` for
+  Codex) — it never touches your global `~/.claude` or `~/.codex`. For Codex the
+  magenta "waiting" dot rides its permission gates, so it shows whenever the agent
+  blocks on you for approval; a session command that bypasses *all* approvals
+  won't surface it.
 
 ## Enable exact hooks in a worktree
 
@@ -34,21 +38,24 @@ this once from inside it:
 switchboard enable-hooks
 ```
 
-Then restart `claude` in that worktree (or run `/hooks`) so it picks them up.
-To undo:
+Then restart `claude` (or `codex`) in that worktree so it picks them up. Codex
+loads project-local hooks only once the project layer is **trusted** — run
+`/hooks` in codex if the dot stays coarse. (`enable-hooks` wires both adapters;
+each is dormant until that agent runs there, so a Claude-only worktree just
+carries an unused `.codex/hooks.json`.) To undo:
 
 ```sh
 switchboard disable-hooks
 ```
 
 **Verify:** `switchboard doctor` reports `hooks enabled here` for the worktree
-you're standing in, and the reporter script path. Start an agent and watch the
-dot become precise.
+you're standing in, breaks the status out per adapter (claude / codex), and
+prints the reporter script path. Start an agent and watch the dot become precise.
 
 ### Turn off auto-wiring on new worktrees
 
-If you don't want switchboard touching `.claude/settings.local.json` on create,
-set in `config.yml`:
+If you don't want switchboard touching `.claude/settings.local.json` or
+`.codex/hooks.json` on create, set in `config.yml`:
 
 ```yaml
 agent_state_hooks: false

@@ -9,7 +9,7 @@ module Switchboard
   #
   # No audio is shipped or depended on. The two defaults are SYNTHESIZED in pure
   # Ruby (16-bit PCM WAV via Array#pack) and materialized into the XDG data dir
-  # on first use — the same self-healing, install-independent trick Hook uses for
+  # on first use — the same self-healing, install-independent trick HookFile uses for
   # its reporter script. Config overrides either state with a file path or a bare
   # macOS system-sound name (e.g. "Glass"). Every failure is swallowed: no player
   # on PATH, no audio device, a bad path — the sidebar never blocks or crashes
@@ -113,7 +113,7 @@ module Switchboard
     end
 
     # Stable, install-independent home for the synthesized WAVs (XDG data dir,
-    # like Hook's reporter) — survives reinstalls and `brew upgrade`.
+    # like HookFile's reporter) — survives reinstalls and `brew upgrade`.
     def asset_dir
       File.expand_path(File.join(ENV["XDG_DATA_HOME"] || "~/.local/share", "switchboard", "sounds"))
     end

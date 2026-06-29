@@ -31,11 +31,14 @@ presence:
 
 ### 1. Hook state — exact, opt-in
 
-Claude Code can run a hook command on each lifecycle event. Switchboard installs
-a tiny POSIX-sh reporter (`Hook::SCRIPT`) that writes one line —
-`<state>\t<cwd>\t<epoch>` — into the state dir. The sidebar reads those files.
+Claude Code *and Codex* can run a hook command on each lifecycle event.
+Switchboard installs a tiny POSIX-sh reporter (`HookFile::SCRIPT`) that writes one
+line — `<state>\t<cwd>\t<epoch>` — into the state dir. The sidebar reads those
+files. The reporter is agent-neutral; what differs per agent is the event→state
+map and the file it's wired into (see "Hooks are wired per worktree" below).
 
-The mapping (`Hook::EVENTS`) is the interesting part:
+Claude's mapping (`ClaudeHook::EVENTS`) is the interesting part (Codex's, which has no
+`Notification` event, is covered in the per-agent section below):
 
 - `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PostToolUseFailure` → **thinking**.
   `PreToolUse` fires *before* a tool runs, and the permission prompt comes *after*
@@ -65,7 +68,7 @@ clock step (a future epoch) still ages out rather than reading as eternally fres
 
 ### 2. Process/activity — coarse, zero-config
 
-For agents that don't report hooks (Codex, Aider, or Claude before
+For agents that don't report hooks (Aider, or Claude/Codex before
 `enable-hooks`), `Agents.active` finds agent CLIs by scanning tmux panes by
 command name plus a `pgrep`/`lsof` pass (the CLIs often run as `node`, so the
 pane command alone misses them). Busy-vs-idle is then inferred by hashing
@@ -81,24 +84,39 @@ reason hooks exist.
 
 `scan` tries the hook first; only if there's no fresh hook does it fall back to
 the process scan (fetched lazily — skipped entirely when every worktree is
-hooked). So a hooked Claude gets exact state, an un-hooked Codex still gets a
-busy/idle dot, and the two never fight. The result is `Hash<worktree, state>`;
-absent means idle (no dot).
+hooked). So a hooked agent (Claude *or* Codex) gets exact state, an un-hooked one
+(say Aider) still gets a busy/idle dot, and the two never fight. The result is
+`Hash<worktree, state>`; absent means idle (no dot).
 
-## Hooks are wired per worktree, never globally
+## Hooks are wired per worktree, never globally — per agent
 
-`Hook.enable` (`hook.rb`) merges switchboard's events into
-`<worktree>/.claude/settings.local.json` — Claude merges that on top of your user
-settings, so your global `~/.claude` is never touched. It also adds that file to
-the worktree's local git excludes (`info/exclude`), so it never dirties
-`git status`.
+The same intents — report-state, the SessionStart rename plant, the Stop backstop
+— are delivered to each agent through a **per-agent adapter** behind a registry
+(`AgentHooks`, `agent_hooks.rb`): `ClaudeHook` for Claude
+(`<worktree>/.claude/settings.local.json`) and `CodexHook` for Codex
+(`<worktree>/.codex/hooks.json`). Both agents happen to read the *same* hook-JSON
+shape, so the merge-safe enable/disable, the materialized reporter, and the
+rename-nudge/Stop wiring all live once in the shared engine `HookFile`
+(`hook_file.rb`); an adapter contributes only its delivery file and its
+event→state map. Each agent merges its file on top of your user settings, so your
+global `~/.claude` / `~/.codex` is never touched, and both files are added to the
+worktree's local git excludes (`info/exclude`) so they never dirty `git status`.
 
-The reporter script itself lives in the XDG **data** dir
+Codex's map differs from Claude's where the agents differ: Codex has no
+`Notification` event, so its `waiting` rides `PermissionRequest` — the magenta dot
+shows whenever Codex blocks on you for approval, which is best-effort (a session
+command that bypasses *all* approvals suppresses it). And Codex loads project-local
+hooks only once the project layer is **trusted** (run `/hooks` in codex), so a
+file being present isn't proof the dot will move — `switchboard doctor` flags that
+caveat per adapter.
+
+The reporter script itself is shared by every adapter (the state-file format is
+agent-neutral) and lives in the XDG **data** dir
 (`~/.local/share/switchboard/sb-agent-hook`) — an install-independent path that
 survives a `git pull` or `brew upgrade`, unlike the checkout. It's rewritten
 whenever it's missing or stale (versioned in the script header), so an upgrade
 self-heals the next time any worktree is enabled. New worktrees switchboard
-creates get hooks automatically (`Creator.create` → `Hook.enable`, gated on
+creates get hooks automatically (`Creator.create` → `AgentHooks.enable`, gated on
 `agent_state_hooks?`); existing ones via `switchboard enable-hooks`.
 
 ## One edge, four consumers

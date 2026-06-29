@@ -228,25 +228,27 @@ module Switchboard
       puts "cloned + added #{entry['name']} -> #{entry['path']}"
     end
 
-    # Wire agent-state hooks into a single worktree's local settings (scoped,
-    # never global). Defaults to the worktree you're standing in.
+    # Wire agent-state hooks into a single worktree's local agent settings
+    # (scoped, never global). Defaults to the worktree you're standing in.
     def enable_hooks(path = nil)
       worktree = worktree_at(path) or return warn("not inside a git worktree (pass a path)")
 
-      Hook.enable(worktree)
+      AgentHooks.enable(worktree)
       puts "enabled agent-state hooks in #{worktree}"
-      puts "  reporter: #{Hook.script_path}"
-      puts "  restart `claude` here (or /hooks) to pick them up."
+      puts "  reporter: #{HookFile.script_path}"
+      puts "  claude: #{ClaudeHook.settings_path(worktree)}"
+      puts "  codex:  #{CodexHook.settings_path(worktree)}"
+      puts "  restart `claude` or `codex` here (or /hooks) to pick them up."
     end
 
     def disable_hooks(path = nil)
       worktree = worktree_at(path) or return warn("not inside a git worktree (pass a path)")
 
-      Hook.disable(worktree)
+      AgentHooks.disable(worktree)
       puts "disabled agent-state hooks in #{worktree}"
     end
 
-    # The worktree root for a path (or cwd) — what Claude treats as the project.
+    # The worktree root for a path (or cwd) — what agent hooks treat as the project.
     def worktree_at(path)
       dir = path ? File.expand_path(path) : Dir.pwd
       top = `git -C #{Shellwords.escape(dir)} rev-parse --show-toplevel 2>/dev/null`.strip
@@ -312,7 +314,7 @@ module Switchboard
       puts "  cd into the new path: cd #{Shellwords.escape(target)}"
     end
 
-    # Claude Code hook entry (#92): nudge the agent to `switchboard rename` while this
+    # Agent hook entry (#92): nudge the agent to `switchboard rename` while this
     # workspace still has a generated placeholder name and `auto_rename` is on. Two events
     # dispatch here, selected by `--stop`:
     #   • SessionStart (no flag) — print an `additionalContext` instruction (the soft
@@ -326,7 +328,7 @@ module Switchboard
     #
     # Two hard contracts (a hook runs on the critical path of a session boundary):
     # ALWAYS exit 0, and print ONLY the JSON or nothing. A stray byte on stdout — a
-    # warning, a partial object, a backtrace — can poison Claude even at exit 0, so the
+    # warning, a partial object, a backtrace — can poison an agent even at exit 0, so the
     # whole body is rescued to silence and nothing else writes stdout.
     def rename_nudge(args = [])
       payload = parse_hook_stdin
@@ -381,9 +383,9 @@ module Switchboard
     # Report agent state by running the SAME sh reporter every other event uses. The
     # child inherits our cwd (the hook's invocation dir), so its `pwd -P`/cksum key
     # matches the file the other events write — no Ruby-side key reproduction, and its
-    # stdout is suppressed so only our block JSON (if any) reaches Claude.
+    # stdout is suppressed so only our block JSON (if any) reaches the agent.
     def report_stop_state(state)
-      system(Hook.script_path, state, out: File::NULL, err: File::NULL)
+      system(HookFile.script_path, state, out: File::NULL, err: File::NULL)
     rescue StandardError
       nil
     end
@@ -672,15 +674,32 @@ module Switchboard
     end
 
     # Agent-state hooks are per-worktree, so report the materialized reporter and
-    # whether the worktree you're standing in is wired up.
+    # whether the worktree you're standing in is wired up — per adapter, since a
+    # present file isn't proof the agent will load it (Codex needs the project
+    # layer trusted), so a bare "enabled" line is false confidence.
     def doctor_hooks
-      script = Hook.script_path
+      script = HookFile.script_path
       puts(File.exist?(script) ? "  \e[32m✓\e[0m agent-state reporter: #{script}" : "  \e[33m–\e[0m agent-state reporter not materialized yet (created on first worktree/enable-hooks)")
       here = worktree_at(nil)
       return unless here
 
-      on = Hook.enabled?(here)
-      puts(on ? "  \e[32m✓\e[0m hooks enabled here: #{here}" : "  \e[33m–\e[0m hooks off here (observation fallback) — `switchboard enable-hooks`")
+      enabled = AgentHooks.enabled_adapters(here)
+      if enabled.empty?
+        puts "  \e[33m–\e[0m hooks off here (observation fallback) — `switchboard enable-hooks`"
+        return
+      end
+
+      puts "  \e[32m✓\e[0m hooks enabled here: #{here}"
+      AgentHooks::ADAPTERS.each do |adapter|
+        mark = enabled.include?(adapter) ? "\e[32m✓\e[0m" : "\e[33m–\e[0m"
+        puts "      #{mark} #{adapter.label}: #{adapter.settings_path(here)}"
+      end
+      # The file existing ≠ Codex running the hook: project-local hooks load only
+      # once the project layer is trusted. Flag it so green here never reads as
+      # "dots will appear" when they won't.
+      return unless enabled.include?(CodexHook)
+
+      puts "      \e[33mnote\e[0m codex loads project hooks only once trusted — run `/hooks` in codex if dots don't show"
     end
 
     def help

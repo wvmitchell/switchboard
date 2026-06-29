@@ -18,7 +18,7 @@ module Switchboard
   # disk, not in a sidebar ivar — the same reason the agent dots read hook files (see
   # AgentState). All writes are atomic (temp + rename) so a peer's concurrent scan
   # never reads a half-written marker — the established self-healing trick (also
-  # Hook.ensure_script and the synthesized WAVs). Everything degrades to nil/empty
+  # HookFile.ensure_script and the synthesized WAVs). Everything degrades to nil/empty
   # rather than raising, per the UI's degrade-never-crash convention.
   #
   # What stays in each caller (NOT here): its key DOMAIN — Attention canonicalizes

@@ -198,8 +198,8 @@ The dot beside each workspace shows whether an agent (Claude/Codex/Aider) is
 thinking / done / waiting. `AgentState.scan` (`agent_state.rb`) merges **two
 presence signals** per worktree:
 
-1. **Hook state (exact).** Claude Code reports state by running a tiny POSIX-sh
-   reporter that writes `<state>\t<cwd>\t<epoch>` files into the state dir. A
+1. **Hook state (exact).** Claude Code *and Codex* report state by running a tiny
+   POSIX-sh reporter that writes `<state>\t<cwd>\t<epoch>` files into the state dir. A
    fresh file (within `PRESENCE_TTL`) *is* presence — no process check needed.
    The flip side: because a fresh file is trusted without a liveness check, a
    `quit` that kills every agent leaves their last states stale (a lingering
@@ -211,20 +211,35 @@ presence signals** per worktree:
    by hashing `tmux capture-pane` between scans. This can't distinguish
    "waiting" from "done".
 
-`Hook` (`hook.rb`) wires Claude up **per worktree, never globally**: it merges
-into `<worktree>/.claude/settings.local.json` (and adds that path to the
-worktree's local git excludes so it never dirties `git status`). The reporter
-script is materialized into the XDG **data** dir — an install-independent path
-that survives `brew upgrade` — and the hook command points there. New worktrees
-get this automatically (`Creator.create` → `Hook.enable`, gated on
-`agent_state_hooks?` **or** `auto_rename_for(project)` — resolved per project, so a
-project that opts into `auto_rename` with the global off still gets the hook the
-runtime nudge needs); existing ones via `switchboard enable-hooks`.
+Hooks are wired **per worktree, never globally**, through a **per-agent adapter**
+registry `AgentHooks` (`agent_hooks.rb`): `ClaudeHook` (`claude_hook.rb`) for Claude
+(`<worktree>/.claude/settings.local.json`) and `CodexHook` (`codex_hook.rb`) for
+Codex (`<worktree>/.codex/hooks.json`). Both agents read the SAME hook-JSON shape,
+so the merge-safe enable/disable, the reporter, and the rename-nudge/Stop wiring
+live once in the shared engine `HookFile` (`hook_file.rb`); an adapter declares only
+its delivery file (`SETTINGS_REL`) + its `EVENTS` map. `enable` merges into the
+agent's local file (adding it to the worktree's git excludes so it never dirties
+`git status`); the reporter script is materialized once into the XDG **data** dir —
+shared by every adapter, the state-file format is agent-neutral, install-independent
+so it survives `brew upgrade`. Codex's map differs where the agents differ: no
+`Notification` event, so its `waiting` rides `PermissionRequest` (best-effort —
+suppressed only by a session command that bypasses *all* approval gates), and Codex
+loads project hooks only once the project layer is **trusted** (`doctor` flags that
+per adapter; a present file isn't proof the dot moves). `AgentHooks.enable` fans out
+to **every** adapter, so a new worktree carries both files (each dormant until that
+agent runs there). New worktrees get this automatically (`Creator.create` →
+`AgentHooks.enable`, gated on `agent_state_hooks?` **or** `auto_rename_for(project)` —
+resolved per project, so a project that opts into `auto_rename` with the global off
+still gets the hook the runtime nudge needs); existing ones via `switchboard
+enable-hooks`. The runtime contract (project-local files fire once trusted, the
+`PreToolUse`→`PostToolUse` ordering, `stop_hook_active` flips `true` after a block so
+the nudge blocks once not forever) is verified against real Codex by the opt-in
+`test/smoke/codex_hook_smoke_test.rb` (`SWITCHBOARD_CODEX_SMOKE=1`).
 
 ### Agent self-naming nudge (issue #92)
 
-`Hook.enable` also wires the nudge into the agent-state hooks, re-invoking the binary (so
-the commands carry `NUDGE_MARK` and `Hook.ours?` recognizes them for idempotent merge /
+`HookFile.enable` also wires the nudge into the agent-state hooks, re-invoking the binary (so
+the commands carry `NUDGE_MARK` and `HookFile.ours?` recognizes them for idempotent merge /
 clean disable) and `command -v`-guarding the baked bin path so a stale path after a repo
 move degrades cleanly instead of erroring "command not found":
 
@@ -248,7 +263,7 @@ move degrades cleanly instead of erroring "command not found":
   <sh-reporter> done; fi` — and `CLI#rename_nudge_stop` reports the state ITSELF:
   `thinking` when it blocks (accurate — the agent is about to keep going), `done` otherwise
   (the normal completion), via the same sh reporter (`report_stop_state` →
-  `Hook.script_path`; the child inherits the hook's cwd so its cksum key matches the file
+  `HookFile.script_path`; the child inherits the hook's cwd so its cksum key matches the file
   the other events write). State is reported for **every** hooked worktree (even
   non-placeholder / `auto_rename`-off — the dot depends on it); only the block is gated.
   The `else` fallback keeps `done` flowing if the binary is stale (the script path doesn't
@@ -314,7 +329,7 @@ one `IDLE` tick before it can ring.
 The two defaults are **synthesized** (16-bit PCM WAV via `Array#pack`) and
 materialized into the XDG data dir on first use (atomic temp+rename, so racing
 sidebar processes never read a half-written file) — same self-healing trick as
-`Hook.ensure_script`, no shipped binary assets. Config resolves a state to a
+`HookFile.ensure_script`, no shipped binary assets. Config resolves a state to a
 built-in name (`train`/`chime`, plus the variants `train_1..3` / `chime_1..3`), a
 file path, or a bare macOS system-sound name,
 via `Config#sound_for` (global default + per-project override, like
@@ -573,7 +588,7 @@ never crash).
 ### Conventions
 
 - Every file starts with `# frozen_string_literal: true`.
-- Stateless helpers are `module_function` modules (`Hook`, `Tmux`, `Installer`,
+- Stateless helpers are `module_function` modules (`ClaudeHook`, `Tmux`, `Installer`,
   …); only `Model`, `Config`, `Sidebar`, and `AgentState` are classes (they hold
   state).
 - All shell-outs escape args with `Shellwords` and swallow stderr; failures

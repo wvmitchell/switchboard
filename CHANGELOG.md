@@ -7,6 +7,36 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.39.0] — Codex gets the exact agent-state experience (#110) (2026-06-27)
+
+### Added
+- **Codex agent-state hooks — exact dots, completion sounds, attention-bold, and the
+  self-naming nudge for Codex-first users (#110).** Previously everything exact was wired
+  to Claude Code and Codex fell through to the coarse process/activity fallback (no real
+  `waiting`, no completion sound, no nudge). Now a Codex worktree gets the same precise
+  thinking/done/waiting dot Claude does.
+- **Per-agent hook adapter layer.** A new `AgentHooks` registry fans out over `Hook`
+  (Claude, `.claude/settings.local.json`) and `CodexHook` (`.codex/hooks.json`), both on a
+  shared engine `HookFile` that owns the merge-safe enable/disable, the materialized sh
+  reporter, and the rename-nudge/Stop wiring. An adapter declares only its delivery file and
+  its event→state map. `enable-hooks` wires both (each dormant until that agent runs there).
+- **`doctor` reports hook status per adapter** and flags the Codex trust caveat (project-local
+  hooks load only once the project layer is trusted — `/hooks`).
+- **Opt-in real-Codex smoke** (`test/smoke/codex_hook_smoke_test.rb`, run with
+  `SWITCHBOARD_CODEX_SMOKE=1`): drives a real `codex` and asserts the project hooks fire, the
+  event order holds, and the Stop chain releases — a standing guard against a Codex version
+  silently breaking parity.
+
+### Changed
+- **`Hook` is now the Claude *adapter*, not the only hook path.** `Creator.create`,
+  `enable-hooks`, `disable-hooks`, and `doctor` route through `AgentHooks` so a new worktree
+  is wired for every supported agent.
+
+### Fixed
+- **The agent-state reporter command now shell-escapes the script path.** An inherited
+  footgun: a space in `$XDG_DATA_HOME`/`$HOME` would split the command and the dot would
+  silently never update. Fixed once in the shared engine.
+
 ## [0.38.1] — fill documentation gaps from recent features (2026-06-27)
 
 ### Added

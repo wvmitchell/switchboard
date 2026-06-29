@@ -130,7 +130,7 @@ becomes visible.
 ## Conventions
 
 - Every file starts with `# frozen_string_literal: true`.
-- Stateless helpers are `module_function` modules (`Hook`, `Tmux`, `Installer`,
+- Stateless helpers are `module_function` modules (`ClaudeHook`, `Tmux`, `Installer`,
   `Git`, `Pr`, …). Only `Model`, `Config`, `Sidebar`, and `AgentState` are
   classes — they hold state.
 - Comments explain *why* a non-obvious thing is done, not *what* the code does.

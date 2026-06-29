@@ -39,7 +39,7 @@ end
 module Switchboard
   # Isolates every test from real state. A fresh tmpdir plus a wall of env
   # overrides so NOTHING reads or writes outside the sandbox: the config, the
-  # symlink dir, the agent-state + PR-cache dirs, the XDG roots Hook materializes
+  # symlink dir, the agent-state + PR-cache dirs, the XDG roots the reporter materializes
   # its reporter into, the git global/system config, HOME, and gh's config dir.
   # TMUX is unset AND tmux's socket dir is redirected into the sandbox, so no
   # test pokes a live tmux server. Everything is restored on teardown by
@@ -61,7 +61,7 @@ module Switchboard
       ENV["SWITCHBOARD_CLAUDE_PROJECTS_DIR"] = path("claude-projects") # ClaudeHistory (rename carries /resume history)
 
       # Anything that reads $HOME / XDG / git-global must land in the sandbox —
-      # Hook.ensure_script writes a reporter into XDG_DATA_HOME, Creator shells
+      # HookFile.ensure_script writes a reporter into XDG_DATA_HOME, Creator shells
       # git, etc. Without this, "no real state touched" would be a lie.
       ENV["HOME"]              = @dir
       ENV["XDG_DATA_HOME"]     = path("xdg-data")
