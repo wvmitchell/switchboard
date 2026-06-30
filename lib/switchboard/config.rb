@@ -58,6 +58,7 @@ module Switchboard
       # prune_on_launch: true                      # prune orphaned sb/ sessions when landing on home
       # auto_rename: true                          # nudge the agent to rename a placeholder-named workspace once it knows the work
       # diff_counts: true                          # show +adds −dels of each branch vs base on the workspace row
+      # prewarm: true                              # keep off-screen sidebars warm so switching sessions doesn't flash a stale tree
 
       # Completion sounds (on by default): a built-in (train / chime, or train_1..3 /
       # chime_1..3), a file path, or a macOS system-sound name. enabled: false mutes all.
@@ -212,6 +213,14 @@ module Switchboard
     # override is a deliberate non-goal for now (#88).
     def diff_counts?
       @data.fetch("diff_counts", true) != false
+    end
+
+    # Whether an off-screen sidebar keeps its pane buffer warm (a change-gated,
+    # WARM_TTL-bounded background reload+render) so switch-in shows fresh content
+    # without the stale-then-snap flash. On by default; `prewarm: false` restores
+    # full dormancy (no off-screen work). Global only, like diff_counts.
+    def prewarm?
+      @data.fetch("prewarm", true) != false
     end
 
     # Optional prefix for new branches, e.g. "wvmitchell" -> wvmitchell/<name>.

@@ -92,6 +92,50 @@ wrongly re-wake it. An un-poked reappearance (a window switch on a tmux too old
 for the hook, a bare `tmux attach`) is caught by the off→on `reappeared` branch in
 `tick` within one `IDLE` tick.
 
+### Pre-warming: fresh on arrival, without the flash
+
+Pure dormancy has a cost you can see: switch into a session and, for a beat, its
+sidebar shows whatever it last painted — maybe minutes ago — until the switch-in
+poke reloads and repaints. That stale-then-snap is the flash.
+
+Pre-warming removes it for the common case. The trick is that a tmux pane keeps
+its screen grid even while off screen, so you can paint a hidden pane *before* the
+user arrives and the fresh frame is already there on switch-in. So the off-screen
+branch of `tick` does a small amount of work again — but only when it's worth it.
+Three cheap gates, cheapest first: the `prewarm` config knob (on by default), a
+`WARM_TTL` throttle (so a busy agent off screen can't make us reload every wake),
+and a `warm_fingerprint` — a stat-only signal (file names + mtimes of the
+agent-state, attention, and PR-cache dirs, plus each worktree's `logs/HEAD`) that
+tells us whether anything the pane draws actually changed. Nothing changed → it
+stays as dormant as before. Something moved → it does one quiet reload and repaint
+into the hidden buffer.
+
+"Quiet" is doing real work here, because the obvious implementation (just call the
+normal `reload` off screen) is wrong in two ways that a review caught:
+
+- `reload` re-locates "you are here", and locating a workspace **clears its bold
+  attention marker** (you're looking at it, so it's been seen). Off screen you are
+  *not* looking at it — so a warm reload would erase the very notification the
+  on-screen sidebar just set, before you ever saw it. `warm_reload` skips locating
+  entirely; an off-screen pane's current workspace can't change while you're away.
+- `reload` records "I just did a full reload", which the switch-in path uses to
+  *skip* a redundant reload. A warm right before you switch in would suppress the
+  switch-in's PR refresh. So `warm_reload` records only its own warm clock; the
+  switch-in still does its full reload.
+
+It also doesn't fan out background PR-refresh subprocesses (one per hidden sidebar
+would be a lot), and it scans agent state **hooks-only** — skipping the
+tmux/pgrep/lsof process probe that the normal scan falls back to whenever a
+worktree has no live hook — so an off-screen scan stays cheap. Sounds never ring
+off screen.
+
+Honest about the limits: this *drastically reduces* the flash, it doesn't
+eliminate it — a change in the last few seconds before you switch can still be
+caught mid-warm. And a worktree added or removed in *another* session, or a
+view-preference toggle (collapse, header, branch-fold, width), isn't in the
+fingerprint; those still refresh on the switch-in reload, as before. `prewarm:
+false` turns the whole thing off and restores pure dormancy.
+
 ### Catch-up scans must not re-ring
 
 Each sidebar has its own `@prev_hook_states`, frozen while off screen. So when a
@@ -152,6 +196,12 @@ visible before it can misbehave.
   (8s) on an un-poked reappearance — a conservative backstop chosen over more
   tmux hook surface. A couple of edge paths (a `prefix-z` zoomed pane, a bare
   `tmux attach`) still lean on that backstop; see `TODOS.md`.
+- **Pre-warming** spends a little of that saved off-screen work back to kill the
+  switch-in flash — but only behind a change-gate and a `WARM_TTL`, so an idle
+  pane stays as cheap as full dormancy. The change-gate's fingerprint is
+  deliberately partial (agent/attention/diff/PR, not worktree-set or view-state),
+  trading complete off-screen coverage for a cheap stat-only check; the switch-in
+  reload remains the catch-all. `prewarm: false` opts back into pure dormancy.
 - **The pty-confirmation guard** errs toward *not* killing a sidebar on an
   ambiguous reply, accepting a brief leak over ever silencing a healthy panel.
 

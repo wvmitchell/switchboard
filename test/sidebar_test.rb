@@ -2329,6 +2329,144 @@ module Switchboard
       assert announce, "a live, continuously-visible scan still announces completions"
     end
 
+    # --- off-screen pre-warm (prewarm) ----------------------------------------
+    # An off-screen sidebar keeps its pane buffer warm (warm_reload + render) so a
+    # later switch-in shows fresh content with no flash — but only when prewarm is
+    # on, WARM_TTL has elapsed, and the change-gate fingerprint actually moved.
+    # warm_reload/render are stubbed; the branch DECISION in tick is what we pin.
+
+    # Drive an off-screen tick with the three warm inputs controlled. Returns
+    # [warmed, rendered] counts. owns_pane? is true (no @pane_tty); window_panes≠1.
+    def offscreen_tick(sb)
+      warmed = rendered = 0
+      sb.define_singleton_method(:warm_reload) { |_fp| warmed += 1 }
+      sb.define_singleton_method(:render) { rendered += 1 }
+      stub_method(Tmux, :focused?, ->(*) { false }) do
+        stub_method(Tmux, :visible?, ->(*) { false }) do
+          stub_method(Tmux, :window_panes, ->(*) { 2 }) do
+            sb.send(:tick)
+          end
+        end
+      end
+      [warmed, rendered]
+    end
+
+    def offscreen_sidebar(warm_fp: "NEW", baseline: "OLD", last_warm: nil, prewarm: true)
+      sb = sidebar(nodes: [proj("app"), ws("a", path: "/wt/a")])
+      sb.instance_variable_set(:@visible, false)
+      sb.instance_variable_set(:@warm_fp, baseline)
+      sb.instance_variable_set(:@last_warm, last_warm)
+      sb.define_singleton_method(:warm_fingerprint) { warm_fp }
+      sb.instance_variable_get(:@config).define_singleton_method(:prewarm?) { prewarm }
+      sb
+    end
+
+    def test_offscreen_tick_warms_when_prewarm_on_ttl_elapsed_and_fingerprint_changed
+      warmed, rendered = offscreen_tick(offscreen_sidebar(warm_fp: "NEW", baseline: "OLD", last_warm: nil))
+      assert_equal 1, warmed, "off-screen + prewarm + WARM_TTL elapsed + changed -> one warm_reload"
+      assert_equal 1, rendered, "...and one render to paint the off-screen buffer"
+    end
+
+    def test_offscreen_tick_skips_warm_when_fingerprint_unchanged
+      warmed, = offscreen_tick(offscreen_sidebar(warm_fp: "SAME", baseline: "SAME", last_warm: nil))
+      assert_equal 0, warmed, "nothing we draw changed -> stay dormant, no warm reload"
+    end
+
+    def test_offscreen_tick_skips_warm_within_warm_ttl
+      # last_warm = now: WARM_TTL has NOT elapsed, so a change still doesn't warm yet.
+      sb = offscreen_sidebar(warm_fp: "NEW", baseline: "OLD")
+      sb.instance_variable_set(:@last_warm, sb.send(:monotonic))
+      warmed, = offscreen_tick(sb)
+      assert_equal 0, warmed, "WARM_TTL bounds the cadence — a recent warm short-circuits the next"
+    end
+
+    def test_offscreen_tick_skips_warm_when_prewarm_disabled
+      warmed, = offscreen_tick(offscreen_sidebar(warm_fp: "NEW", baseline: "OLD", prewarm: false))
+      assert_equal 0, warmed, "prewarm: false restores full dormancy — no off-screen work"
+    end
+
+    # The bug the outside-voice review caught: reload -> locate clears the current
+    # workspace's attention bold. warm_reload skips locate precisely so an off-screen
+    # warm can't erase the marker the on-screen sidebar set for that completion.
+    def test_warm_reload_does_not_clear_attention
+      Dir.mktmpdir do |wt|
+        sb = sidebar(nodes: [proj("app"), ws("a", path: wt)])
+        sb.instance_variable_set(:@current_path, wt)
+        sb.define_singleton_method(:rebuild) { nil } # isolate from Model/git
+        sb.define_singleton_method(:refresh_diffs) { nil }
+        Attention.mark(wt)
+        assert_includes Attention.scan, File.realpath(wt), "precondition: workspace is bold"
+        sb.send(:warm_reload, "fp")
+        assert_includes Attention.scan, File.realpath(wt),
+                        "warm_reload skips locate, so it must NOT clear the bold before you view it"
+      end
+    end
+
+    # warm must stamp its own clock, never @last_reload — else a warm within POKE_TTL
+    # of a switch-in would make reload_and_refresh skip its (warm-suppressed) PR refresh.
+    def test_warm_reload_does_not_stamp_the_switch_in_throttle
+      sb = sidebar(nodes: [proj("app"), ws("a", path: "/wt/a")])
+      sb.define_singleton_method(:rebuild) { nil }
+      sb.define_singleton_method(:refresh_diffs) { nil }
+      sb.instance_variable_set(:@last_reload, nil)
+      sb.send(:warm_reload, "fp")
+      assert_nil sb.instance_variable_get(:@last_reload), "warm must not stamp the switch-in reload throttle"
+      assert sb.send(:reload_due?), "...so a switch-in right after a warm still does its full reload + PR refresh"
+      refute_nil sb.instance_variable_get(:@last_warm), "warm stamps its own @last_warm clock instead"
+    end
+
+    # refresh_prs:false suppresses the off-screen PR-spawn fan-out, but on_agent_edges
+    # still marks attention and advances the baseline (so switch-in rings nothing stale).
+    def test_on_agent_edges_refresh_prs_false_suppresses_spawn_but_keeps_marks_and_baseline
+      sb = sidebar(nodes: [proj("app"), ws("a", path: "/wt/a")])
+      sb.instance_variable_set(:@prev_hook_states, { "/wt/a" => :thinking })
+      sb.instance_variable_get(:@agent_state).instance_variable_set(:@last_hook_states, { "/wt/a" => :done })
+      sprayed = marked = 0
+      sb.define_singleton_method(:refresh_prs_for) { |*| sprayed += 1 }
+      sb.define_singleton_method(:mark_attention_for) { |*| marked += 1 }
+      sb.define_singleton_method(:refresh_diffs) { nil }
+      sb.send(:on_agent_edges, announce_sounds: false, refresh_prs: false)
+      assert_equal 0, sprayed, "refresh_prs:false suppresses the PR-spawn fan-out off screen"
+      assert_equal 1, marked, "...but attention marking still runs"
+      assert_equal :done, sb.instance_variable_get(:@prev_hook_states)["/wt/a"], "...and the baseline still advances"
+    end
+
+    def test_on_agent_edges_default_still_spawns_pr_refresh
+      sb = sidebar(nodes: [proj("app"), ws("a", path: "/wt/a")])
+      sb.instance_variable_set(:@prev_hook_states, { "/wt/a" => :thinking })
+      sb.instance_variable_get(:@agent_state).instance_variable_set(:@last_hook_states, { "/wt/a" => :done })
+      sprayed = 0
+      sb.define_singleton_method(:refresh_prs_for) { |*| sprayed += 1 }
+      sb.define_singleton_method(:mark_attention_for) { |*| nil }
+      sb.define_singleton_method(:refresh_diffs) { nil }
+      sb.send(:on_agent_edges, announce_sounds: false)
+      assert_equal 1, sprayed, "the default (switch-in/visible) path still fires the PR refresh"
+    end
+
+    def test_warm_reload_scans_hooks_only_skipping_process_fallback
+      sb = sidebar(nodes: [proj("app"), ws("a", path: "/wt/a")])
+      sb.define_singleton_method(:rebuild) { nil }
+      sb.define_singleton_method(:refresh_diffs) { nil }
+      stub_method(Agents, :active, ->(*) { flunk "warm must scan hooks-only — no tmux/pgrep/lsof fallback" }) do
+        sb.send(:warm_reload, "fp")
+      end
+    end
+
+    # Race guard (the stale-stuck bug): warm_reload must stamp the fingerprint the
+    # CALLER measured before the scan — never a fresh one taken after — so a change
+    # landing mid-warm leaves the baseline behind and the next tick re-warms.
+    def test_warm_reload_stamps_the_passed_fingerprint_not_a_fresh_one
+      sb = sidebar(nodes: [proj("app"), ws("a", path: "/wt/a")])
+      sb.define_singleton_method(:rebuild) { nil }
+      sb.define_singleton_method(:refresh_diffs) { nil }
+      # If warm_reload ignored its arg and re-measured, it'd stamp "AFTER" and the
+      # gate would think it's caught up; stamping the passed "BEFORE" keeps it honest.
+      sb.define_singleton_method(:warm_fingerprint) { "AFTER" }
+      sb.send(:warm_reload, "BEFORE")
+      assert_equal "BEFORE", sb.instance_variable_get(:@warm_fp),
+                   "warm stamps the pre-scan fingerprint, so a mid-warm change re-fires next tick"
+    end
+
     # --- visibility-aware loop (off-screen dormancy) --------------------------
     # @visible is the single on-screen flag: it gates render + pulse, and the poke
     # path re-samples it because C-l is overloaded (session switch-in vs background

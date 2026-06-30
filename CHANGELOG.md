@@ -7,6 +7,26 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.43.0] — pre-warm off-screen sidebars to cut the switch-in flash (2026-06-29)
+
+### Added
+- **Pre-warming (`prewarm:`, default on).** Switching into a session used to flash that
+  pane's stale tree until it caught up. Now each off-screen sidebar keeps its buffer warm —
+  a change-gated, `WARM_TTL`-bounded, visibility-safe background reload+render — so switch-in
+  shows fresh content (dots, diffs, badges, bold) with no flash, for any switch path (the
+  tree, native tmux, attach). A tmux pane buffers writes even off screen, so the frame is
+  already correct the moment it becomes active. Set `prewarm: false` to restore full dormancy.
+
+### Changed
+- The off-screen warm stays cheap: it's gated by a stats-only fingerprint (agent-state,
+  attention, and PR-cache dirs + each worktree's `logs/HEAD`), so a fully idle pane costs
+  about one visibility check per idle wake, as before. It scans agent state hooks-only
+  (skipping the tmux/pgrep/lsof fallback), never rings sounds, and never fans out background
+  PR refreshes — those stay on the switch-in path. A worktree added/removed in another
+  session, and shared view-state (collapse/header/branch-fold/width), still refresh on
+  switch-in. The agent-state hook reporter now writes atomically (temp+rename) so the warm
+  fingerprint can never read a torn state file.
+
 ## [0.42.0] — `prune` reaps orphaned sidebar processes (2026-06-29)
 
 ### Added

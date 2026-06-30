@@ -28,6 +28,7 @@ or `e` in the sidebar — both reload on save.
 | `prune_on_launch` | bool | `true` | Prune orphaned `sb/` sessions when landing on the home session. |
 | `auto_rename` | bool | `true` | Nudge the agent to `switchboard rename` a placeholder-named workspace once it knows the work (a `SessionStart` hook). `false` opts out. Per-project override wins. See [`auto_rename`](#auto_rename). |
 | `diff_counts` | bool | `true` | Show the `+adds −dels` diff count on each workspace/branch row. `false` hides it and skips the per-worktree `git diff` entirely. |
+| `prewarm` | bool | `true` | Keep off-screen sidebars warm so switching sessions doesn't flash a stale tree. `false` restores full dormancy (no off-screen work). See [`prewarm`](#prewarm). |
 | `session_command` | string | _(none)_ | Command typed into a worktree's window the first time its session is created. Per-project override wins. |
 | `sounds` | map or `false` | _(on, built-ins)_ | Completion sounds. See [`sounds`](#sounds). |
 | `tmux_keys` | map | _(toggle `s`)_ | Which prefix keys switchboard binds. See [`tmux_keys`](#tmux_keys). |
@@ -47,6 +48,7 @@ agent_state_hooks: true                  # auto-wire agent-state dots on create
 prune_on_launch: true                    # tidy orphaned sessions on landing home
 auto_rename: true                        # let the agent name a placeholder workspace (on by default)
 diff_counts: true                        # show +adds −dels on each row (false skips the git diff)
+prewarm: true                            # keep off-screen sidebars warm (false = full dormancy)
 session_command: claude                  # run this on a worktree's first session
 sounds:
   enabled: true
@@ -95,6 +97,34 @@ projects:
 hooks at create time, so flip it on and run `switchboard enable-hooks` inside an
 existing worktree to add it there (new worktrees get it automatically). Requires
 `agent_state_hooks` OR `auto_rename` to be on for the hooks to wire at all.
+
+---
+
+## `prewarm`
+
+```yaml
+prewarm: true    # default
+```
+
+Each window's sidebar is its own process, and while off screen it sleeps to stay
+cheap. Without pre-warming, switching into a session briefly shows that pane's
+*last* render (possibly minutes old) until the switch-in poke reloads it — a
+visible flash. With `prewarm: true` (the default), an off-screen sidebar keeps its
+pane buffer fresh in the background, so switch-in shows correct content (agent
+dots, diff counts, PR badges, bold) immediately, for any way you switch (the tree,
+native tmux, a bare attach).
+
+It stays cheap by design: the background refresh only runs when a stats-only check
+sees that something it draws actually changed, and it's rate-limited, so a fully
+idle pane costs about what it did before. It never rings completion sounds and
+never kicks off background PR fetches off screen — those still happen when you
+switch in. A worktree added or removed in *another* session, and view-preference
+toggles (collapse, full header, branch fold, width), refresh on switch-in rather
+than via pre-warming.
+
+Set `prewarm: false` to restore full off-screen dormancy (the flash returns). It's
+a global knob — there's no per-project override. For the full mechanism see
+`docs/explanation-sidebar-lifecycle.md`.
 
 ---
 

@@ -43,7 +43,7 @@ module Switchboard
     # directly), so both adapters share it unchanged.
     SCRIPT = <<~'SH'
       #!/bin/sh
-      # sb-agent-hook v3 — switchboard agent-state reporter (managed file; edits
+      # sb-agent-hook v4 — switchboard agent-state reporter (managed file; edits
       # are overwritten). Usage: sb-agent-hook <thinking|done|waiting|notify>
       #
       # `notify` (Claude's Notification hook) reads the event JSON on stdin and
@@ -70,7 +70,16 @@ module Switchboard
 
       cwd=$(pwd -P)
       key=$(printf '%s' "$cwd" | cksum | cut -d' ' -f1)
-      printf '%s\t%s\t%s\n' "$state" "$cwd" "$(date +%s)" >"$dir/$key" 2>/dev/null
+      # Write atomically (temp + mv, same dir => same fs => atomic rename). A plain
+      # `> file` is non-atomic: a reader (the sidebar's warm-render fingerprint, or
+      # AgentState.scan) could catch a half-written line, skip the malformed state,
+      # and miss the report until the next event. With temp+rename, readers always
+      # see the old file or the fully-written new one. $$ keeps concurrent reporters
+      # from colliding on the temp; rm cleans up a temp the write/rename didn't consume.
+      tmp="$dir/$key.$$"
+      printf '%s\t%s\t%s\n' "$state" "$cwd" "$(date +%s)" >"$tmp" 2>/dev/null &&
+        mv -f "$tmp" "$dir/$key" 2>/dev/null
+      rm -f "$tmp" 2>/dev/null
 
       exit 0
     SH

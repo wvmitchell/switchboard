@@ -60,16 +60,19 @@ module Switchboard
     end
 
     # worktree_paths -> Hash<path, state>. Only worktrees with an agent appear.
-    def scan(worktree_paths)
+    # hooks_only skips the Agents.active (tmux/pgrep/lsof) fallback entirely — the
+    # warm-render path passes it so an off-screen sidebar stays cheap; hook-less /
+    # activity-based dots just defer their freshness to the next visible scan.
+    def scan(worktree_paths, hooks_only: false)
       hooks = read_hooks
-      process = nil # Agents.active, fetched lazily (skipped entirely if all hooked)
+      process = nil # Agents.active, fetched lazily (skipped entirely if all hooked / hooks_only)
       panes = nil
       hook_states = {} # the hook-only subset, stashed for last_hook_states
       states = worktree_paths.each_with_object({}) do |wt, out|
         state = fresh_hook(wt, hooks)
         if state
           out[wt] = hook_states[wt] = state
-        elsif (process ||= Agents.active(worktree_paths)).include?(wt)
+        elsif !hooks_only && (process ||= Agents.active(worktree_paths)).include?(wt)
           out[wt] = activity(wt, panes ||= Agents.tmux_panes)
         end
       end

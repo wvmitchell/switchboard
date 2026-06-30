@@ -203,6 +203,48 @@ marking that hidden pane visible would re-wake it. An un-poked reappearance (a
 window switch on a tmux too old for the hook, a bare `tmux attach`) is caught by
 the off→on `reappeared` branch in `tick` within `IDLE`.
 
+**Pre-warming keeps an off-screen sidebar's buffer fresh so switch-in doesn't
+flash a stale tree** (`prewarm?`, default on; `prewarm: false` restores full
+dormancy). Without it, switching into a session shows that pane's *last* render
+(possibly minutes old) until the switch-in poke reloads — a visible flash. A tmux
+pane buffers writes even while off screen (its grid persists; `render` doesn't
+gate on `@visible`, the caller does), so the fix is to paint it *before* you
+arrive. The off-screen branch of `tick` does a **change-gated, `WARM_TTL`-bounded,
+visibility-safe** warm: when `prewarm?` AND `WARM_TTL` has elapsed (`@last_warm`)
+AND a cheap `warm_fingerprint` differs from the `@warm_fp` baseline, it runs
+`warm_reload` + `render`. The gates are cheapest-first, so a fully idle pane still
+costs ~one `Tmux.visible?` call per `IDLE` (today's dormancy). `warm_fingerprint`
+is stats only — a `dir_fingerprint` (name+mtime per file) over the agent-state,
+attention, and PR-cache dirs plus each tracked worktree's `logs/HEAD` mtime — so
+it sees agent dots, bold, badges, and commits move without a git/process
+shell-out. It deliberately does NOT cover a worktree added/removed in **another**
+session, or shared view-state (collapse/full-header/branch-fold/width); those
+refresh on the switch-in reload as before.
+
+`warm_reload` is **not** `reload` with flags — reusing `reload` off screen caused
+two real bugs (caught in review): `reload`→`locate` clears `Attention` for
+`@current_path`, so an off-screen warm would erase the bold the on-screen sidebar
+just set for that workspace's completion *before you saw it*; and `reload` stamps
+`@last_reload`, so a warm within `POKE_TTL` of a switch would make
+`reload_and_refresh` skip its PR refresh. So `warm_reload` **skips `locate`
+entirely** (an off-screen pane's `@current_path` can't change while you're away)
+and stamps only `@last_warm` (never `@last_reload`, so switch-in still does its
+full reload + PR refresh). It also passes `refresh_prs: false` (no off-screen
+PR-spawn fan-out — `on_agent_edges` still marks + advances the baseline, only the
+spawn is gated) and `hooks_only: true` to `AgentState.scan` (skip the
+tmux/pgrep/lsof `Agents.active` fallback — which otherwise fires whenever *any*
+worktree lacks a live hook, i.e. almost always — so an off-screen scan stays
+cheap; hook-less/activity dots just defer their freshness to switch-in). Sounds
+are never rung off screen (`announce_sounds: false`). Honest scope: this
+*drastically reduces* the flash, it doesn't kill it — a change in the last
+`~IDLE+WARM_TTL` before a switch can still be caught mid-warm. One limitation:
+the warm frame is drawn at the off-screen pane's size, which is correct for a
+single client at a stable size (the dominant case) but may be briefly mis-sized
+under multiple clients of different sizes until the switch-in poke re-renders
+(self-heals via the poke we already have, never worse than today). The hook
+reporter writes atomically (temp+rename, `hook_file.rb`) so the warm fingerprint
+can never catch — and stamp-as-clean — a torn state file.
+
 ### Agent-state dots (the subtle part)
 
 The dot beside each workspace shows whether an agent (Claude/Codex/Aider) is

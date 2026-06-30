@@ -30,6 +30,11 @@ module Switchboard
     POKE_TTL = 2   # min seconds between full reloads a session-switch poke triggers
                    # (rapid switching used to fire a git+capture-pane scan per
                    #  switch — a burst that froze the animation and hammered tmux)
+    WARM_TTL = 12  # min seconds between OFF-SCREEN warm reloads (prewarm). Bounds
+                   # the cost of a churning off-screen agent (its state file rewrites
+                   # every turn would otherwise dirty the warm fingerprint on every
+                   # ~IDLE wake). The lost freshness is invisible (you're not looking)
+                   # and the switch-in poke catches the residual.
 
     # Background PR-badge refresh (issue #19): event-driven, never blocks the UI.
     PR_DEBOUNCE = 5          # min seconds between background refreshes per project
@@ -206,6 +211,8 @@ module Switchboard
                            # twinkle; pulsing? keeps animating until it lapses (sparkling?)
       @last_scan = nil     # monotonic time of the last agent re-scan
       @last_reload = nil   # monotonic of the last full reload (throttles switch pokes)
+      @last_warm = nil     # monotonic of the last OFF-SCREEN warm reload (throttles by WARM_TTL)
+      @warm_fp = nil       # warm_fingerprint at the last reload — the warm change-gate baseline
       @last_vis = nil      # monotonic of the last mid-pulse visibility re-check
       @geom = nil          # winsize at the last successful width-pin (skip no-op pins)
       @width = Width.resolved # pane width in cols; ←/→ step it. Hydrated from the shared
@@ -394,6 +401,18 @@ module Switchboard
         else
           refresh_agents
         end
+      elsif @config.prewarm? && elapsed?(@last_warm, WARM_TTL) && (fp = warm_fingerprint) != @warm_fp
+        # Off screen and something we draw changed: keep this hidden pane's buffer
+        # warm (warm_reload + render) so a later switch-in shows fresh content with
+        # no flash. Gates are cheapest-first — prewarm? (config), then WARM_TTL
+        # (a monotonic compare), then warm_fingerprint (disk stats) — so a fully
+        # idle pane still costs ~one Tmux.visible? call per IDLE wake (today's
+        # dormancy). warm_reload is the visibility-safe path (no locate, no
+        # @last_reload stamp, no PR-spawn, hooks-only); see its comment. Pass the
+        # fingerprint we measured HERE so the gate baseline can't outrun the scan
+        # (a change landing between the scan and a fresh stamp would otherwise stick
+        # the dot stale). Repaint only when warm_reload refreshed cleanly.
+        render if warm_reload(fp)
       end
       true
     end
@@ -635,13 +654,22 @@ module Switchboard
       [node.project, node.name, node.branch].compact.join(" ")
     end
 
-    def refresh_agents(announce_sounds: true)
+    # refresh_prs/hooks_only default to the full behavior; only the off-screen warm
+    # path (warm_reload) passes them false/true to stay quiet (no PR-spawn fan-out)
+    # and cheap (hooks-only scan, skipping the tmux/pgrep/lsof activity fallback).
+    # Returns true on a clean scan, false if it rescued — the warm path uses that to
+    # decide whether to advance its change-gate baseline (a failed scan must NOT, or
+    # the gate would suppress every retry and the dot would stick stale). Other
+    # callers ignore the return.
+    def refresh_agents(announce_sounds: true, refresh_prs: true, hooks_only: false)
       ws_paths = @nodes.select { |n| n.kind == "ws" }.map(&:path)
-      @agents = @agent_state.scan(ws_paths)
-      on_agent_edges(announce_sounds: announce_sounds) # may mark new completions
+      @agents = @agent_state.scan(ws_paths, hooks_only: hooks_only)
+      on_agent_edges(announce_sounds: announce_sounds, refresh_prs: refresh_prs) # may mark new completions
       @attention = Attention.marked(ws_paths)          # load for render, after the marks land
+      true
     rescue StandardError
       @agents = {}
+      false
     end
 
     # Per-worktree diff counts (issue #79): "+adds −dels" of each row's branch vs
@@ -742,6 +770,11 @@ module Switchboard
     def reload(announce_sounds: true)
       rebuild
       locate # before refresh_agents: marks below skip the workspace you're in, and viewing it clears its bold
+      # Capture the warm-gate fingerprint BEFORE the scan, so @warm_fp can never
+      # outrun what this reload actually rendered (the same stale-stuck race
+      # warm_reload guards against): a change landing mid-reload leaves fp behind, so
+      # the next off-screen warm re-fires instead of suppressing forever.
+      fp = warm_fingerprint
       refresh_agents(announce_sounds: announce_sounds)
       refresh_diffs # branch-vs-base counts, gated on each worktree's reflog mtime
       refresh_stale_prs
@@ -749,6 +782,73 @@ module Switchboard
       # and @last_scan stops the next loop timeout from firing a redundant agent scan
       # right after this reload already scanned — the poke path runs outside scan_due?.
       @last_reload = @last_scan = monotonic
+      # Re-baseline the off-screen warm gate (see fp above). Stamped only on a full
+      # reload — a visible refresh_agents doesn't, so the first warm after a visible
+      # spell may fire one spurious extra time. Harmless: it re-paints a correct buffer.
+      @warm_fp = fp
+    end
+
+    # A cheap "has anything the pane draws changed?" signal for the off-screen warm
+    # gate — stats only, no git/process shell-outs. Covers the dynamic content:
+    # agent dots (state-dir file mtimes), bold (attention markers), diff counts
+    # (each tracked worktree's logs/HEAD mtime), and PR badges (the PR cache).
+    # Deliberately NOT covered (they refresh on the switch-in reload, as before):
+    # a worktree added/removed in ANOTHER session, and shared view-state
+    # (collapse/full-header/branch-fold/width). Fully rescued — a stat fault yields
+    # a value that just triggers one harmless warm, never crashes the loop.
+    def warm_fingerprint
+      reflogs = @branch_cache.values.filter_map do |gitdir,|
+        head = File.join(gitdir.to_s, "logs", "HEAD")
+        [head, File.mtime(head).to_f] if gitdir && File.exist?(head)
+      end
+      [dir_fingerprint(AgentState.state_dir),  # agent dots
+       dir_fingerprint(Attention.state_dir),   # bold markers
+       dir_fingerprint(Pr.cache_dir),          # PR badges
+       reflogs.sort]                           # diff counts (commits)
+    rescue StandardError
+      nil
+    end
+
+    # Each entry in `dir` as [name, mtime], sorted — a cheap directory change
+    # signal (a file added, rewritten in place, or removed all change it). Stats
+    # only; the per-file rescue tolerates a file vanishing between glob and stat.
+    def dir_fingerprint(dir)
+      Dir.glob(File.join(dir, "*")).sort.filter_map do |f|
+        [File.basename(f), File.mtime(f).to_f]
+      rescue SystemCallError
+        nil
+      end
+    end
+
+    # Off-screen warm reload (prewarm): keep this hidden pane's buffer fresh so a
+    # later switch-in shows correct content with no flash. Deliberately NOT `reload`:
+    #   - skips `locate` — an off-screen sidebar's @current_path doesn't change while
+    #     you're away, and locate would CLEAR this workspace's attention bold (the
+    #     marker the on-screen sidebar just set for its completion), erasing the
+    #     notification before you ever see it.
+    #   - stamps @last_warm, never @last_reload — so the switch-in reload_and_refresh
+    #     still passes reload_due? and runs its full reload + PR refresh.
+    #   - refresh_prs:false — no off-screen PR-spawn fan-out (N sidebars, one each).
+    #   - hooks_only:true — skip the tmux/pgrep/lsof activity scan; stay cheap.
+    #   - announce_sounds:false — never ring off screen.
+    # on_agent_edges still runs (marks + baseline advance), just without the spawn.
+    # `fp` is the fingerprint the caller measured BEFORE this scan (the value that
+    # tripped the gate). Stamping it — not a fresh one taken after the scan — keeps
+    # @warm_fp from ever outrunning what the scan actually saw: a state change that
+    # lands between the scan and the stamp leaves fp behind the new reality, so the
+    # next tick re-warms (converges) instead of marking the gate satisfied for a dot
+    # the render missed (the stale-stuck race). Returns true when it refreshed
+    # cleanly (caller repaints + baseline advances); false when the scan rescued, so
+    # the next off-screen tick retries rather than sticking a stale buffer.
+    def warm_reload(fp)
+      rebuild
+      ok = refresh_agents(announce_sounds: false, refresh_prs: false, hooks_only: true)
+      refresh_diffs
+      return false unless ok # leave @last_warm + @warm_fp stale so the next tick retries promptly
+
+      @last_warm = monotonic
+      @warm_fp = fp
+      true
     end
 
     # May a session-switch poke run a full (git + capture-pane) reload now? Only
@@ -861,12 +961,12 @@ module Switchboard
     # heard from the sidebar that was on screen then). PRs still refresh — debounced
     # and idempotent — and the baseline still advances, so the next real completion
     # scanned while we're here rings normally.
-    def on_agent_edges(announce_sounds: true)
+    def on_agent_edges(announce_sounds: true, refresh_prs: true)
       now = @agent_state.last_hook_states
       if @prev_hook_states
         edges = self.class.completion_edges(@prev_hook_states, now)
         mark_attention_for(edges)
-        refresh_prs_for(edges)
+        refresh_prs_for(edges) if refresh_prs # warm suppresses the off-screen PR-spawn fan-out
         refresh_diffs if edges.any? # a finished turn likely just committed — repaint its count
         if announce_sounds
           play_sounds_for(edges, now)

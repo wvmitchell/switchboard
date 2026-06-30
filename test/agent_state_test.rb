@@ -120,6 +120,26 @@ module Switchboard
       end
     end
 
+    # hooks_only (the off-screen warm path) must never reach Agents.active — that's
+    # the expensive tmux/pgrep/lsof scan the warm path exists to avoid.
+    def test_hooks_only_scan_skips_the_process_fallback
+      wt = worktree # no hook file -> would normally trigger the fallback
+      called = false
+      stub_method(Agents, :active, ->(_paths) { called = true; Set[wt] }) do
+        assert_empty AgentState.new.scan([wt], hooks_only: true),
+                     "hooks-only with no hook reports nothing — the process scan is skipped"
+      end
+      refute called, "hooks_only must not invoke the tmux/pgrep/lsof process scan"
+    end
+
+    def test_hooks_only_scan_still_reports_hook_state
+      wt = worktree
+      write_hook("thinking", wt)
+      stub_method(Agents, :active, ->(_) { flunk "hooks_only must not touch the process scan" }) do
+        assert_equal({ wt => :thinking }, AgentState.new.scan([wt], hooks_only: true))
+      end
+    end
+
     # clear_all wipes the state dir on quit — a fresh file is trusted as presence
     # without a liveness check, so tearing down every agent must drop their now-
     # stale states or a :thinking would read as a live, working agent for the TTL.
