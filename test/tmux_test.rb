@@ -50,6 +50,38 @@ module Switchboard
       assert_equal 0, Tmux.count_sidebar_panes("")
     end
 
+    # --- parse_ttys / parse_sidebar_processes / normalize_tty: the pure inputs to
+    # prune's orphaned-sidebar reap (a sidebar process whose tty is no live pane).
+
+    def test_parse_ttys_strips_dev_prefix_and_dedupes
+      raw = "/dev/ttys001\n/dev/ttys002\n/dev/ttys001\n"
+      assert_equal Set["ttys001", "ttys002"], Tmux.parse_ttys(raw)
+    end
+
+    def test_parse_ttys_drops_no_tty_markers_and_blanks
+      # A pane with no tty ("??"/"-") must not seed a tty that a no-tty process matches.
+      assert_equal Set["pts/3"], Tmux.parse_ttys("/dev/pts/3\n??\n-\n\n")
+    end
+
+    def test_parse_sidebar_processes_keeps_only_sidebar_rows_with_pid_and_tty
+      raw = +"  101 ttys005 ruby /x/bin/switchboard sidebar\n"
+      raw << "  202 ttys006 ruby /x/bin/switchboard prune\n"        # not a sidebar
+      raw << "  303 ?? ruby /x/bin/switchboard sidebar\n"           # no tty -> tty nil
+      assert_equal [[101, "ttys005"], [303, nil]], Tmux.parse_sidebar_processes(raw)
+    end
+
+    def test_parse_sidebar_processes_ignores_a_header_or_garbled_line
+      raw = "PID TTY COMMAND\n\nnotanumber ttys001 switchboard sidebar\n"
+      assert_empty Tmux.parse_sidebar_processes(raw)
+    end
+
+    def test_normalize_tty_bridges_dev_prefix_and_no_tty_markers
+      assert_equal "ttys048", Tmux.normalize_tty("/dev/ttys048")
+      assert_equal "pts/3", Tmux.normalize_tty("pts/3")
+      assert_nil Tmux.normalize_tty("??")
+      assert_nil Tmux.normalize_tty("  ")
+    end
+
     # --- parse_window_panes: the pure count parse behind the #64 lone-pane check.
     # A confirmed integer drives the "am I the only pane?" decision; anything
     # empty/garbled is "unknown" -> nil -> the caller keeps running (degrade, never

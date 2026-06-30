@@ -37,7 +37,7 @@ bin/switchboard init       # create ~/.config/switchboard/config.yml (empty; gro
 bin/switchboard config     # open config.yml in $EDITOR (sidebar `e` does the same)
 bin/switchboard sidebar    # run the persistent sidebar standalone (normally tmux-spawned)
 bin/switchboard rename NAME # rename the current workspace from inside it (dir move + bridge + session rename + Claude `/resume` history carry + the git branch when safe — see #94); for the agent to (re)name its own live workspace (#42). No NAME prints usage + the current name (switchboard doesn't guess one)
-bin/switchboard prune      # kill orphaned sb/ sessions (reconcile vs git worktrees; --dry-run/-n previews)
+bin/switchboard prune      # kill orphaned sb/ sessions (reconcile vs git worktrees) + reap orphaned sidebar processes; --dry-run/-n previews
 bin/switchboard quit       # close ALL sb/ sessions (full teardown; current session last; clears agent state)
 bin/test                   # run the stdlib-Minitest suite (offline; bin/test <file> for one)
 bin/test-smoke             # run the real-tmux smoke layer (boots a server; needs tmux; out of bin/test — #104)
@@ -72,6 +72,12 @@ sidebar processes** — a `switchboard sidebar` that outlived its pane — by di
 the running-process count (`pgrep`) against the sidebar-pane count
 (`Tmux.sidebar_pane_count`); a straggler matters because tmux recycles pane ids,
 so it can end up reading a different live pane and double-fire completion sounds.
+`prune` **reaps** them (`Reconcile.reap_sidebars`): it pairs each running sidebar
+with its tty (`Tmux.sidebar_processes`) and SIGTERMs any whose tty matches no live
+pane (`Tmux.live_pane_ttys`) — so a sidebar that owns a pane is never touched, and
+a nil/empty pane list (a flaky/garbled `tmux` read) reaps nothing rather than wipe
+every sidebar. They accumulate mostly from interrupted `bin/test-smoke` runs, whose
+daemon servers outlive the run; the smoke harness now sweeps those before each run.
 
 **Configurable keybindings (issue #15).** The fragment delegates binding to
 `switchboard tmux-bind` (`Installer.apply_keybindings`), which reads `tmux_keys:`

@@ -31,6 +31,45 @@ module Switchboard
     HOME          = Tmux::HOME                         # "sb/home" — what go_home reuses
     WAIT          = 15                                 # poll ceiling, comfortably > REFRESH(3s)
 
+    # Sweep abandoned isolated tmux servers left by earlier INTERRUPTED smoke runs.
+    # Each run's teardown kills its own server (kill-server below), but a Ctrl-C /
+    # SIGKILL mid-run skips teardown and leaves the daemon server — and its sidebar
+    # panes — alive: that's how orphaned `switchboard sidebar` processes pile up between
+    # runs (the count `switchboard prune` later has to reap). bin/test-smoke calls this
+    # BEFORE a fresh run so each run cleans up the last interrupted one. Only dirs whose
+    # owning pid is DEAD are swept, so a CONCURRENT smoke run (CI parallelism) is never
+    # torn down. Best-effort: a dir we can't kill/remove is skipped, never fatal.
+    def self.sweep_stale_servers(glob = "/tmp/sbk*")
+      stale_sock_dirs(Dir.glob(glob)).each do |dir|
+        system({ "TMUX_TMPDIR" => dir }, "tmux", "kill-server", out: File::NULL, err: File::NULL)
+        FileUtils.remove_entry(dir)
+      rescue StandardError
+        next
+      end
+    end
+
+    # Pure: of `dirs`, the throwaway socket dirs (sbk<pid>-<hex>) whose owning pid is no
+    # longer alive — the ones safe to sweep. The pid is carried in the basename, so
+    # liveness is a cheap Process.kill(0); a name without a parseable pid is left alone
+    # (not ours to judge). Split out so the selection is testable without real pids.
+    def self.stale_sock_dirs(dirs, alive: method(:pid_alive?))
+      dirs.select do |dir|
+        m = File.basename(dir).match(/\Asbk(\d+)-/)
+        m && !alive.call(m[1].to_i)
+      end
+    end
+
+    # Is `pid` a live process? ESRCH ⇒ dead (sweep it); EPERM ⇒ alive but not ours
+    # (keep — never sweep a server we can't prove is dead).
+    def self.pid_alive?(pid)
+      Process.kill(0, pid)
+      true
+    rescue Errno::ESRCH
+      false
+    rescue Errno::EPERM
+      true
+    end
+
     def setup
       super                                  # SandboxTest: the full env wall-off (incl TMUX_TMPDIR=@dir)
       skip "real-tmux smoke layer needs tmux on PATH" unless tmux_available?

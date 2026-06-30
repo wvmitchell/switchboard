@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "shellwords"
+require "set"
 
 module Switchboard
   # tmux orchestration. Each worktree maps to a session; every session carries a
@@ -162,6 +163,57 @@ module Switchboard
     # work pane whose title merely contains the marker can't inflate the count.
     def count_sidebar_panes(raw)
       raw.to_s.lines.count { |line| line.strip == SIDEBAR_TITLE }
+    end
+
+    # The tty of EVERY live pane on the running server (not just sidebar panes),
+    # normalized to bare names ("/dev/" stripped) to match `ps -o tty=`. This is the
+    # set of ttys a sidebar process could legitimately be sitting on; prune reaps the
+    # sidebar processes whose tty ISN'T here (their pane is gone). All panes, not just
+    # sidebar-titled ones, so a freshly-spawned sidebar whose pane isn't titled yet is
+    # never mistaken for an orphan. nil when tmux is unreachable (no server) — distinct
+    # from an empty set, so a transient miss can't read as "every sidebar is an orphan".
+    def live_pane_ttys
+      raw = `tmux list-panes -a -F '#\{pane_tty}' 2>/dev/null`
+      return nil unless $?.success?
+
+      parse_ttys(raw)
+    end
+
+    # Pure: bare tty names from a newline list of pane ttys. Split out so the
+    # normalization is unit-testable without a server.
+    def parse_ttys(raw)
+      raw.to_s.lines.filter_map { |l| normalize_tty(l) }.to_set
+    end
+
+    # [[pid, tty], ...] for every running `switchboard sidebar` process, tty
+    # normalized like live_pane_ttys. One `ps` (not pgrep + per-pid lookups) so pid and
+    # tty arrive together. The substring matches doctor's `pgrep -f 'switchboard
+    # sidebar'` so the two agree on what a sidebar is; the safety against a stray match
+    # (an editor/grep with that text) is the tty gate in orphan_sidebar_pids — those run
+    # in a live pane, so they're never reaped. [] when ps is unavailable.
+    def sidebar_processes
+      parse_sidebar_processes(`ps -axo pid=,tty=,command= 2>/dev/null`)
+    end
+
+    # Pure: parse `ps -axo pid=,tty=,command=` into [[pid, tty], ...] sidebar rows.
+    # Split out so the parse is unit-testable without spawning processes.
+    def parse_sidebar_processes(raw)
+      raw.to_s.lines.filter_map do |line|
+        pid, tty, cmd = line.strip.split(/\s+/, 3)
+        next unless pid&.match?(/\A\d+\z/) && cmd&.include?("switchboard sidebar")
+
+        [pid.to_i, normalize_tty(tty)]
+      end
+    end
+
+    # A bare tty name ("/dev/ttys048" / "/dev/pts/3" -> "ttys048" / "pts/3"), or nil for
+    # a no-tty marker ("??", "?", "-") or a blank — so a no-tty process never matches a
+    # real pane tty. Bridges tmux's #{pane_tty} (/dev-prefixed) and ps's bare tty=.
+    def normalize_tty(raw)
+      t = raw.to_s.strip.sub(%r{\A/dev/}, "")
+      return nil if t.empty? || %w[?? ? -].include?(t)
+
+      t
     end
 
     def ensure_session(name, dir, start = nil)

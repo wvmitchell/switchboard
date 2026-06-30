@@ -71,6 +71,33 @@ module Switchboard
       assert_empty Reconcile.orphans(live, valid, prefixes, current: nil, now: NOW)
     end
 
+    # --- orphan_sidebar_pids (pure): a sidebar process whose tty is no live pane ---
+
+    def test_orphan_sidebar_pids_returns_processes_off_every_live_pane
+      procs = [[101, "ttys001"], [202, "ttys999"], [303, nil]]
+      # ttys001 owns a live pane (keep); ttys999 and the no-tty 303 own none (reap).
+      assert_equal [202, 303], Reconcile.orphan_sidebar_pids(procs, Set["ttys001", "ttys005"])
+    end
+
+    def test_orphan_sidebar_pids_reaps_nothing_when_tmux_unreachable
+      # nil live_ttys = no pane list; reaping then can't tell an orphan from a healthy
+      # sidebar, so it degrades to reaping none (never nuke every sidebar on a miss).
+      assert_empty Reconcile.orphan_sidebar_pids([[101, "ttys001"], [202, "ttys002"]], nil)
+    end
+
+    def test_orphan_sidebar_pids_reaps_nothing_on_an_empty_pane_set
+      # An empty-but-successful pane list (a partial/garbled read — a live server always
+      # has ≥1 pane) must NOT make every sidebar look orphaned: that would reap them all
+      # and wipe the server. The empty set degrades to reaping none, like a nil.
+      procs = [[101, "ttys001"], [202, "ttys002"]]
+      assert_empty Reconcile.orphan_sidebar_pids(procs, Set.new)
+    end
+
+    def test_orphan_sidebar_pids_keeps_all_when_every_tty_is_live
+      procs = [[101, "ttys001"], [202, "ttys002"]]
+      assert_empty Reconcile.orphan_sidebar_pids(procs, Set["ttys001", "ttys002"])
+    end
+
     # --- prune (real git, stubbed tmux) --------------------------------------
 
     def test_prune_kills_only_the_unbacked_session

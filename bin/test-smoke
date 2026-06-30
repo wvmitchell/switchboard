@@ -36,4 +36,11 @@ files = if file_args.empty?
           file_args.map { |f| File.exist?(f) ? f : File.join(smoke_dir, File.basename(f)) }
         end
 
+# Clean up after any earlier INTERRUPTED run before booting fresh servers: a Ctrl-C /
+# kill mid-run skips per-test teardown and leaves an isolated tmux server (and its
+# sidebar panes) alive, which is how orphaned `switchboard sidebar` processes pile up.
+# Sweeps only dirs whose owning pid is dead, so a concurrent run is never disturbed.
+require "smoke_helper"
+Switchboard::SmokeCase.sweep_stale_servers
+
 files.each { |f| require File.expand_path(f) }

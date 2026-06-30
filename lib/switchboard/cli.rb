@@ -139,14 +139,23 @@ module Switchboard
     # from a plain shell (the usual recovery context) must work.
     def prune(args)
       dry = args.include?("--dry-run") || args.include?("-n")
-      puts prune_summary(Reconcile.prune(config, dry_run: dry), dry)
+      report = Reconcile.prune(config, dry_run: dry)
+      reaped = Reconcile.reap_sidebars(dry_run: dry)
+      puts prune_summary(report, reaped, dry)
     end
 
     # Format a reconcile report for a human. Distinguishes "couldn't reach tmux"
     # from "nothing orphaned" so a failed shell-out never reads as success, and
     # (dry run) ends with the next step. (doctor's orphan line reuses the same
-    # Reconcile.prune Report, but formats its own row — not this method.)
-    def prune_summary(report, dry)
+    # Reconcile.prune Report, but formats its own row — not this method.) `reaped`
+    # is the orphaned-sidebar-process pids prune also cleared — a separate axis from
+    # the session orphans (process-with-no-pane vs session-with-no-worktree), so it
+    # gets its own appended line and never suppresses the session summary.
+    def prune_summary(report, reaped, dry)
+      [session_prune_summary(report, dry), sidebar_reap_summary(reaped, dry)].compact.join("\n")
+    end
+
+    def session_prune_summary(report, dry)
       return "no tmux server — nothing to reconcile" unless report.reachable
       return "no sb/ sessions found" if report.sb_count.zero?
       return "#{report.sb_count} sb/ session(s), none orphaned" if report.orphans.empty?
@@ -155,6 +164,14 @@ module Switchboard
       lines = ["#{verb} #{report.orphans.size} orphaned session(s):", *report.orphans.map { |n| "  #{n}" }]
       lines << "run `switchboard prune` to remove these" if dry
       lines.join("\n")
+    end
+
+    # nil (no line) when nothing was orphaned, so a clean run reads as just the
+    # session summary.
+    def sidebar_reap_summary(reaped, dry)
+      return if reaped.empty?
+
+      "#{dry ? 'would reap' : 'reaped'} #{reaped.size} orphaned sidebar process(es)"
     end
 
     # Tear down switchboard: kill every sb/ session, the one you're in last (so
@@ -615,7 +632,8 @@ module Switchboard
         puts row(true, "no orphaned sidebars (#{procs} process(es), #{panes} pane(s))")
       else
         puts row(false, "#{orphans} orphaned sidebar process(es) (#{procs} running vs #{panes} pane(s)) — " \
-                        "stale sidebars whose pane is gone; a recycled pane id can make one double-ring")
+                        "stale sidebars whose pane is gone; a recycled pane id can make one double-ring — " \
+                        "run `switchboard prune` to reap them")
       end
     end
 
@@ -764,7 +782,7 @@ module Switchboard
           switchboard disable-hooks [P]  remove them from that worktree
           switchboard rename NAME    rename the current workspace (dir + tmux session)
           switchboard sound [done|waiting]  play a state's sound (try audio / pick sounds)
-          switchboard prune        kill orphaned sb/ sessions (--dry-run / -n previews)
+          switchboard prune        kill orphaned sb/ sessions + reap orphaned sidebar processes (--dry-run / -n previews)
           switchboard quit         close ALL switchboard sessions (full teardown — kills the one you're in too)
           switchboard doctor       check dependencies + config
           switchboard help         show this help

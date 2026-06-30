@@ -89,6 +89,48 @@ module Switchboard
       Report.new(reachable: true, sb_count: live.size, orphans: orphaned)
     end
 
+    # Pure: which running sidebar PIDs are orphans — their tty is not among the live
+    # pane ttys, so no pane on the server owns them. No tmux/ps here, so the decision is
+    # unit-testable.
+    #
+    # nil OR EMPTY live_ttys reaps NOTHING — this guard is load-bearing, not paranoia. A
+    # nil is tmux unreachable; an EMPTY set means list-panes succeeded but enumerated no
+    # pane, which on a live server is impossible (a server with no panes has already
+    # exited), so it can only be a partial/garbled read. Without that guard an empty set
+    # makes EVERY sidebar match "no live pane" and we'd reap every one at once — the
+    # whole-server-wipe a flaky shell-out must never trigger. Same house rule as
+    # owns_pane?: degrade, never act, on a miss.
+    def orphan_sidebar_pids(processes, live_ttys)
+      return [] if live_ttys.nil? || live_ttys.empty?
+
+      processes.reject { |_pid, tty| live_ttys.include?(tty) }.map(&:first)
+    end
+
+    # Reap orphaned sidebar PROCESSES — a `switchboard sidebar` whose pane is gone
+    # (an interrupted run, a hard server kill). A different orphan than the sessions
+    # above: those are sb/ sessions with no worktree; these are processes with no pane.
+    # Worth reaping in the same sweep because tmux RECYCLES pane ids, so a straggler can
+    # be handed a live pane and double-fire completion sounds (the bug owns_pane? guards
+    # at runtime — this clears the ones already stranded). Returns the reaped pids (or,
+    # dry_run, the ones it would). SIGTERM, not KILL: orphan_sidebar_pids already
+    # excludes every process that owns a pane, so nothing healthy is in range, but TERM
+    # still lets a misjudged one run its own teardown.
+    def reap_sidebars(dry_run: false)
+      pids = orphan_sidebar_pids(Tmux.sidebar_processes, Tmux.live_pane_ttys)
+      # Per-pid rescue: a pid that died between the listing and the kill (ESRCH) is
+      # already what we wanted — skip it, don't abort reaping the rest.
+      pids.each { |pid| kill_quietly(pid) } unless dry_run
+      pids
+    end
+
+    # SIGTERM a pid, swallowing the ESRCH of one that already exited (the kill race) and
+    # any EPERM — a failed signal degrades to "left running", never crashes the prune.
+    def kill_quietly(pid)
+      Process.kill("TERM", pid)
+    rescue StandardError
+      nil
+    end
+
     # Remove rename bridges (the old -> new symlinks Git.move_worktree leaves) once
     # they dangle — i.e. the renamed worktree they pointed at is itself gone.
     # Scoped to dedicated-worktree parent dirs (never the main repo's parent), and

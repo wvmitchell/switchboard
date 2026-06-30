@@ -7,6 +7,26 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.42.0] — `prune` reaps orphaned sidebar processes (2026-06-29)
+
+### Added
+- **`switchboard prune` now reaps orphaned sidebar *processes*, not just orphaned
+  sessions.** `doctor` already flagged a `switchboard sidebar` that outlived its pane
+  (an interrupted run or a hard tmux kill leaves the process running); because tmux
+  recycles pane ids, such a straggler can later read a *different* live pane and
+  **double-fire completion sounds**. `prune` now clears them in the same sweep —
+  `--dry-run`/`-n` previews the reap, and `doctor`'s orphan line points at `prune`.
+  A sidebar is reaped only when its tty matches no live pane, so one that owns a pane
+  is never touched; an unreadable or empty pane list reaps nothing (degrade, never
+  wipe every sidebar on a flaky `tmux` call).
+
+### Changed
+- **The real-tmux smoke harness (`bin/test-smoke`) sweeps abandoned isolated servers
+  before each run.** An interrupted smoke run (Ctrl-C / kill) skips per-test teardown
+  and leaves a daemon tmux server — and its sidebar panes — alive, which is how those
+  orphaned processes accumulate. A pre-run sweep GCs the throwaway `sbk*` socket dirs of
+  any earlier run whose owning pid is dead, so a concurrent run is never disturbed.
+
 ## [0.41.0] — user-configurable in-sidebar keybindings (#108) (2026-06-29)
 
 ### Added

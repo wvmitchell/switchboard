@@ -372,22 +372,41 @@ module Switchboard
     # --- prune_summary: honest reporting (F5) + dry-run next step (DX-2) ------
 
     def test_prune_summary_distinguishes_unreachable_from_empty
-      assert_equal "no tmux server — nothing to reconcile", CLI.prune_summary(report(reachable: false), false)
-      assert_equal "no sb/ sessions found", CLI.prune_summary(report(sb_count: 0), false)
-      assert_equal "3 sb/ session(s), none orphaned", CLI.prune_summary(report(sb_count: 3), false)
+      assert_equal "no tmux server — nothing to reconcile", CLI.prune_summary(report(reachable: false), [], false)
+      assert_equal "no sb/ sessions found", CLI.prune_summary(report(sb_count: 0), [], false)
+      assert_equal "3 sb/ session(s), none orphaned", CLI.prune_summary(report(sb_count: 3), [], false)
     end
 
     def test_prune_summary_kill_lists_orphans_without_next_step
-      out = CLI.prune_summary(report(sb_count: 3, orphans: ["sb/app/gone"]), false)
+      out = CLI.prune_summary(report(sb_count: 3, orphans: ["sb/app/gone"]), [], false)
       assert_includes out, "killed 1 orphaned session(s):"
       assert_includes out, "  sb/app/gone"
       refute_includes out, "run `switchboard prune`"
     end
 
     def test_prune_summary_dry_run_appends_next_step
-      out = CLI.prune_summary(report(sb_count: 3, orphans: ["sb/app/gone"]), true)
+      out = CLI.prune_summary(report(sb_count: 3, orphans: ["sb/app/gone"]), [], true)
       assert_includes out, "would kill 1 orphaned session(s):"
       assert_includes out, "run `switchboard prune` to remove these"
+    end
+
+    # The orphaned-sidebar-process reap is a SEPARATE axis (process-with-no-pane vs
+    # session-with-no-worktree): it appends its own line and never suppresses the
+    # session summary, so a clean-sessions-but-stale-sidebars run reports both truths.
+    def test_prune_summary_appends_sidebar_reap_line
+      out = CLI.prune_summary(report(sb_count: 3), [111, 222], false)
+      assert_includes out, "3 sb/ session(s), none orphaned"
+      assert_includes out, "reaped 2 orphaned sidebar process(es)"
+    end
+
+    def test_prune_summary_sidebar_reap_dry_run_says_would
+      out = CLI.prune_summary(report(sb_count: 3), [111], true)
+      assert_includes out, "would reap 1 orphaned sidebar process(es)"
+    end
+
+    def test_prune_summary_omits_sidebar_line_when_none_reaped
+      out = CLI.prune_summary(report(sb_count: 3), [], false)
+      refute_includes out, "sidebar process"
     end
 
     # --- doctor_sessions: actionable orphan line (DX-1), three branches --------
