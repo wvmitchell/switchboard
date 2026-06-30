@@ -22,6 +22,17 @@ module Switchboard
     # an optional one-key jump the user opts into. nil ⇒ "don't bind this role".
     TMUX_KEY_DEFAULTS = { "toggle" => "s", "home" => nil }.freeze
 
+    # Every top-level key switchboard reads. Anything else at the top level is dead
+    # weight — most often a NESTED key (a sidebar action, a sound, a tmux key) that
+    # lost its parent/indent when uncommented from the scaffold (e.g. `new_workspace:
+    # w` at the margin instead of under `sidebar_keys:`): it parses fine but is never
+    # read, so the setting silently does nothing. `doctor` flags these (CLI#doctor_unknown_keys).
+    KNOWN_KEYS = %w[
+      worktree_root projects_root base branch_prefix session_command
+      agent_state_hooks prune_on_launch auto_rename diff_counts prewarm
+      sounds tmux_keys sidebar_keys projects
+    ].freeze
+
     def self.path
       ENV["SWITCHBOARD_CONFIG"] || DEFAULT_PATH
     end
@@ -48,6 +59,12 @@ module Switchboard
       # switchboard config — see the README "Config" section for the full reference.
       # Uncommented keys are active; the commented ones below show every optional knob
       # at its default. Uncomment and edit what you want, then save.
+      #
+      # NESTED settings (sounds, tmux_keys, sidebar_keys) are a map. Their headers are
+      # already active but empty (an empty map changes nothing), so to set one just
+      # uncomment the indented line(s) under it — keep the two-space indent so each
+      # line stays a child. A child dragged out to the margin becomes a top-level key
+      # that switchboard ignores; `switchboard doctor` flags any such stray key.
 
       worktree_root: "#{DEFAULT_ROOT}"   # where `n` puts new worktrees
       # projects_root: "#{DEFAULT_PROJECTS_ROOT}"        # where `a` / clone drop fetched repos
@@ -62,39 +79,39 @@ module Switchboard
 
       # Completion sounds (on by default): a built-in (train / chime, or train_1..3 /
       # chime_1..3), a file path, or a macOS system-sound name. enabled: false mutes all.
-      # sounds:
-      #   enabled: true
-      #   done: train
-      #   waiting: chime
+      sounds:
+        # enabled: true
+        # done: train
+        # waiting: chime
 
       # Prefix keys switchboard binds. toggle defaults to s; home is unbound unless set.
       # A key is a char, a named key (Space, F1, BSpace), or a C-/M- combo.
-      # tmux_keys:
-      #   toggle: s
-      #   home: S
+      tmux_keys:
+        # toggle: s
+        # home: S
 
       # In-sidebar keys, remapped by ACTION -> key (each a single printable character;
       # omit an action to keep its default, shown below). Structural keys are fixed
       # (↵, Esc, Backspace, arrows, ^n/^p) and can't be remapped. `switchboard doctor`
       # flags clashes (two actions on one key -> the later one drops to unbound).
-      # sidebar_keys:
-      #   down: j                 # move down
-      #   up: k                   # move up
-      #   top: g                  # jump to top
-      #   bottom: G               # jump to bottom
-      #   filter: "/"             # type-to-filter by name
-      #   add_project: a          # add a project
-      #   new_workspace: n        # new workspace (auto-named)
-      #   open_pr: o              # open the row's PR
-      #   open_repo: O            # open the row's repo
-      #   rename: r               # rename workspace
-      #   delete: d               # delete / remove
-      #   edit_config: e          # edit this config
-      #   refresh_prs: R          # refresh PR badges
-      #   toggle_branch_fold: z   # fold / unfold branches
-      #   toggle_full_header: H   # toggle full header
-      #   help: "?"               # help overlay
-      #   quit: q                 # quit all sessions
+      sidebar_keys:
+        # down: j                 # move down
+        # up: k                   # move up
+        # top: g                  # jump to top
+        # bottom: G               # jump to bottom
+        # filter: "/"             # type-to-filter by name
+        # add_project: a          # add a project
+        # new_workspace: n        # new workspace (auto-named)
+        # open_pr: o              # open the row's PR
+        # open_repo: O            # open the row's repo
+        # rename: r               # rename workspace
+        # delete: d               # delete / remove
+        # edit_config: e          # edit this config
+        # refresh_prs: R          # refresh PR badges
+        # toggle_branch_fold: z   # fold / unfold branches
+        # toggle_full_header: H   # toggle full header
+        # help: "?"               # help overlay
+        # quit: q                 # quit all sessions
 
       projects: []   # grown by `a` in the sidebar or `switchboard add <name> <path>`
     YAML
@@ -170,6 +187,15 @@ module Switchboard
     rescue StandardError => e
       @load_error = e.message
       {}
+    end
+
+    # Top-level keys in the loaded config that switchboard doesn't recognize (see
+    # KNOWN_KEYS) — for `doctor` to flag. Empty for a clean or default config.
+    # Guards a non-Hash top level (a malformed scalar/list) so it degrades to [].
+    def unknown_keys
+      return [] unless @data.is_a?(Hash)
+
+      @data.keys - KNOWN_KEYS
     end
 
     # Where `switchboard` puts worktrees it creates: <root>/<project>/<name>.

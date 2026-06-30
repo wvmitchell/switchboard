@@ -25,6 +25,16 @@ class Minitest::Test
     receiver.define_singleton_method(name, original)
   end
 
+  # The scaffold leaves the nested-map headers (sounds/tmux_keys/sidebar_keys)
+  # present but EMPTY (nil) so a child override is one uncomment away with its
+  # parent already in place. An empty header reads identically to absent
+  # (@data["sounds"] is nil either way), so the EFFECTIVE config is just the keys
+  # that carry values — assert THAT equals default_data, ignoring the nil headers.
+  def assert_effective_default_config(parsed)
+    assert_equal Switchboard::Config.default_data, parsed.reject { |_, v| v.nil? },
+                 "the scaffold's empty headers must not change the effective config"
+  end
+
   # Swap $stdin for the block (restored after) so a test can drive the sidebar's
   # raw-mode read_key against a controllable IO — e.g. a closed pipe to hit EOF.
   def with_stdin(io)

@@ -19,15 +19,25 @@ module Switchboard
       refute Config.exist?
       Config.scaffold
       assert Config.exist?
-      assert_equal Config.default_data, YAML.safe_load_file(Config.path)
+      assert_effective_default_config(YAML.safe_load_file(Config.path))
     end
 
     # The scaffold is an annotated template so a fresh install discovers the optional
-    # knobs in the file itself. The invariant: only worktree_root + projects are
-    # active, so it parses to exactly default_data (commented knobs change nothing).
+    # knobs in the file itself. The invariant: only worktree_root + projects carry
+    # VALUES, so the effective config equals default_data. The nested-map headers
+    # (sounds/tmux_keys/sidebar_keys) are present but EMPTY (nil) — that reads
+    # identically to absent everywhere (@data["sounds"] is nil either way), so a
+    # child override is a single uncomment away with its parent already in place.
     def test_scaffold_template_parses_to_default_data
-      assert_equal Config.default_data, YAML.safe_load(Config::SCAFFOLD_TEMPLATE),
-                   "commented knobs must not change the effective config"
+      assert_effective_default_config(YAML.safe_load(Config::SCAFFOLD_TEMPLATE))
+    end
+
+    def test_scaffold_nested_map_headers_are_present_but_empty
+      parsed = YAML.safe_load(Config::SCAFFOLD_TEMPLATE)
+      %w[sounds tmux_keys sidebar_keys].each do |header|
+        assert parsed.key?(header), "#{header} header is active so a child is one uncomment away"
+        assert_nil parsed[header], "#{header} header is empty, so it changes nothing (reads as absent)"
+      end
     end
 
     def test_scaffold_template_advertises_the_optional_knobs
@@ -41,9 +51,24 @@ module Switchboard
     # scaffold for a new user to discover.
     def test_scaffold_template_lists_every_sidebar_key_action
       Keymap::ACTIONS.each do |a|
-        assert_includes Config::SCAFFOLD_TEMPLATE, "#   #{a.name}: ",
-                        "the scaffold should show the #{a.name} sidebar key so a new user can set it"
+        # The two-space indent BEFORE the comment marker is load-bearing: it keeps
+        # each key a child of `sidebar_keys:` after the natural uncomment (delete the
+        # `# `), instead of orphaning it at the margin where switchboard ignores it.
+        assert_includes Config::SCAFFOLD_TEMPLATE, "  # #{a.name}: ",
+                        "the scaffold should show the #{a.name} sidebar key, indented under sidebar_keys:"
       end
+    end
+
+    # The hardening that makes the misindent recoverable: with the header already
+    # active, enabling a key is a SINGLE uncomment of one child the natural way (delete
+    # the leading `# `, keep the indent) — it must land in the nested map, not as a
+    # stray top-level key. Guards against a regression to the flush-left `#   child`
+    # style (or a re-commented header) that produced the original trap.
+    def test_scaffold_sidebar_key_uncomments_into_a_nested_map
+      enabled = Config::SCAFFOLD_TEMPLATE.sub("  # new_workspace: n", "  new_workspace: w")
+      data = YAML.safe_load(enabled)
+      assert_equal({ "new_workspace" => "w" }, data["sidebar_keys"])
+      refute data.key?("new_workspace"), "an uncommented child must not land at the top level"
     end
 
     def test_scaffold_writes_the_annotated_template_but_parses_to_defaults
@@ -51,7 +76,7 @@ module Switchboard
       body = File.read(Config.path)
       assert_includes body, "tmux_keys", "the written file shows the keybinding knob"
       assert_includes body, "# switchboard config", "and the header pointer to the README"
-      assert_equal Config.default_data, YAML.safe_load_file(Config.path), "but still parses to the defaults"
+      assert_effective_default_config(YAML.safe_load_file(Config.path))
     end
 
     def test_scaffold_returns_the_path
@@ -418,6 +443,34 @@ module Switchboard
       refute c.valid_sidebar_key?("é"), "multi-byte char is rejected"
       refute c.valid_sidebar_key?(1), "non-string"
       refute c.valid_sidebar_key?(nil), "nil"
+    end
+
+    # --- unknown_keys: the misindent backstop (doctor reads this) ----------------
+
+    def test_unknown_keys_empty_for_a_default_config
+      assert_empty cfg("worktree_root" => "/x", "projects" => []).unknown_keys
+    end
+
+    def test_unknown_keys_empty_for_the_scaffold
+      assert_empty cfg(YAML.safe_load(Config::SCAFFOLD_TEMPLATE)).unknown_keys,
+                   "every key the scaffold activates must be recognized"
+    end
+
+    def test_unknown_keys_flags_a_misindented_nested_key
+      # The exact trap: a sidebar action uncommented to the top level instead of
+      # nested under sidebar_keys: — parses fine, silently does nothing.
+      c = cfg("worktree_root" => "/x", "new_workspace" => "w", "help" => "h")
+      assert_equal %w[new_workspace help], c.unknown_keys
+    end
+
+    def test_unknown_keys_ignores_every_recognized_top_level_key
+      data = Config::KNOWN_KEYS.to_h { |k| [k, nil] }
+      assert_empty cfg(data).unknown_keys
+    end
+
+    def test_unknown_keys_degrades_on_a_non_hash_top_level
+      File.write(Config.path, "- just\n- a list\n")
+      assert_empty Config.new.unknown_keys, "a malformed non-map config yields [], never raises"
     end
 
     # --- malformed config degrades instead of crashing (decision #5) -----------

@@ -142,7 +142,7 @@ module Switchboard
     def test_init_writes_an_empty_config_when_absent
       out = capture { CLI.init }
       assert Config.exist?
-      assert_equal Config.default_data, YAML.safe_load_file(Config.path)
+      assert_effective_default_config(YAML.safe_load_file(Config.path))
       assert_includes out, "wrote"
     end
 
@@ -494,6 +494,28 @@ module Switchboard
         capture { CLI.send(:doctor_binding_live) }
       end
       assert_includes out, "replaced a prior binding: send-keys hi"
+    end
+
+    # --- doctor: unknown top-level keys (the misindent backstop) --------------
+
+    def test_doctor_is_silent_about_unknown_keys_by_default
+      File.write(Config.path, YAML.dump("worktree_root" => "/x", "projects" => []))
+      assert_equal "", capture { CLI.send(:doctor_unknown_keys) }, "a clean config reports nothing"
+    end
+
+    def test_doctor_flags_a_misindented_sidebar_key_with_the_fix
+      File.write(Config.path, YAML.dump("worktree_root" => "/x", "new_workspace" => "w"))
+      out = capture { CLI.send(:doctor_unknown_keys) }
+      assert_includes out, "\"new_workspace\""
+      assert_includes out, "does nothing"
+      assert_includes out, "nest it under `sidebar_keys:`", "names the parent so the fix is obvious"
+    end
+
+    def test_doctor_flags_a_generic_unknown_key
+      File.write(Config.path, YAML.dump("worktree_root" => "/x", "wortree_root" => "/typo"))
+      out = capture { CLI.send(:doctor_unknown_keys) }
+      assert_includes out, "\"wortree_root\""
+      assert_includes out, "unrecognized", "a non-action key gets the generic hint, not a sidebar_keys steer"
     end
 
     # --- doctor: sidebar_keys rows (issue #108) -------------------------------

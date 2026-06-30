@@ -503,6 +503,7 @@ module Switchboard
       end
       exists = Config.exist?
       puts row(exists, exists ? "config: #{Config.path}" : "no config — run `switchboard install`")
+      doctor_unknown_keys
       doctor_install
       doctor_sidebar_keys
       doctor_hooks
@@ -510,6 +511,28 @@ module Switchboard
       doctor_sounds
       doctor_sessions
       doctor_orphan_sidebars
+    end
+
+    # Flag top-level config keys switchboard doesn't recognize. The cause this catches
+    # for new users: a nested key uncommented from the scaffold that lost its
+    # parent/indent (e.g. `new_workspace: w` at the margin instead of under
+    # `sidebar_keys:`). It parses fine but is never read, so the setting silently does
+    # nothing — the exact trap that motivated this check. A stray key that's actually a
+    # sidebar action gets the precise fix; anything else gets the generic hint. Silent
+    # for a clean/default config.
+    def doctor_unknown_keys
+      unknown = config.unknown_keys
+      return if unknown.empty?
+
+      actions = Keymap::ACTIONS.map { |a| a.name.to_s }
+      unknown.each do |key|
+        hint = if actions.include?(key)
+                 "a sidebar key — nest it under `sidebar_keys:`, indented two spaces"
+               else
+                 "unrecognized — a typo, or a nested key that lost its parent/indent"
+               end
+        puts "  \e[33m–\e[0m config key #{key.inspect} at the top level does nothing: #{hint}"
+      end
     end
 
     # Surface a bad `sidebar_keys` remap (issue #108) so a binding that didn't take

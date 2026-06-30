@@ -426,7 +426,7 @@ module Switchboard
     def test_install_scaffolds_an_empty_config
       silently { Installer.install(no_tmux: true) }
       assert Config.exist?
-      assert_equal Config.default_data, YAML.safe_load_file(Config.path)
+      assert_effective_default_config(YAML.safe_load_file(Config.path))
     end
 
     def test_install_leaves_an_existing_config_untouched

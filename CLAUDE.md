@@ -50,10 +50,17 @@ installs), adds a
 marker-delimited line to the tmux.conf tmux actually loads (found via
 `#{config_files}`) that sources the self-locating `switchboard.tmux` fragment,
 and scaffolds a config (an **annotated template** — `Config::SCAFFOLD_TEMPLATE`,
-whose only uncommented keys are `worktree_root` + `projects`, so it parses to
-`default_data` while showing every optional knob commented out; comments are
-stripped on the first `add_project` YAML.dump rewrite, after the new user has read
-them). Finally it offers to install the **global codex hooks** block — opt-in,
+whose only **value-carrying** keys are `worktree_root` + `projects`, so its
+*effective* config equals `default_data` while showing every optional knob. The
+nested-map headers (`sounds`/`tmux_keys`/`sidebar_keys`) are uncommented but **empty**
+— an empty map reads identically to absent (`@data["sounds"]` is nil either way), so
+they change nothing, yet a child override is a single uncomment away with its parent
+already in place (the anti-trap: a key can't get orphaned at the margin because its
+header is never commented). Tests assert the effective shape via
+`assert_effective_default_config` — the parse minus nil headers. Comments are stripped
+on the first `add_project` YAML.dump rewrite, after the new user has read them.
+Stray top-level keys (a misindented child) are caught by `Config#unknown_keys` →
+`doctor`.) Finally it offers to install the **global codex hooks** block — opt-in,
 prompted (`--codex-hooks` / `--no-codex-hooks` skip the prompt; default no on a
 non-tty), since it writes the user's personal `~/.codex/config.toml` (see the
 agent-state-dots section). The fragment runs `switchboard tmux-bind` (which

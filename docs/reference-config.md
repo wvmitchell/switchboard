@@ -212,6 +212,14 @@ sidebar_keys:
   down: j            # (default; shown only as an example)
 ```
 
+`sidebar_keys` is a **YAML map**, so each override must stay **indented two spaces
+under the `sidebar_keys:` header**. The common mistake when uncommenting it from the
+scaffolded config is to strip the indentation and leave the header commented, so the
+override lands at the top level — where switchboard never reads it and the remap
+silently does nothing. The same applies to `sounds` and `tmux_keys`. `switchboard
+doctor` flags any such stray top-level key (e.g. `config key "new_workspace" at the
+top level does nothing`) and names the parent it belongs under.
+
 | Action | Default | Action | Default |
 |--------|---------|--------|---------|
 | `down` | `j` | `open_repo` | `O` |
