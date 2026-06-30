@@ -7,6 +7,23 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.43.2] — pre-warm covers collapse/fold/header (the view-state flash) (2026-06-29)
+
+### Fixed
+- **Collapsing a project (or folding branches / toggling the header) then switching
+  sessions still flashed.** The warm fingerprint omitted shared *view-state*, so an
+  off-screen sidebar never repainted a fold made in another session — and the
+  switch-in reload applied it visibly on arrival. Two changes: (1) view-state
+  (collapse, branch-fold, full-header, width) is now in `warm_fingerprint`, and
+  (2) a collapse/fold/header toggle **broadcasts** a `C-w` "repaint now" poke to
+  every other sidebar (`Tmux.broadcast_warm`), so off-screen panes reflect the new
+  state within ~0.2s — before you can switch to them — instead of lagging until
+  their lazy warm tick. The broadcast is event-driven (fires only on the toggle, so
+  off-screen dormancy is preserved); the fingerprint entries are the backstop.
+  Verified in real tmux: collapse, switch, and the destination repaints nothing.
+  (Width still settles on switch-in — it resizes the pane, which a background
+  repaint can't do.)
+
 ## [0.43.1] — pre-warm actually kills the flash (the » marker fix) (2026-06-29)
 
 ### Fixed

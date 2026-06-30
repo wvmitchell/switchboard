@@ -19,6 +19,10 @@ module Switchboard
     # dedicated post-edit reload signal, distinct from C-l (the session-switch
     # refresh poke) so an ordinary switch never re-reads config off disk.
     RELOAD_CONFIG_POKE = "C-r"
+    # A non-user key the sidebar maps to "shared view-state changed — repaint now",
+    # broadcast to every OTHER sidebar when one toggles a collapse/fold/header so
+    # off-screen panes update instantly (no switch-in flash). Distinct from C-l.
+    WARM_POKE = "C-w"
 
     module_function
 
@@ -597,6 +601,27 @@ module Switchboard
     # Tell a specific sidebar pane to reload (C-l, a non-user key — `r` renames).
     def poke(pane)
       system("tmux", "send-keys", "-t", pane, "C-l", out: File::NULL, err: File::NULL) if pane
+    end
+
+    # Broadcast the warm poke (C-w) to every sidebar pane except `except` — used when
+    # one sidebar changes SHARED view-state (collapse / branch-fold / full-header) so
+    # all the other (mostly off-screen) sidebars repaint to the new state immediately,
+    # making a switch right after the toggle flash-free. Best-effort per pane; the
+    # originating pane is skipped (it already re-rendered). No-op off a tmux server.
+    def broadcast_warm(except: nil)
+      all_sidebar_panes.each do |pane|
+        next if pane == except
+
+        system("tmux", "send-keys", "-t", pane, WARM_POKE, out: File::NULL, err: File::NULL)
+      end
+    end
+
+    # Every live sidebar pane id across all sessions/windows (title == SIDEBAR_TITLE).
+    def all_sidebar_panes
+      `tmux list-panes -a -F '#\{pane_id} #\{pane_title}' 2>/dev/null`.lines.filter_map do |line|
+        id, title = line.split(" ", 2)
+        id if id && title.to_s.strip == SIDEBAR_TITLE
+      end
     end
 
     # Poke a session's sidebar by session name (vs. poke's pane id). reload_config:

@@ -80,6 +80,11 @@ module Switchboard
 
     BRANCH_FG = "\e[90m"         # branch rows: bright-black, a theme-relative dim (#23)
     RELOAD_CONFIG_BYTE = "\x12"  # C-r: the dedicated post-edit "re-read config" poke (Tmux.poke_sidebar_of)
+    WARM_POKE_BYTE = "\x17"      # C-w: "shared view-state changed elsewhere — repaint NOW" broadcast
+                                 # (Tmux.broadcast_warm). Lets a collapse/fold/header toggle in one
+                                 # sidebar reach every other (off-screen) sidebar's buffer instantly,
+                                 # instead of waiting for its lazy warm tick — so a switch right after
+                                 # a toggle shows the new view-state with no flash.
     WIDTH_STEP = 2               # cols per ←/→ press; bounds live in Width (issue #78)
     READ_BYTES = 1024            # per read: large enough that a normal input burst (a held
                                  # key-repeat, a switch's focus-event flurry) is never capped
@@ -129,7 +134,7 @@ module Switchboard
     # can't open the editor while help is up — `e` dismisses it first — and C-r isn't
     # broadcast, it targets the just-focused pane); focus is cosmetic under the overlay.
     # If C-r ever becomes broadcast, revisit this (it'd then need honoring). (issue #62)
-    HELP_IGNORED_BYTES = ["\f", RELOAD_CONFIG_BYTE, "\e[I", "\e[O"].freeze
+    HELP_IGNORED_BYTES = ["\f", RELOAD_CONFIG_BYTE, WARM_POKE_BYTE, "\e[I", "\e[O"].freeze
 
     def self.run
       new.run
@@ -804,8 +809,21 @@ module Switchboard
       [dir_fingerprint(AgentState.state_dir),  # agent dots
        dir_fingerprint(Attention.state_dir),   # bold markers
        dir_fingerprint(Pr.cache_dir),          # PR badges
+       dir_fingerprint(Collapse.state_dir),    # shared project folds (the originally-missed case)
+       file_fingerprint(FullHeader.marker),    # full-header toggle
+       file_fingerprint(BranchFold.marker),    # branch-fold toggle
+       file_fingerprint(Width.state_file),     # sidebar width
        reflogs.sort]                           # diff counts (commits)
     rescue StandardError
+      nil
+    end
+
+    # mtime of a single shared-state marker file (nil if absent) — captures both a
+    # toggle-on (file appears) and toggle-off (file removed) of an existence-flag
+    # store, and a value change of the width file.
+    def file_fingerprint(path)
+      File.mtime(path).to_f
+    rescue SystemCallError
       nil
     end
 
@@ -851,6 +869,23 @@ module Switchboard
       @last_warm = monotonic
       @warm_fp = fp
       true
+    end
+
+    # C-w broadcast handler: a peer sidebar changed shared view-state (collapse /
+    # branch-fold / full-header) and pinged us to repaint NOW, so a switch right
+    # after the toggle shows it with no flash — instead of us lagging until our next
+    # warm tick. On screen: a silent reload + render shows it immediately. Off
+    # screen: warm_reload paints the new view-state into the buffer (gated on
+    # prewarm? — a user who opted out of off-screen work gets none). Either way it's
+    # cheap and event-driven (fires only on the rare toggle, not on a poll), so it
+    # keeps the off-screen dormancy.
+    def warm_poke
+      if @visible
+        reload(announce_sounds: false)
+        render
+      elsif @config.prewarm?
+        render if warm_reload(warm_fingerprint)
+      end
     end
 
     # May a session-switch poke run a full (git + capture-pane) reload now? Only
@@ -1205,6 +1240,7 @@ module Switchboard
       when "\e[D"             then resize(-WIDTH_STEP) # ← narrow the pane
       when "\r", "\n"         then enter
       when "\f"               then reload_and_refresh # Ctrl-L (hook poke on switch)
+      when WARM_POKE_BYTE     then warm_poke # Ctrl-W (peer broadcast: shared view-state changed)
       when RELOAD_CONFIG_BYTE then reload_config_and_rebuild # Ctrl-R (post-edit reload)
       when "\e[I"             then return false if focus_in # focus-in: light cursor; #64 fast reap may exit the loop
       when "\e[O"             then @focused = false # tmux focus-out: drop it
@@ -1299,6 +1335,7 @@ module Switchboard
         Collapse.collapse(project)
       end
       recompute_rows
+      Tmux.broadcast_warm(except: ENV["TMUX_PANE"]) # other sidebars repaint the fold now (no switch-in flash)
     end
 
     # H: flip the full header on/off for EVERY session. Like the project fold it
@@ -1309,6 +1346,7 @@ module Switchboard
     def toggle_full_header
       @full_header = !@full_header
       @full_header ? FullHeader.enable : FullHeader.disable
+      Tmux.broadcast_warm(except: ENV["TMUX_PANE"]) # other sidebars repaint the header now
     end
 
     # z: fold/unfold EVERY workspace's branch-history rows tree-wide (issue #107).
@@ -1326,6 +1364,7 @@ module Switchboard
       recompute_rows
       i = @rows.index { |n| n.path == here } if here
       @cursor = i if i
+      Tmux.broadcast_warm(except: ENV["TMUX_PANE"]) # other sidebars repaint the fold now
     end
 
     def switch(node)

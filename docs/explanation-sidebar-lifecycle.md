@@ -129,12 +129,22 @@ tmux/pgrep/lsof process probe that the normal scan falls back to whenever a
 worktree has no live hook — so an off-screen scan stays cheap. Sounds never ring
 off screen.
 
-Honest about the limits: this *drastically reduces* the flash, it doesn't
-eliminate it — a change in the last few seconds before you switch can still be
-caught mid-warm. And a worktree added or removed in *another* session, or a
-view-preference toggle (collapse, header, branch-fold, width), isn't in the
-fingerprint; those still refresh on the switch-in reload, as before. `prewarm:
-false` turns the whole thing off and restores pure dormancy.
+Shared view-state (collapse a project, fold branches, toggle the full header) gets
+a stronger guarantee than the lazy fingerprint: the sidebar that makes the change
+**broadcasts** a "repaint now" poke to every other sidebar, so they paint the new
+state into their buffers within a fraction of a second — before you can switch to
+them. That's the fix for "collapse a project, switch session, and it still
+flashed": the off-screen sidebars used to lag the fold until their slow warm tick
+(or the switch-in reload), so you saw it snap. Now they're already folded when you
+arrive. The broadcast only fires on the (rare) toggle, so it costs nothing at rest.
+
+Honest about the remaining limits: a *continuously* changing thing — an agent dot
+ticking in the last second or two before you switch — can still update on arrival
+(that's a live change, not stale view-state), since dots ride the lazy warm, not
+the broadcast. Width is the one view-toggle that still settles on switch-in:
+changing it resizes the pane, which a background repaint can't do. And a worktree
+added or removed in *another* session refreshes on the switch-in reload, as
+before. `prewarm: false` turns the whole thing off and restores pure dormancy.
 
 ### Catch-up scans must not re-ring
 
@@ -198,10 +208,12 @@ visible before it can misbehave.
   `tmux attach`) still lean on that backstop; see `TODOS.md`.
 - **Pre-warming** spends a little of that saved off-screen work back to kill the
   switch-in flash — but only behind a change-gate and a `WARM_TTL`, so an idle
-  pane stays as cheap as full dormancy. The change-gate's fingerprint is
-  deliberately partial (agent/attention/diff/PR, not worktree-set or view-state),
-  trading complete off-screen coverage for a cheap stat-only check; the switch-in
-  reload remains the catch-all. `prewarm: false` opts back into pure dormancy.
+  pane stays as cheap as full dormancy. The change-gate's fingerprint covers
+  agent/attention/diff/PR **and shared view-state** (collapse/fold/header/width);
+  view-state changes additionally **broadcast** a repaint to other sidebars so they
+  update instantly rather than waiting for the gate. A worktree added/removed in
+  another session is the one thing left to the switch-in reload. `prewarm: false`
+  opts back into pure dormancy.
 - **The pty-confirmation guard** errs toward *not* killing a sidebar on an
   ambiguous reply, accepting a brief leak over ever silencing a healthy panel.
 

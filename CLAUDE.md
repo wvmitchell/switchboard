@@ -215,11 +215,30 @@ AND a cheap `warm_fingerprint` differs from the `@warm_fp` baseline, it runs
 `warm_reload` + `render`. The gates are cheapest-first, so a fully idle pane still
 costs ~one `Tmux.visible?` call per `IDLE` (today's dormancy). `warm_fingerprint`
 is stats only — a `dir_fingerprint` (name+mtime per file) over the agent-state,
-attention, and PR-cache dirs plus each tracked worktree's `logs/HEAD` mtime — so
-it sees agent dots, bold, badges, and commits move without a git/process
-shell-out. It deliberately does NOT cover a worktree added/removed in **another**
-session, or shared view-state (collapse/full-header/branch-fold/width); those
-refresh on the switch-in reload as before.
+attention, PR-cache, and **collapse** dirs, the **full-header / branch-fold /
+width** marker files, plus each tracked worktree's `logs/HEAD` mtime — so it sees
+agent dots, bold, badges, commits, **and the shared view-state** move without a
+git/process shell-out. It deliberately does NOT cover a worktree added/removed in
+**another** session; that refreshes on the switch-in reload as before.
+
+**Shared view-state propagates instantly via a broadcast, not just the lazy
+fingerprint.** A collapse/branch-fold/full-header toggle in one sidebar is a user
+action that writes a shared on-disk store; the toggling sidebar then
+`Tmux.broadcast_warm`s a `C-w` "repaint now" poke (`WARM_POKE_BYTE`) to every
+*other* sidebar pane (`all_sidebar_panes`, except itself). Each handles it in
+`warm_poke`: off screen → `warm_reload` + render (paint the new view-state into the
+buffer); on screen → a silent `reload` + render. So an off-screen sidebar reflects
+the fold within ~0.2s — before you can switch to it — instead of lagging until its
+~`IDLE` warm tick (the bug where "collapse then switch still flashed"). The
+broadcast is event-driven (fires only on the rare toggle, zero steady-state cost,
+so dormancy is preserved); the view-state entries in `warm_fingerprint` are the
+lazy backstop if a broadcast is missed. The earlier `prewarm` shipped WITHOUT
+this — its fingerprint omitted view-state, so a collapse never warmed off-screen
+panes and every switch-in repainted the fold = a flash on exactly the case folks
+test with. Width is the one view-state that still defers to switch-in: changing it
+*resizes* the pane (a `pin`, not just a render), so a warm repaint can't apply it
+off screen — the fingerprint tracks it as a backstop but the resize lands on the
+switch-in `pin`.
 
 `warm_reload` is **not** `reload` with flags — reusing `reload` off screen caused
 two real bugs (caught in review): `reload`→`locate` clears `Attention` for

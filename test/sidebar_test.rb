@@ -2494,6 +2494,83 @@ module Switchboard
                    "warm stamps the pre-scan fingerprint, so a mid-warm change re-fires next tick"
     end
 
+    # --- shared view-state propagation (collapse/fold/header repaint other sidebars) ---
+    # Toggling shared view-state broadcasts a warm poke so OTHER (off-screen) sidebars
+    # repaint the new state immediately — the fix for "collapse then switch still flashes".
+
+    def test_toggle_collapse_broadcasts_warm
+      sb = sidebar(nodes: [proj("app"), ws("a", path: "/wt/a")])
+      bcast = 0
+      stub_method(Tmux, :broadcast_warm, ->(**) { bcast += 1 }) do
+        sb.send(:toggle_collapse, "app")
+      end
+      assert_equal 1, bcast, "collapsing a project pings other sidebars to repaint the fold now"
+    end
+
+    def test_toggle_branch_fold_broadcasts_warm
+      sb = sidebar(nodes: [proj("app"), ws("a", path: "/wt/a")])
+      bcast = 0
+      stub_method(Tmux, :broadcast_warm, ->(**) { bcast += 1 }) do
+        sb.send(:toggle_branch_fold)
+      end
+      assert_equal 1, bcast, "z (branch fold) pings other sidebars too"
+    end
+
+    def test_toggle_full_header_broadcasts_warm
+      sb = sidebar(nodes: [proj("app"), ws("a", path: "/wt/a")])
+      bcast = 0
+      stub_method(Tmux, :broadcast_warm, ->(**) { bcast += 1 }) do
+        sb.send(:toggle_full_header)
+      end
+      assert_equal 1, bcast, "H (full header) pings other sidebars too"
+    end
+
+    # The fingerprint backstop: shared view-state now moves the warm fingerprint, so
+    # even a missed broadcast is caught by the next lazy warm tick.
+    def test_warm_fingerprint_tracks_shared_view_state
+      sb = sidebar(nodes: [proj("app"), ws("a", path: "/wt/a")])
+      base = sb.send(:warm_fingerprint)
+      Collapse.collapse("app")
+      refute_equal base, sb.send(:warm_fingerprint), "a project collapse moves the warm fingerprint"
+      after_collapse = sb.send(:warm_fingerprint)
+      FullHeader.enable
+      refute_equal after_collapse, sb.send(:warm_fingerprint), "a full-header toggle moves it too"
+    end
+
+    # warm_poke (the C-w broadcast handler): off screen -> warm_reload + render;
+    # on screen -> silent reload + render; prewarm:false off screen -> nothing.
+    def test_warm_poke_offscreen_warm_reloads_and_renders
+      sb = sidebar(nodes: [proj("app"), ws("a", path: "/wt/a")])
+      sb.instance_variable_set(:@visible, false)
+      warmed = rendered = 0
+      sb.define_singleton_method(:warm_reload) { |_fp| warmed += 1; true }
+      sb.define_singleton_method(:render) { rendered += 1 }
+      sb.send(:warm_poke)
+      assert_equal 1, warmed, "off screen: paint the new view-state into the buffer"
+      assert_equal 1, rendered
+    end
+
+    def test_warm_poke_visible_reloads_and_renders
+      sb = sidebar(nodes: [proj("app"), ws("a", path: "/wt/a")])
+      sb.instance_variable_set(:@visible, true)
+      reloaded = rendered = 0
+      sb.define_singleton_method(:reload) { |announce_sounds: true| reloaded += 1 }
+      sb.define_singleton_method(:render) { rendered += 1 }
+      sb.send(:warm_poke)
+      assert_equal 1, reloaded, "on screen: a silent reload shows the change immediately"
+      assert_equal 1, rendered
+    end
+
+    def test_warm_poke_offscreen_respects_prewarm_off
+      sb = sidebar(nodes: [proj("app"), ws("a", path: "/wt/a")])
+      sb.instance_variable_set(:@visible, false)
+      sb.instance_variable_get(:@config).define_singleton_method(:prewarm?) { false }
+      warmed = 0
+      sb.define_singleton_method(:warm_reload) { |_fp| warmed += 1; true }
+      sb.send(:warm_poke)
+      assert_equal 0, warmed, "prewarm:false -> a warm poke does no off-screen work"
+    end
+
     # --- visibility-aware loop (off-screen dormancy) --------------------------
     # @visible is the single on-screen flag: it gates render + pulse, and the poke
     # path re-samples it because C-l is overloaded (session switch-in vs background
