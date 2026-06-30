@@ -881,6 +881,7 @@ module Switchboard
       w = real_dir("w")
       Attention.mark(w)
       sb = sidebar(nodes: [proj("app"), ws("w", path: w)], attention: [w])
+      sb.instance_variable_set(:@visible, true) # clearing bold means "viewing" — only on screen
       stub_method(Tmux, :pane_path, ->(_pane) { w }) do
         sb.send(:locate)
       end
@@ -2385,20 +2386,43 @@ module Switchboard
       assert_equal 0, warmed, "prewarm: false restores full dormancy — no off-screen work"
     end
 
-    # The bug the outside-voice review caught: reload -> locate clears the current
-    # workspace's attention bold. warm_reload skips locate precisely so an off-screen
-    # warm can't erase the marker the on-screen sidebar set for that completion.
-    def test_warm_reload_does_not_clear_attention
+    # warm_reload RUNS locate (so the warm frame carries the » "you are here" marker
+    # and matches the switch-in frame — else every switch-in adds the marker and
+    # flashes). But locate's attention-clear is @visible-gated, so an off-screen warm
+    # sets @current_path without erasing bold you haven't seen yet.
+    def test_warm_reload_runs_locate_for_marker_but_keeps_bold_off_screen
       Dir.mktmpdir do |wt|
         sb = sidebar(nodes: [proj("app"), ws("a", path: wt)])
-        sb.instance_variable_set(:@current_path, wt)
+        sb.instance_variable_set(:@visible, false) # off screen
         sb.define_singleton_method(:rebuild) { nil } # isolate from Model/git
         sb.define_singleton_method(:refresh_diffs) { nil }
         Attention.mark(wt)
         assert_includes Attention.scan, File.realpath(wt), "precondition: workspace is bold"
-        sb.send(:warm_reload, "fp")
+        stub_method(Tmux, :pane_path, ->(_) { wt }) do # locate resolves the current workspace
+          sb.send(:warm_reload, "fp")
+        end
+        assert_equal wt, sb.instance_variable_get(:@current_path),
+                     "warm runs locate so the warm frame carries the » marker (no switch-in flash)"
         assert_includes Attention.scan, File.realpath(wt),
-                        "warm_reload skips locate, so it must NOT clear the bold before you view it"
+                        "...but the @visible-gated clear means it must NOT erase bold off screen"
+      end
+    end
+
+    # The locate @visible gate directly: off screen it sets @current_path (for the
+    # marker) but keeps bold; on screen (actually viewing) it clears bold.
+    def test_locate_clears_attention_only_when_visible
+      Dir.mktmpdir do |wt|
+        sb = sidebar(nodes: [proj("app"), ws("a", path: wt)])
+        Attention.mark(wt)
+        stub_method(Tmux, :pane_path, ->(_) { wt }) do
+          sb.instance_variable_set(:@visible, false)
+          sb.send(:locate)
+          assert_equal wt, sb.instance_variable_get(:@current_path), "locate still resolves the workspace off screen"
+          assert_includes Attention.scan, File.realpath(wt), "off screen: bold kept (not viewing)"
+          sb.instance_variable_set(:@visible, true)
+          sb.send(:locate)
+          refute_includes Attention.scan, File.realpath(wt), "on screen (viewing): bold cleared"
+        end
       end
     end
 
@@ -2407,6 +2431,7 @@ module Switchboard
     def test_warm_reload_does_not_stamp_the_switch_in_throttle
       sb = sidebar(nodes: [proj("app"), ws("a", path: "/wt/a")])
       sb.define_singleton_method(:rebuild) { nil }
+      sb.define_singleton_method(:locate) { nil }
       sb.define_singleton_method(:refresh_diffs) { nil }
       sb.instance_variable_set(:@last_reload, nil)
       sb.send(:warm_reload, "fp")
@@ -2446,6 +2471,7 @@ module Switchboard
     def test_warm_reload_scans_hooks_only_skipping_process_fallback
       sb = sidebar(nodes: [proj("app"), ws("a", path: "/wt/a")])
       sb.define_singleton_method(:rebuild) { nil }
+      sb.define_singleton_method(:locate) { nil }
       sb.define_singleton_method(:refresh_diffs) { nil }
       stub_method(Agents, :active, ->(*) { flunk "warm must scan hooks-only — no tmux/pgrep/lsof fallback" }) do
         sb.send(:warm_reload, "fp")
@@ -2458,6 +2484,7 @@ module Switchboard
     def test_warm_reload_stamps_the_passed_fingerprint_not_a_fresh_one
       sb = sidebar(nodes: [proj("app"), ws("a", path: "/wt/a")])
       sb.define_singleton_method(:rebuild) { nil }
+      sb.define_singleton_method(:locate) { nil }
       sb.define_singleton_method(:refresh_diffs) { nil }
       # If warm_reload ignored its arg and re-measured, it'd stamp "AFTER" and the
       # gate would think it's caught up; stamping the passed "BEFORE" keeps it honest.

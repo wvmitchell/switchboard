@@ -820,12 +820,13 @@ module Switchboard
       end
     end
 
-    # Off-screen warm reload (prewarm): keep this hidden pane's buffer fresh so a
-    # later switch-in shows correct content with no flash. Deliberately NOT `reload`:
-    #   - skips `locate` — an off-screen sidebar's @current_path doesn't change while
-    #     you're away, and locate would CLEAR this workspace's attention bold (the
-    #     marker the on-screen sidebar just set for its completion), erasing the
-    #     notification before you ever see it.
+    # Off-screen warm reload (prewarm): paint this hidden pane's buffer with EXACTLY
+    # the frame a switch-in would produce, so arriving shows no flash. It must match
+    # `reload`'s output, which is why it calls `locate` — the warm frame has to carry
+    # the » "you are here" marker, or every switch-in would add it and flash (the bug
+    # this fixes). locate's attention-CLEAR is gated on @visible, so calling it off
+    # screen sets @current_path (for the marker) without erasing bold you haven't seen.
+    # Still deliberately NOT plain `reload`:
     #   - stamps @last_warm, never @last_reload — so the switch-in reload_and_refresh
     #     still passes reload_due? and runs its full reload + PR refresh.
     #   - refresh_prs:false — no off-screen PR-spawn fan-out (N sidebars, one each).
@@ -842,6 +843,7 @@ module Switchboard
     # the next off-screen tick retries rather than sticking a stale buffer.
     def warm_reload(fp)
       rebuild
+      locate # so the warm frame carries the » marker and matches the switch-in frame
       ok = refresh_agents(announce_sounds: false, refresh_prs: false, hooks_only: true)
       refresh_diffs
       return false unless ok # leave @last_warm + @warm_fp stale so the next tick retries promptly
@@ -883,6 +885,12 @@ module Switchboard
                                     .select { |p| here == p || here.start_with?("#{p}/") }
                                     .max_by(&:length)
       return unless @current_path
+      # Clearing bold means "I'm viewing this" — only true when on screen. The
+      # off-screen warm path calls locate too (so the warm frame carries the »
+      # current-workspace marker and matches the switch-in frame — no flash), but it
+      # must NOT clear bold for a completion you haven't actually seen yet. Setting
+      # @current_path above is always safe; the clear is the viewing side effect.
+      return unless @visible
 
       # Viewing a workspace clears its bold — even with no input submitted. Drop it
       # from the in-memory set too, so the un-bold shows this frame, not next scan.

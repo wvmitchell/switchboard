@@ -7,6 +7,18 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.43.1] — pre-warm actually kills the flash (the » marker fix) (2026-06-29)
+
+### Fixed
+- **Pre-warming (0.43.0) didn't actually remove the switch-in flash.** The off-screen
+  warm skipped `locate`, so the warm frame never drew the `»` "you are here" marker —
+  and the switch-in reload added it on *every* switch, repainting a visible delta even
+  when nothing else had changed (so switching to an idle session still flashed). Warm
+  now runs `locate` so its frame is identical to the switch-in frame; `locate`'s
+  bold-clearing is gated on `@visible` so an off-screen warm still can't erase a
+  "needs attention" marker you haven't seen yet. Verified: switching to an unchanged
+  off-screen session now repaints nothing.
+
 ## [0.43.0] — pre-warm off-screen sidebars to cut the switch-in flash (2026-06-29)
 
 ### Added
