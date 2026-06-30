@@ -73,15 +73,28 @@ module Switchboard
       #   toggle: s
       #   home: S
 
-      # In-sidebar keys, remapped by ACTION -> key (each a single character; omit an
-      # action to keep its default). Structural keys are fixed (↵, Esc, Backspace,
-      # arrows, ^n/^p). Actions: down up top bottom filter add_project new_workspace
-      # open_pr open_repo rename delete edit_config refresh_prs toggle_branch_fold
-      # toggle_full_header help quit. `switchboard doctor` flags clashes.
+      # In-sidebar keys, remapped by ACTION -> key (each a single printable character;
+      # omit an action to keep its default, shown below). Structural keys are fixed
+      # (↵, Esc, Backspace, arrows, ^n/^p) and can't be remapped. `switchboard doctor`
+      # flags clashes (two actions on one key -> the later one drops to unbound).
       # sidebar_keys:
-      #   down: j
-      #   up: k
-      #   new_workspace: c
+      #   down: j                 # move down
+      #   up: k                   # move up
+      #   top: g                  # jump to top
+      #   bottom: G               # jump to bottom
+      #   filter: "/"             # type-to-filter by name
+      #   add_project: a          # add a project
+      #   new_workspace: n        # new workspace (auto-named)
+      #   open_pr: o              # open the row's PR
+      #   open_repo: O            # open the row's repo
+      #   rename: r               # rename workspace
+      #   delete: d               # delete / remove
+      #   edit_config: e          # edit this config
+      #   refresh_prs: R          # refresh PR badges
+      #   toggle_branch_fold: z   # fold / unfold branches
+      #   toggle_full_header: H   # toggle full header
+      #   help: "?"               # help overlay
+      #   quit: q                 # quit all sessions
 
       projects: []   # grown by `a` in the sidebar or `switchboard add <name> <path>`
     YAML

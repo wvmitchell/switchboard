@@ -7,6 +7,19 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.43.3] — fresh-install scaffold lists every settable in-sidebar key (2026-06-30)
+
+### Changed
+- **The fresh-install config scaffold now shows every remappable in-sidebar key**, not a
+  three-line teaser. `Config::SCAFFOLD_TEMPLATE`'s `sidebar_keys:` block enumerates all 17
+  actions (#108) at their defaults — `down`/`up`/`top`/`bottom`/`filter`/`add_project`/
+  `new_workspace`/`open_pr`/`open_repo`/`rename`/`delete`/`edit_config`/`refresh_prs`/
+  `toggle_branch_fold`/`toggle_full_header`/`help`/`quit` — each with an inline description,
+  so a new user can discover and remap any of them without leaving the file. Still commented,
+  so a fresh config parses to exactly `default_data` (effective config unchanged). A new
+  `config_test` drift guard asserts every `Keymap` action appears in the scaffold, so a
+  future action can't be added without surfacing it for new users.
+
 ## [0.43.2] — pre-warm covers collapse/fold/header (the view-state flash) (2026-06-29)
 
 ### Fixed

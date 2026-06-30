@@ -36,6 +36,16 @@ module Switchboard
       end
     end
 
+    # A fresh install should show EVERY settable in-sidebar key (#108 follow-up), not
+    # a teaser — so a new Keymap action can't be added without surfacing it in the
+    # scaffold for a new user to discover.
+    def test_scaffold_template_lists_every_sidebar_key_action
+      Keymap::ACTIONS.each do |a|
+        assert_includes Config::SCAFFOLD_TEMPLATE, "#   #{a.name}: ",
+                        "the scaffold should show the #{a.name} sidebar key so a new user can set it"
+      end
+    end
+
     def test_scaffold_writes_the_annotated_template_but_parses_to_defaults
       Config.scaffold
       body = File.read(Config.path)
