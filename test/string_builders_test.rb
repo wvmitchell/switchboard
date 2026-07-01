@@ -128,6 +128,14 @@ module Switchboard
       assert_equal "OPEN", View.pr_state("status" => "open")
       assert_equal "MERGED", View.pr_state("status" => "merged")
       assert_equal "DRAFT", View.pr_state("status" => "open", "is_draft" => 1)
+      # A draft that's been closed keeps is_draft=1 but is CLOSED, not DRAFT —
+      # else it renders yellow like a live draft (draft only means anything open).
+      assert_equal "CLOSED", View.pr_state("status" => "closed", "is_draft" => 1)
+    end
+
+    def test_pr_tag_closed_draft_is_red_not_yellow
+      closed_draft = View.pr_tag("identifier" => "#7", "status" => "closed", "is_draft" => 1)
+      assert_includes closed_draft, "\e[31m" # CLOSED -> red, distinct from DRAFT yellow
     end
 
     def test_pr_tag_colors_by_state_and_is_empty_without_a_pr

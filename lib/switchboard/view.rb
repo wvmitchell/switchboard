@@ -30,7 +30,11 @@ module Switchboard
     def pr_state(pr)
       return "" unless pr.is_a?(Hash)
 
-      pr["is_draft"].to_i == 1 ? "DRAFT" : pr["status"].to_s.upcase
+      # Draft only applies while open — a draft that's been closed is CLOSED (and a
+      # draft can't be merged). Without the OPEN gate a closed draft keeps
+      # isDraft=true and renders DRAFT (yellow), indistinguishable from a live draft.
+      status = pr["status"].to_s.upcase
+      status == "OPEN" && pr["is_draft"].to_i == 1 ? "DRAFT" : status
     end
 
     # Diff-count badge (issue #79). Additions green, deletions red — the universal

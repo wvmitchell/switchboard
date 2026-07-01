@@ -7,6 +7,17 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.43.4] — closed draft PRs render red, not draft-yellow (2026-07-01)
+
+### Fixed
+- **A linked PR that was a draft when closed looked identical to a live draft.**
+  `View.pr_state` checked `is_draft` unconditionally, but GitHub keeps `isDraft: true`
+  on a draft that's closed without merging — so a closed draft returned `DRAFT` (yellow)
+  and never reached `CLOSED`'s red. Draft only means anything while a PR is open (a draft
+  can't be merged, and once closed it's closed), so the draft state is now gated on
+  `status == "OPEN"`; a closed draft renders red like any other closed PR. Side benefit:
+  the diff-cache resting flag (`MERGED`/`CLOSED`) now settles correctly for closed drafts.
+
 ## [0.43.3] — fresh-install scaffold lists every settable in-sidebar key (2026-06-30)
 
 ### Changed
