@@ -46,7 +46,7 @@ drops it entirely if it just echoes the global default, so the config stays clea
 switchboard clone <git-url> [name]
 ```
 
-Clones under `projects_root` (default `~/Programming`) as `<projects_root>/<name>`,
+Clones under `projects_root` (default `~`) as `<projects_root>/<name>`,
 then registers it. `name` defaults to the URL's basename.
 
 ```sh

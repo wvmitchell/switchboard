@@ -21,7 +21,7 @@ or `e` in the sidebar — both reload on save.
 | Key | Type | Default | Effect |
 |-----|------|---------|--------|
 | `worktree_root` | path | `~/switchboard/worktrees` | Where `n` creates new worktrees: `<root>/<project>/<name>`. |
-| `projects_root` | path | `~/Programming` | Where `a`/`clone` drop fetched repos: `<root>/<name>`. |
+| `projects_root` | path | `~` | Where `a`/`clone` drop fetched repos: `<root>/<name>`. |
 | `base` | git ref | `origin/main` | Default ref new worktrees branch from. Per-project `base` overrides it. |
 | `branch_prefix` | string | _(none)_ | New branches become `<prefix>/<name>`. Empty/unset ⇒ bare `<name>`. |
 | `agent_state_hooks` | bool | `true` | Auto-wire the per-worktree Claude agent-state hook on worktree create. (Codex hooks are global — installed once via `install --codex-hooks`, not per worktree.) |

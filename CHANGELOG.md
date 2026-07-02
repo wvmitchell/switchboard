@@ -7,6 +7,17 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.44.1] — the default projects_root is home, not a Will-centric path (2026-07-02)
+
+### Changed
+- **`projects_root` now defaults to `~` instead of `~/Programming`.** The old
+  default (where `a`/`clone` drop fetched repos as `<root>/<name>`) baked in one
+  maintainer's personal layout; a fresh install would clone into `~/Programming`
+  whether or not that directory meant anything to you. Home is the neutral
+  default. Anyone who set `projects_root` explicitly is unaffected — this only
+  moves the fallback. `worktree_root` (where `n` creates worktrees) was already
+  generic and is unchanged.
+
 ## [0.44.0] — an isolated, interactive way to dogfood the sidebar (2026-07-02)
 
 ### Added

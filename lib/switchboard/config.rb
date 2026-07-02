@@ -11,7 +11,7 @@ module Switchboard
   class Config
     DEFAULT_PATH = File.expand_path("~/.config/switchboard/config.yml")
     DEFAULT_ROOT = "~/switchboard/worktrees"
-    DEFAULT_PROJECTS_ROOT = "~/Programming" # where the clone action drops repos
+    DEFAULT_PROJECTS_ROOT = "~" # where the clone action drops repos
 
     # Built-in sound name per resting state; the Sound module synthesizes + caches
     # these. Overridable globally or per project via a `sounds:` map.
