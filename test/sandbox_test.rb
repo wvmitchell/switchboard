@@ -23,6 +23,11 @@ module Switchboard
       assert_equal "/my/checkout/bin/switchboard", set["SWITCHBOARD_BIN"]
       assert_equal "1", set["SWITCHBOARD_SANDBOX"]
       assert_equal File::NULL, set["GIT_CONFIG_SYSTEM"]
+
+      # #145: claude's self-updater guards — both set (belt-and-suspenders). NOT paths,
+      # so asserted here, outside the throwaway-path loop above.
+      assert_equal "1", set["DISABLE_AUTOUPDATER"], "claude's background auto-updater must be off in the sandbox (#145)"
+      assert_equal "1", set["DISABLE_UPDATES"], "manual `claude update` must be off too — same symlink-repoint footgun (#145)"
     end
 
     def test_sandbox_env_keeps_home_and_clears_tmux_and_gh_token

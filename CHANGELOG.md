@@ -7,6 +7,20 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.46.1] — sandbox: don't let claude's self-updater hijack the global launcher (2026-07-02)
+
+### Fixed
+- **`switchboard sandbox` now disables Claude Code's self-updater** inside the throwaway
+  session (`DISABLE_UPDATES` + `DISABLE_AUTOUPDATER`). Before, if an auto-update fired
+  while dogfooding the sandbox, claude installed into the sandbox's redirected
+  `XDG_DATA_HOME` and repointed the **global** `~/.local/bin/claude` launcher symlink
+  there — which teardown then deleted, leaving `command not found: claude` in every new
+  shell until the symlink was manually repointed. The sandbox isolated claude's data dir
+  but not its launcher; passing claude its own opt-outs closes that third escape (the
+  self-updater is neither a `SWITCHBOARD_SANDBOX`-gated op nor something switchboard can
+  gate in its own code). Recovery for an already-bitten install:
+  `ln -sf ~/.local/share/claude/versions/<latest> ~/.local/bin/claude` (#145).
+
 ## [0.46.0] — monitoring: agent-declared liveness TTL (2026-07-02)
 
 ### Added

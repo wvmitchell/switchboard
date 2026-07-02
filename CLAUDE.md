@@ -866,12 +866,18 @@ exports **`SWITCHBOARD_SANDBOX=1`** and switchboard's own code checks it: `prune
 inside an isolated server every *real* sidebar would read as an orphan and get
 SIGTERM'd), and the sidebar's background PR refresh (`maybe_refresh_prs`) skips its
 spawn (the seeded repo has no origin, so a refresh would fetch `{}` and clobber the
-badge you're dogfooding). The checkout under test is resolved from `sandbox.rb`'s own
-`__dir__` (NOT the symlink-resolved `SWITCHBOARD_BIN`) and printed as a banner, so a
-PATH `switchboard sandbox` can't silently dogfood the canonical checkout. Verified by
-`test/smoke/sandbox_smoke_test.rb` (seed renders + view-state toggles land in the
-throwaway tree), with the pure pieces (`sandbox_env`, `isolated_socket?`,
-`stale_sock_dirs`, the `SWITCHBOARD_SANDBOX` guards) unit-tested offline.
+badge you're dogfooding). A third escape isn't switchboard's to gate with its own flag:
+Claude Code's self-updater would install under the redirected `XDG_DATA_HOME` yet repoint
+the **global** `~/.local/bin/claude` symlink there, which teardown then deletes
+(`command not found: claude` system-wide, #145) — so `sandbox_env` also passes claude its
+own opt-outs, `DISABLE_UPDATES` + `DISABLE_AUTOUPDATER`=1 (the former is the documented
+superset of the latter; both set as belt-and-suspenders). The checkout under test is
+resolved from `sandbox.rb`'s own `__dir__` (NOT the symlink-resolved `SWITCHBOARD_BIN`)
+and printed as a banner, so a PATH `switchboard sandbox` can't silently dogfood the
+canonical checkout. Verified by `test/smoke/sandbox_smoke_test.rb` (seed renders +
+view-state toggles land in the throwaway tree + the self-updater guards propagate to a
+pane), with the pure pieces (`sandbox_env`, `isolated_socket?`, `stale_sock_dirs`, the
+`SWITCHBOARD_SANDBOX` guards) unit-tested offline.
 
 ### Conventions
 

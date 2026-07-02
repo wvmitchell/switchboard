@@ -184,6 +184,18 @@ auth + per-project badge staleness, audio player +
 sound resolution, orphaned sessions, and orphaned sidebar processes. Read-only.
 The first place to look when something's off.
 
+### `switchboard sandbox`
+Dogfood **this checkout's** sidebar in a throwaway, fully-isolated tmux — a hermetic
+repo seeded with worktrees in varied visual states (an open-PR badge, a big `+/−` diff,
+a no-PR row, a multi-branch workspace, a monitored `∞` row), on its own tmux server and
+socket, torn down automatically on detach. The interactive twin of `bin/test-smoke`
+(#126); nothing it does touches your real sessions or state. It also disables Claude
+Code's self-updater inside the sandbox (`DISABLE_UPDATES` + `DISABLE_AUTOUPDATER`), so an
+update firing in the throwaway can't repoint your global `~/.local/bin/claude` symlink
+into the tree teardown deletes (#145). If an older sandbox already dangled your launcher
+(`command not found: claude`), repoint it:
+`ln -sf ~/.local/share/claude/versions/<latest> ~/.local/bin/claude`.
+
 ### `switchboard version` (aliases: `-v`, `--version`)
 Print the version (`switchboard X.Y.Z`).
 

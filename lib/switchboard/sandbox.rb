@@ -17,9 +17,12 @@ module Switchboard
   # nothing switchboard writes escapes. HOME is kept real (so the pane shell/tmux/ruby
   # still work — safe because every state path is redirected). TMUX is cleared (else a
   # nested attach from inside your real tmux fails). SWITCHBOARD_SANDBOX stops the two
-  # operations that would otherwise reach outside the isolated server: prune's
+  # operations switchboard's OWN code would otherwise run against outside state: prune's
   # machine-global sidebar reap, and the background PR refresh that would clobber the
-  # seeded badge.
+  # seeded badge. A third escape isn't switchboard's to gate with its own flag — Claude
+  # Code's self-updater would repoint the global ~/.local/bin/claude symlink into the
+  # throwaway tree — so sandbox_env passes claude its own opt-outs (DISABLE_UPDATES /
+  # DISABLE_AUTOUPDATER, #145).
   module Sandbox
     module_function
 
@@ -61,11 +64,13 @@ module Switchboard
     # --- env: the full wall-off (F4/F10) -------------------------------------
 
     # Pure: { set:, unset: } — every switchboard/XDG/git/gh path redirected into
-    # the throwaway tree, TMUX + GH_TOKEN cleared. Reuses SandboxTest#setup's literal
-    # key set (the isolation reference). HOME is deliberately absent — the pane
-    # shell/tmux/ruby must stay usable, and every state path below is redirected, so
-    # nothing switchboard writes escapes. Split out pure so a unit test can assert
-    # every var lands in the throwaway tree and HOME is untouched.
+    # the throwaway tree, TMUX + GH_TOKEN cleared, plus a few non-path behavior guards
+    # (SWITCHBOARD_SANDBOX, and claude's DISABLE_UPDATES/DISABLE_AUTOUPDATER — #145).
+    # Reuses SandboxTest#setup's literal key set (the isolation reference). HOME is
+    # deliberately absent — the pane shell/tmux/ruby must stay usable, and every state
+    # path below is redirected, so nothing switchboard writes escapes. Split out pure so
+    # a unit test can assert every state path lands in the throwaway tree, the guards are
+    # set, and HOME is untouched.
     def sandbox_env(sock_dir, state_dir, checkout = checkout_root)
       {
         set: {
@@ -89,7 +94,18 @@ module Switchboard
           "XDG_CACHE_HOME"                  => File.join(state_dir, "xdg-cache"),
           "GIT_CONFIG_GLOBAL"               => File.join(state_dir, "gitconfig"),
           "GIT_CONFIG_SYSTEM"               => File::NULL,
-          "GH_CONFIG_DIR"                   => File.join(state_dir, "gh")
+          "GH_CONFIG_DIR"                   => File.join(state_dir, "gh"),
+          # Behavior guards, NOT throwaway paths: neuter Claude Code's self-updater. An
+          # update (auto OR manual `claude update`) installs under the redirected
+          # XDG_DATA_HOME but repoints the GLOBAL ~/.local/bin/claude symlink there, which
+          # teardown then deletes — `command not found: claude` system-wide (#145). We
+          # can't gate claude's internals with SWITCHBOARD_SANDBOX, so we pass claude its
+          # own opt-outs. DISABLE_UPDATES is the documented superset of DISABLE_AUTOUPDATER;
+          # both are set as belt-and-suspenders (the superset is a docs claim, and the
+          # automatic path — the one that bit us — is what DISABLE_AUTOUPDATER names).
+          # Recovery: ln -sf ~/.local/share/claude/versions/<latest> ~/.local/bin/claude
+          "DISABLE_AUTOUPDATER"             => "1",
+          "DISABLE_UPDATES"                 => "1"
         },
         # gh authenticates from GH_TOKEN OR GITHUB_TOKEN (and the *_ENTERPRISE_* twins),
         # so all four must go or a manual `o`/PR action could use real credentials even

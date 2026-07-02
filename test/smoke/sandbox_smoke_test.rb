@@ -14,6 +14,13 @@ module Switchboard
     # mirror the sandbox's SWITCHBOARD_SANDBOX flag so the guarded paths match production.
     def write_project_and_config
       ENV["SWITCHBOARD_SANDBOX"] = "1"
+      # #145: mirror the two self-updater guards apply_env exports, BEFORE boot_server's
+      # new-session, so the server (hence its panes) inherits them — the propagation path
+      # test_updater_guards_propagate_to_a_sandbox_pane checks. Sourced from the real
+      # sandbox_env so a regression to "0"/absent fails the smoke too, not just the unit.
+      guards = Sandbox.sandbox_env(@sock_dir, path("state"), REPO)[:set]
+      ENV["DISABLE_AUTOUPDATER"] = guards["DISABLE_AUTOUPDATER"]
+      ENV["DISABLE_UPDATES"]     = guards["DISABLE_UPDATES"]
       @seed = path("sandbox-seed")
       Sandbox.write_git_config
       Sandbox.seed_repo(@seed)
@@ -60,6 +67,21 @@ module Switchboard
       # 3. teardown will only ever kill OUR throwaway server — the shared guard agrees
       #    this socket is isolated, so kill-server on detach can't reach a real server.
       assert isolated_socket?, "the active socket must be recognized as the throwaway one"
+    end
+
+    # #145: the presence-in-hash unit test proves sandbox_env carries the guards; this
+    # proves they actually REACH the child process the auto-updater runs in. The guard is
+    # worthless if it stops at the ruby ENV and never lands in a pane shell. A background
+    # new-window runs the probe in a real pane shell (which inherits the server env booted
+    # with the guards set) — deterministic, unlike send-keys into an interactive prompt.
+    def test_updater_guards_propagate_to_a_sandbox_pane
+      probe = path("updater-probe")
+      tmux!("new-window", "-t", HOME, "-d",
+            "printf '%s,%s' \"$DISABLE_AUTOUPDATER\" \"$DISABLE_UPDATES\" > #{probe}")
+      got = wait_until("a pane shell writes the inherited updater vars") do
+        File.exist?(probe) && !File.read(probe).empty? && File.read(probe)
+      end
+      assert_equal "1,1", got, "a pane shell did not inherit both self-updater guards (#145)"
     end
   end
 end
