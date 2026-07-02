@@ -156,6 +156,23 @@ module Switchboard
       end
     end
 
+    # `monitoring on <secs>` sizes the liveness window for a slow cycle: the marker stays
+    # live past the default TTL, and the effective window is echoed back to the agent.
+    def test_monitoring_on_with_a_ttl_arg_sizes_the_window
+      d = path("wt")
+      FileUtils.mkdir_p(d)
+      real = File.realpath(d)
+      wt = Worktree.new(project: "p", path: real, primary: false)
+      stub_method(CLI, :current_worktree, ->(*) { wt }) do
+        out = capture { CLI.monitoring("on", (Monitoring::TTL * 4).to_s) }
+        assert_includes out, "ttl #{Monitoring::TTL * 4}s"
+
+        aged = Time.now - Monitoring::TTL - 60 # past the default, within the declared window
+        File.utime(aged, aged, File.join(Monitoring.state_dir, Monitoring.key(real)))
+        assert Monitoring.monitored([real]).any?, "the declared window outlives the default TTL"
+      end
+    end
+
     def test_monitoring_status_reports_without_changing_state
       d = path("wt")
       FileUtils.mkdir_p(d)

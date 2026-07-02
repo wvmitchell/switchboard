@@ -52,9 +52,10 @@ module Switchboard
     def message
       "This switchboard workspace can show background work in the sidebar. If you start a " \
         "background monitor, watch loop, or recurring/scheduled task here, run `switchboard " \
-        "monitoring on` — and re-run it at the start of each cycle to keep it marked live — so " \
-        "the operator sees a ∞ instead of the workspace looking idle. Run `switchboard " \
-        "monitoring off` when the background work ends."
+        "monitoring on` — and re-run it at the start of each cycle to keep it marked live " \
+        "(the mark goes stale after ~10 min; if your cycle is longer, pass the seconds, e.g. " \
+        "`switchboard monitoring on 2400`) — so the operator sees a ∞ instead of the workspace " \
+        "looking idle. Run `switchboard monitoring off` when the background work ends."
     end
 
     # The SessionStart stdout payload Claude merges into context (its `additionalContext`),

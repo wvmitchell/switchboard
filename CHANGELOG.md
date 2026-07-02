@@ -7,6 +7,24 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.46.0] — monitoring: agent-declared liveness TTL (2026-07-02)
+
+### Added
+- **`switchboard monitoring on [ttl_seconds]` — the declaring agent sizes its own
+  liveness window.** The `∞` dot ages out after a fixed ~10-min TTL when it isn't
+  re-affirmed, which a monitor on a slower cycle can't keep lit — a 30-min tick goes
+  dark 10 min in and stays dark until the next cycle. Since the agent knows its own
+  cadence, it now owns the window: `monitoring on 2400` sizes it to a 30-min loop. The
+  ttl is persisted in the marker and honored at read time by the sidebar/status; absent
+  or invalid falls back to the ~10-min default, so a bare `monitoring on` is unchanged.
+  The `SessionStart` nudge teaches the arg for long cycles.
+
+### Changed
+- Monitoring markers encode an optional per-marker TTL (`<realpath>` bare, or
+  `<realpath>\t<seconds>`); legacy bare markers read identically, and `Monitoring.carry`
+  preserves a declared TTL across a workspace rename. Decode splits on the **last** tab
+  and requires digits, so a realpath that itself contains a tab is never truncated.
+
 ## [0.45.0] — background-agent presence: the ∞ dot (2026-07-02)
 
 ### Added

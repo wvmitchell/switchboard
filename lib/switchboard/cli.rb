@@ -29,7 +29,7 @@ module Switchboard
       when "disable-hooks"     then disable_hooks(argv[1])
       when "rename"            then exit(1) unless rename(argv[1])
       when "rename-nudge"      then rename_nudge(argv.drop(1))
-      when "monitoring"        then monitoring(argv[1])
+      when "monitoring"        then monitoring(argv[1], argv[2])
       when "monitoring-nudge"  then monitoring_nudge(argv.drop(1))
       when "sound"             then play_sound(argv[1])
       when "sidebar"           then Sidebar.run
@@ -186,13 +186,15 @@ module Switchboard
       puts(killed.empty? ? "no switchboard sessions to close" : "closed #{killed.size} switchboard session(s)")
     end
 
-    # `monitoring on|off` (bare = status): declare or clear that a background monitor /
-    # recurring loop is running in THIS worktree, so the sidebar shows a steady ∞ instead
-    # of reading as done/idle. Agent- or human-invoked; resolves the worktree from cwd
-    # like the rename nudge. Re-running `on` re-affirms (refreshes the liveness clock) —
-    # that's how a live monitor keeps its dot up across cycles; a stopped agent that stops
-    # re-affirming lets the marker age out.
-    def monitoring(sub)
+    # `monitoring on [ttl] | off` (bare = status): declare or clear that a background
+    # monitor / recurring loop is running in THIS worktree, so the sidebar shows a steady
+    # ∞ instead of reading as done/idle. Agent- or human-invoked; resolves the worktree
+    # from cwd like the rename nudge. Re-running `on` re-affirms (refreshes the liveness
+    # clock) — that's how a live monitor keeps its dot up across cycles; a stopped agent
+    # that stops re-affirming lets the marker age out. The optional `ttl` (seconds) sizes
+    # that liveness window: a loop slower than the ~10-min default passes its own cadence
+    # (e.g. `monitoring on 2400` for a 30-min tick) so the dot doesn't go dark between ticks.
+    def monitoring(sub, ttl_arg = nil)
       wt = current_worktree
       if wt.nil? || wt.primary
         puts "not inside a switchboard workspace — nothing to mark"
@@ -202,15 +204,16 @@ module Switchboard
       leaf = File.basename(wt.path)
       case sub
       when "on"
-        Monitoring.mark(wt.path)
-        puts "monitoring on: #{leaf}"
+        ttl = Monitoring.positive_int(ttl_arg) # nil => default window; garbage falls back too
+        Monitoring.mark(wt.path, ttl: ttl)
+        puts "monitoring on#{" (ttl #{ttl}s)" if ttl}: #{leaf}"
       when "off"
         Monitoring.clear(wt.path)
         puts "monitoring off: #{leaf}"
       when nil, "status"
         puts "monitoring #{Monitoring.monitored([wt.path]).any? ? 'on' : 'off'}: #{leaf}"
       else
-        puts "usage: switchboard monitoring on|off"
+        puts "usage: switchboard monitoring on [ttl_seconds] | off"
       end
     end
 
@@ -867,7 +870,7 @@ module Switchboard
           switchboard enable-hooks [P]   wire agent-state dots in a worktree (default: cwd)
           switchboard disable-hooks [P]  remove them from that worktree
           switchboard rename NAME    rename the current workspace (dir + tmux session)
-          switchboard monitoring on|off  flag this workspace as running a background monitor (shows a ∞; bare = status)
+          switchboard monitoring on [secs]|off  flag this workspace as running a background monitor (∞; optional secs = liveness ttl for slow loops; bare = status)
           switchboard sound [done|waiting]  play a state's sound (try audio / pick sounds)
           switchboard prune        kill orphaned sb/ sessions + reap orphaned sidebar processes (--dry-run / -n previews)
           switchboard sandbox      dogfood THIS checkout's sidebar in a throwaway, isolated tmux (auto-torn-down on detach)
