@@ -37,6 +37,7 @@ module Switchboard
       when "poke-window"       then Tmux.poke_window(argv[1])
       when "tmux-bind"         then Installer.apply_keybindings
       when "prune"             then prune(argv.drop(1))
+      when "sandbox"           then Sandbox.run
       when "quit"              then quit
       when "doctor"            then doctor
       when "version", "-v", "--version" then puts("switchboard #{VERSION}")
@@ -806,6 +807,7 @@ module Switchboard
           switchboard rename NAME    rename the current workspace (dir + tmux session)
           switchboard sound [done|waiting]  play a state's sound (try audio / pick sounds)
           switchboard prune        kill orphaned sb/ sessions + reap orphaned sidebar processes (--dry-run / -n previews)
+          switchboard sandbox      dogfood THIS checkout's sidebar in a throwaway, isolated tmux (auto-torn-down on detach)
           switchboard quit         close ALL switchboard sessions (full teardown — kills the one you're in too)
           switchboard doctor       check dependencies + config
           switchboard help         show this help

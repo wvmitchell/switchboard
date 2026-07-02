@@ -38,6 +38,7 @@ bin/switchboard config     # open config.yml in $EDITOR (sidebar `e` does the sa
 bin/switchboard sidebar    # run the persistent sidebar standalone (normally tmux-spawned)
 bin/switchboard rename NAME # rename the current workspace from inside it (dir move + bridge + session rename + Claude `/resume` history carry + the git branch when safe — see #94); for the agent to (re)name its own live workspace (#42). No NAME prints usage + the current name (switchboard doesn't guess one)
 bin/switchboard prune      # kill orphaned sb/ sessions (reconcile vs git worktrees) + reap orphaned sidebar processes; --dry-run/-n previews
+bin/switchboard sandbox    # dogfood THIS checkout's sidebar in a throwaway, fully-isolated tmux — auto-torn-down on detach (the interactive twin of bin/test-smoke, #126)
 bin/switchboard quit       # close ALL sb/ sessions (full teardown; current session last; clears agent state)
 bin/test                   # run the stdlib-Minitest suite (offline; bin/test <file> for one)
 bin/test-smoke             # run the real-tmux smoke layer (boots a server; needs tmux; out of bin/test — #104)
@@ -766,6 +767,48 @@ hydrates `@keymap` (key→action, for dispatch) and `@bindings` (action→key, f
 overlay + footer hints) in `initialize` and re-resolves them every `rebuild`, so an
 `e` config edit (`reload_config_and_rebuild` → `reload` → `rebuild`) re-binds live.
 
+### The sandbox command (issue #126 — the interactive dogfooding twin)
+
+The sidebar is the whole UX but it's a live tmux TUI the offline suite can't show
+you, so verifying a UI change means *looking* at it — and running an in-flight
+branch inside your real tmux lets its self-actions (`go_home`, a reconcile, a
+`quit`) land on your real `sb/` sessions. `switchboard sandbox` (`sandbox.rb`) is
+**"the smoke harness, but you're the client":** it boots a throwaway tmux server on
+an isolated socket, seeds a hermetic repo with worktrees in varied visual states (a
+`#12` PR badge, a big `+/−` diff, a no-PR row, an expanded multi-branch workspace,
+agent dots), points the integration at **this** checkout, drops you into an attached
+home session you drive by hand, and tears the whole server + state down on detach.
+
+The isolated-server scaffolding is **shared** with the smoke layer: `IsolatedServer`
+(`isolated_server.rb`) owns the socket lifecycle — `make_socket_dir` (short `0700`,
+unpredictable suffix, symlink-safe), the dead-pid-gated `sweep_stale` (prefix-
+parameterized: smoke uses `sbk`, the sandbox `sbx`), and the boundary-aware
+`isolated_socket?` guard that gates every `kill-server`. `SmokeCase` delegates to it,
+so the guard that stops teardown from reaching a real server is single-source and
+can't drift. `Sandbox` reuses `SandboxTest`'s **full** env wall-off — `sandbox_env`
+redirects every `SWITCHBOARD_*`/`XDG_*`/`GIT_CONFIG_*`/`GH_*` path into the throwaway
+tree (co-located **under** the socket dir, so one sweep reaps both), clears `TMUX`
+(else a nested attach from inside your real tmux fails) and `GH_TOKEN`, and keeps
+real `HOME` (the pane shell/tmux/ruby stay usable — safe because every state path is
+redirected). The seeded config carries `base: main` + `projects:` + `auto_rename:
+false` + `agent_state_hooks: false` (in the emitted YAML — without base the no-origin
+repo defaults to `origin/main` and `n`/diff break; without `projects:` the tree is
+empty). The `#64` lone-pane trap is avoided by always seeding a work-pane+sidebar
+split, never touched.
+
+Two operations would otherwise reach **outside** the isolated server, so the command
+exports **`SWITCHBOARD_SANDBOX=1`** and switchboard's own code checks it: `prune`'s
+`Reconcile.reap_sidebars` no-ops (its `ps`-based process list is machine-global, so
+inside an isolated server every *real* sidebar would read as an orphan and get
+SIGTERM'd), and the sidebar's background PR refresh (`maybe_refresh_prs`) skips its
+spawn (the seeded repo has no origin, so a refresh would fetch `{}` and clobber the
+badge you're dogfooding). The checkout under test is resolved from `sandbox.rb`'s own
+`__dir__` (NOT the symlink-resolved `SWITCHBOARD_BIN`) and printed as a banner, so a
+PATH `switchboard sandbox` can't silently dogfood the canonical checkout. Verified by
+`test/smoke/sandbox_smoke_test.rb` (seed renders + view-state toggles land in the
+throwaway tree), with the pure pieces (`sandbox_env`, `isolated_socket?`,
+`stale_sock_dirs`, the `SWITCHBOARD_SANDBOX` guards) unit-tested offline.
+
 ### Conventions
 
 - Every file starts with `# frozen_string_literal: true`.
@@ -777,3 +820,7 @@ overlay + footer hints) in `initialize` and re-resolves them every `rebuild`, so
 - Code is meant to be self-documenting; the existing comments explain *why* a
   non-obvious thing is done (the re-exec, the TTL, the capture-hash). Match that
   density — terse, only where the reason isn't on the surface.
+- Formal implementation plans live in `thoughts/` (one markdown file per effort,
+  e.g. `thoughts/126-sandbox-command.md`). The directory is **gitignored** — plans
+  are local working notes, drafted before the code and reviewed there, never
+  committed.

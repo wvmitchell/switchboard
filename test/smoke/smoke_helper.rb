@@ -39,35 +39,11 @@ module Switchboard
     # BEFORE a fresh run so each run cleans up the last interrupted one. Only dirs whose
     # owning pid is DEAD are swept, so a CONCURRENT smoke run (CI parallelism) is never
     # torn down. Best-effort: a dir we can't kill/remove is skipped, never fatal.
-    def self.sweep_stale_servers(glob = "/tmp/sbk*")
-      stale_sock_dirs(Dir.glob(glob)).each do |dir|
-        system({ "TMUX_TMPDIR" => dir }, "tmux", "kill-server", out: File::NULL, err: File::NULL)
-        FileUtils.remove_entry(dir)
-      rescue StandardError
-        next
-      end
-    end
-
-    # Pure: of `dirs`, the throwaway socket dirs (sbk<pid>-<hex>) whose owning pid is no
-    # longer alive — the ones safe to sweep. The pid is carried in the basename, so
-    # liveness is a cheap Process.kill(0); a name without a parseable pid is left alone
-    # (not ours to judge). Split out so the selection is testable without real pids.
-    def self.stale_sock_dirs(dirs, alive: method(:pid_alive?))
-      dirs.select do |dir|
-        m = File.basename(dir).match(/\Asbk(\d+)-/)
-        m && !alive.call(m[1].to_i)
-      end
-    end
-
-    # Is `pid` a live process? ESRCH ⇒ dead (sweep it); EPERM ⇒ alive but not ours
-    # (keep — never sweep a server we can't prove is dead).
-    def self.pid_alive?(pid)
-      Process.kill(0, pid)
-      true
-    rescue Errno::ESRCH
-      false
-    rescue Errno::EPERM
-      true
+    # Delegates to the shared IsolatedServer.sweep_stale — issue #126 extracted the
+    # socket lifecycle (mkdir / guard / sweep) into lib so the smoke layer and
+    # `switchboard sandbox` share ONE implementation and the socket guard can't drift.
+    def self.sweep_stale_servers
+      IsolatedServer.sweep_stale("sbk")
     end
 
     def setup
@@ -79,8 +55,7 @@ module Switchboard
       # that mkdir would follow, slipping past the socket guard. Dir.mkdir (NOT mkdir_p) with
       # 0700 raises if the path already exists — including as a symlink — so we only ever
       # operate on a dir WE created fresh.
-      @sock_dir = "/tmp/sbk#{Process.pid}-#{SecureRandom.hex(4)}"
-      Dir.mkdir(@sock_dir, 0o700)
+      @sock_dir = IsolatedServer.make_socket_dir("sbk") # shared symlink-safe 0700 dir (#126)
       ENV["TMUX_TMPDIR"]     = @sock_dir      # override SandboxTest's deep mktmpdir path
       ENV["SWITCHBOARD_BIN"] = BIN            # how tmux.rb spawns sidebar panes
       ENV["TERM"]            = "xterm-256color" # PTY.spawn("tmux","attach") fails on TERM=dumb/unset (CI)
@@ -198,22 +173,11 @@ module Switchboard
       tmux("display-message", "-p", fmt("socket_path")).strip
     end
 
+    # Delegates to the shared boundary-aware guard (#126) — the realpath + boundary
+    # compare that keeps a raw "/tmp/sbk123-10" from matching "/tmp/sbk123-1" lives in
+    # IsolatedServer now, so the smoke layer and the sandbox teardown can't diverge.
     def isolated_socket?
-      sp = current_socket_path
-      root = real_sock_dir
-      # Boundary-aware prefix (root + "/"), NOT a raw start_with? — the socket always lives
-      # at "<root>/tmux-<uid>/default", and a raw prefix would let "/tmp/sbk123-10" match
-      # root "/tmp/sbk123-1". Append File::SEPARATOR so the compare is a real path boundary.
-      !sp.empty? && root && sp.start_with?(root + File::SEPARATOR)
-    end
-
-    # @sock_dir resolved through symlinks — macOS reports socket_path under /private/tmp
-    # while @sock_dir is /tmp, so a raw string compare would always miss. Degrades to the
-    # raw path if it can't resolve (then the compare just fails closed, never a false ok).
-    def real_sock_dir
-      @sock_dir && File.realpath(@sock_dir)
-    rescue StandardError
-      @sock_dir
+      IsolatedServer.isolated_socket?(@sock_dir, current_socket_path)
     end
 
     def assert_isolated_socket!

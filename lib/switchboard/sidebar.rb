@@ -1124,6 +1124,10 @@ module Switchboard
     def maybe_refresh_prs(project)
       bin = ENV["SWITCHBOARD_BIN"]
       return unless bin && project
+      # The sandbox (#126) seeds a STATIC PR cache to demo badges; its throwaway repo
+      # has no origin, so a background `switchboard refresh` would fetch {} and clobber
+      # the seed — the badge you're dogfooding would vanish. Skip the spawn there.
+      return if ENV["SWITCHBOARD_SANDBOX"]
 
       now = monotonic
       return unless self.class.spawn_due?(@pr_spawned[project], now)

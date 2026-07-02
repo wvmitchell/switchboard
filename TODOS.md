@@ -210,3 +210,19 @@ and where to start.
   resolver) + `Sidebar#refresh_diffs` (a mode branch + its own invalidation). Low
   priority — the committed default is the right one for the PR-workflow case; only
   worth it if the dirty-tree view is asked for.
+
+## Sandbox / dogfooding (issue #126) follow-ups
+
+- **`lone_pane_handled` learns to skip a non-switchboard split.** Teach
+  `lone_pane_handled` (`sidebar.rb:457`) to ignore a sidebar that isn't a
+  switchboard-managed split, so a hand-run lone `switchboard sidebar` doesn't
+  self-`go_home` and exit. *Why:* `switchboard sandbox` (#126) avoids the #64 trap
+  by always seeding a work pane beside the sidebar, so the normal flow never trips.
+  But if someone manually runs a *lone* `switchboard sidebar` inside the sandbox, it
+  still self-exits. Inside the isolated server that's harmless (`go_home` lands on the
+  sandbox home, not real sessions), which is why it's deferred — but #126 explicitly
+  flagged it as "worth deciding on separately," and #64 is now CLOSED so this is a
+  fresh small enhancement, not a reopen. *Start in:* `sidebar.rb:457` — gate the
+  fall-home on a marker that identifies OUR split (pane title / an `@sb_*` option)
+  before acting. Independent of the sandbox PR. Low priority — the seeded work pane
+  already covers the real flow, and the manual-lone case is harmless in the sandbox.

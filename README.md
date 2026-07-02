@@ -114,4 +114,14 @@ zero-gem, and release conventions, and [AGENTS.md](AGENTS.md) if you're pointing
 an AI coding agent at the repo. The test suite is stdlib Minitest with no build
 step: `bin/test`.
 
+Working on the sidebar UI? `bin/switchboard sandbox` boots **this checkout's**
+sidebar in a throwaway, fully-isolated tmux — its own server, socket, and state,
+seeded with a few worktrees (a PR badge, a big diff, an expanded multi-branch
+workspace) so alignment/colors/spacing changes have something to render against.
+Drive it by hand; detach (`prefix-d`) and it tears the whole thing down. Nothing
+it does — `go_home`, a reconcile, even `quit` — can reach your real `sb/`
+sessions, so you can dogfood an in-flight branch without eating your live
+workspaces. It's the interactive twin of the real-tmux smoke layer
+(`bin/test-smoke`).
+
 Licensed under [MIT](LICENSE).

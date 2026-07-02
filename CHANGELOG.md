@@ -7,6 +7,27 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.44.0] — an isolated, interactive way to dogfood the sidebar (2026-07-02)
+
+### Added
+- **`switchboard sandbox` — dogfood THIS checkout's sidebar in a throwaway, fully
+  isolated tmux, without eating your real sessions (#126).** Verifying an in-flight
+  sidebar change (alignment, colors, a new badge) means running the branch's code in a
+  real tmux and *looking* at it — but doing that inside your working tmux lets the
+  branch's self-actions (`go_home`, a reconcile, a `quit`) land on your live `sb/`
+  workspaces. `sandbox` is "the smoke harness, but you're the client": it boots a
+  throwaway server on its own socket (`IsolatedServer`, extracted from and now shared
+  with the real-tmux smoke layer), seeds a hermetic repo with worktrees in varied visual
+  states (a PR badge, a big `+/−` diff, a no-PR row, an expanded multi-branch workspace,
+  agent dots), points the integration at this checkout, drops you into an attached home
+  session, and tears the whole server + state down on detach. Every switchboard state
+  path (`SWITCHBOARD_*`, `XDG_*`, `git`/`gh` config, `projects_root`) is redirected into
+  the throwaway tree and `TMUX` is cleared, so nothing it does reaches your real state;
+  real `HOME` is kept so the pane shell/tmux/ruby still work. A `SWITCHBOARD_SANDBOX`
+  flag stops the two operations that would otherwise reach outside the isolated server —
+  `prune`'s machine-global sidebar reap, and the background PR refresh that would clobber
+  the seeded badge.
+
 ## [0.43.4] — closed draft PRs render red, not draft-yellow (2026-07-01)
 
 ### Fixed
