@@ -23,6 +23,13 @@ module Switchboard
     # broadcast to every OTHER sidebar when one toggles a collapse/fold/header so
     # off-screen panes update instantly (no switch-in flash). Distinct from C-l.
     WARM_POKE = "C-w"
+    # Remembers `e`'s editor pane on the home session, so a second `e` before the
+    # first was :q'd re-focuses that pane instead of stacking another split (the
+    # editor panes would otherwise pile up, one per press). tmux never recycles a
+    # %pane-id within a server's lifetime, so a stashed id present in home is the
+    # same editor pane; once it's :q'd (pane closed) the id is retired and the
+    # stash goes stale — live_editor_pane then reports nil and `e` spawns fresh.
+    EDITOR_PANE_OPT = "@sb_editor_pane"
 
     module_function
 
@@ -89,6 +96,20 @@ module Switchboard
     def edit_in_home(command)
       ensure_home
       sidebar = window_sidebar_pane(HOME)
+
+      # `e` is idempotent: if the last editor pane is still open (you came back to
+      # the tree without :q-ing it), re-focus it rather than stack another split —
+      # otherwise every press piled on a new editor pane in home (they accumulated,
+      # and closing one still left the rest). Its own return-to-origin trailer is
+      # already running in that pane, so we only land you back on it — :q then
+      # returns to wherever the FIRST `e` was pressed, not this one (reuse keeps the
+      # original edit's origin; moot for the common repeat-`e`-from-home case).
+      if (existing = live_editor_pane)
+        pin(sidebar)
+        system("tmux", "select-pane", "-t", existing, out: File::NULL, err: File::NULL)
+        return switch(HOME)
+      end
+
       # Only ever split the work pane. NO active-pane fallback: when home has no
       # work pane the active pane is the sidebar, and splitting it is exactly the
       # nest-in-the-tree bug this method exists to avoid.
@@ -102,10 +123,43 @@ module Switchboard
         return switch(HOME)                                  # at least land in home
       end
 
+      stash_editor_pane(pane) # remember it so the next `e` reuses this pane
       pin(sidebar) # the split reflows the right column; keep the sidebar fixed-width
       switch(HOME) # land on the new (active) editor pane, beside the tree
     rescue StandardError
       switch(HOME) # IO.popen can raise (e.g. tmux missing); never crash the `e` keypress
+    end
+
+    # Remember `e`'s editor pane on the home session (EDITOR_PANE_OPT), so the next
+    # `e` can reuse it. A session option shares the session's lifetime, so a server
+    # restart clears it along with the pane it names — no cross-restart staleness.
+    def stash_editor_pane(pane)
+      system("tmux", "set-option", "-t", HOME, EDITOR_PANE_OPT, pane, out: File::NULL, err: File::NULL)
+    end
+
+    # The stashed editor pane iff it's still a LIVE pane in home's active window
+    # (where the editor and sidebar live). nil once the editor was :q'd or on a
+    # stale/foreign id — the signal to spawn a fresh editor. Two deliberate scopes:
+    # (1) dead panes are filtered out (#{pane_dead}) — under a user's `remain-on-exit
+    # on`, a :q'd editor lingers as a dead pane list-panes still reports, which would
+    # otherwise trap `e` re-focusing the corpse instead of opening a new editor;
+    # (2) active window only — home is single-window by design, so a manually-added
+    # home window holding the editor just degrades to a fresh spawn (never worse than
+    # pre-fix), never a wrong-pane focus.
+    def live_editor_pane
+      want = `tmux show-options -v -t #{Shellwords.escape(HOME)} #{EDITOR_PANE_OPT} 2>/dev/null`.strip
+      raw  = `tmux list-panes -t #{Shellwords.escape(HOME)} -F '#\{pane_id} #\{pane_dead}' 2>/dev/null`
+      live = raw.lines.filter_map { |l| id, dead = l.split; id if dead != "1" }
+      reusable_editor_pane(want, live)
+    end
+
+    # Pure: the pane to reuse — the stashed id, but only when it's still among
+    # home's live pane ids (an empty stash or a retired id yields nil). Split out
+    # so the reuse gate is unit-testable without a server.
+    def reusable_editor_pane(want, pane_ids)
+      return if want.to_s.empty?
+
+      want if pane_ids.include?(want)
     end
 
     # Home sits in $HOME: a neutral, always-present directory owned by no project.

@@ -106,6 +106,37 @@ module Switchboard
       wait_until("the orphaned session is reconciled away") { !session?(sess) }
     end
 
+    # `e` reuse (issue: repeated `e` stacked a new editor pane each press). The idempotence
+    # lives in stash_editor_pane + live_editor_pane on the home session; exercise THAT against
+    # real tmux with a stand-in pane. We don't drive the full `e`/edit_in_home flow here: it
+    # resolves ${VISUAL:-${EDITOR:-vi}} in the pane's shell (the CI runner has no editor/vi, so
+    # the command exits and the pane closes) and its switch() would exec over the test process.
+    # The pure key→pane gate is covered by tmux_test's reusable_editor_pane; this is the live
+    # half — show-options/list-panes/#{pane_dead} — which is what varies across tmux builds.
+    def test_live_editor_pane_reuses_a_live_stashed_pane_and_drops_it_once_closed
+      editor = tmux("split-window", "-t", HOME, "-d", "-P", "-F", fmt("pane_id"), "sleep 100000").strip
+      refute editor.empty?, "spawned a stand-in editor pane in home"
+      Tmux.stash_editor_pane(editor)
+      assert_equal editor, Tmux.live_editor_pane, "the stashed, still-live pane is the one `e` reuses"
+
+      tmux!("kill-pane", "-t", editor) # the :q that closes the editor
+      wait_until("the editor pane is gone") { !active_window_pane_ids(HOME).include?(editor) }
+      assert_nil Tmux.live_editor_pane, "a closed editor pane is dropped, so the next `e` spawns fresh"
+    end
+
+    # remain-on-exit keeps a :q'd editor as a DEAD pane list-panes still reports; the gate must
+    # filter it (#{pane_dead}) or `e` would re-focus the corpse forever instead of reopening.
+    def test_live_editor_pane_ignores_a_dead_editor_pane_under_remain_on_exit
+      tmux!("set-option", "-t", HOME, "remain-on-exit", "on")
+      editor = tmux("split-window", "-t", HOME, "-d", "-P", "-F", fmt("pane_id"), "true").strip # exits at once
+      refute editor.empty?, "spawned a stand-in editor pane in home"
+      Tmux.stash_editor_pane(editor)
+      wait_until("the pane exits and goes dead but stays listed") do
+        active_window_pane_ids(HOME).include?(editor) && pane_dead?(editor)
+      end
+      assert_nil Tmux.live_editor_pane, "a dead editor pane is filtered, not reused"
+    end
+
     # quit: full teardown — every sb/ session gone (current one last), agent state cleared.
     def test_quit_tears_down_every_sb_session
       create_workspace

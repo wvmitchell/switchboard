@@ -285,6 +285,16 @@ module Switchboard
       tmux("display-message", "-p", "-t", session, fmt("window_panes")).strip.to_i
     end
 
+    # Pane ids of a session's active window (where the sidebar + `e`'s editor live).
+    def active_window_pane_ids(session)
+      tmux("list-panes", "-t", session, "-F", fmt("pane_id")).split("\n").map(&:strip).reject(&:empty?)
+    end
+
+    # A pane's #{pane_dead} flag ("1" once its command has exited under remain-on-exit).
+    def pane_dead?(pane)
+      tmux("display-message", "-p", "-t", pane, fmt("pane_dead")).strip == "1"
+    end
+
     def capture(pane)
       tmux("capture-pane", "-t", pane, "-p")
     end

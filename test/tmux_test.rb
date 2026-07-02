@@ -180,6 +180,25 @@ module Switchboard
       assert_nil Tmux.work_dir(""), "no panes (server gone) -> nil, so -c is just omitted"
     end
 
+    # --- reusable_editor_pane: the pure `e` reuse gate ------------------------
+    # `e` stashes its editor pane on home; the next `e` reuses it iff it's still
+    # a live home pane, so editor panes can't pile up (the accumulation bug).
+
+    def test_reusable_editor_pane_returns_the_stashed_id_when_still_live
+      assert_equal "%3", Tmux.reusable_editor_pane("%3", ["%0", "%1", "%3"])
+    end
+
+    def test_reusable_editor_pane_is_nil_when_the_editor_pane_is_gone
+      # :q closed the pane; the retired id is absent -> spawn a fresh editor.
+      assert_nil Tmux.reusable_editor_pane("%3", ["%0", "%1"])
+    end
+
+    def test_reusable_editor_pane_is_nil_when_nothing_is_stashed
+      # Option unset -> show-options -v yields "" -> no pane to reuse.
+      assert_nil Tmux.reusable_editor_pane("", ["%0", "%1"])
+      assert_nil Tmux.reusable_editor_pane("", [])
+    end
+
     # --- pane_switch_keys: the user's own select-pane bindings, surfaced in the ?
     # overlay (issue #62). Pure given the `tmux list-keys -T prefix` output.
 

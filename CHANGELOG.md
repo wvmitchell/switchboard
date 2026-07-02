@@ -7,7 +7,19 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
-## [0.44.1] — the default projects_root is home, not a Will-centric path (2026-07-02)
+## [0.44.2] — `e` reuses its editor pane instead of stacking new ones (2026-07-02)
+
+### Fixed
+- **Pressing `e` repeatedly opened a new editor split every time.** `e` opens
+  `$EDITOR` in a dedicated pane in the home session and expects you to `:q` back.
+  But if you returned to the tree without quitting the editor and pressed `e`
+  again, `Tmux.edit_in_home` split *another* editor pane — they piled up one per
+  press, and closing one still left the rest. `e` is now idempotent: it stashes
+  the editor pane on the home session (`@sb_editor_pane`) and re-focuses it while
+  it's still live, only spawning a fresh one once the editor is `:q`'d. The gate
+  filters dead panes (`#{pane_dead}`), so a user's `remain-on-exit on` can't leave
+  `e` re-focusing a closed editor's corpse. Covered by a real-tmux smoke test
+  (press `e` twice → one editor pane, not two) plus a unit test for the reuse gate.
 
 ### Changed
 - **`projects_root` now defaults to `~` instead of `~/Programming`.** The old
