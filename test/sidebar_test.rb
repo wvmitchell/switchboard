@@ -29,12 +29,13 @@ module Switchboard
     end
 
     def sidebar(nodes: [], collapsed: [], cursor: 0, agents: {}, focused: true,
-                current_path: nil, pulse: 0, attention: [])
+                current_path: nil, pulse: 0, attention: [], monitoring: [])
       sb = Sidebar.new
       sb.instance_variable_set(:@nodes, nodes)
       sb.instance_variable_set(:@collapsed, Set.new(collapsed))
       sb.instance_variable_set(:@agents, agents)
       sb.instance_variable_set(:@attention, Set.new(attention))
+      sb.instance_variable_set(:@monitoring, Set.new(monitoring))
       sb.instance_variable_set(:@focused, focused)
       sb.instance_variable_set(:@current_path, current_path)
       sb.instance_variable_set(:@pulse, pulse)
@@ -1033,6 +1034,79 @@ module Switchboard
     def test_colored_project_is_bold
       sb = sidebar
       assert_equal "\e[1m▾ app\e[0m", sb.send(:colored, proj("app"), "▾ app")
+    end
+
+    # --- background-monitor dot (∞) ------------------------------------------
+
+    def test_monitoring_glyph_and_dot
+      sb = sidebar
+      assert_equal "∞", sb.send(:glyph_for, :monitoring)
+      assert_includes sb.send(:dot_for, :monitoring), "∞"
+    end
+
+    # render_state is the single resolver both paint paths use: a monitored worktree AT
+    # REST shows :monitoring; active states win so live work / input requests still show.
+    def test_render_state_shows_monitoring_only_at_rest
+      sb = sidebar(agents: { "/wt/a" => :done, "/wt/b" => :thinking, "/wt/c" => :waiting, "/wt/d" => nil },
+                   monitoring: %w[/wt/a /wt/b /wt/c /wt/d])
+      assert_equal :monitoring, sb.send(:render_state, "/wt/a"), "done + monitored -> ∞"
+      assert_equal :monitoring, sb.send(:render_state, "/wt/d"), "idle/aged-out + monitored -> ∞"
+      assert_equal :thinking,   sb.send(:render_state, "/wt/b"), "thinking wins (live work)"
+      assert_equal :waiting,    sb.send(:render_state, "/wt/c"), "waiting wins (needs input)"
+    end
+
+    def test_render_state_is_the_plain_state_when_not_monitored
+      sb = sidebar(agents: { "/wt/a" => :done }, monitoring: [])
+      assert_equal :done, sb.send(:render_state, "/wt/a")
+    end
+
+    # The rendered ws row actually carries the ∞ (via ws_glyph -> render_state) when the
+    # worktree is a resting monitor.
+    def test_a_resting_monitored_ws_row_renders_the_dot
+      node = ws("watcher", path: "/wt/watch")
+      sb = sidebar(nodes: [proj("app"), node], agents: { "/wt/watch" => :done }, monitoring: ["/wt/watch"])
+      assert_includes sb.send(:plain, node), "∞", "idle-between-ticks reads as watching, not done"
+    end
+
+    # The noise fix (thought experiment #2/#3): a monitored worktree's routine :done is
+    # dropped from bold + sound; :waiting always surfaces; an unmonitored :done rings.
+    def test_suppress_completion_only_for_a_monitored_done
+      sb = sidebar(monitoring: ["/wt/a"])
+      assert sb.send(:suppress_completion?, "/wt/a", :done), "monitored :done is a routine tick"
+      refute sb.send(:suppress_completion?, "/wt/a", :waiting), ":waiting always surfaces"
+      refute sb.send(:suppress_completion?, "/wt/b", :done), "an unmonitored :done rings normally"
+    end
+
+    def test_monitored_done_edge_is_not_bolded_or_sounded
+      sb = sidebar(monitoring: ["/wt/a"])
+      sb.instance_variable_set(:@prev_hook_states, { "/wt/a" => :thinking, "/wt/b" => :thinking })
+      as = AgentState.new
+      as.instance_variable_set(:@last_hook_states, { "/wt/a" => :done, "/wt/b" => :done })
+      sb.instance_variable_set(:@agent_state, as)
+
+      bolded = []
+      sounded = []
+      sb.define_singleton_method(:mark_attention_for) { |edges| bolded.concat(edges) }
+      sb.define_singleton_method(:play_sounds_for) { |edges, _now| sounded.concat(edges) }
+
+      sb.send(:on_agent_edges, refresh_prs: false)
+      assert_equal ["/wt/b"], bolded.sort,  "monitored :done suppressed from bold; the other still bolds"
+      assert_equal ["/wt/b"], sounded.sort, "monitored :done suppressed from sound; the other still rings"
+    end
+
+    def test_monitored_waiting_edge_still_rings
+      sb = sidebar(monitoring: ["/wt/a"])
+      sb.instance_variable_set(:@prev_hook_states, { "/wt/a" => :thinking })
+      as = AgentState.new
+      as.instance_variable_set(:@last_hook_states, { "/wt/a" => :waiting })
+      sb.instance_variable_set(:@agent_state, as)
+
+      sounded = []
+      sb.define_singleton_method(:play_sounds_for) { |edges, _now| sounded.concat(edges) }
+      sb.define_singleton_method(:mark_attention_for) { |_edges| }
+
+      sb.send(:on_agent_edges, refresh_prs: false)
+      assert_equal ["/wt/a"], sounded, "a monitor pausing for input still rings"
     end
 
     def test_line_draws_a_reverse_video_bar_only_for_the_focused_cursor_row

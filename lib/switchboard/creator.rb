@@ -56,13 +56,17 @@ module Switchboard
              out: File::NULL, err: File::NULL)
     end
 
-    # Wire the per-worktree agent hooks (agent-state reporter + the #92 self-naming
-    # nudge), scoped to this worktree, never global. Enabled when EITHER dots or
-    # auto_rename is on — auto_rename resolved *per project* (auto_rename_for), so a
-    # project that opts in with the global off still gets the hook the runtime nudge
-    # needs. Best-effort: a hook-wiring hiccup must never sink an otherwise-good worktree.
+    # Wire the per-worktree agent hooks (agent-state reporter + the #92 self-naming nudge
+    # + the background-presence monitoring nudge/clears), scoped to this worktree, never
+    # global. Enabled when ANY of dots / auto_rename / background_presence is on — each
+    # resolved *per project* so a project that opts into just one (with the global off)
+    # still gets the hook its runtime nudge needs. Best-effort: a hook-wiring hiccup must
+    # never sink an otherwise-good worktree.
     def enable_hooks(config, project_name, dest)
-      AgentHooks.enable(dest) if config.agent_state_hooks? || config.auto_rename_for(project_name)
+      if config.agent_state_hooks? || config.auto_rename_for(project_name) ||
+         config.background_presence_for(project_name)
+        AgentHooks.enable(dest)
+      end
       dest
     rescue StandardError
       dest

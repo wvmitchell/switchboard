@@ -29,6 +29,8 @@ module Switchboard
       when "disable-hooks"     then disable_hooks(argv[1])
       when "rename"            then exit(1) unless rename(argv[1])
       when "rename-nudge"      then rename_nudge(argv.drop(1))
+      when "monitoring"        then monitoring(argv[1])
+      when "monitoring-nudge"  then monitoring_nudge(argv.drop(1))
       when "sound"             then play_sound(argv[1])
       when "sidebar"           then Sidebar.run
       when "poke-sidebar"      then Tmux.poke_current_sidebar
@@ -179,8 +181,68 @@ module Switchboard
     # it never orphans the others). Like prune, works outside tmux.
     def quit
       AgentState.clear_all # killing every agent makes their last hook state stale — drop it now
+      Monitoring.clear_all # ...and every monitoring declaration is now stale too
       killed = Tmux.kill_all
       puts(killed.empty? ? "no switchboard sessions to close" : "closed #{killed.size} switchboard session(s)")
+    end
+
+    # `monitoring on|off` (bare = status): declare or clear that a background monitor /
+    # recurring loop is running in THIS worktree, so the sidebar shows a steady ∞ instead
+    # of reading as done/idle. Agent- or human-invoked; resolves the worktree from cwd
+    # like the rename nudge. Re-running `on` re-affirms (refreshes the liveness clock) —
+    # that's how a live monitor keeps its dot up across cycles; a stopped agent that stops
+    # re-affirming lets the marker age out.
+    def monitoring(sub)
+      wt = current_worktree
+      if wt.nil? || wt.primary
+        puts "not inside a switchboard workspace — nothing to mark"
+        return
+      end
+
+      leaf = File.basename(wt.path)
+      case sub
+      when "on"
+        Monitoring.mark(wt.path)
+        puts "monitoring on: #{leaf}"
+      when "off"
+        Monitoring.clear(wt.path)
+        puts "monitoring off: #{leaf}"
+      when nil, "status"
+        puts "monitoring #{Monitoring.monitored([wt.path]).any? ? 'on' : 'off'}: #{leaf}"
+      else
+        puts "usage: switchboard monitoring on|off"
+      end
+    end
+
+    # SessionStart / SessionEnd hook entry (the Layer-2 background-presence handler, wired
+    # by HookFile.command_entries). Makes "monitoring" a per-session declaration: clears
+    # this worktree's marker on a new/resumed session boundary — so a resumed agent (its
+    # old loop dead) must re-declare — and (re)plants the self-report nudge. The clear and
+    # the nudge have DIFFERENT source gates on purpose (see MonitoringNudge): a `compact`
+    # does NOT clear (the same process continues, a live monitor's marker must survive) but
+    # DOES re-nudge (compaction can drop the original instruction, so an agent that sets a
+    # monitor after compaction still learns the convention). Gated on `background_presence`.
+    # Always exits 0 with only the JSON (or nothing) on stdout — a stray byte poisons the
+    # agent even at exit 0, so the body is rescued to silence.
+    def monitoring_nudge(args = [])
+      payload = parse_hook_stdin
+      cwd = payload["cwd"]
+      cwd = Dir.pwd unless cwd.is_a?(String) && !cwd.strip.empty?
+
+      wt = current_worktree(cwd)
+      return if wt.nil? || wt.primary
+      return unless config.background_presence_for(wt.project)
+
+      if args.include?("--end")
+        Monitoring.clear(wt.path) # SessionEnd: the agent is gone, so it can't still be monitoring
+        return
+      end
+
+      source = payload["source"]
+      Monitoring.clear(wt.path) if MonitoringNudge.clears_on?(source) # new/resumed process only
+      puts MonitoringNudge.context_json if MonitoringNudge.nudges_on?(source) # + compact: re-teach
+    rescue StandardError
+      nil # a hook must never error a session boundary; emit nothing on any fault
     end
 
     # Create an empty config (no projects yet). Add your first project from the
@@ -805,6 +867,7 @@ module Switchboard
           switchboard enable-hooks [P]   wire agent-state dots in a worktree (default: cwd)
           switchboard disable-hooks [P]  remove them from that worktree
           switchboard rename NAME    rename the current workspace (dir + tmux session)
+          switchboard monitoring on|off  flag this workspace as running a background monitor (shows a ∞; bare = status)
           switchboard sound [done|waiting]  play a state's sound (try audio / pick sounds)
           switchboard prune        kill orphaned sb/ sessions + reap orphaned sidebar processes (--dry-run / -n previews)
           switchboard sandbox      dogfood THIS checkout's sidebar in a throwaway, isolated tmux (auto-torn-down on detach)

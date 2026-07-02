@@ -24,11 +24,17 @@ switchboard · home
 ```
 
 Each row shows its work at a glance: an **agent dot** (`⠹` blue thinking, `◆`
-magenta waiting, `●` green done), the `»` pointer for where you are now, the
-committed diff vs base (`+adds −dels`), and the PR as a color-coded `#number`.
-When an agent finishes a turn you **hear a short chime** and its name goes
-**bold** until you look — so a completion that lands while you're heads-down
-elsewhere is still waiting for your eye.
+magenta waiting, `●` green done, `∞` green running a background monitor), the `»`
+pointer for where you are now, the committed diff vs base (`+adds −dels`), and the
+PR as a color-coded `#number`. When an agent finishes a turn you **hear a short
+chime** and its name goes **bold** until you look — so a completion that lands
+while you're heads-down elsewhere is still waiting for your eye.
+
+An agent running a **background monitor or recurring loop** shows the steady `∞`
+instead of reading as idle/done, so you don't mistake "watching in the background"
+for "finished and abandoned" (and a looping agent won't chime on every tick). The
+agent flags it with `switchboard monitoring on` (taught automatically via the
+`background_presence` nudge; toggle off in config), or you can run it by hand.
 
 ## Why
 

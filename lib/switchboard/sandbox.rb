@@ -76,6 +76,7 @@ module Switchboard
           "SWITCHBOARD_BIN_DIR"             => File.join(state_dir, "bin"),
           "SWITCHBOARD_STATE_DIR"           => File.join(state_dir, "agent-state"),
           "SWITCHBOARD_ATTENTION_DIR"       => File.join(state_dir, "attention"),
+          "SWITCHBOARD_MONITORING_DIR"      => File.join(state_dir, "monitoring"),
           "SWITCHBOARD_COLLAPSE_DIR"        => File.join(state_dir, "collapse"),
           "SWITCHBOARD_FULL_HEADER_FILE"    => File.join(state_dir, "full_header"),
           "SWITCHBOARD_BRANCH_FOLD_FILE"    => File.join(state_dir, "branch_fold"),
@@ -142,10 +143,13 @@ module Switchboard
       seed_big_diff(add_worktree(repo, wt_root, "bulk-import", "sandbox/bulk-import")) # 2. big +/- diff
       add_worktree(repo, wt_root, "quiet-cleanup", "sandbox/quiet-cleanup")            # 3. no-PR row
       seed_branch_history(add_worktree(repo, wt_root, "sidebar-polish", "sandbox/sidebar-polish")) # 4. multi-branch
+      add_worktree(repo, wt_root, "watch-ci", "sandbox/watch-ci")                     # 5. background monitor (∞)
 
       seed_pr_cache("sandbox/auth-token-refresh")
       seed_dot(File.join(wt_root, "auth-token-refresh"), "thinking")
       seed_dot(File.join(wt_root, "quiet-cleanup"), "done")
+      seed_dot(File.join(wt_root, "watch-ci"), "done")     # a resting agent...
+      seed_monitor(File.join(wt_root, "watch-ci"))         # ...flagged monitoring -> renders ∞, not ●
     end
 
     def add_worktree(repo, wt_root, leaf, branch)
@@ -191,6 +195,15 @@ module Switchboard
                  "#{state}\t#{cwd}\t#{Time.now.to_i}\n")
     rescue StandardError
       nil # a dot that fails to seed just doesn't render — never abort the sandbox
+    end
+
+    # Flag a worktree as running a background monitor so its row shows the ∞ dot. Reuses
+    # the real Monitoring.mark (fresh mtime => live within TTL); render_state's precedence
+    # then turns its resting dot into ∞ instead of ●.
+    def seed_monitor(worktree)
+      Monitoring.mark(File.realpath(worktree))
+    rescue StandardError
+      nil # a marker that fails to seed just doesn't render the ∞ — never abort the sandbox
     end
 
     # base: main + projects: are load-bearing (F2): without base the no-origin repo

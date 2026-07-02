@@ -154,10 +154,12 @@ module Switchboard
     end
 
     # The inverse override: global auto_rename:true but this project opts OUT — no hook
-    # (with dots also off), matching what auto_rename_for resolves at runtime.
+    # (with dots + background_presence also off), matching what the *_for resolvers
+    # resolve at runtime.
     def test_create_skips_hooks_for_a_per_project_auto_rename_opt_out
       File.write(Config.path, YAML.dump("worktree_root" => path("wts"),
                                         "agent_state_hooks" => false, "auto_rename" => true,
+                                        "background_presence" => false,
                                         "projects" => [{ "name" => "proj", "auto_rename" => false,
                                                          "path" => temp_git_repo("proj", origin: true) }]))
       dest = Creator.create(Config.new, "proj", "thing")
@@ -165,13 +167,25 @@ module Switchboard
       refute File.exist?(File.join(dest, ".codex", "hooks.json")), "no per-worktree codex file"
     end
 
-    def test_create_skips_hooks_when_dots_and_auto_rename_both_off
+    def test_create_skips_hooks_when_dots_rename_and_presence_all_off
       File.write(Config.path, YAML.dump("worktree_root" => path("wts"),
                                         "agent_state_hooks" => false, "auto_rename" => false,
+                                        "background_presence" => false,
                                         "projects" => [{ "name" => "proj", "path" => temp_git_repo("proj", origin: true) }]))
       dest = Creator.create(Config.new, "proj", "thing")
-      refute ClaudeHook.enabled?(dest), "no claude hook when both dots and auto_rename are off"
+      refute ClaudeHook.enabled?(dest), "no claude hook when dots, auto_rename, and background_presence are all off"
       refute File.exist?(File.join(dest, ".codex", "hooks.json")), "no per-worktree codex file"
+    end
+
+    # background_presence alone (dots + auto_rename off) still wires the hook — the
+    # monitoring nudge + session-boundary clears need it.
+    def test_create_wires_the_hook_for_background_presence_alone
+      File.write(Config.path, YAML.dump("worktree_root" => path("wts"),
+                                        "agent_state_hooks" => false, "auto_rename" => false,
+                                        "background_presence" => true,
+                                        "projects" => [{ "name" => "proj", "path" => temp_git_repo("proj", origin: true) }]))
+      dest = Creator.create(Config.new, "proj", "thing")
+      assert ClaudeHook.enabled?(dest), "background_presence on wires the claude hook even with dots + rename off"
     end
 
     # The branch created off origin/main must NOT inherit it as an upstream

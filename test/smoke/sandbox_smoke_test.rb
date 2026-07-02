@@ -43,6 +43,8 @@ module Switchboard
       screen = capture(pane)
       assert_includes screen, "auth-token-refresh", "the open-PR worktree row"
       assert_includes screen, "sidebar-polish", "the multi-branch worktree row"
+      assert_includes screen, "watch-ci", "the background-monitor worktree row"
+      assert_includes screen, "∞", "the monitored workspace renders the ∞ dot (resting -> ∞, not ●)"
 
       # 2. isolation proof: two GLOBAL view-state toggles (branch-fold `z`, full-header
       #    `H`) must write their markers into the THROWAWAY state tree, never real state.

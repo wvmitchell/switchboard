@@ -59,6 +59,36 @@ module Switchboard
       assert_equal 1, cmds.count { |c| c.include?(HookFile::MARK) }, "no duplicate reporter"
     end
 
+    # Background-presence (Layer 2): SessionStart also carries the monitoring nudge/clear,
+    # and SessionEnd carries the clear-on-exit — both MONITOR_MARK-tagged so ours? dedups.
+    def test_enable_wires_the_monitoring_nudge_on_sessionstart_and_sessionend
+      ClaudeHook.enable(worktree)
+      start = commands_for(settings, "SessionStart")
+      assert(start.any? { |c| c.include?(HookFile::MONITOR_MARK) && !c.include?("--end") },
+             "SessionStart carries the monitoring nudge/clear")
+      ends = commands_for(settings, "SessionEnd")
+      assert_equal 1, ends.length, "SessionEnd has exactly one command"
+      assert_includes ends.first, "monitoring-nudge --end", "SessionEnd clears the marker on exit"
+    end
+
+    # Re-enable must not pile up duplicate monitoring commands (ours? recognizes MONITOR_MARK).
+    def test_enable_is_idempotent_for_the_monitoring_commands
+      ClaudeHook.enable(worktree)
+      ClaudeHook.enable(worktree)
+      assert_equal 1, commands_for(settings, "SessionStart").count { |c| c.include?(HookFile::MONITOR_MARK) },
+                   "no duplicate SessionStart monitoring command"
+      assert_equal 1, commands_for(settings, "SessionEnd").length, "no duplicate SessionEnd command"
+    end
+
+    # SessionEnd is entirely switchboard's, so disable strips it (and the whole file, when
+    # only ours remained) — proves ours? recognizes the SessionEnd clear for removal.
+    def test_disable_strips_the_sessionend_clear
+      ClaudeHook.enable(worktree)
+      ClaudeHook.disable(worktree)
+      refute File.exist?(ClaudeHook.settings_path(worktree)),
+             "SessionEnd was only ours -> file gone after disable"
+    end
+
     # #92 + unification: Stop hooks run in parallel with no ordering, so a separate sh
     # reporter racing the blocking nudge could record a blocked (still-working) agent as
     # `done`. So Stop carries ONE command — `rename-nudge --stop` reports the state itself

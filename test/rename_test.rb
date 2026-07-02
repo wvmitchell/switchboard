@@ -54,6 +54,33 @@ module Switchboard
       assert File.exist?(File.join(dest_hist, "s1.jsonl")), "the transcript moved to the new key"
     end
 
+    # A rename carries the background-monitor ∞ marker to the new realpath (the key is
+    # the realpath, which the dir move changes). The old path is captured BEFORE the move
+    # because the bridge symlink resolves it to the new dir afterward.
+    def test_perform_carries_the_monitoring_marker_to_the_new_path
+      repo = temp_git_repo("proj")
+      old = add_worktree(repo, "old")
+      Monitoring.mark(File.realpath(old))
+
+      assert_equal :ok, Rename.perform(config_for(repo), "proj", old, "new").status
+
+      new = File.realpath(path("wts", "proj", "new"))
+      assert_includes Monitoring.monitored([new]), new, "the ∞ marker followed the rename"
+    end
+
+    # The same shared carry fixes Attention's latent bug: a rename used to silently drop
+    # an unviewed completion's bold.
+    def test_perform_carries_the_attention_bold_to_the_new_path
+      repo = temp_git_repo("proj")
+      old = add_worktree(repo, "old")
+      Attention.mark(File.realpath(old))
+
+      assert_equal :ok, Rename.perform(config_for(repo), "proj", old, "new").status
+
+      new = File.realpath(path("wts", "proj", "new"))
+      assert_includes Attention.marked([new]), new, "the bold followed the rename"
+    end
+
     def test_perform_unknown_project_is_failed
       config = config_for(temp_git_repo("proj"))
       assert_equal :failed, Rename.perform(config, "nope", path("x"), "new").status

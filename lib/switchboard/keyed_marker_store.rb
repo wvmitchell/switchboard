@@ -76,7 +76,9 @@ module Switchboard
     end
 
     # Scan the store, returning the Set of live marker CONTENTS. The caller's block is
-    # the GC policy: it receives each marker's content and returns whether to KEEP it.
+    # the GC policy: it receives each marker's content (and its mtime as a second arg,
+    # for callers like Monitoring that GC on freshness — one-arg blocks just ignore it)
+    # and returns whether to KEEP it.
     #
     # CAUTION — a falsy return DELETES that marker (garbage collection). Guard any
     # TRANSIENT input in your predicate, or a momentary model/config-load failure will
@@ -97,7 +99,7 @@ module Switchboard
         content = File.read(file).chomp
         next if content.empty? # a torn read: skip this cycle, don't delete — write rewrites atomically
 
-        if yield(content)
+        if yield(content, File.mtime(file))
           set << content
         else
           File.delete(file) # the caller's GC policy rejected it -> remove
@@ -107,6 +109,21 @@ module Switchboard
       end
     rescue StandardError
       Set.new
+    end
+
+    # Move a marker from one key to another — used to carry a path-keyed marker across a
+    # worktree rename, where the key (a realpath) changes but the marker should survive.
+    # A no-op when nothing is stored at old_value. The content is rewritten to new_value
+    # so the marker's stored path matches its new location, and the write is atomic
+    # (temp+rename) like every other, so a peer scan never catches a torn carry. Fully
+    # rescued: a failed carry drops the marker rather than crash the rename.
+    def carry(dir, old_value, new_value)
+      return unless File.exist?(File.join(dir, key(old_value)))
+
+      write(dir, key(new_value), new_value)
+      delete(dir, key(old_value))
+    rescue StandardError
+      nil
     end
   end
 end

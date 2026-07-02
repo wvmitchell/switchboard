@@ -37,6 +37,7 @@ bin/switchboard init       # create ~/.config/switchboard/config.yml (empty; gro
 bin/switchboard config     # open config.yml in $EDITOR (sidebar `e` does the same)
 bin/switchboard sidebar    # run the persistent sidebar standalone (normally tmux-spawned)
 bin/switchboard rename NAME # rename the current workspace from inside it (dir move + bridge + session rename + Claude `/resume` history carry + the git branch when safe — see #94); for the agent to (re)name its own live workspace (#42). No NAME prints usage + the current name (switchboard doesn't guess one)
+bin/switchboard monitoring on|off # flag/unflag this workspace as running a background monitor/loop (steady ∞ dot; bare = status). Agent- or human-invoked; re-run `on` each cycle to keep it live (liveness = marker mtime within Monitoring::TTL). Layer-2 SessionStart/SessionEnd hooks (monitoring-nudge) clear it per-session + nudge, gated on config background_presence
 bin/switchboard prune      # kill orphaned sb/ sessions (reconcile vs git worktrees) + reap orphaned sidebar processes; --dry-run/-n previews
 bin/switchboard sandbox    # dogfood THIS checkout's sidebar in a throwaway, fully-isolated tmux — auto-torn-down on detach (the interactive twin of bin/test-smoke, #126)
 bin/switchboard quit       # close ALL sb/ sessions (full teardown; current session last; clears agent state)
@@ -478,6 +479,69 @@ and a config-membership predicate — as a `scan(dir) { |content| keep? }` block
 return GCs that marker; `dir` is total so a state-path failure degrades, never crashes).
 `FullHeader`/`Width` deliberately stay **off** this base — single flag / single int,
 they'd only share "an XDG dir."
+
+### Background-agent presence (the ∞ dot — declared, not detected)
+
+A workspace where an agent is running a **background monitor / recurring loop /
+scheduled tick** (a `/loop`, a self-paced wakeup, the Monitor tool, a background bash)
+looked identical to a finished-and-idle one — both a resting `●`. The dot couldn't
+tell them apart because **hooks can't**: a background loop fires the same
+`SessionStart`/`Stop` events as an interactive turn, and there is no
+`source: routine` / `is_autonomous` signal (cloud routines never touch the local
+reporter at all). So presence here is **declared, not detected**: `switchboard
+monitoring on|off` (agent- or human-invoked; `Monitoring`, `monitoring.rb`) writes a
+per-worktree marker on the shared `KeyedMarkerStore` — a twin of `Attention`, keyed by
+realpath, `Dir.exist?` GC — and the sidebar draws a **steady green ∞** for that
+workspace at rest. The dot is a render overlay, not a fourth `@agents` value: a single
+`render_state` resolver (used by BOTH paint paths, so precedence can't drift) yields
+`thinking`/`waiting > monitoring > done/idle` — you still see live work and input
+requests; only the *resting* dot becomes ∞ (idle-between-ticks reads as *watching*, not
+*finished*). Steady, deliberately: an animated ∞ would keep `pulsing?` true for every
+monitored pane and defeat the off-screen dormancy budget.
+
+**"The dot is up" must mean "monitoring is happening right now."** The trap: a marker
+only proves an agent *declared* monitoring, and a liveness gate can only prove an agent
+is *alive* — neither proves it's *still* monitoring. So liveness is **marker-mtime +
+per-cycle re-affirmation**, NOT a hook heartbeat: `monitoring on` (re)writes the marker
+(fresh mtime), the agent re-runs it each cycle, and `Monitoring.monitored` shows a
+worktree only while `now - mtime <= TTL` (`Monitoring::TTL`, ~10 min) — GC'ing the stale
+file. Re-affirmation is the *precise* still-monitoring signal a generic heartbeat can't
+produce: a stopped/crashed/resumed-into-other-work agent stops re-affirming, so its dot
+ages out on its own (a heartbeat would keep it falsely lit from unrelated activity).
+This is why Option A beat the heartbeat — see `thoughts/` and the three
+thought-experiment tests (resume, user-stops, agent-stops).
+
+The **routine `:done` per tick is suppressed** from the completion sound AND the
+attention-bold (`suppress_completion?`, the one predicate both `play_sounds_for` and
+`mark_attention_for` consult) — a background loop must not chime/bold every tick — but
+`:waiting` still surfaces (it wants input) and the PR/diff refresh still rides every
+edge. `@monitoring` is hydrated (in `refresh_agents`, before `on_agent_edges`) so the
+suppression is live on the scan that fires the edge; the monitoring dir joins
+`warm_fingerprint` so a toggle warms off-screen panes.
+
+**Clears, fastest to slowest (defense in depth):** explicit `off` and `quit`
+(`Monitoring.clear_all`, beside `AgentState.clear_all` — a teardown kills every agent)
+are instant; `Dir`-GC reaps a deleted worktree; the mtime **TTL** is the floor for a
+crash with no clean exit. Two **session-boundary clears** (Layer 2, `MonitoringNudge` +
+`CLI#monitoring_nudge`, wired into the Claude hook by `HookFile.command_entries` as
+matcher-less `SessionStart`/`SessionEnd` commands — `MONITOR_MARK` so `ours?` dedups/
+strips them) tighten those windows to instant: **clear-on-SessionStart** makes
+monitoring a per-session declaration (a resumed agent, its old loop dead, re-declares) —
+and **SessionEnd auto-off** (the agent's gone, so it can't still be monitoring). The
+clear and the nudge have **different source gates** (the compaction split): the clear
+fires on `startup`/`resume` only, NEVER `compact` (same process continues, a live
+monitor's marker must survive); the **nudge** re-plants on `startup`/`resume`/`compact`
+(matching `RenameNudge`), because compaction summarizes the original instruction out of
+context and SessionStart re-fires on `compact` precisely so a hook can re-inject it — so
+an agent that sets a monitor *after* a compaction still knows the `monitoring on`
+convention (`MonitoringNudge.clears_on?` vs `nudges_on?`). Both rename-safe: `Rename.perform` carries the marker via the shared
+`KeyedMarkerStore.carry` (capture the old realpath BEFORE `move_worktree` — the bridge
+symlink resolves it to the new dir after), which also fixes the pre-existing bug where a
+rename silently dropped `Attention`'s bold. The whole Layer-2 behavior (nudge + session
+clears) is gated on the `background_presence` config knob (global + per-project, default
+**on**, like `auto_rename`); the `Creator.create` hook-enable gate now includes it, so a
+project using only monitoring still gets the hook wired. Cloud routines remain invisible
+(they never reach the local reporter) — a hard limit stated, not worked around.
 
 ### Shared project collapse (the same multi-process trick)
 

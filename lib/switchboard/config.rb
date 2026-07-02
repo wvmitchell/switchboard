@@ -29,7 +29,7 @@ module Switchboard
     # read, so the setting silently does nothing. `doctor` flags these (CLI#doctor_unknown_keys).
     KNOWN_KEYS = %w[
       worktree_root projects_root base branch_prefix session_command
-      agent_state_hooks prune_on_launch auto_rename diff_counts prewarm
+      agent_state_hooks prune_on_launch auto_rename diff_counts prewarm background_presence
       sounds tmux_keys sidebar_keys projects
     ].freeze
 
@@ -74,6 +74,7 @@ module Switchboard
       # agent_state_hooks: true                    # auto-wire the agent-state dots on worktree create
       # prune_on_launch: true                      # prune orphaned sb/ sessions when landing on home
       # auto_rename: true                          # nudge the agent to rename a placeholder-named workspace once it knows the work
+      # background_presence: true                  # nudge the agent to flag background monitors/loops (`switchboard monitoring on`) so the sidebar shows a ∞
       # diff_counts: true                          # show +adds −dels of each branch vs base on the workspace row
       # prewarm: true                              # keep off-screen sidebars warm so switching sessions doesn't flash a stale tree
 
@@ -244,6 +245,25 @@ module Switchboard
       return node == true unless node.nil?
 
       auto_rename?
+    end
+
+    # Global background-presence switch — ON by default. When on, the agent-state hooks
+    # plant a SessionStart instruction telling a running agent to `switchboard monitoring
+    # on` if it starts a background monitor / recurring loop, and clear the monitoring
+    # marker on session start (a resumed agent re-declares) and session end. Set
+    # `background_presence: false` to opt out — the `switchboard monitoring` subcommand
+    # still works by hand, but nothing is nudged or auto-cleared on session boundaries.
+    def background_presence?
+      @data.fetch("background_presence", true) != false
+    end
+
+    # Resolved background_presence for a project: an explicit per-project value wins over
+    # the global default (mirrors auto_rename). Boolean by VALUE, not truthiness.
+    def background_presence_for(project_name)
+      node = project_background_presence_node(project_name)
+      return node == true unless node.nil?
+
+      background_presence?
     end
 
     # Whether the sidebar shows the +adds −dels diff count on each ws/br row.
@@ -428,6 +448,15 @@ module Switchboard
 
       p = Array(@data["projects"]).find { |e| e.is_a?(Hash) && e["name"] == name }
       p&.key?("auto_rename") ? p["auto_rename"] : nil
+    end
+
+    # The project's raw `background_presence` value, or nil when unset (falls back to the
+    # global). nil vs false are distinct, like project_auto_rename_node.
+    def project_background_presence_node(name)
+      return nil unless name
+
+      p = Array(@data["projects"]).find { |e| e.is_a?(Hash) && e["name"] == name }
+      p&.key?("background_presence") ? p["background_presence"] : nil
     end
   end
 end

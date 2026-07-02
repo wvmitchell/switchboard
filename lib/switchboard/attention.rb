@@ -58,6 +58,14 @@ module Switchboard
       !real.nil? && real == realpath(two)
     end
 
+    # Carry a worktree's bold across a rename (the realpath key changes on the dir
+    # move). old/new are canonical paths captured by the caller — old BEFORE the move,
+    # new AFTER (the bridge symlink makes realpath(old) resolve to new post-move). Fixes
+    # the pre-existing bug where a rename silently dropped an unviewed completion's bold.
+    def carry(old_real, new_real)
+      KeyedMarkerStore.carry(state_dir, old_real, new_real)
+    end
+
     def key(path)
       KeyedMarkerStore.key(path)
     end

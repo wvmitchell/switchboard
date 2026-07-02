@@ -7,6 +7,36 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.45.0] — background-agent presence: the ∞ dot (2026-07-02)
+
+### Added
+- **A steady green `∞` for a workspace running a background monitor / recurring loop.**
+  A `/loop`, a self-paced wakeup, the Monitor tool, or a background bash task used to
+  read as a resting `●`, indistinguishable from finished-and-idle — so you could close
+  a workspace whose agent was actually mid-loop. Hooks can't tell the two apart (a
+  background loop fires the same `SessionStart`/`Stop` events as an interactive turn,
+  and there's no `source: routine` / `is_autonomous` signal), so presence here is
+  **declared, not detected**: `switchboard monitoring on|off` (bare = status;
+  agent- or human-invoked) marks the workspace and the sidebar draws the `∞` at rest.
+  The dot is a render overlay — active states still win (`thinking`/`waiting > ∞ > done`)
+  so you see live work and input requests; only the *resting* dot becomes `∞`.
+- **Liveness is honest: `∞` up ⇒ monitoring right now.** The mark carries a
+  marker-mtime clock; the agent re-affirms `on` each cycle to keep it lit, and a
+  stopped/crashed/resumed agent stops re-affirming so its dot ages out on its own
+  (`Monitoring::TTL`, ~10 min) — no generic hook-heartbeat that would keep it falsely
+  lit from unrelated activity. A monitored workspace's routine per-tick `:done` is
+  suppressed from the completion chime **and** the attention-bold (a background loop
+  shouldn't ring every tick); `:waiting` still surfaces.
+- **`background_presence` config knob (global + per-project, default on).** When on,
+  the agent-state hooks nudge a running agent to `switchboard monitoring on` if it
+  starts background work, and clear the marker on session boundaries — a per-session
+  declaration: a resumed agent (its old loop dead) re-declares (`SessionStart`, on
+  `startup`/`resume`, never `compact`), and a session that ends can't still be
+  monitoring (`SessionEnd` auto-off). A rename carries the marker (and, via the same
+  shared helper, fixes a latent bug where a rename silently dropped an unviewed
+  completion's bold). Cloud routines remain invisible — they never reach the local
+  reporter, a hard limit stated rather than worked around.
+
 ## [0.44.2] — `e` reuses its editor pane instead of stacking new ones (2026-07-02)
 
 ### Fixed

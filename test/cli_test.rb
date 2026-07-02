@@ -139,6 +139,107 @@ module Switchboard
       ENV["TMUX"] = orig
     end
 
+    # `monitoring on|off` marks/clears the current worktree; the worktree resolution is
+    # stubbed (it's cwd + Model machinery, covered elsewhere) so the test stays on the
+    # subcommand's own behavior.
+    def test_monitoring_on_marks_and_off_clears
+      d = path("wt")
+      FileUtils.mkdir_p(d)
+      wt = Worktree.new(project: "p", path: File.realpath(d), primary: false)
+      stub_method(CLI, :current_worktree, ->(*) { wt }) do
+        out = capture { CLI.monitoring("on") }
+        assert_includes out, "monitoring on"
+        assert Monitoring.monitored([File.realpath(d)]).any?, "on marks the worktree"
+
+        capture { CLI.monitoring("off") }
+        assert_empty Monitoring.monitored([File.realpath(d)]), "off clears it"
+      end
+    end
+
+    def test_monitoring_status_reports_without_changing_state
+      d = path("wt")
+      FileUtils.mkdir_p(d)
+      wt = Worktree.new(project: "p", path: File.realpath(d), primary: false)
+      stub_method(CLI, :current_worktree, ->(*) { wt }) do
+        assert_includes capture { CLI.monitoring(nil) }, "monitoring off"
+        Monitoring.mark(File.realpath(d))
+        assert_includes capture { CLI.monitoring("status") }, "monitoring on"
+      end
+    end
+
+    def test_monitoring_outside_a_workspace_is_a_noop
+      stub_method(CLI, :current_worktree, ->(*) { nil }) do
+        out = capture { CLI.monitoring("on") }
+        assert_includes out, "not inside a switchboard workspace"
+      end
+    end
+
+    # --- monitoring-nudge (the Layer-2 SessionStart/SessionEnd hook handler) ------
+
+    # A real worktree dir (Monitoring.mark gates on the dir existing) under project "proj".
+    def monitoring_wt
+      d = path("wt")
+      FileUtils.mkdir_p(d)
+      Worktree.new(project: "proj", path: File.realpath(d), primary: false)
+    end
+
+    def run_monitoring_nudge(worktree:, stdin:, args: [])
+      out = nil
+      stub_method(CLI, :current_worktree, ->(*) { worktree }) do
+        stub_method(CLI, :config, -> { Config.new }) do
+          with_stdin(StringIO.new(stdin)) { out = capture { CLI.monitoring_nudge(args) } }
+        end
+      end
+      out
+    end
+
+    def test_monitoring_nudge_sessionstart_clears_stale_marker_and_emits_nudge
+      nudge_config("background_presence" => true)
+      wt = monitoring_wt
+      Monitoring.mark(wt.path) # a stale marker left by a prior session
+      out = run_monitoring_nudge(worktree: wt, stdin: %({"source":"resume","cwd":"#{wt.path}"}))
+      assert_empty Monitoring.monitored([wt.path]), "SessionStart clears the stale marker (per-session declaration)"
+      assert_includes JSON.parse(out).dig("hookSpecificOutput", "additionalContext"), "monitoring on"
+    end
+
+    def test_monitoring_nudge_end_clears_without_stdout
+      nudge_config("background_presence" => true)
+      wt = monitoring_wt
+      Monitoring.mark(wt.path)
+      out = run_monitoring_nudge(worktree: wt, stdin: %({"cwd":"#{wt.path}"}), args: ["--end"])
+      assert_empty Monitoring.monitored([wt.path]), "SessionEnd clears the marker"
+      assert_equal "", out.strip, "SessionEnd emits nothing on stdout"
+    end
+
+    # The thought experiment: work with an agent -> compaction -> agent sets a monitor.
+    # Compaction must (1) NOT clear a live monitor's marker, and (2) STILL re-plant the
+    # nudge (compaction can drop the original instruction, so a post-compaction monitor
+    # still gets flagged).
+    def test_monitoring_nudge_compact_keeps_marker_and_still_reteaches
+      nudge_config("background_presence" => true)
+      wt = monitoring_wt
+      Monitoring.mark(wt.path)
+      out = run_monitoring_nudge(worktree: wt, stdin: %({"source":"compact","cwd":"#{wt.path}"}))
+      assert Monitoring.monitored([wt.path]).any?, "compact continues the session -> a live monitor's marker survives"
+      assert_includes JSON.parse(out).dig("hookSpecificOutput", "additionalContext"), "monitoring on",
+                      "compact still re-teaches the convention (survives context summarization)"
+    end
+
+    def test_monitoring_nudge_noop_when_background_presence_off
+      nudge_config("background_presence" => false)
+      wt = monitoring_wt
+      Monitoring.mark(wt.path)
+      out = run_monitoring_nudge(worktree: wt, stdin: %({"source":"resume","cwd":"#{wt.path}"}))
+      assert Monitoring.monitored([wt.path]).any?, "feature off -> a manual marker is left alone"
+      assert_equal "", out.strip
+    end
+
+    def test_monitoring_nudge_silent_on_primary_checkout
+      nudge_config("background_presence" => true)
+      prim = Worktree.new(project: "proj", path: "/p", primary: true)
+      assert_equal "", run_monitoring_nudge(worktree: prim, stdin: '{"source":"resume","cwd":"/p"}')
+    end
+
     def test_init_writes_an_empty_config_when_absent
       out = capture { CLI.init }
       assert Config.exist?

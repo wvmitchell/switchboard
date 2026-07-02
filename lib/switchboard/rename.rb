@@ -59,6 +59,11 @@ module Switchboard
         return Result.new(:failed, dest) unless Git.rename_branch(project["path"], sync, new_branch)
       end
 
+      # Capture the canonical OLD path before the move: move_worktree leaves a bridge
+      # symlink at old_path resolving to dest, so realpath(old_path) AFTER the move
+      # returns dest — carrying the markers post-move would key off the wrong path.
+      old_real = canonical(old_path)
+
       # bridge: leave a symlink at the old path so a running agent's frozen
       # project dir keeps resolving and its hooks keep reporting (see move_worktree).
       unless Git.move_worktree(project["path"], old_path, dest, bridge: true)
@@ -75,7 +80,21 @@ module Switchboard
       # finds it after a restart — the cwd just changed out from under it (#42).
       ClaudeHistory.migrate(old_path, dest)
 
+      # Carry the shared per-worktree markers (bold, monitoring) to the new realpath,
+      # so a rename doesn't drop them — both are keyed by realpath, which just changed.
+      new_real = canonical(dest)
+      Attention.carry(old_real, new_real)
+      Monitoring.carry(old_real, new_real)
+
       Result.new(rename_session(project_name, old_path, dest), dest)
+    end
+
+    # File.realpath, degrading to the raw path on a vanished/odd path — a best-effort
+    # canonical key for the marker carry (a bad path just misses a carry, never raises).
+    def canonical(path)
+      File.realpath(path)
+    rescue StandardError
+      path
     end
 
     # The branch to rename, or false when the branch should be left alone. We sync

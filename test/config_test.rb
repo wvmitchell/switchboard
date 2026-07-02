@@ -216,6 +216,22 @@ module Switchboard
       assert cfg(proj.call({})).auto_rename_for("p")
     end
 
+    def test_background_presence_on_by_default_off_only_when_false
+      assert cfg({}).background_presence?
+      assert cfg("background_presence" => true).background_presence?
+      refute cfg("background_presence" => false).background_presence?
+    end
+
+    # The global×project matrix, mirroring auto_rename.
+    def test_background_presence_for_resolution_matrix
+      proj = ->(extra) { { "projects" => [{ "name" => "p", "path" => "/p" }.merge(extra)] } }
+      refute cfg(proj.call("background_presence" => false).merge("background_presence" => true)).background_presence_for("p")
+      assert cfg(proj.call("background_presence" => true).merge("background_presence" => false)).background_presence_for("p")
+      assert cfg(proj.call({}).merge("background_presence" => true)).background_presence_for("p")
+      refute cfg(proj.call({}).merge("background_presence" => false)).background_presence_for("p")
+      assert cfg(proj.call({})).background_presence_for("p"), "nothing set -> inherits the on default"
+    end
+
     def test_prune_on_launch_on_by_default_off_only_when_false
       assert cfg({}).prune_on_launch?
       assert cfg("prune_on_launch" => true).prune_on_launch?

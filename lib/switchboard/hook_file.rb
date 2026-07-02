@@ -28,6 +28,7 @@ module Switchboard
 
     MARK = "sb-agent-hook" # identifies the agent-state reporter entries (idempotent merge/removal)
     NUDGE_MARK = "rename-nudge" # identifies the #92 SessionStart self-naming nudge entry
+    MONITOR_MARK = "monitoring-nudge" # identifies the background-presence SessionStart/SessionEnd entries
 
     # Raised rather than clobbering a settings file we couldn't parse.
     Corrupt = Class.new(StandardError)
@@ -140,6 +141,17 @@ module Switchboard
       entries << { event: "Stop", matcher: nil,
                    command: "#{pre}if command -v #{binesc} >/dev/null 2>&1; then #{binesc} rename-nudge --stop; " \
                             "else #{esc} done; fi" }
+      # Background-presence (the Layer-2 monitoring nudge + per-session marker clears).
+      # SessionStart: clear this worktree's monitoring marker (a resumed agent re-declares)
+      # and plant the self-report nudge — both gated at runtime on `background_presence` and
+      # the source (startup/resume, never compact). SessionEnd: the agent is gone, so it
+      # can't still be monitoring — clear the marker (the instant twin of the liveness TTL).
+      # Matcher-less like the SessionStart nudge, so SessionEnd fires on every end reason,
+      # not just /clear. Same `command -v` bin guard so a stale path no-ops cleanly.
+      entries << { event: "SessionStart", matcher: nil,
+                   command: "#{pre}command -v #{binesc} >/dev/null 2>&1 && #{binesc} monitoring-nudge || true" }
+      entries << { event: "SessionEnd", matcher: nil,
+                   command: "#{pre}command -v #{binesc} >/dev/null 2>&1 && #{binesc} monitoring-nudge --end || true" }
       entries
     end
 
@@ -199,11 +211,13 @@ module Switchboard
 
     # --- internals -----------------------------------------------------------
 
-    # A hook command switchboard installed — the agent-state reporter OR the #92
-    # rename nudge. Both must be recognized so disable/idempotent-merge handle each.
+    # A hook command switchboard installed — the agent-state reporter, the #92 rename
+    # nudge, OR the background-presence monitoring nudge/clears. Each must be recognized
+    # so disable / idempotent-merge handle it (a missed mark would duplicate on re-enable
+    # and survive disable).
     def ours?(command)
       s = command.to_s
-      s.include?(MARK) || s.include?(NUDGE_MARK)
+      s.include?(MARK) || s.include?(NUDGE_MARK) || s.include?(MONITOR_MARK)
     end
 
     # Drop our entries from one event's groups, then any group left empty.

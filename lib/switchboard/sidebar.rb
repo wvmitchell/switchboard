@@ -61,6 +61,7 @@ module Switchboard
     WANTS_ON  = "\e[1;35m◆\e[0m"  # input needed: magenta diamond, lit
     WANTS_OFF = "\e[1;35m◇\e[0m"  # ...and hollow, the blink's off-beat
     DONE      = "\e[1;32m●\e[0m"  # green: replied, ready for you (not blocked)
+    MONITORING = "\e[1;32m∞\e[0m" # a background monitor/loop runs continuously here. Shares DONE's green ON PURPOSE — the ∞ glyph (not a new color) distinguishes it from ●, so the palette stays tight. Steady, so it stays off the pulse cadence — dormancy preserved.
     BLINK_PERIOD = 4             # @pulse ticks per blink half-cycle (~0.5s at PULSE)
 
     # Completion twinkle — the visual twin of the sound: a brief ✦/✧ shimmer when a
@@ -192,6 +193,7 @@ module Switchboard
       @visible_rows = []   # the on-screen slice of @rows (set in render; gates pulsing?)
       @agents = {}         # worktree path => :thinking | :done | :waiting
       @attention = Set.new # worktree paths with an unviewed completion (rendered bold)
+      @monitoring = Set.new # worktree paths with a live background-monitor marker (∞)
       @agent_state = AgentState.new
       @collapsed = Set.new # collapsed project names; hydrated from the shared
                            # on-disk store (Collapse) on every rebuild, so all
@@ -669,6 +671,7 @@ module Switchboard
     def refresh_agents(announce_sounds: true, refresh_prs: true, hooks_only: false)
       ws_paths = @nodes.select { |n| n.kind == "ws" }.map(&:path)
       @agents = @agent_state.scan(ws_paths, hooks_only: hooks_only)
+      @monitoring = Monitoring.monitored(ws_paths)     # BEFORE on_agent_edges: gates the :done suppression
       on_agent_edges(announce_sounds: announce_sounds, refresh_prs: refresh_prs) # may mark new completions
       @attention = Attention.marked(ws_paths)          # load for render, after the marks land
       true
@@ -808,6 +811,7 @@ module Switchboard
       end
       [dir_fingerprint(AgentState.state_dir),  # agent dots
        dir_fingerprint(Attention.state_dir),   # bold markers
+       dir_fingerprint(Monitoring.state_dir),  # background-monitor ∞ markers
        dir_fingerprint(Pr.cache_dir),          # PR badges
        dir_fingerprint(Collapse.state_dir),    # shared project folds (the originally-missed case)
        file_fingerprint(FullHeader.marker),    # full-header toggle
@@ -1008,12 +1012,17 @@ module Switchboard
       now = @agent_state.last_hook_states
       if @prev_hook_states
         edges = self.class.completion_edges(@prev_hook_states, now)
-        mark_attention_for(edges)
+        # A monitored worktree's routine :done is not a "come look, I'm done" event —
+        # drop it from the human-facing signals (bold, sound, sparkle) so a background
+        # loop doesn't chime and bold every tick. :waiting still surfaces (it wants
+        # input), and the PR/diff refresh rides EVERY edge (a tick may have committed).
+        notify = edges.reject { |path| suppress_completion?(path, now[path]) }
+        mark_attention_for(notify)
         refresh_prs_for(edges) if refresh_prs # warm suppresses the off-screen PR-spawn fan-out
         refresh_diffs if edges.any? # a finished turn likely just committed — repaint its count
         if announce_sounds
-          play_sounds_for(edges, now)
-          sparkle_for(edges, now)
+          play_sounds_for(notify, now)
+          sparkle_for(notify, now)
         end
       end
     ensure
@@ -1038,6 +1047,14 @@ module Switchboard
       edges.each { |path| Attention.mark(path) unless viewing?(path) }
     rescue StandardError
       nil
+    end
+
+    # The single predicate the sound + bold + sparkle all consult: a monitored
+    # worktree's :done is a routine loop tick, not a completion, so it's suppressed
+    # from every human-facing signal. Only :done — :waiting is an actionable request
+    # for input and always surfaces, even mid-monitor.
+    def suppress_completion?(path, state)
+      state == :done && @monitoring.include?(path)
     end
 
     # Are we currently sitting in this worktree? Canonicalizes both sides — edge
@@ -1289,6 +1306,7 @@ module Switchboard
       return true unless confirm("quit all switchboard sessions?")
 
       AgentState.clear_all # killing every agent makes their last hook state stale — drop it now
+      Monitoring.clear_all # ...and every monitoring declaration is now stale too
       Tmux.kill_all
       false
     end
@@ -2263,7 +2281,7 @@ module Switchboard
       case node.kind
       when "proj" then "\e[1m#{text}\e[0m"
       when "ws"
-        dot = sparkling?(node.path) ? SPARKLE_COLORED[(@pulse / 2) % SPARKLE_COLORED.size] : dot_for(@agents[node.path])
+        dot = sparkling?(node.path) ? SPARKLE_COLORED[(@pulse / 2) % SPARKLE_COLORED.size] : dot_for(render_state(node.path))
         # The " ▸N" fold cue is appended ONLY when its full width was reserved off the
         # name budget (budget >= 1 ⇒ ≥1 name col left after the cue). At a very narrow
         # pane the budget floors and there's no room: drop the cue so colored's visible
@@ -2292,7 +2310,7 @@ module Switchboard
     def ws_glyph(path)
       return SPARKLE_GLYPHS[(@pulse / 2) % SPARKLE_GLYPHS.size] if sparkling?(path)
 
-      glyph_for(@agents[path])
+      glyph_for(render_state(path))
     end
 
     # Bare state glyph (no color), the single source for both render paths. The
@@ -2300,9 +2318,10 @@ module Switchboard
     # hollow every BLINK_PERIOD ticks; done is steady; idle is a blank slot.
     def glyph_for(state)
       case state
-      when :thinking then SPIN_FRAMES[@pulse % SPIN_FRAMES.size]
-      when :waiting  then (@pulse / BLINK_PERIOD).even? ? "◆" : "◇"
-      when :done     then "●"
+      when :thinking   then SPIN_FRAMES[@pulse % SPIN_FRAMES.size]
+      when :waiting    then (@pulse / BLINK_PERIOD).even? ? "◆" : "◇"
+      when :monitoring then "∞"
+      when :done       then "●"
       else " "
       end
     end
@@ -2312,11 +2331,25 @@ module Switchboard
     # per-frame string allocation.
     def dot_for(state)
       case state
-      when :thinking then SPIN_COLORED[@pulse % SPIN_COLORED.size]
-      when :waiting  then (@pulse / BLINK_PERIOD).even? ? WANTS_ON : WANTS_OFF
-      when :done     then DONE
+      when :thinking   then SPIN_COLORED[@pulse % SPIN_COLORED.size]
+      when :waiting    then (@pulse / BLINK_PERIOD).even? ? WANTS_ON : WANTS_OFF
+      when :monitoring then MONITORING
+      when :done       then DONE
       else " "
       end
+    end
+
+    # The state to DRAW for a ws row: the live agent state, except a monitored worktree
+    # AT REST (done, or idle/nil after its hooks aged out) shows :monitoring instead — so
+    # idle-between-ticks reads as "watching", not "finished". Active states win, so you
+    # still see live work (thinking) and input requests (waiting). Sparkle is handled by
+    # the callers, ahead of this. The single source both paint paths (glyph_for/dot_for)
+    # resolve through, so precedence can't drift between plain and colored.
+    def render_state(path)
+      state = @agents[path]
+      return state if %i[thinking waiting].include?(state)
+
+      @monitoring.include?(path) ? :monitoring : state
     end
 
     def trunc(str, width)
