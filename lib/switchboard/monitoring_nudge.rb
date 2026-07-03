@@ -45,17 +45,28 @@ module Switchboard
       NUDGES_ON.include?(source)
     end
 
-    # The standing instruction. Terse (it rides every acted-on SessionStart), and the
-    # re-affirm clause is load-bearing: the sidebar dot is liveness-gated, so a monitor
-    # must re-run `on` each cycle to stay lit — otherwise a stopped agent's dot correctly
-    # ages out, which is also how "still monitoring" stays honest.
+    # The standing instruction. Terse (it rides every acted-on SessionStart) and scoped to the
+    # ACTION, not the mechanism: it names neither the glyph nor the staleness internals — the
+    # agent DECLARES monitoring, it doesn't render the dot (that's the sidebar's job). Two
+    # load-bearing parts:
+    #   (1) `on <seconds>` re-affirmed at the top of each cycle — liveness is re-affirmation-
+    #       gated (see Monitoring), so a live loop keeps its presence up by re-declaring with a
+    #       ttl sized to its OWN cadence (#146 made the ttl agent-declared); a stopped agent
+    #       stops re-declaring and ages out. Sizing the ttl per-cycle replaces the old "~10 min
+    #       default, pass seconds only if longer" framing — always pass one, always sized.
+    #   (2) the SILENT framing — the presence is operator-facing UI plumbing, so the agent flips
+    #       it on/off with the work's lifecycle without narrating it or waiting to be told to
+    #       stop. An earlier wording left this implicit and agents dutifully announced "I'm
+    #       turning the monitor on" and asked the user when to turn it off — noise the user
+    #       never needed.
     def message
       "This switchboard workspace can show background work in the sidebar. If you start a " \
-        "background monitor, watch loop, or recurring/scheduled task here, run `switchboard " \
-        "monitoring on` — and re-run it at the start of each cycle to keep it marked live " \
-        "(the mark goes stale after ~10 min; if your cycle is longer, pass the seconds, e.g. " \
-        "`switchboard monitoring on 2400`) — so the operator sees a ∞ instead of the workspace " \
-        "looking idle. Run `switchboard monitoring off` when the background work ends."
+        "background monitor, watch loop, or recurring/scheduled task here, silently run " \
+        "`switchboard monitoring on <seconds>` at the top of each cycle — set <seconds> a bit " \
+        "longer than that cycle so the workspace keeps reading as actively monitoring between " \
+        "ticks — and `switchboard monitoring off` the moment that work ends. It's UI plumbing " \
+        "you manage as part of the work's lifecycle: don't announce it, explain it, or wait for " \
+        "the user to ask you to turn it off."
     end
 
     # The SessionStart stdout payload Claude merges into context (its `additionalContext`),

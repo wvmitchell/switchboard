@@ -7,6 +7,19 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.46.2] — monitoring: the background-presence nudge is silent plumbing (2026-07-02)
+
+### Changed
+- **The `SessionStart` background-presence nudge is reworded.** It now tells the agent to
+  flip `switchboard monitoring on/off` *silently* — as operator-facing UI plumbing, not
+  something to announce to the user or wait to be asked to turn off — and to run
+  `monitoring on <seconds>` sized to the loop's own cycle (the agent-declared TTL from
+  v0.46.0 / #146), replacing the old "~10-min default, pass the seconds only if longer"
+  framing. The `∞` glyph is dropped from the agent-facing message: the agent *declares*
+  monitoring, the sidebar renders the dot. No change to `Monitoring` / CLI behavior — nudge
+  wording only. The test swaps the glyph assertion for `each cycle` + `silently` and adds a
+  `refute_includes "∞"` so the glyph can't leak back in.
+
 ## [0.46.1] — sandbox: don't let claude's self-updater hijack the global launcher (2026-07-02)
 
 ### Fixed

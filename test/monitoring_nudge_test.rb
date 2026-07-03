@@ -31,7 +31,14 @@ module Switchboard
       ctx = JSON.parse(MonitoringNudge.context_json)["hookSpecificOutput"]
       assert_equal "SessionStart", ctx["hookEventName"]
       assert_includes ctx["additionalContext"], "switchboard monitoring on"
-      assert_includes ctx["additionalContext"], "∞", "the message names the dot the operator will see"
+      assert_includes ctx["additionalContext"], "each cycle",
+                      "re-affirmation each cycle is the liveness signal (Monitoring) — the nudge must teach it"
+      assert_includes ctx["additionalContext"], "silently",
+                      "the presence is operator-facing UI plumbing: the agent flips it on/off with the work " \
+                      "lifecycle, silently — it must NOT narrate the monitoring command to the user"
+      refute_includes ctx["additionalContext"], "∞",
+                      "the agent declares monitoring but doesn't render the dot — the message must not " \
+                      "expose the glyph (that's the sidebar's job, and it's handled)"
     end
   end
 end
