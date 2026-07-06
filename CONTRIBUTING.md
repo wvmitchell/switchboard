@@ -107,9 +107,10 @@ guard test. Needs `codex` on PATH + auth + network, and spends tokens.
 - Every file starts with `# frozen_string_literal: true`.
 - **Stateless helpers are `module_function` modules** (`ClaudeHook`, `Tmux`,
   `Installer`, `Git`, `Pr`, `Reconcile`, `Creator`, `Registrar`, `Sound`,
-  `Attention`, `Collapse`, …). Only `Model`, `Config`, `Sidebar`, and
-  `AgentState` are classes — they hold state. Don't make a class for something
-  that doesn't need instance state.
+  `Attention`, `Collapse`, …). Only `Model`, `Config`, `Sidebar` (plus its
+  `Sidebar::Edges` collaborator, the #57 carve-out of the agent-edge fanout
+  state), and `AgentState` are classes — they hold state. Don't make a class
+  for something that doesn't need instance state.
 - **Comments explain *why*, not *what*.** The code is meant to be
   self-documenting; the existing comments are there for the non-obvious reason (a
   re-exec, a TTL, a capture-hash, a recycled pane id). Match that density — terse,
@@ -151,7 +152,7 @@ tmux bindings/hooks go live — the CHANGELOG header says so.
 | Command dispatch | `lib/switchboard/cli.rb` |
 | Config / registry | `lib/switchboard/config.rb` |
 | The data model + tree | `lib/switchboard/model.rb`, `tree.rb` |
-| The sidebar TUI | `lib/switchboard/sidebar.rb` |
+| The sidebar TUI | `lib/switchboard/sidebar.rb` (run-loop core) + `lib/switchboard/sidebar/{edges,render,input,actions,prompt,rows}.rb` (its test files: `test/sidebar_*_test.rb`, sharing `test/support/sidebar_case.rb`) |
 | tmux integration | `lib/switchboard/tmux.rb`, `switchboard.tmux` |
 | Install / keybindings | `lib/switchboard/installer.rb` |
 | Marker-block surgery (tmux.conf + `~/.codex/config.toml`) | `lib/switchboard/marker_block.rb` |

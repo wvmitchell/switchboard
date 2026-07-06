@@ -159,7 +159,9 @@ block already covers them.
 
 When a worktree's hook state newly enters a resting state (`:done`/`:waiting`),
 that's a *completion edge*. Four features ride the exact same edge
-(`Sidebar.completion_edges`), in one place (`Sidebar#on_agent_edges`):
+(`Sidebar::Edges.completion_edges`), in one place (`Sidebar::Edges#on_scan`,
+`sidebar/edges.rb` — #57 extracted the whole fanout into that collaborator;
+the diff refresh rides the edge list `on_scan` returns to `refresh_agents`):
 
 1. **Bold-until-viewed** (`attention.rb`) marks the workspace name bold — on
    every scan, since which process noticed doesn't matter (see below).
@@ -171,7 +173,7 @@ that's a *completion edge*. Four features ride the exact same edge
    sound fault can never starve the refreshes above, and gated so only the
    sidebar you're watching rings (a catch-up scan re-baselines silently).
 
-The state cursor (`@prev_hook_states`) advances in an `ensure`, so a fault in any
+The state cursor (`@prev_hook_states`, owned by `Edges`) advances in an `ensure`, so a fault in any
 consumer can't corrupt the next edge diff.
 
 The completion-edge consumers ride the *hook* signal only, not the coarse activity fallback — because

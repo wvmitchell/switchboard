@@ -7,6 +7,30 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.46.3] — the sidebar is one class in seven files (2026-07-05)
+
+### Changed
+- **`sidebar.rb` split into concern files (#57).** The 2,362-line module is now a
+  703-line run-loop core plus six focused files under `lib/switchboard/sidebar/`:
+  `edges.rb` (a collaborator class owning the agent-edge fanout — the sticky
+  hook-state baseline, sparkle deadlines, and PR-spawn debounce), and the
+  `render` / `input` / `actions` / `prompt` / `rows` concern mixins. Pure
+  refactor: zero behavior change, every load-bearing comment moved with its
+  code, and the deferred-naming/monitoring/warm invariants are pinned exactly
+  where they were. Navigating or extending the sidebar no longer means paging
+  through a 2.4k-line file.
+- The class header now carries a file-ownership map + scan-flow diagram, and the
+  conventions doc codifies the concern-file pattern (including the constant
+  load-order rule that keeps the split boot-safe).
+
+### Added
+- Permanent split guards in the suite: a public-API pin, a no-module-shadowing
+  tripwire, core constant/singleton pins, and seam-integration tests proving
+  `refresh_agents` threads live monitoring state into the edge fanout and rides
+  the returned edges into the diff-count refresh (from the pre-landing review).
+- The test suite mirrors the split: seven `test/sidebar_*_test.rb` files over a
+  shared `test/support/sidebar_case.rb` white-box base (974 offline runs).
+
 ## [0.46.2] — monitoring: the background-presence nudge is silent plumbing (2026-07-02)
 
 ### Changed

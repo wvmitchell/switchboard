@@ -132,7 +132,11 @@ so the UI never blocks on the network.
 **One data model, one front-end.** `Model` (`model.rb`) assembles the
 `project → worktree` tree from `Config` + `Git` + cached `Pr` data. `Tree.nodes`
 (`tree.rb`) turns that into ordered `Node` structs, which the **persistent
-sidebar** (`sidebar.rb`) draws as a hand-rolled ANSI TUI in a narrow tmux pane
+sidebar** (`sidebar.rb` — the run-loop core; #57 split the rest into `sidebar/`
+concern files: `edges.rb`, a collaborator class owning the agent-edge fanout
+state, plus the `render`/`input`/`actions`/`prompt`/`rows` concern mixins — one
+class in several files, each with its own `test/sidebar_*_test.rb` over the
+shared `test/support/sidebar_case.rb`) draws as a hand-rolled ANSI TUI in a narrow tmux pane
 (no fzf). It's the only navigator. The bound tmux key toggles it; bare
 `bin/switchboard` is context-aware (`CLI#start`) — inside tmux it toggles the
 sidebar like the key, from a plain shell it bootstraps and attaches the home
@@ -258,7 +262,7 @@ just set for that workspace's completion *before you saw it*; and `reload` stamp
 entirely** (an off-screen pane's `@current_path` can't change while you're away)
 and stamps only `@last_warm` (never `@last_reload`, so switch-in still does its
 full reload + PR refresh). It also passes `refresh_prs: false` (no off-screen
-PR-spawn fan-out — `on_agent_edges` still marks + advances the baseline, only the
+PR-spawn fan-out — the edge fanout (`Edges#on_scan`) still marks + advances the baseline, only the
 spawn is gated) and `hooks_only: true` to `AgentState.scan` (skip the
 tmux/pgrep/lsof `Agents.active` fallback — which otherwise fires whenever *any*
 worktree lacks a live hook, i.e. almost always — so an off-screen scan stays
@@ -401,12 +405,14 @@ signal, no marker file. The subcommand resolves the worktree from the hook's std
 ### Completion sounds (the audible twin)
 
 `Sound` (`sound.rb`) plays a short sound when a worktree's hook state newly
-enters a resting state — the same `Sidebar.completion_edges` the PR refresh
-rides. Both consumers live in `Sidebar#on_agent_edges`: it computes the edges
-once, runs the PR refresh **first**, then `play_sounds_for` (fully rescued), and
-advances `@prev_hook_states` in an `ensure` — so a sound fault can never starve
-the PR trigger, blank the dots (the broad `refresh_agents` rescue), or corrupt
-the next edge diff. Hook-only states, like the PR trigger, so observation-only
+enters a resting state — the same `Sidebar::Edges.completion_edges` the PR
+refresh rides. Both consumers live in `Sidebar::Edges#on_scan` (`sidebar/edges.rb`,
+the #57 collaborator that owns the edge state): it computes the edges once, runs
+the PR refresh **first**, then `play_sounds_for` (fully rescued), and advances
+`@prev_hook_states` in an `ensure` — so a sound fault can never starve the PR
+trigger, blank the dots (the broad `refresh_agents` rescue), or corrupt the next
+edge diff; the returned edge list is what `refresh_agents` rides for the diff
+refresh. Hook-only states, like the PR trigger, so observation-only
 agents make no sound. Deduped per `[worktree, state]`: every distinct worktree's
 completion is heard, but one worktree can't double-fire in a scan.
 
@@ -458,7 +464,7 @@ via `Config#sound_for` (global default + per-project override, like
 moment its hooked agent finishes a turn (`:done`) or asks for input
 (`:waiting`) until you actually look at it — so a completion you weren't
 watching can't slip past unnoticed. It rides the **same `completion_edges`** as
-the sound/PR triggers (the third consumer in `Sidebar#on_agent_edges`), but with
+the sound/PR triggers (the third consumer in `Sidebar::Edges#on_scan`), but with
 two deliberate differences from the sound: (1) it is **persistent on-disk
 state**, one marker file per worktree in a `switchboard/attention` sibling of the
 agent-state dir — because every window's sidebar is its own process, only a
@@ -515,7 +521,7 @@ The **routine `:done` per tick is suppressed** from the completion sound AND the
 attention-bold (`suppress_completion?`, the one predicate both `play_sounds_for` and
 `mark_attention_for` consult) — a background loop must not chime/bold every tick — but
 `:waiting` still surfaces (it wants input) and the PR/diff refresh still rides every
-edge. `@monitoring` is hydrated (in `refresh_agents`, before `on_agent_edges`) so the
+edge. `@monitoring` is hydrated (in `refresh_agents`, before `Edges#on_scan`) so the
 suppression is live on the scan that fires the edge; the monitoring dir joins
 `warm_fingerprint` so a toggle warms off-screen panes.
 
@@ -658,14 +664,14 @@ ride the synchronous paint, so it gets the **agent-dot / PR-badge treatment**: a
 per-process `@diffs` cache (`[path, branch] => [logs/HEAD mtime, adds, dels]`)
 refreshed by `Sidebar#refresh_diffs` off the paint loop. NOT shared on disk (a count
 isn't a view preference) and NOT on the every-3s scan — it rides exactly the issue's
-triggers: `reload` (switch-in / idle / tree-tick) and `on_agent_edges` (a finished
+triggers: `reload` (switch-in / idle / tree-tick) and the agent edge (a finished
 turn likely just committed). `Git.diff_counts` uses `--numstat` (the localized
 `--shortstat` summary would slip past a word regex on a non-English git) and
 `Git.range(base, ref)` so an inline branch row diffs its *own* ref, not HEAD.
 
 The cache key is the worktree's `logs/HEAD` mtime, **stat'd fresh** in `refresh_diffs`
 — NOT reused from `@branch_cache[path][1]`, which only refreshes on `rebuild`; the
-`on_agent_edges` caller has no rebuild, so a cached mtime would compare stale-to-stale
+edge-riding caller has no rebuild, so a cached mtime would compare stale-to-stale
 and skip the just-landed commit. Only the gitdir (`@branch_cache[path][0]`, stable +
 already absolute — the relative-`.git` bug that once blanked the tree) is reused.
 `refresh_diffs` computes **value-or-nil** and `delete`s on nil, so a row that loses
@@ -885,6 +891,13 @@ pane), with the pure pieces (`sandbox_env`, `isolated_socket?`, `stale_sock_dirs
 - Stateless helpers are `module_function` modules (`ClaudeHook`, `CodexHook`,
   `MarkerBlock`, `Tmux`, `Installer`, …); only `Model`, `Config`, `Sidebar`, and
   `AgentState` are classes (they hold state).
+- One stateful class may split across **concern files** when it outgrows a
+  single one (#57: `Sidebar` + `lib/switchboard/sidebar/*`): nested modules
+  `include`d into the class, state ownership staying in the class; a cohesive
+  state-owning cluster becomes a collaborator class instead (`Sidebar::Edges`).
+  The load-order rule that keeps it safe: a file's constant initializers only
+  reference same-file constants, and the parts are required at the BOTTOM of
+  the core file. Genuinely stateless pieces remain `module_function`.
 - All shell-outs escape args with `Shellwords` and swallow stderr; failures
   degrade gracefully (return `[]`/`{}`/`nil`) rather than crash the UI.
 - Code is meant to be self-documenting; the existing comments explain *why* a

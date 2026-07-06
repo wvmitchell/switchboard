@@ -82,7 +82,7 @@ and where to start.
 ## PR-badge refresh (issue #19) follow-ups
 
 - **Trailing/coalescing debounce.** The per-project background refresh uses a
-  *leading* debounce (`PR_DEBOUNCE`, `sidebar.rb`): a second distinct event for
+  *leading* debounce (`Edges::PR_DEBOUNCE`, `sidebar/edges.rb`): a second distinct event for
   the same project inside the window is dropped. Today the idle backstop and the
   next navigation heal it, so it self-corrects within `BACKSTOP_TTL`. If that
   staleness window is ever felt in practice (e.g. two worktrees of one project
@@ -100,7 +100,7 @@ and where to start.
   surface.) If you run a hook-less agent and want its badges as live as a hooked
   one's, add a presence-precise signal for it rather than leaning on the
   capture-hash. Start in `agent_state.rb` (`activity`) and the T1 wiring in
-  `sidebar.rb` (`refresh_prs_on_agent_edges`).
+  `sidebar/edges.rb` (`refresh_agents` → `Edges#on_scan`).
 
 ## Sidebar input handling follow-ups
 
@@ -112,12 +112,12 @@ and where to start.
   breaks on a stop-token), so the residue is benign today — extra navigation, at worst
   another confirm. *Why not fix now:* a clean fix means draining the buffer across all
   three confirm callers (`q`/`d`, and the `rename`/`create` cooked-mode prompts), which
-  is broader than the quit change. *Start in:* `Sidebar#handle` / `#confirm` — either
+  is broader than the quit change. *Start in:* `Input#handle` (`sidebar/input.rb`) / `Prompt#confirm` (`sidebar/prompt.rb`) — either
   pass the remaining buffer into the prompt helpers, or clear `$stdin` after a prompt
   returns. Low priority — needs buffered/pasted input to trigger and nothing destructive
   results.
 
-- **Esc-timeout to close the `\e`|`[O` escape split (accepted).** `Sidebar.tokenize`
+- **Esc-timeout to close the `\e`|`[O` escape split (accepted).** `Input.tokenize`
   carries an incomplete CSI across reads, but a sequence split BEFORE its `[` (a read
   ending on a lone `\e`, the next starting `[O`) flushes the `\e` as Esc and re-orphans
   the `O` → open_repo — the very symptom the tokenizer exists to prevent. *Why accepted,
@@ -128,16 +128,16 @@ and where to start.
   key (filter/prompt cancel) unless the run loop grows a short Esc-timeout to disambiguate
   bare-Esc from a sequence head. That timing complexity in an already-intricate loop isn't
   worth defending an input tmux can't produce. *Start in:* `Sidebar#run` (a deadline flush
-  when `@pending == "\e"`) + `tokenize` (return a lone trailing `\e` as remainder). Only
+  when `@pending == "\e"`) + `Input.tokenize` (return a lone trailing `\e` as remainder). Only
   worth it if we ever stop trusting the producer to write sequences atomically.
 
-- **Unify the name-prompt reader onto `tokenize`.** `Sidebar#edit_buffer` (the inline
-  `r`/`n` name prompt, `sidebar.rb`) still slices escapes at a fixed 3 bytes, the same
+- **Unify the name-prompt reader onto `tokenize`.** `Prompt#edit_buffer` (the inline
+  `r`/`n` name prompt, `sidebar/prompt.rb`) still slices escapes at a fixed 3 bytes, the same
   shape the main loop's `handle` had before the tokenizer. *Why low:* the prompt already
   reads 1024 bytes and no destructive key is bound during a name edit, so a split sequence
   there just drops a stray char into the name you can see and backspace — not a footgun
-  like the open-repo orphan was. *Start in:* `Sidebar#edit_buffer` — route it through
-  `self.class.tokenize` so both readers share one grammar. Pure cleanup; do it next time
+  like the open-repo orphan was. *Start in:* `Prompt#edit_buffer` — route it through
+  `Input.tokenize` so both readers share one grammar. Pure cleanup; do it next time
   the prompt path is touched.
 
 ## Sidebar off-screen-work (architecture-review) follow-ups
@@ -169,7 +169,7 @@ and where to start.
   — rejected; `O` detaches precisely to stay off that path) or a local
   `refs/remotes/origin/<branch>` check that's itself imperfect (a push without
   `-u` and no fetch leaves no tracking ref, so it still falls back). *Start in:*
-  `Sidebar.browse_args` (`sidebar.rb`) + a `Git` remote-branch helper. Low
+  `Actions.browse_args` (`sidebar/actions.rb`) + a `Git` remote-branch helper. Low
   priority — repo home is a fine fallback; only worth it if the gap is felt.
 
 - **Residual `O` deep-link 404 windows (accepted).** The OPEN-PR gate avoids the
@@ -214,7 +214,7 @@ and where to start.
 ## Sandbox / dogfooding (issue #126) follow-ups
 
 - **`lone_pane_handled` learns to skip a non-switchboard split.** Teach
-  `lone_pane_handled` (`sidebar.rb:457`) to ignore a sidebar that isn't a
+  `lone_pane_handled` (`sidebar.rb`, the run-loop core) to ignore a sidebar that isn't a
   switchboard-managed split, so a hand-run lone `switchboard sidebar` doesn't
   self-`go_home` and exit. *Why:* `switchboard sandbox` (#126) avoids the #64 trap
   by always seeding a work pane beside the sidebar, so the normal flow never trips.
@@ -222,7 +222,23 @@ and where to start.
   still self-exits. Inside the isolated server that's harmless (`go_home` lands on the
   sandbox home, not real sessions), which is why it's deferred — but #126 explicitly
   flagged it as "worth deciding on separately," and #64 is now CLOSED so this is a
-  fresh small enhancement, not a reopen. *Start in:* `sidebar.rb:457` — gate the
+  fresh small enhancement, not a reopen. *Start in:* `Sidebar#lone_pane_handled` — gate the
   fall-home on a marker that identifies OUR split (pane title / an `@sb_*` option)
   before acting. Independent of the sandbox PR. Low priority — the seeded work pane
   already covers the real flow, and the manual-lone case is harmless in the sandbox.
+
+## Sidebar split (issue #57) follow-ups
+
+- **Option (not obligation): a pure `Frame`/view-model render object.** The #57
+  split chose concern mixins over extracting render into a `Frame.build(state) →
+  lines` object because mid-refactor it was the wrong trade: ~17 state fields
+  through a constructor and a rewrite of 100+ white-box render tests, for zero
+  behavior gain (per the 2026-07 plan-eng-review, decisions D5/D15 in
+  `thoughts/57-sidebar-split.md`). That calculus flips once `render.rb` is a
+  single file with `sidebar_render_test.rb` beside it — the Frame becomes a
+  contained experiment, not a big bang. *Triggers that would justify it:* wanting
+  render tests that don't construct a `Sidebar` at all; a second front-end; the
+  mixin's implicit ivar coupling actually causing bugs (a render change breaking
+  a non-render concern). *Start in:* `lib/switchboard/sidebar/render.rb` — the
+  paint paths are already the leaf of the call graph. If none of the triggers
+  ever fire, this entry is correctly ignored forever.

@@ -38,7 +38,9 @@ no build step.
 ## Map
 
 - **Dispatch:** `lib/switchboard/cli.rb`
-- **Data model → tree → TUI:** `model.rb` → `tree.rb` → `sidebar.rb`
+- **Data model → tree → TUI:** `model.rb` → `tree.rb` → `sidebar.rb` (+ its
+  `sidebar/` concern files: `edges`, `render`, `input`, `actions`, `prompt`,
+  `rows` — one class in several files, #57)
 - **Config / registry:** `config.rb`
 - **tmux / global config blocks:** `tmux.rb`, `switchboard.tmux` · **install/keys:** `installer.rb` · **marker-block surgery:** `marker_block.rb`
 - **Agent presence:** `agent_state.rb`, `agents.rb`; hook adapters `claude_hook.rb` (Claude, per-worktree) + `codex_hook.rb` (Codex, global block in `~/.codex/config.toml`) on shared base `hook_file.rb`, behind registry `agent_hooks.rb`
@@ -48,7 +50,8 @@ no build step.
 ## Conventions
 
 - Stateless helpers are `module_function` modules; only `Model`, `Config`,
-  `Sidebar`, `AgentState` are classes (they hold state).
+  `Sidebar` (plus its `Sidebar::Edges` collaborator, #57), `AgentState` are
+  classes (they hold state).
 - New worktree state belongs on disk (one file per item, atomic temp+rename, GC'd)
   because every window's sidebar is a separate process — see
   [docs/explanation-sidebar-lifecycle.md](docs/explanation-sidebar-lifecycle.md). For

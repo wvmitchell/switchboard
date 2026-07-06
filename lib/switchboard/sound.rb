@@ -5,7 +5,7 @@ require "fileutils"
 module Switchboard
   # Plays a short sound when a hooked agent finishes a turn (:done) or asks for
   # input (:waiting) — the audible twin of the sidebar's state dots, riding the
-  # same completion edges that trigger the PR refresh (Sidebar#on_agent_edges).
+  # same completion edges that trigger the PR refresh (Sidebar::Edges#on_scan).
   #
   # No audio is shipped or depended on. The two defaults are SYNTHESIZED in pure
   # Ruby (16-bit PCM WAV via Array#pack) and materialized into the XDG data dir

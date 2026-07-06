@@ -63,8 +63,11 @@ Pr  ────┘   (project    (ordered      (hand-rolled ANSI TUI in a
   more than one branch — inline branch rows. The branch history comes from the
   worktree's own HEAD reflog (`Git.branch_history`), a signal neither GUI uses.
   This is the multiple-PRs-per-workspace case made visible.
-- **`Sidebar`** (`sidebar.rb`) draws the nodes as a 3-level tree in a fixed-width
-  tmux pane. No fzf, no curses — a hand-rolled ANSI renderer. It is the *only*
+- **`Sidebar`** (`sidebar.rb` — the run-loop core, plus the `sidebar/` concern
+  files the #57 split carved out: `edges`, a collaborator owning the agent-edge
+  fanout state, and the `render`/`input`/`actions`/`prompt`/`rows` concern
+  mixins — one class in several files) draws the nodes as a 3-level tree in a
+  fixed-width tmux pane. No fzf, no curses — a hand-rolled ANSI renderer. It is the *only*
   navigator.
 
 The primary trunk checkout is always filtered out as a switch target (you never
@@ -131,8 +134,8 @@ becomes visible.
 
 - Every file starts with `# frozen_string_literal: true`.
 - Stateless helpers are `module_function` modules (`ClaudeHook`, `Tmux`, `Installer`,
-  `Git`, `Pr`, …). Only `Model`, `Config`, `Sidebar`, and `AgentState` are
-  classes — they hold state.
+  `Git`, `Pr`, …). Only `Model`, `Config`, `Sidebar` (plus its `Sidebar::Edges`
+  collaborator — see above), and `AgentState` are classes — they hold state.
 - Comments explain *why* a non-obvious thing is done, not *what* the code does.
   Match that density.
 

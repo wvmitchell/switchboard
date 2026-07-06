@@ -7,7 +7,8 @@ built that way, how a sidebar stays cheap while off screen, and the subtle bug
 that the design exists to prevent.
 
 This is the deepest part of the codebase. If you're changing visibility, poking,
-or the run loop in `sidebar.rb`, read this first.
+or the run loop in `sidebar.rb` (or its `sidebar/` concern files — the #57
+split: `edges`, `render`, `input`, `actions`, `prompt`, `rows`), read this first.
 
 ## Why one process per window
 
@@ -148,7 +149,8 @@ before. `prewarm: false` turns the whole thing off and restores pure dormancy.
 
 ### Catch-up scans must not re-ring
 
-Each sidebar has its own `@prev_hook_states`, frozen while off screen. So when a
+Each sidebar has its own edge baseline (`@prev_hook_states`, owned by its
+`Sidebar::Edges`), frozen while off screen. So when a
 sidebar wakes after sleeping, a naive scan would see every completion that
 finished while it slept as a *new* edge — and re-ring sounds you already heard
 from the sidebar that was on screen at the time, spraying duplicates as you move
