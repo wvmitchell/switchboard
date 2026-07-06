@@ -182,6 +182,7 @@ module Switchboard
     def quit
       AgentState.clear_all # killing every agent makes their last hook state stale — drop it now
       Monitoring.clear_all # ...and every monitoring declaration is now stale too
+      Notify.clear_all     # ...and any pending "come look" alert is moot once the agents are gone
       killed = Tmux.kill_all
       puts(killed.empty? ? "no switchboard sessions to close" : "closed #{killed.size} switchboard session(s)")
     end
@@ -210,10 +211,27 @@ module Switchboard
       when "off"
         Monitoring.clear(wt.path)
         puts "monitoring off: #{leaf}"
+      when "notify"
+        # Declared "come look — this cycle surfaced something." Gated to a monitored
+        # workspace (the verb lives under `monitoring`, and it's the ONE exception to
+        # monitoring's :done suppression). Writes both markers: Attention for the
+        # persistent bold (direct, so an away user still gets it), Notify for the
+        # announce-gated sound/sparkle the sidebar rings on its next scan. The direct
+        # Attention.mark deliberately bypasses the edge's "don't bold the workspace you're
+        # viewing" skip (the CLI can't cheaply know the focused pane) — so a notify fired
+        # while you're sitting IN this workspace briefly bolds its own row; the viewing
+        # sidebar's next reload runs locate and clears it, so it self-heals within a tick.
+        if Monitoring.monitored([wt.path]).empty?
+          puts "not monitoring — run `monitoring on` first: #{leaf}"
+        else
+          Attention.mark(wt.path)
+          Notify.mark(wt.path)
+          puts "monitoring notify: #{leaf}"
+        end
       when nil, "status"
         puts "monitoring #{Monitoring.monitored([wt.path]).any? ? 'on' : 'off'}: #{leaf}"
       else
-        puts "usage: switchboard monitoring on [ttl_seconds] | off"
+        puts "usage: switchboard monitoring on [ttl_seconds] | off | notify"
       end
     end
 
@@ -542,13 +560,13 @@ module Switchboard
     end
 
     # Play a configured sound, for trying audio out / picking sounds (and showing
-    # it off). `switchboard sound [done|waiting]` — defaults to done. Uses the
+    # it off). `switchboard sound [done|waiting|alert]` — defaults to done. Uses the
     # GLOBAL sound config (no project context), blocks until it finishes, and
     # reports WHY nothing played (muted / no player / unresolvable spec) so a
     # silent run is never mistaken for success.
     def play_sound(state = nil)
       state = state || "done"
-      return warn("usage: switchboard sound [done|waiting]") unless %w[done waiting].include?(state)
+      return warn("usage: switchboard sound [done|waiting|alert]") unless %w[done waiting alert].include?(state)
 
       spec = config.sound_for(nil, state.to_sym)
       return warn("sounds are muted for #{state} (set `sounds: { enabled: true }`)") if spec.nil?
@@ -664,7 +682,7 @@ module Switchboard
     def doctor_sounds
       player = Sound.player_argv
       puts row(!player.nil?, player ? "audio player: #{player.first}" : "no audio player (afplay/paplay/aplay/ffplay) — sounds stay silent")
-      %w[done waiting].each do |state|
+      %w[done waiting alert].each do |state|
         spec = config.sound_for(nil, state.to_sym)
         if spec.nil?
           puts "  \e[33m–\e[0m sound #{state}: muted"
@@ -871,7 +889,8 @@ module Switchboard
           switchboard disable-hooks [P]  remove them from that worktree
           switchboard rename NAME    rename the current workspace (dir + tmux session)
           switchboard monitoring on [secs]|off  flag this workspace as running a background monitor (∞; optional secs = liveness ttl for slow loops; bare = status)
-          switchboard sound [done|waiting]  play a state's sound (try audio / pick sounds)
+          switchboard monitoring notify  (from a monitored workspace) surface this cycle's output — bold + a distinct alert sound, even though routine ticks stay silent
+          switchboard sound [done|waiting|alert]  play a state's sound (try audio / pick sounds)
           switchboard prune        kill orphaned sb/ sessions + reap orphaned sidebar processes (--dry-run / -n previews)
           switchboard sandbox      dogfood THIS checkout's sidebar in a throwaway, isolated tmux (auto-torn-down on detach)
           switchboard quit         close ALL switchboard sessions (full teardown — kills the one you're in too)

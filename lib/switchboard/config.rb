@@ -15,7 +15,7 @@ module Switchboard
 
     # Built-in sound name per resting state; the Sound module synthesizes + caches
     # these. Overridable globally or per project via a `sounds:` map.
-    DEFAULT_SOUNDS = { "done" => "train", "waiting" => "chime" }.freeze
+    DEFAULT_SOUNDS = { "done" => "train", "waiting" => "chime", "alert" => "alert" }.freeze
 
     # Default tmux key per configurable role (`tmux_keys:` map). The toggle defaults
     # to `s` (switchboard's historical binding); home is unbound by default (nil) —
@@ -78,12 +78,14 @@ module Switchboard
       # diff_counts: true                          # show +adds −dels of each branch vs base on the workspace row
       # prewarm: true                              # keep off-screen sidebars warm so switching sessions doesn't flash a stale tree
 
-      # Completion sounds (on by default): a built-in (train / chime, or train_1..3 /
-      # chime_1..3), a file path, or a macOS system-sound name. enabled: false mutes all.
+      # Completion sounds (on by default): a built-in (train / chime / alert, or
+      # train_1..3 / chime_1..3), a file path, or a macOS system-sound name. enabled:
+      # false mutes all. `alert` is the declared `monitoring notify` cue.
       sounds:
         # enabled: true
         # done: train
         # waiting: chime
+        # alert: alert
 
       # Prefix keys switchboard binds. toggle defaults to s; home is unbound unless set.
       # A key is a char, a named key (Space, F1, BSpace), or a C-/M- combo.

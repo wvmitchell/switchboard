@@ -72,18 +72,25 @@ agent_state_hooks: false
 ## Set completion sounds
 
 Sounds are on by default: a two-blast train horn when an agent is **done**, a soft
-two-note chime when it's **waiting**. Configure globally:
+two-note chime when it's **waiting**, and a distinct two-tap-then-leap `alert` when a
+monitored agent declares `switchboard monitoring notify` ("come look — this cycle
+surfaced something"; see [agent presence](explanation-agent-presence.md)). Configure
+globally:
 
 ```yaml
 sounds:
   enabled: true     # false mutes everything
   done: train
   waiting: chime
+  alert: alert      # the declared-notify cue
 ```
 
-Each `done`/`waiting` value is one of:
+Audition any of them without waiting for an agent: `switchboard sound done`,
+`switchboard sound waiting`, or `switchboard sound alert`.
 
-- A **built-in** (synthesized, no files): `train`, `chime`, or the variations
+Each `done`/`waiting`/`alert` value is one of:
+
+- A **built-in** (synthesized, no files): `train`, `chime`, `alert`, or the variations
   `train_1`/`train_2`/`train_3` and `chime_1`/`chime_2`/`chime_3`.
 - A **file path**: `~/sounds/horn.wav` (anything with `/` or `~`).
 - A **macOS system sound** name: `Glass`, `Ping`, etc. (a bare name).

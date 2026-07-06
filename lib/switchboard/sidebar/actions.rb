@@ -63,6 +63,7 @@ module Switchboard
 
         AgentState.clear_all # killing every agent makes their last hook state stale — drop it now
         Monitoring.clear_all # ...and every monitoring declaration is now stale too
+        Notify.clear_all     # ...and any pending "come look" alert is moot once the agents are gone
         Tmux.kill_all
         false
       end

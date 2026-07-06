@@ -139,6 +139,7 @@ sounds:
   enabled: true        # false mutes EVERY sound
   done: train          # played when an agent finishes a turn
   waiting: chime       # played when an agent asks for input
+  alert: alert         # played on a declared `monitoring notify`
 ```
 
 | Sub-key | Type | Default | Effect |
@@ -146,6 +147,7 @@ sounds:
 | `enabled` | bool | `true` | `false` mutes all sounds (globally or per-project). |
 | `done` | sound spec | `train` | Sound when a hooked agent reaches `:done`. |
 | `waiting` | sound spec | `chime` | Sound when a hooked agent reaches `:waiting`. |
+| `alert` | sound spec | `alert` | Sound for a declared `switchboard monitoring notify` — a monitored agent surfacing something. Distinct from `done` so a "come look" reads differently than a finish. |
 
 **Sound spec** resolves in this order:
 

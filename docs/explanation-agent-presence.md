@@ -181,6 +181,29 @@ the capture-hash flips `:thinking ⇄ :done` every few seconds and would fire on
 noise. So observation-only agents show a dot but make no sound and trigger no
 badge refresh on completion.
 
+### The declared alert — `monitoring notify`
+
+A workspace running a background monitor (the steady `∞`) has its routine `:done`
+ticks **suppressed** — a `/loop` finishing a cycle every few seconds must not chime
+and bold each time. But some cycles matter: the monitor wakes, finds the thing it's
+watching for, and prints a result. Switchboard can't tell that tick from a "nothing
+new" one — both are byte-identical `Stop` (`:done`) events — the same wall the `∞`
+itself is built on. So the significant tick is **declared, not detected**: the agent
+runs `switchboard monitoring notify` (taught by the nudge), which fires the normal
+bold + sound + sparkle with a **distinct `alert` sound**, even though routine ticks
+stay silent.
+
+It's an **independent alert channel**, not a hook edge — it can fire mid-`:thinking`,
+with no `Stop`. `Notify` (`notify.rb`) is a `KeyedMarkerStore` twin of `Attention`
+read by file **mtime**: `monitoring notify` re-touches the marker, and each sidebar's
+`@prev_notify` cursor rings once per mtime advance — the same "compare against your own
+cursor" trick the completion sound uses, so only the on-screen pane rings and catch-up
+scans re-baseline silently. The **bold** is written straight into `Attention` by the CLI
+(not the edge), so it persists even when no sidebar is on screen — you still see it the
+moment you return. The verb is **gated to a monitored workspace** (it's precisely the
+exception to monitoring's suppression). Cloud routines that never touch the local
+reporter can't declare a notify — a stated limit, like the `∞` itself.
+
 ### Why bold lives on disk but sound doesn't
 
 A completion **sound** is a one-time event — play it once, from wherever you're

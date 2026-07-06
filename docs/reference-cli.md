@@ -157,7 +157,18 @@ non-zero — switchboard doesn't guess a name; you (or the agent) supply it.
 > shell's `pwd` still reports the old name. The command prints the exact `cd` to
 > run — into the same subdir you were in, under the new path.
 
-### `switchboard sound [done|waiting]`
+### `switchboard monitoring on [secs] | off | notify` (bare = status)
+Declare (or clear) that this workspace is running a **background monitor / recurring
+loop**, so the sidebar shows a steady `∞` instead of reading as idle/done. `on`
+re-affirms liveness — re-run it each cycle (optional `secs` sizes the window for a slow
+loop); `off` clears it; a bare `monitoring` prints the status. Agent- or human-invoked.
+
+`monitoring notify` (from a **monitored** workspace) declares "come look — this cycle
+surfaced something": the workspace bolds and plays a distinct **`alert`** sound, the one
+exception to the otherwise-silent routine ticks. It no-ops with a hint if the workspace
+isn't monitoring. See [agent presence](explanation-agent-presence.md#the-declared-alert--monitoring-notify).
+
+### `switchboard sound [done|waiting|alert]`
 Play a state's configured sound, for trying audio out or auditioning sounds.
 Defaults to `done`. Uses the global sound config, blocks until it finishes, and
 reports *why* nothing played (muted / no player / unresolvable spec) so a silent

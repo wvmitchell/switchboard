@@ -36,6 +36,9 @@ module Switchboard
       assert_includes ctx["additionalContext"], "silently",
                       "the presence is operator-facing UI plumbing: the agent flips it on/off with the work " \
                       "lifecycle, silently — it must NOT narrate the monitoring command to the user"
+      assert_includes ctx["additionalContext"], "switchboard monitoring notify",
+                      "routine ticks are silent, so the nudge must teach the notify verb for the cycle that " \
+                      "surfaces something worth the operator's eyes"
       refute_includes ctx["additionalContext"], "∞",
                       "the agent declares monitoring but doesn't render the dot — the message must not " \
                       "expose the glyph (that's the sidebar's job, and it's handled)"

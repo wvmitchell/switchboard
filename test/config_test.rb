@@ -304,6 +304,7 @@ module Switchboard
       assert c.sounds_enabled?
       assert_equal "train", c.sound_for(nil, :done)
       assert_equal "chime", c.sound_for(nil, :waiting)
+      assert_equal "alert", c.sound_for(nil, :alert), "the declared-notify state has its own distinct default"
     end
 
     def test_sounds_global_mute_via_enabled_false

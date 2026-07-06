@@ -92,6 +92,29 @@ module Switchboard
       refute_empty sb.instance_variable_get(:@agents), "the happy path never blanks the dots"
     end
 
+    # The notify seam: refresh_agents must hydrate Notify.pending and thread it into
+    # on_scan, or the whole alert feature ships DEAD (bold works, ring never fires) with a
+    # green suite — the edges tests inject notify_pending directly and the CLI tests only
+    # check disk. Drive the REAL method: a monitored :done is suppressed (silent), but a
+    # live Notify marker pierces it through the hydrated seam and rings the alert sound.
+    def test_refresh_agents_threads_hydrated_notify_into_the_edge_fanout
+      a = real_dir("a")
+      sb = sidebar(nodes: [ws("a", project: "app", path: a)])
+      sb.instance_variable_get(:@edges).instance_variable_set(:@prev_hook_states, { a => :thinking })
+      states = { a => :done } # a completion edge, but...
+      as = Struct.new(:last_hook_states).new(states)
+      as.define_singleton_method(:scan) { |_paths, hooks_only: false| states }
+      sb.instance_variable_set(:@agent_state, as)
+      Monitoring.mark(a) # ...monitored, so the :done is suppressed (no completion sound)
+      Notify.mark(a)     # ...but a declared notify pierces it
+      sounds = []
+      stub_method(Sound, :play, ->(spec, **) { sounds << spec }) do
+        sb.send(:refresh_agents, refresh_prs: false)
+      end
+      assert_equal ["alert"], sounds,
+                   "the hydrated Notify.pending reaches the fanout — delete that line and this goes silent"
+    end
+
     # The edge -> diff-count ride the split rewired: refresh_diffs rides the
     # edge list on_scan RETURNS — one recount on an edge, none on a steady scan.
     def test_refresh_agents_rides_returned_edges_into_refresh_diffs

@@ -22,7 +22,7 @@ module Switchboard
     # selectable per state or project (e.g. `done: train_2`). Bump ASSET_VERSION
     # when any synthesis changes so an upgrade regenerates the cached WAVs — the
     # version rides in the filename, so a stale file is simply never referenced.
-    BUILTINS = %w[train train_1 train_2 train_3 chime chime_1 chime_2 chime_3].freeze
+    BUILTINS = %w[train train_1 train_2 train_3 chime chime_1 chime_2 chime_3 alert].freeze
     ASSET_VERSION = 1
     RATE = 22_050 # Hz, mono — ample for these blips, keeps the cached files tiny
     PEAK = 0.5    # baked-in amplitude: clearly audible, gentle enough for on-by-default
@@ -152,6 +152,7 @@ module Switchboard
         when "chime_1" then chime_1
         when "chime_2" then chime_2
         when "chime_3" then chime_3
+        when "alert"   then alert
         end
       buf && wav(buf)
     end
@@ -202,6 +203,13 @@ module Switchboard
     # chime_3 — a gentle perfect-fifth lift up high (A5 -> E6).
     def chime_3
       peal([880.0, 0.22], [1318.51, 0.5])
+    end
+
+    # alert — the "come look" cue for `monitoring notify`. Two quick equal taps then a
+    # leap up (A5 A5 -> D6): the repeated-note prefix reads as attention-getting and won't
+    # be mistaken for the single-direction chimes (waiting) or the horn trains (done).
+    def alert
+      peal([880.0, 0.12], [880.0, 0.12], [1174.66, 0.45])
     end
 
     # Join horn blasts (each [freqs, dur]) with a short gap, then normalize the

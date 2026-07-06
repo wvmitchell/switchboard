@@ -7,6 +7,24 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.47.0] — a background monitor can say "come look" (2026-07-06)
+
+### Added
+- **`switchboard monitoring notify` — the declared alert.** A workspace running a
+  background monitor shows the steady `∞`, and its routine per-cycle `:done` ticks are
+  silent by design — but a cycle that actually *finds* something (the monitor woke, ran
+  its check, printed a result) used to pass with no cue at all, indistinguishable from an
+  idle tick. The agent now declares that moment with `switchboard monitoring notify`: the
+  workspace name goes **bold** and plays a distinct **`alert`** sound (a two-tap-then-leap,
+  unmistakable from the done horn and waiting chime) — the one exception to the otherwise
+  silent ticks. It's an independent "come look" channel, so it can fire mid-turn, not only
+  at a stopping point. The bold is the durable signal — it persists until you look, even if
+  no sidebar was on screen when the alert landed — while the sound rings when you're
+  watching. Gated to a monitored workspace, and taught to the agent automatically via the
+  background-presence nudge (fire it *after* the cycle's output exists). Configure the
+  sound per project or globally with `sounds: { alert: ... }`; audition it with
+  `switchboard sound alert`.
+
 ## [0.46.3] — the sidebar is one class in seven files (2026-07-05)
 
 ### Changed

@@ -420,11 +420,12 @@ module Switchboard
       ws_paths = @nodes.select { |n| n.kind == "ws" }.map(&:path)
       @agents = @agent_state.scan(ws_paths, hooks_only: hooks_only)
       @monitoring = Monitoring.monitored(ws_paths)     # BEFORE on_scan: gates the :done suppression
+      notify_pending = Notify.pending(ws_paths)        # declared "come look" alerts (mtime per path)
       # T1: the edge fanout (marks, sounds, sparkles, PR spawns) lives in Edges;
       # it returns the edge list so the diff-count refresh can ride the same edge.
       edges = @edges.on_scan(@agent_state.last_hook_states,
                              monitoring: @monitoring, nodes: @nodes, config: @config,
-                             current_path: @current_path,
+                             current_path: @current_path, notify_pending: notify_pending,
                              announce_sounds: announce_sounds, refresh_prs: refresh_prs)
       refresh_diffs if edges.any? # a finished turn likely just committed — repaint its count
       @attention = Attention.marked(ws_paths)          # load for render, after the marks land

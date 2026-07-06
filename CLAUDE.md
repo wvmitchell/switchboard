@@ -38,6 +38,7 @@ bin/switchboard config     # open config.yml in $EDITOR (sidebar `e` does the sa
 bin/switchboard sidebar    # run the persistent sidebar standalone (normally tmux-spawned)
 bin/switchboard rename NAME # rename the current workspace from inside it (dir move + bridge + session rename + Claude `/resume` history carry + the git branch when safe — see #94); for the agent to (re)name its own live workspace (#42). No NAME prints usage + the current name (switchboard doesn't guess one)
 bin/switchboard monitoring on|off # flag/unflag this workspace as running a background monitor/loop (steady ∞ dot; bare = status). Agent- or human-invoked; re-run `on` each cycle to keep it live (liveness = marker mtime within Monitoring::TTL). Layer-2 SessionStart/SessionEnd hooks (monitoring-nudge) clear it per-session + nudge, gated on config background_presence
+bin/switchboard monitoring notify # (from a MONITORED workspace) declare "come look — this cycle surfaced something": bold + a distinct `alert` sound + sparkle, the one exception to the silent routine ticks. Gated to monitored; writes an Attention bold (direct) + a Notify mtime marker (the sidebar's announce-gated ring). See the ∞ section.
 bin/switchboard prune      # kill orphaned sb/ sessions (reconcile vs git worktrees) + reap orphaned sidebar processes; --dry-run/-n previews
 bin/switchboard sandbox    # dogfood THIS checkout's sidebar in a throwaway, fully-isolated tmux — auto-torn-down on detach (the interactive twin of bin/test-smoke, #126)
 bin/switchboard quit       # close ALL sb/ sessions (full teardown; current session last; clears agent state)
@@ -524,6 +525,29 @@ attention-bold (`suppress_completion?`, the one predicate both `play_sounds_for`
 edge. `@monitoring` is hydrated (in `refresh_agents`, before `Edges#on_scan`) so the
 suppression is live on the scan that fires the edge; the monitoring dir joins
 `warm_fingerprint` so a toggle warms off-screen panes.
+
+**The one exception is a DECLARED notify** (`switchboard monitoring notify`, `notify.rb`)
+— the agent's "come look, this cycle surfaced something" for the case that routine
+suppression would otherwise swallow. Same "declared, not detected" wall: switchboard
+can't tell a "found it" tick from a "nothing new" tick (both are byte-identical `:done`
+Stops), so the agent declares the one that matters. It's an **independent alert channel**,
+not a hook edge — it may fire mid-`:thinking`. `Notify` is a `KeyedMarkerStore` twin of
+`Attention` (content = realpath, like Attention) read by **mtime**: `monitoring notify`
+re-touches the marker (fresh mtime), and each sidebar's `Edges#@prev_notify` cursor rings
+once per advance (the completion-sound "compare-to-your-own-cursor" trick, so only the
+on-screen pane rings and catch-up scans re-baseline silently — no delete race, no TTL).
+The **bold** is written **directly by the CLI** into `Attention` (so it persists even
+when no sidebar is on screen — the away-user case), so the edge's `mark_attention_for`
+sees only the un-suppressed *completions*; the forced alert drives only the announce-gated
+sound + sparkle. `:alert` (the sound state + `alert` built-in, distinct from `done`/
+`waiting` — NOT `:notify`, which the Notification hook owns) stays **strictly local** to
+sound/sparkle: a throwaway `states` map, never merged into `now`/`@prev_hook_states`, the
+returned `edges` (so the diff refresh still rides real `:done`s), or `render_state`. The
+verb is **gated to a monitored workspace** (it's the exception to monitoring's
+suppression) and `Notify.clear_all` rides `quit` beside `Monitoring.clear_all`. The nudge
+teaches it: fire *after* a cycle's output exists, not before. `Notify.pending` needs no
+`warm_fingerprint` entry — its only shared render effect is the Attention bold, already
+covered there.
 
 **Clears, fastest to slowest (defense in depth):** explicit `off` and `quit`
 (`Monitoring.clear_all`, beside `AgentState.clear_all` — a teardown kills every agent)

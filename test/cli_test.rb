@@ -191,6 +191,38 @@ module Switchboard
       end
     end
 
+    # `monitoring notify` on a MONITORED workspace writes both markers: Attention (the
+    # persistent bold, direct so an away user still gets it) and Notify (the sidebar's
+    # announce-gated sound/sparkle signal).
+    def test_monitoring_notify_on_a_monitored_workspace_writes_both_markers
+      d = path("wt")
+      FileUtils.mkdir_p(d)
+      real = File.realpath(d)
+      wt = Worktree.new(project: "p", path: real, primary: false)
+      stub_method(CLI, :current_worktree, ->(*) { wt }) do
+        Monitoring.mark(real) # must be monitoring first
+        out = capture { CLI.monitoring("notify") }
+        assert_includes out, "monitoring notify"
+        assert Attention.marked([real]).any?, "notify bolds via a direct Attention mark"
+        assert Notify.pending([real]).any?,   "notify writes the sound/sparkle signal"
+      end
+    end
+
+    # `monitoring notify` is GATED: a non-monitored workspace no-ops with a hint (the verb
+    # lives under `monitoring` and is strictly the exception to its suppression).
+    def test_monitoring_notify_on_a_non_monitored_workspace_no_ops
+      d = path("wt")
+      FileUtils.mkdir_p(d)
+      real = File.realpath(d)
+      wt = Worktree.new(project: "p", path: real, primary: false)
+      stub_method(CLI, :current_worktree, ->(*) { wt }) do
+        out = capture { CLI.monitoring("notify") } # never ran `on`
+        assert_includes out, "not monitoring"
+        assert_empty Notify.pending([real]), "no marker written when not monitoring"
+        assert_empty Attention.marked([real]), "and no bold either"
+      end
+    end
+
     # --- monitoring-nudge (the Layer-2 SessionStart/SessionEnd hook handler) ------
 
     # A real worktree dir (Monitoring.mark gates on the dir existing) under project "proj".
@@ -333,6 +365,20 @@ module Switchboard
       assert kw[:wait], "CLI plays blocking so the one-shot finishes"
     end
 
+    # `sound alert` auditions the declared-notify sound — the accept-branch must include it,
+    # or `switchboard sound alert` would fall to the usage warning.
+    def test_sound_auditions_the_alert_state
+      captured = nil
+      stub_method(Sound, :player_argv, -> { ["afplay"] }) do
+        stub_method(Sound, :play, ->(spec, **kw) { captured = [spec, kw] }) do
+          CLI.play_sound("alert")
+        end
+      end
+      spec, kw = captured
+      assert_equal "alert", spec, "the alert state resolves to its distinct default sound"
+      assert kw[:wait], "CLI plays blocking so the one-shot finishes"
+    end
+
     def test_doctor_reports_player_and_sound_rows
       out = capture do
         stub_method(Sound, :player_argv, -> { ["afplay"] }) { run_doctor }
@@ -340,6 +386,7 @@ module Switchboard
       assert_includes out, "audio player: afplay"
       assert_includes out, "sound done: train"
       assert_includes out, "sound waiting: chime"
+      assert_includes out, "sound alert: alert", "doctor reports the declared-notify sound too"
     end
 
     # --- doctor: PATH symlink rows (the required command + the optional alias) ---

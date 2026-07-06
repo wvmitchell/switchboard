@@ -64,9 +64,13 @@ module Switchboard
         "background monitor, watch loop, or recurring/scheduled task here, silently run " \
         "`switchboard monitoring on <seconds>` at the top of each cycle — set <seconds> a bit " \
         "longer than that cycle so the workspace keeps reading as actively monitoring between " \
-        "ticks — and `switchboard monitoring off` the moment that work ends. It's UI plumbing " \
-        "you manage as part of the work's lifecycle: don't announce it, explain it, or wait for " \
-        "the user to ask you to turn it off."
+        "ticks — and `switchboard monitoring off` the moment that work ends. Routine ticks are " \
+        "silent by design, so when a cycle actually surfaces something the operator should see " \
+        "(you found the thing you're watching for, produced a result), run `switchboard " \
+        "monitoring notify` right after that output exists — it bolds the workspace and plays a " \
+        "distinct alert sound, the one exception to the silent ticks. It's UI plumbing you " \
+        "manage as part of the work's lifecycle: don't announce it, explain it, or wait for the " \
+        "user to ask you to turn it off."
     end
 
     # The SessionStart stdout payload Claude merges into context (its `additionalContext`),

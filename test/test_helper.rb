@@ -65,6 +65,7 @@ module Switchboard
       ENV["SWITCHBOARD_STATE_DIR"]     = path("state")     # AgentState (T3 seam)
       ENV["SWITCHBOARD_ATTENTION_DIR"] = path("attention") # Attention markers (bold-until-viewed)
       ENV["SWITCHBOARD_MONITORING_DIR"] = path("monitoring") # Monitoring markers (background-monitor ∞)
+      ENV["SWITCHBOARD_NOTIFY_DIR"]    = path("notify")    # Notify markers (declared "come look" alert)
       ENV["SWITCHBOARD_COLLAPSE_DIR"]  = path("collapse")  # Collapse folds (shared project collapse state)
       ENV["SWITCHBOARD_FULL_HEADER_FILE"] = path("full_header") # FullHeader toggle (full header on every session)
       ENV["SWITCHBOARD_WIDTH_FILE"]    = path("width")     # Width (shared sidebar pane width, ←/→ resize)

@@ -82,6 +82,7 @@ module Switchboard
           "SWITCHBOARD_STATE_DIR"           => File.join(state_dir, "agent-state"),
           "SWITCHBOARD_ATTENTION_DIR"       => File.join(state_dir, "attention"),
           "SWITCHBOARD_MONITORING_DIR"      => File.join(state_dir, "monitoring"),
+          "SWITCHBOARD_NOTIFY_DIR"          => File.join(state_dir, "notify"),
           "SWITCHBOARD_COLLAPSE_DIR"        => File.join(state_dir, "collapse"),
           "SWITCHBOARD_FULL_HEADER_FILE"    => File.join(state_dir, "full_header"),
           "SWITCHBOARD_BRANCH_FOLD_FILE"    => File.join(state_dir, "branch_fold"),

@@ -59,6 +59,15 @@ module Switchboard
       assert_equal :ok, Sound.status("chime_3")
     end
 
+    # The declared-notify `alert` built-in synthesizes + resolves like the others.
+    def test_resolve_alert_builtin_materializes_versioned_wav
+      assert_includes Sound::BUILTINS, "alert"
+      path = Sound.resolve("alert")
+      assert path.end_with?("alert.v#{Sound::ASSET_VERSION}.wav")
+      assert File.exist?(path), "the alert WAV materializes on first use"
+      assert_equal :ok, Sound.status("alert")
+    end
+
     def test_resolve_expands_path_specs
       assert_equal File.expand_path("/tmp/horn.wav"), Sound.resolve("/tmp/horn.wav")
       assert_equal File.expand_path("~/horn.aiff"), Sound.resolve("~/horn.aiff")

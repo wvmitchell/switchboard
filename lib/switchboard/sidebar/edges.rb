@@ -54,6 +54,9 @@ module Switchboard
 
       def initialize
         @prev_hook_states = nil # last scan's hook states; nil until the first scan
+        @prev_notify = {}       # worktree path => last-seen notify-marker mtime; the per-process
+                                # cursor that makes a declared `monitoring notify` ring once (twin
+                                # of @prev_hook_states, but for the alert channel)
         @sparkles = {}          # worktree path => monotonic deadline of an active completion
                                 # twinkle; the sidebar's pulsing? keeps animating until it
                                 # lapses (sparkling?)
@@ -95,7 +98,7 @@ module Switchboard
       # raises past us (the fault-path test pins exactly this) — and the ensure
       # still advances the baseline either way.
       def on_scan(now, monitoring:, nodes:, config:, current_path:,
-                  announce_sounds: true, refresh_prs: true)
+                  notify_pending: {}, announce_sounds: true, refresh_prs: true)
         edges = []
         if @prev_hook_states
           edges = self.class.completion_edges(@prev_hook_states, now)
@@ -103,12 +106,29 @@ module Switchboard
           # drop it from the human-facing signals (bold, sound, sparkle) so a background
           # loop doesn't chime and bold every tick. :waiting still surfaces (it wants
           # input), and the PR/diff refresh rides EVERY edge (a tick may have committed).
-          notify = edges.reject { |path| suppress_completion?(path, now[path], monitoring) }
-          mark_attention_for(notify, current_path)
+          completions = edges.reject { |path| suppress_completion?(path, now[path], monitoring) }
+          # Bold rides the un-suppressed COMPLETIONS only. A declared alert's bold is written
+          # directly into Attention by the CLI (so it persists even when no sidebar is on
+          # screen), so it's NOT re-marked here — one source of truth, and no viewing?-skip drift.
+          mark_attention_for(completions, current_path)
           refresh_prs_for(edges, nodes) if refresh_prs # warm suppresses the off-screen PR-spawn fan-out
           if announce_sounds
-            play_sounds_for(notify, now, nodes, config)
-            sparkle_for(notify, now)
+            # A declared "come look" alert (`monitoring notify`): its marker mtime is newer
+            # than our per-process cursor. An INDEPENDENT alert channel, NOT a hook edge — it
+            # may fire mid-:thinking, with no Stop. It only rings + sparkles here; the diff
+            # refresh still rides the hook `edges` (returned below), never the alert.
+            forced = notify_pending.select { |p, m| (prev = @prev_notify[p]).nil? || m > prev }.keys
+            alerted = completions | forced
+            # :alert is STRICTLY LOCAL to sound/sparkle: a throwaway states map, never merged
+            # into `now` (which advances @prev_hook_states) or the returned `edges` (which the
+            # diff refresh rides) or render_state (which reads @agents). It only picks the alert
+            # sound/glyph for a forced path whose real hook state is :thinking/absent — but NOT
+            # if that path ALSO has a live :waiting edge this scan (an input request is more
+            # urgent than a routine alert, and already owns its chime + blink): let :waiting win.
+            overrides = forced.reject { |p| now[p] == :waiting }.to_h { |p| [p, :alert] }
+            states = overrides.empty? ? now : now.merge(overrides)
+            play_sounds_for(alerted, states, nodes, config)
+            sparkle_for(alerted, states)
           end
         end
         edges
@@ -122,6 +142,10 @@ module Switchboard
         # remembered :done, so it's a non-change, not an edge. Bounded by worktrees
         # seen this process — tiny; never pruned.
         @prev_hook_states = (@prev_hook_states || {}).merge(now)
+        # The notify cursor advances EVERY scan (catch-up included), so a switch-in scan
+        # re-baselines a while-away alert silently instead of re-ringing it. Absent from
+        # notify_pending => no marker => no entry, so it stays bounded by notified worktrees.
+        @prev_notify.merge!(notify_pending)
       end
 
       # Is `path` mid-twinkle? Deadlines are wall-clock (monotonic), NOT pulse units —
@@ -218,8 +242,8 @@ module Switchboard
       # paths, so this is one sound per [worktree, state]: every worktree's
       # completion is heard, but a worktree can't double-fire in one scan. Fully
       # rescued — a sound fault never disturbs the scan or the PR refresh above.
-      def play_sounds_for(edges, now, nodes, config)
-        edges.each { |path| Sound.play(config.sound_for(project_for_path(nodes, path), now[path])) }
+      def play_sounds_for(edges, states, nodes, config)
+        edges.each { |path| Sound.play(config.sound_for(project_for_path(nodes, path), states[path])) }
       rescue StandardError
         nil
       end
@@ -232,9 +256,9 @@ module Switchboard
       # replay on switch-back; the sidebar's pulsing? keeps the loop animating while
       # it's live, then sparkling? GCs it. Fully rescued — a fault never disturbs
       # scan, sound, or refresh.
-      def sparkle_for(edges, now)
+      def sparkle_for(edges, states)
         deadline = monotonic + SPARKLE_SECS
-        edges.each { |path| @sparkles[path] = deadline if now[path] == :done }
+        edges.each { |path| @sparkles[path] = deadline if %i[done alert].include?(states[path]) }
       rescue StandardError
         nil
       end

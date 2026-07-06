@@ -20,9 +20,9 @@ module Switchboard
 
     # on_scan with inert defaults so each test names only what it exercises.
     def scan(e, now, nodes: [], monitoring: Set.new, config: Config.new,
-             current_path: nil, announce_sounds: true, refresh_prs: true)
+             current_path: nil, notify_pending: {}, announce_sounds: true, refresh_prs: true)
       e.on_scan(now, monitoring: monitoring, nodes: nodes, config: config,
-                current_path: current_path,
+                current_path: current_path, notify_pending: notify_pending,
                 announce_sounds: announce_sounds, refresh_prs: refresh_prs)
     end
 
@@ -263,6 +263,145 @@ module Switchboard
       e.define_singleton_method(:mark_attention_for) { |_paths, _cp| }
       scan(e, { "/wt/a" => :waiting }, monitoring: Set.new(["/wt/a"]), refresh_prs: false)
       assert_equal ["/wt/a"], sounded, "a monitor pausing for input still rings"
+    end
+
+    # --- declared notify: the alert channel (`monitoring notify`) --------------
+    # A monitored workspace's routine :done is suppressed, but a DECLARED notify
+    # (fresh marker mtime) pierces it — rings the distinct alert sound + sparkles,
+    # even mid-:thinking. It's not a hook edge; it never leaks into the baseline.
+
+    T0 = Time.at(1_000) # a fixed marker mtime (Date.now-free)
+    T1 = Time.at(2_000) # a newer one (a re-notify)
+
+    def test_notify_pierces_monitored_suppression_with_the_alert_sound
+      e = edges(prev: { "/wt/a" => :thinking })
+      sounds = []
+      e.define_singleton_method(:maybe_refresh_prs) { |_p| }
+      stub_method(Sound, :play, ->(spec, **) { sounds << spec }) do
+        # :done is suppressed (monitored), but the fresh notify forces the alert through.
+        scan(e, { "/wt/a" => :done }, nodes: [ws("a", project: "app", path: "/wt/a")],
+                                      monitoring: Set.new(["/wt/a"]),
+                                      notify_pending: { "/wt/a" => T0 })
+      end
+      assert_equal ["alert"], sounds, "a declared notify rings the distinct alert sound"
+    end
+
+    def test_notify_fires_even_mid_thinking
+      e = edges(prev: { "/wt/a" => :thinking })
+      sounds = []
+      e.define_singleton_method(:maybe_refresh_prs) { |_p| }
+      stub_method(Sound, :play, ->(spec, **) { sounds << spec }) do
+        # No hook edge at all (still :thinking), yet the notify surfaces.
+        scan(e, { "/wt/a" => :thinking }, nodes: [ws("a", project: "app", path: "/wt/a")],
+                                          monitoring: Set.new(["/wt/a"]),
+                                          notify_pending: { "/wt/a" => T0 })
+      end
+      assert_equal ["alert"], sounds, "an alert is independent of hook state"
+    end
+
+    def test_monitored_done_without_a_notify_stays_silent
+      # REGRESSION guard: the whole feature must not un-suppress the routine tick.
+      e = edges(prev: { "/wt/a" => :thinking })
+      sounds = []
+      e.define_singleton_method(:maybe_refresh_prs) { |_p| }
+      stub_method(Sound, :play, ->(spec, **) { sounds << spec }) do
+        scan(e, { "/wt/a" => :done }, nodes: [ws("a", path: "/wt/a")],
+                                      monitoring: Set.new(["/wt/a"])) # no notify_pending
+      end
+      assert_empty sounds, "a monitored :done with no notify is still silent"
+    end
+
+    def test_notify_rings_once_per_mtime
+      e = edges(prev: { "/wt/a" => :thinking })
+      sounds = []
+      e.define_singleton_method(:maybe_refresh_prs) { |_p| }
+      nodes = [ws("a", path: "/wt/a")]
+      mon = Set.new(["/wt/a"])
+      stub_method(Sound, :play, ->(spec, **) { sounds << spec }) do
+        scan(e, { "/wt/a" => :thinking }, nodes: nodes, monitoring: mon, notify_pending: { "/wt/a" => T0 })
+        scan(e, { "/wt/a" => :thinking }, nodes: nodes, monitoring: mon, notify_pending: { "/wt/a" => T0 })
+      end
+      assert_equal ["alert"], sounds, "the same marker mtime rings once — the cursor advances"
+    end
+
+    def test_re_notify_a_fresher_mtime_rings_again
+      e = edges(prev: { "/wt/a" => :thinking })
+      sounds = []
+      e.define_singleton_method(:maybe_refresh_prs) { |_p| }
+      nodes = [ws("a", path: "/wt/a")]
+      mon = Set.new(["/wt/a"])
+      stub_method(Sound, :play, ->(spec, **) { sounds << spec }) do
+        scan(e, { "/wt/a" => :thinking }, nodes: nodes, monitoring: mon, notify_pending: { "/wt/a" => T0 })
+        scan(e, { "/wt/a" => :thinking }, nodes: nodes, monitoring: mon, notify_pending: { "/wt/a" => T1 })
+      end
+      assert_equal %w[alert alert], sounds, "a re-notify (fresher mtime) rings again"
+    end
+
+    def test_notify_catch_up_is_silent_but_advances_the_cursor
+      e = edges(prev: { "/wt/a" => :thinking })
+      sounds = []
+      e.define_singleton_method(:maybe_refresh_prs) { |_p| }
+      nodes = [ws("a", path: "/wt/a")]
+      mon = Set.new(["/wt/a"])
+      stub_method(Sound, :play, ->(spec, **) { sounds << spec }) do
+        # Switch-in catch-up: the away alert re-baselines silently...
+        scan(e, { "/wt/a" => :thinking }, nodes: nodes, monitoring: mon,
+                                          notify_pending: { "/wt/a" => T0 }, announce_sounds: false)
+        # ...and a later visible scan of the SAME marker does not re-ring it.
+        scan(e, { "/wt/a" => :thinking }, nodes: nodes, monitoring: mon, notify_pending: { "/wt/a" => T0 })
+      end
+      assert_empty sounds, "a while-away alert is consumed silently, never re-rung on return"
+      assert_equal T0, e.instance_variable_get(:@prev_notify)["/wt/a"], "the cursor still advanced"
+    end
+
+    def test_notify_marker_live_on_first_scan_seeds_silently
+      e = edges # no baseline — a fresh sidebar process
+      sounds = []
+      e.define_singleton_method(:maybe_refresh_prs) { |_p| }
+      stub_method(Sound, :play, ->(spec, **) { sounds << spec }) do
+        scan(e, { "/wt/a" => :thinking }, nodes: [ws("a", path: "/wt/a")],
+                                          monitoring: Set.new(["/wt/a"]), notify_pending: { "/wt/a" => T0 })
+      end
+      assert_empty sounds, "a marker already live when the process starts seeds, doesn't ring"
+      assert_equal T0, e.instance_variable_get(:@prev_notify)["/wt/a"], "the first scan seeds the cursor"
+    end
+
+    def test_alert_state_does_not_leak_into_the_hook_baseline_or_edges
+      e = edges(prev: { "/wt/a" => :thinking })
+      e.define_singleton_method(:maybe_refresh_prs) { |_p| }
+      ret = nil
+      stub_method(Sound, :play, ->(*) {}) do
+        ret = scan(e, { "/wt/a" => :thinking }, nodes: [ws("a", path: "/wt/a")],
+                                                monitoring: Set.new(["/wt/a"]),
+                                                notify_pending: { "/wt/a" => T0 })
+      end
+      assert_empty ret, ":alert is not a hook edge — the returned edge list (diff ride) stays empty"
+      assert_equal :thinking, e.instance_variable_get(:@prev_hook_states)["/wt/a"],
+                   ":alert never leaks into @prev_hook_states — the real hook state is preserved"
+    end
+
+    def test_notify_sparkles
+      e = edges(prev: { "/wt/a" => :thinking })
+      e.define_singleton_method(:maybe_refresh_prs) { |_p| }
+      stub_method(Sound, :play, ->(*) {}) do
+        scan(e, { "/wt/a" => :thinking }, nodes: [ws("a", path: "/wt/a")],
+                                          monitoring: Set.new(["/wt/a"]), notify_pending: { "/wt/a" => T0 })
+      end
+      assert e.sparkling?("/wt/a"), "a declared alert twinkles like a completion"
+    end
+
+    def test_notify_does_not_bold_through_the_edge_cli_owns_the_bold
+      # The forced alert's bold is written by the CLI into Attention, NOT by the edge —
+      # so mark_attention_for (edge-side) sees only the completions, never the forced path.
+      e = edges(prev: { "/wt/a" => :thinking })
+      bolded = []
+      e.define_singleton_method(:maybe_refresh_prs) { |_p| }
+      e.define_singleton_method(:mark_attention_for) { |paths, _cp| bolded.concat(paths) }
+      stub_method(Sound, :play, ->(*) {}) do
+        scan(e, { "/wt/a" => :thinking }, nodes: [ws("a", path: "/wt/a")],
+                                          monitoring: Set.new(["/wt/a"]), notify_pending: { "/wt/a" => T0 })
+      end
+      assert_empty bolded, "the edge does not bold a forced alert — the CLI's Attention.mark owns it"
     end
 
     # --- attention marks (the visual twin) -------------------------------------

@@ -34,7 +34,11 @@ An agent running a **background monitor or recurring loop** shows the steady `�
 instead of reading as idle/done, so you don't mistake "watching in the background"
 for "finished and abandoned" (and a looping agent won't chime on every tick). The
 agent flags it with `switchboard monitoring on` (taught automatically via the
-`background_presence` nudge; toggle off in config), or you can run it by hand.
+`background_presence` nudge; toggle off in config), or you can run it by hand. When one
+of those quiet cycles actually **surfaces something** — the monitor found what it was
+watching for — the agent runs `switchboard monitoring notify` and that workspace bolds
+and plays a distinct **alert** sound, the one exception to the silent ticks, so a
+background find still reaches you.
 
 ## Why
 
