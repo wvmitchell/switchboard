@@ -95,5 +95,60 @@ module Switchboard
       assert_equal "700", format("%o", File.stat(a).mode & 0o777)
       assert File.basename(a).start_with?("sbxtest#{Process.pid}-")
     end
+
+    # --- server.pid record/read (pid-kill a socketless daemon) ---------------
+
+    def test_server_pid_file_lives_in_the_socket_dir
+      assert_equal File.join(@tmp, "server.pid"), IsolatedServer.server_pid_file(@tmp)
+    end
+
+    def test_recorded_pid_round_trips_a_live_pid_with_matching_identity
+      pid = Process.pid # genuinely live, so its start-time matches the recorded token
+      File.write(IsolatedServer.server_pid_file(@tmp), "#{pid}\t#{IsolatedServer.process_start(pid)}")
+      assert_equal pid, IsolatedServer.recorded_pid(@tmp)
+    end
+
+    def test_recorded_pid_rejects_a_recycled_pid_whose_start_time_differs
+      # A LIVE pid but a start-time that doesn't match = the pid was recycled since we
+      # recorded it. Returning it would let ensure_dead SIGKILL a stranger (maybe the dev's
+      # real tmux server) — so an identity mismatch reads as nil and is never killed.
+      File.write(IsolatedServer.server_pid_file(@tmp), "#{Process.pid}\tThu Jan  1 00:00:00 1970")
+      assert_nil IsolatedServer.recorded_pid(@tmp)
+    end
+
+    def test_recorded_pid_is_nil_when_missing_garbled_or_identityless
+      assert_nil IsolatedServer.recorded_pid(@tmp), "no server.pid -> nil, not a crash"
+      File.write(IsolatedServer.server_pid_file(@tmp), "not-a-pid")
+      assert_nil IsolatedServer.recorded_pid(@tmp), "a garbled pid file reads as nil"
+      File.write(IsolatedServer.server_pid_file(@tmp), "4242")
+      assert_nil IsolatedServer.recorded_pid(@tmp), "a pid with no identity token can't be verified -> nil"
+    end
+
+    def test_process_start_present_for_a_live_pid_and_empty_for_a_dead_one
+      refute_empty IsolatedServer.process_start(Process.pid), "a live pid has a start time"
+      assert_equal "", IsolatedServer.process_start(2_147_483_600), "an unused pid has no start time"
+    end
+
+    # --- tmux_comm? (the recycle guard before a pid-kill) --------------------
+
+    def test_tmux_comm_matches_tmux_only
+      assert IsolatedServer.tmux_comm?("tmux"),                    "bare name"
+      assert IsolatedServer.tmux_comm?("/opt/homebrew/bin/tmux\n"), "absolute path + newline"
+      assert IsolatedServer.tmux_comm?("tmux: server"),            "tmux server variant"
+      refute IsolatedServer.tmux_comm?("ruby"),                    "a recycled non-tmux pid is NOT ours to kill"
+      refute IsolatedServer.tmux_comm?(""),                        "empty (dead pid) is not tmux"
+    end
+
+    # ensure_dead must NOT signal a recycled pid whose process is no longer tmux — the
+    # guard that keeps a pid-kill from ever hitting a stranger.
+    def test_ensure_dead_skips_a_non_tmux_pid
+      killed = false
+      stub_method(IsolatedServer, :tmux_process?, ->(_) { false }) do
+        stub_method(Process, :kill, ->(*) { killed = true }) do
+          IsolatedServer.ensure_dead(999_999)
+        end
+      end
+      refute killed, "a pid that isn't a live tmux process must never be signalled"
+    end
   end
 end

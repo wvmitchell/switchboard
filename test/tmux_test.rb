@@ -51,7 +51,8 @@ module Switchboard
     end
 
     # --- parse_ttys / parse_sidebar_processes / normalize_tty: the pure inputs to
-    # prune's orphaned-sidebar reap (a sidebar process whose tty is no live pane).
+    # prune's orphaned-sidebar reap (a THIS-SERVER sidebar process whose tty is no live
+    # pane — parse_sidebar_processes scopes to our server's children by parent pid).
 
     def test_parse_ttys_strips_dev_prefix_and_dedupes
       raw = "/dev/ttys001\n/dev/ttys002\n/dev/ttys001\n"
@@ -63,16 +64,27 @@ module Switchboard
       assert_equal Set["pts/3"], Tmux.parse_ttys("/dev/pts/3\n??\n-\n\n")
     end
 
-    def test_parse_sidebar_processes_keeps_only_sidebar_rows_with_pid_and_tty
-      raw = +"  101 ttys005 ruby /x/bin/switchboard sidebar\n"
-      raw << "  202 ttys006 ruby /x/bin/switchboard prune\n"        # not a sidebar
-      raw << "  303 ?? ruby /x/bin/switchboard sidebar\n"           # no tty -> tty nil
-      assert_equal [[101, "ttys005"], [303, nil]], Tmux.parse_sidebar_processes(raw)
+    def test_parse_sidebar_processes_keeps_only_this_servers_sidebar_rows
+      raw = +"  101 900 ttys005 ruby /x/bin/switchboard sidebar\n"    # ours (parent = server 900)
+      raw << "  202 900 ttys006 ruby /x/bin/switchboard prune\n"      # ours but not a sidebar
+      raw << "  303 900 ?? ruby /x/bin/switchboard sidebar\n"         # ours, no tty -> tty nil
+      raw << "  404 111 ttys007 ruby /x/bin/switchboard sidebar\n"    # a DIFFERENT server's sidebar
+      # Only sidebar rows whose parent is OUR server (900) survive; the foreign 404
+      # (another server — e.g. the dev's real one during a throwaway prune) is filtered
+      # out. That ppid scope is the structural guard against reaping a real sidebar.
+      assert_equal [[101, "ttys005"], [303, nil]], Tmux.parse_sidebar_processes(raw, 900)
+    end
+
+    def test_parse_sidebar_processes_excludes_everything_when_server_pid_unknown
+      # nil owner_pid (server unreachable) matches no parent -> reap nothing: the fail-safe
+      # direction, never a mass-reap on a bad read.
+      raw = "101 900 ttys005 ruby /x/bin/switchboard sidebar\n"
+      assert_empty Tmux.parse_sidebar_processes(raw, nil)
     end
 
     def test_parse_sidebar_processes_ignores_a_header_or_garbled_line
-      raw = "PID TTY COMMAND\n\nnotanumber ttys001 switchboard sidebar\n"
-      assert_empty Tmux.parse_sidebar_processes(raw)
+      raw = "PID PPID TTY COMMAND\n\nnotanumber 900 ttys001 switchboard sidebar\n"
+      assert_empty Tmux.parse_sidebar_processes(raw, 900)
     end
 
     def test_normalize_tty_bridges_dev_prefix_and_no_tty_markers

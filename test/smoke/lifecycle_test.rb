@@ -102,6 +102,11 @@ module Switchboard
       # guard), so age the orphan past it — a deterministic wait, not a flake.
       sleep Reconcile::SESSION_GRACE + 1
       assert_isolated_socket!
+      # prune reaps sidebar PROCESSES with a machine-global `ps`; without the isolated-server
+      # guard it would SIGTERM the developer's REAL sidebar (its tty isn't a pane on this
+      # throwaway server). The flag MUST be live before we drive prune — see SmokeCase#setup.
+      assert_equal "1", ENV["SWITCHBOARD_SANDBOX"],
+                   "prune must run under the isolated-server guard, else it kills the dev's real sidebar"
       run_bin("prune")
       wait_until("the orphaned session is reconciled away") { !session?(sess) }
     end

@@ -249,6 +249,7 @@ module Switchboard
       home = Tmux::HOME
       system("tmux", "new-session", "-d", "-s", home, "-x", "220", "-y", "50", "-c", sock_dir,
              out: File::NULL, err: File::NULL)
+      IsolatedServer.record_server_pid(sock_dir) # so teardown can pid-kill a socketless daemon
       system("tmux", "set-option", "-t", home, "@sb_sidebar", "on", out: File::NULL, err: File::NULL)
       # run-shell execs its arg via `sh -c`, so a checkout path with a space would
       # word-split and silently drop every keybinding + hook — Shellwords.escape it.
@@ -258,16 +259,14 @@ module Switchboard
     end
 
     # Kill the throwaway server and remove the whole dir (socket + co-located state).
-    # The kill is CONFINED by IsolatedServer.kill_env (TMUX cleared + TMUX_TMPDIR pinned
-    # to sock_dir), so it can only ever reach OUR server — even if teardown runs after
-    # an early failure that never unset the caller's real $TMUX. Unconditional (no
-    # readback gate): a flaky `display-message` must never skip the kill and then remove
-    # the dir out from under a still-live daemon (orphaning it where sweep can't find it).
-    # `kill-server` with no server is a harmless no-op. Best-effort.
+    # IsolatedServer.kill_server does kill-server (confined by kill_env, so it can only
+    # reach OUR server) AND pid-kills the recorded pid as a guarantee — so a kill-server
+    # that doesn't take can't leave a socketless daemon orphaned where sweep can't find
+    # it (the leak this closes). Only after it returns do we remove the dir. Best-effort.
     def teardown(sock_dir)
       return unless sock_dir
 
-      system(IsolatedServer.kill_env(sock_dir), "tmux", "kill-server", out: File::NULL, err: File::NULL)
+      IsolatedServer.kill_server(sock_dir)
       FileUtils.remove_entry(sock_dir) if File.directory?(sock_dir)
     rescue StandardError
       nil

@@ -36,7 +36,7 @@ module Switchboard
     # kill/remove is skipped, never fatal.
     def sweep_stale(prefix)
       stale_sock_dirs(Dir.glob("/tmp/#{prefix}*"), prefix).each do |dir|
-        system(kill_env(dir), "tmux", "kill-server", out: File::NULL, err: File::NULL)
+        kill_server(dir)                  # kill-server AND pid-kill — reaps even a socketless daemon
         FileUtils.remove_entry(dir)
       rescue StandardError
         next
@@ -79,6 +79,130 @@ module Switchboard
       false
     rescue Errno::EPERM
       true
+    end
+
+    # Kill the throwaway server rooted at `sock_dir` and DO NOT RETURN until it's really
+    # dead — the fix for orphaned daemons. A tmux server outlives its socket: once the
+    # socket file is unlinked, `tmux kill-server` (path-based) can never reach it, so a
+    # teardown/sweep that removed the dir after a merely-ATTEMPTED kill left the daemon
+    # alive AND unfindable (only Process.kill can reach a socketless daemon). So two
+    # steps: (1) `kill-server` confined by kill_env — the clean path while the socket is
+    # live; (2) pid-kill the recorded pid as the GUARANTEE. The caller can then remove the
+    # dir with zero risk of orphaning a live server. Safety: the pid comes ONLY from THIS
+    # throwaway server (a read through its own confined socket, or its boot-time server.pid
+    # which is identity-checked so a recycled pid is never returned — see recorded_pid),
+    # and ensure_dead only signals a still-live tmux process, so it can never reach the
+    # dev's real server. Best-effort.
+    def kill_server(sock_dir)
+      return if sock_dir.to_s.strip.empty? # an empty dir makes kill_env resolve the DEFAULT socket = real server
+
+      pid = recorded_pid(sock_dir) || read_server_pid(sock_dir)
+      system(kill_env(sock_dir), "tmux", "kill-server", out: File::NULL, err: File::NULL)
+      ensure_dead(pid)
+    rescue StandardError
+      nil
+    end
+
+    # The file inside a socket dir holding the server's pid, written at boot. It's what
+    # lets kill_server reap a daemon whose socket was already unlinked — the pid survives
+    # in the dir even when the socket doesn't.
+    def server_pid_file(sock_dir)
+      File.join(sock_dir, "server.pid")
+    end
+
+    # Record the throwaway server's pid at boot so teardown/sweep can pid-kill it even
+    # after the socket is gone. Reads the pid through the server's OWN confined socket
+    # (never bare tmux) and persists it WITH its start-time as an identity token (see
+    # recorded_pid). Returns the pid or nil; best-effort.
+    def record_server_pid(sock_dir)
+      pid = read_server_pid(sock_dir)
+      File.write(server_pid_file(sock_dir), "#{pid}\t#{process_start(pid)}") if pid
+      pid
+    rescue StandardError
+      nil
+    end
+
+    # The pid recorded in the socket dir's server.pid, VERIFIED still to be that same
+    # process — or nil. It survives the socket being unlinked (the leak case), which is
+    # why it's preferred over a live socket read. But a recorded pid can go stale (its
+    # server died, its dir lingered), and the OS may have RECYCLED that pid to another live
+    # process — including the dev's REAL tmux server. Killing on pid alone would then hit
+    # the wrong process. So the file stores `pid<TAB>start-time`, and we return the pid
+    # only when the live process's start-time still matches: a recycled or dead pid
+    # mismatches → nil → never killed. A pid with no identity token can't be verified, so
+    # it's also nil (fail-closed).
+    def recorded_pid(sock_dir)
+      pid_s, started = File.read(server_pid_file(sock_dir)).split("\t", 2)
+      return nil unless pid_s&.match?(/\A\d+\z/)
+
+      pid = pid_s.to_i
+      started = started.to_s.strip
+      return nil if started.empty? || process_start(pid) != started
+
+      pid
+    rescue StandardError
+      nil
+    end
+
+    # Read the server's pid THROUGH ITS CONFINED SOCKET — kill_env clears TMUX and pins
+    # TMUX_TMPDIR to sock_dir, so `display-message` can only ever reach OUR throwaway
+    # server, never the dev's real one (a bare `tmux display-message` under the dev's real
+    # $TMUX would return the REAL server's pid — the footgun this avoids). nil when the
+    # socket is gone/unreachable or the reply is garbled.
+    def read_server_pid(sock_dir)
+      return nil if sock_dir.to_s.strip.empty? # empty TMUX_TMPDIR resolves to the DEFAULT socket = the real server
+
+      raw = IO.popen(kill_env(sock_dir), ["tmux", "display-message", "-p", "#\{pid}"],
+                     err: File::NULL, &:read).to_s.strip
+      raw.match?(/\A\d+\z/) ? raw.to_i : nil
+    rescue StandardError
+      nil
+    end
+
+    # SIGKILL `pid` and wait (bounded) until it's actually gone — the guarantee step of
+    # kill_server. Straight KILL: a throwaway server is disposable, and a wedged daemon
+    # was observed to ignore TERM. The recycle guard (tmux_process?) is load-bearing: if
+    # the server already died and its pid was reused, we must NOT kill the stranger — so
+    # we only ever signal a pid that is STILL a live tmux process. Best-effort: a process
+    # that refuses to die is left, never looped on forever.
+    def ensure_dead(pid, attempts: 40, interval: 0.05)
+      return unless pid && tmux_process?(pid)
+
+      Process.kill("KILL", pid)
+      attempts.times do
+        return unless pid_alive?(pid)
+
+        sleep interval
+      end
+    rescue Errno::ESRCH
+      nil # already gone between the guard and the kill — the win condition
+    rescue StandardError
+      nil
+    end
+
+    # Is `pid` a live tmux process right now? The recycle guard before a pid-kill — `ps`
+    # the pid's command name and require tmux. Split from tmux_comm? so the match is
+    # unit-testable without a real process.
+    def tmux_process?(pid)
+      return false unless pid
+
+      tmux_comm?(`ps -p #{pid.to_i} -o comm= 2>/dev/null`)
+    end
+
+    # Pure: does a `ps -o comm=` value name tmux? Basename so an absolute path
+    # (/opt/homebrew/bin/tmux) matches; prefix so a "tmux: server" variant matches too.
+    def tmux_comm?(comm)
+      File.basename(comm.to_s.strip).start_with?("tmux")
+    end
+
+    # A pid's start timestamp (`ps -o lstart=`) — the identity token that tells THIS
+    # process apart from a later one that reused its pid (pid + start-time is a strong
+    # identity). Empty for a dead/unknown pid, so a stale recorded pid whose process is
+    # gone or recycled never matches its recorded token.
+    def process_start(pid)
+      return "" unless pid
+
+      `ps -p #{pid.to_i} -o lstart= 2>/dev/null`.strip
     end
 
     # Is `socket_path` under the throwaway `sock_dir`? The blast-radius backstop:

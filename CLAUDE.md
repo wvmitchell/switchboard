@@ -86,8 +86,19 @@ so it can end up reading a different live pane and double-fire completion sounds
 with its tty (`Tmux.sidebar_processes`) and SIGTERMs any whose tty matches no live
 pane (`Tmux.live_pane_ttys`) — so a sidebar that owns a pane is never touched, and
 a nil/empty pane list (a flaky/garbled `tmux` read) reaps nothing rather than wipe
-every sidebar. They accumulate mostly from interrupted `bin/test-smoke` runs, whose
-daemon servers outlive the run; the smoke harness now sweeps those before each run.
+every sidebar. Crucially `Tmux.sidebar_processes` is **scoped to this server's own
+children by parent pid** (`ppid == Tmux.server_pid`): a sidebar is a direct child of
+the tmux server that split-window'd it, so this machine-global `ps` can only ever
+reach sidebars *this* server owns — a **different** server's sidebar (the dev's real
+one, when a throwaway smoke/sandbox server runs a prune) is structurally out of range,
+not merely env-gated. That closes the bug where running the smoke suite SIGTERM'd the
+developer's live sidebars: their tty is no pane on the isolated server, but they're
+another server's children, so the ppid scope excludes them. It fails safe — a nil
+server pid, or a wrong process-tree assumption, under-reaps (never over-reaps). The
+`SWITCHBOARD_SANDBOX` env guard is the belt over that structural scope: inside a
+throwaway server it skips the reap entirely (see the sandbox section). They accumulate
+mostly from interrupted `bin/test-smoke` runs, whose daemon servers outlive the run;
+the smoke harness now sweeps those before each run.
 
 **Configurable keybindings (issue #15).** The fragment delegates binding to
 `switchboard tmux-bind` (`Installer.apply_keybindings`), which reads `tmux_keys:`
@@ -877,9 +888,28 @@ The isolated-server scaffolding is **shared** with the smoke layer: `IsolatedSer
 (`isolated_server.rb`) owns the socket lifecycle — `make_socket_dir` (short `0700`,
 unpredictable suffix, symlink-safe), the dead-pid-gated `sweep_stale` (prefix-
 parameterized: smoke uses `sbk`, the sandbox `sbx`), and the boundary-aware
-`isolated_socket?` guard that gates every `kill-server`. `SmokeCase` delegates to it,
-so the guard that stops teardown from reaching a real server is single-source and
-can't drift. `Sandbox` reuses `SandboxTest`'s **full** env wall-off — `sandbox_env`
+`isolated_socket?` guard. `SmokeCase` delegates to it, so the guard that stops
+teardown from reaching a real server is single-source and can't drift.
+
+Teardown/sweep go through one primitive, `IsolatedServer.kill_server(sock_dir)`,
+which is why a throwaway server can't leak. The subtle bug it closes: a tmux daemon
+**outlives its socket** — once the socket file is unlinked, `tmux kill-server` (path-
+based) can never reach it, so the old socket-only teardown, which removed the dir
+after a merely-*attempted* kill, stranded a live daemon where `sweep_stale` (dir-keyed)
+could never find it (~15 such zombies had accumulated). So `kill_server` does BOTH:
+`kill-server` (confined by `kill_env` — the clean path while the socket is live) AND a
+**pid-kill guarantee** — `ensure_dead` SIGKILLs the server's pid, which is the only
+thing that reaches a socketless daemon. The pid comes only from THIS throwaway server
+(a read through the server's own confined socket, or a `server.pid` file
+`record_server_pid` writes at boot). That recorded pid is **identity-checked** — the file
+stores `pid<TAB>start-time`, and `recorded_pid` returns it only when the live process's
+start-time still matches, so a pid that went stale and was **recycled** to another live
+process (even the dev's real tmux server) mismatches → nil → never killed; `ensure_dead`
+additionally only SIGKILLs a still-live `tmux` process. So it can never reach the dev's
+real server. Callers remove the dir only *after* `kill_server` returns, so a kill that
+doesn't take can no longer orphan a daemon. Verified by `test/smoke/isolated_server_smoke_test.rb`
+(unlink a live server's socket, assert it's still reaped by recorded pid), with the pure
+pieces (`recorded_pid`, `tmux_comm?`, the recycle guard) unit-tested offline. `Sandbox` reuses `SandboxTest`'s **full** env wall-off — `sandbox_env`
 redirects every `SWITCHBOARD_*`/`XDG_*`/`GIT_CONFIG_*`/`GH_*` path into the throwaway
 tree (co-located **under** the socket dir, so one sweep reaps both), clears `TMUX`
 (else a nested attach from inside your real tmux fails) and `GH_TOKEN`, and keeps

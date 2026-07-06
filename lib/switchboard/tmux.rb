@@ -243,25 +243,41 @@ module Switchboard
       raw.to_s.lines.filter_map { |l| normalize_tty(l) }.to_set
     end
 
-    # [[pid, tty], ...] for every running `switchboard sidebar` process, tty
-    # normalized like live_pane_ttys. One `ps` (not pgrep + per-pid lookups) so pid and
-    # tty arrive together. The substring matches doctor's `pgrep -f 'switchboard
-    # sidebar'` so the two agree on what a sidebar is; the safety against a stray match
-    # (an editor/grep with that text) is the tty gate in orphan_sidebar_pids — those run
-    # in a live pane, so they're never reaped. [] when ps is unavailable.
+    # [[pid, tty], ...] for every running `switchboard sidebar` process THAT BELONGS TO
+    # THIS server, tty normalized like live_pane_ttys. Scoped by PARENT pid: a sidebar is
+    # a direct child of the tmux server that split-window'd it (spawn_sidebar execs the
+    # binary as the pane command), so ppid == server_pid means it's ours. That scoping is
+    # the STRUCTURAL guard that keeps this machine-global `ps` from ever reaching a
+    # DIFFERENT server's sidebar — the dev's real one, when a throwaway smoke/sandbox
+    # server runs a prune (the bug where the smoke suite SIGTERM'd live sidebars). A
+    # foreign-server sidebar is filtered out here, so orphan_sidebar_pids never sees it.
+    # One `ps` (not pgrep + per-pid lookups) so pid, ppid, tty arrive together; the
+    # substring matches doctor's `pgrep -f 'switchboard sidebar'` so the two agree on what
+    # a sidebar is. [] when ps is unavailable or the server pid is unreadable.
     def sidebar_processes
-      parse_sidebar_processes(`ps -axo pid=,tty=,command= 2>/dev/null`)
+      parse_sidebar_processes(`ps -axo pid=,ppid=,tty=,command= 2>/dev/null`, server_pid)
     end
 
-    # Pure: parse `ps -axo pid=,tty=,command=` into [[pid, tty], ...] sidebar rows.
-    # Split out so the parse is unit-testable without spawning processes.
-    def parse_sidebar_processes(raw)
+    # Pure: parse `ps -axo pid=,ppid=,tty=,command=` into [[pid, tty], ...] sidebar rows
+    # OWNED BY owner_pid (their parent server). A nil owner_pid (server unreachable)
+    # matches no parent → [] → reap nothing, the fail-safe direction. A wrong process-tree
+    # assumption (an intervening shell, so ppid isn't the server) also just under-reaps —
+    # never over-reaps. Split out so the parse + ownership filter are unit-testable.
+    def parse_sidebar_processes(raw, owner_pid)
       raw.to_s.lines.filter_map do |line|
-        pid, tty, cmd = line.strip.split(/\s+/, 3)
-        next unless pid&.match?(/\A\d+\z/) && cmd&.include?("switchboard sidebar")
+        pid, ppid, tty, cmd = line.strip.split(/\s+/, 4)
+        next unless pid&.match?(/\A\d+\z/) && ppid&.match?(/\A\d+\z/) && cmd&.include?("switchboard sidebar")
+        next unless owner_pid && ppid.to_i == owner_pid
 
         [pid.to_i, normalize_tty(tty)]
       end
+    end
+
+    # This server's own PID (tmux's `#{pid}`), or nil when no server is reachable — the
+    # ownership key sidebar_processes scopes the reap to. Read once per reap, not per row.
+    def server_pid
+      out = `tmux display-message -p '#\{pid}' 2>/dev/null`.strip
+      $?.success? && out.match?(/\A\d+\z/) ? out.to_i : nil
     end
 
     # A bare tty name ("/dev/ttys048" / "/dev/pts/3" -> "ttys048" / "pts/3"), or nil for

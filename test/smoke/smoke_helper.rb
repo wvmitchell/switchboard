@@ -60,6 +60,17 @@ module Switchboard
       ENV["SWITCHBOARD_BIN"] = BIN            # how tmux.rb spawns sidebar panes
       ENV["TERM"]            = "xterm-256color" # PTY.spawn("tmux","attach") fails on TERM=dumb/unset (CI)
 
+      # The smoke server is an isolated THROWAWAY tmux server, exactly like `switchboard
+      # sandbox` — so it needs the same machine-global guard. `switchboard prune` (driven
+      # below via run_bin) reaps sidebar PROCESSES it finds with a machine-global `ps`,
+      # keeping only those whose tty maps to a live pane on THIS isolated server. A
+      # developer's REAL sidebar — on their real server, absent from this one's pane list —
+      # would read as an orphan and get SIGTERM'd: the smoke suite would close their live
+      # sidebar out from under them. SWITCHBOARD_SANDBOX makes reap_sidebars (and the
+      # origin-less PR-refresh spawn) no-op here. Set BEFORE boot_server so the server, and
+      # every pane it spawns, inherits it (matching SandboxSmokeTest's ordering).
+      ENV["SWITCHBOARD_SANDBOX"] = "1"
+
       write_project_and_config
       seed_pr_cache                          # fresh cache -> visible reloads don't fork `switchboard refresh`
       boot_server
@@ -71,7 +82,10 @@ module Switchboard
     def teardown
       close_pty  # close the master FIRST so the drain thread's blocking readpartial hits EOF...
       stop_drain # ...and this join returns at once instead of stalling on Thread#kill for up to 2s
-      tmux("kill-server") if @sock_dir && isolated_socket? # only ever our own throwaway server
+      # kill_server pid-kills too (recycle-guarded), so a kill-server that doesn't take
+      # can't leave a socketless daemon behind — and it can only reach OUR throwaway
+      # server, so the isolated_socket? gate is no longer load-bearing here.
+      IsolatedServer.kill_server(@sock_dir) if @sock_dir
       FileUtils.remove_entry(@sock_dir) if @sock_dir && File.directory?(@sock_dir)
     ensure
       super                                  # SandboxTest: restore ENV + remove the state dir
@@ -101,6 +115,7 @@ module Switchboard
     def boot_server
       tmux!("new-session", "-d", "-s", HOME, "-x", "220", "-y", "50", "-c", ENV["HOME"])
       tmux!("set-option", "-t", HOME, "@sb_sidebar", "on") # opt the home session into a sidebar
+      IsolatedServer.record_server_pid(@sock_dir) # so teardown can pid-kill a socketless daemon
     end
 
     # Apply switchboard's REAL tmux wiring to the isolated server. The fragment is a shell

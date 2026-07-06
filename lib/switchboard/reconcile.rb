@@ -116,10 +116,13 @@ module Switchboard
     # excludes every process that owns a pane, so nothing healthy is in range, but TERM
     # still lets a misjudged one run its own teardown.
     def reap_sidebars(dry_run: false)
-      # Never reap from inside the sandbox's isolated server (#126): sidebar_processes
-      # is machine-global (`ps`) while live_pane_ttys is this-server-only, so every
-      # REAL sidebar on the box would read as an orphan and get SIGTERM'd. The
-      # sandbox's own leftovers are handled by IsolatedServer.sweep_stale instead.
+      # Two layers keep this machine-global `ps` reap from ever killing the dev's REAL
+      # sidebar: sidebar_processes scopes to THIS server's children by ppid (the structural
+      # guard — a foreign server's sidebar is out of range), and this env guard
+      # short-circuits entirely inside an isolated throwaway server — the `sandbox` command
+      # (#126) or the real-tmux smoke layer (SmokeCase). A throwaway server has no orphans
+      # worth reaping and its leftovers are cleaned by IsolatedServer.sweep_stale /
+      # teardown's kill-server, so skip.
       return [] if ENV["SWITCHBOARD_SANDBOX"]
 
       pids = orphan_sidebar_pids(Tmux.sidebar_processes, Tmux.live_pane_ttys)

@@ -7,6 +7,29 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.47.2] — the test suite stops closing your sidebar (2026-07-06)
+
+### Fixed
+- **`prune` (and the smoke suite it drives) never reaps the developer's REAL
+  sidebars.** `Reconcile.reap_sidebars` found sidebar processes with a machine-global
+  `ps` but compared them against only the current server's pane ttys, so a throwaway
+  smoke/sandbox server running a prune flagged every real sidebar on the box as an
+  orphan and `SIGTERM`'d it — running `bin/test-smoke` closed the developer's live
+  sidebar out from under them. `Tmux.sidebar_processes` now scopes to **this server's
+  own children by parent pid** (a sidebar is a direct child of the tmux server that
+  split-window'd it), so a different server's sidebar is structurally out of range, not
+  merely env-gated. `SmokeCase` also exports `SWITCHBOARD_SANDBOX` as a belt over that
+  structural guard.
+- **Throwaway tmux servers can no longer leak.** A tmux daemon outlives its socket, so
+  the old socket-only `kill-server` teardown stranded socketless daemons that
+  `kill-server` (path-based) could never reach again — they piled up from interrupted
+  `bin/test-smoke` runs. Teardown/sweep now go through one primitive,
+  `IsolatedServer.kill_server`, which `kill-server`s AND pid-kills a `server.pid`
+  recorded at boot as a guarantee, removing the dir only once the server is confirmed
+  dead. The recorded pid is **identity-checked** (pid + start-time) so a recycled pid is
+  never trusted, and the SIGKILL only ever targets a still-live `tmux` process — so it
+  can never reach the developer's real server.
+
 ## [0.47.0] — a background monitor can say "come look" (2026-07-06)
 
 ### Added
