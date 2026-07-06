@@ -7,6 +7,23 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.47.3] — the dot settles when you interrupt a turn (2026-07-06)
+
+### Fixed
+- **The agent dot kept spinning after a cancel.** Interrupting a turn (Esc/Ctrl-C)
+  fires no Claude hook, so the workspace's last `:thinking` report lingered and the
+  dot spun blue for up to the 15-minute presence TTL — even though the agent was
+  sitting idle at the prompt. A fresh `:thinking` is now corroborated against the
+  agent's work pane: Claude's TUI animates every second while it works and freezes
+  at the prompt, so a pane gone **static** means the report is stale and the dot
+  settles to a resting green within a scan cycle (~3–6s). A long think or a long
+  silent tool run keeps its pane animating, so it correctly stays blue. The
+  downgrade is render-only (it never rings a false completion chime), and every
+  uncertain case — an ambiguous pane layout, an off-screen sidebar, a flaky tmux
+  read — keeps trusting the exact hook rather than guessing. The work pane is
+  identified by the absence of the `sb-sidebar` title marker, because an agent's
+  pane reports its version (e.g. `2.1.201`), not `claude`, as its command.
+
 ## [0.47.2] — the test suite stops closing your sidebar (2026-07-06)
 
 ### Fixed

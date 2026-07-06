@@ -30,6 +30,21 @@ module Switchboard
       stub_method(Agents, :active, ->(_paths) { Set.new }, &blk)
     end
 
+    # An AgentState whose per-pane capture_hash is deterministic (no real tmux) —
+    # yields the given values in order, the last repeating. Equal successive values
+    # read as a STATIC pane, differing ones as a CHANGING pane, so a test drives the
+    # interrupt-vs-working distinction without a live server. The monotonic clock is
+    # stubbed to advance `clock_step` per call — default 3s (the REFRESH cadence), so a
+    # second identical scan clears STATIC_MIN_AGE and downgrades as it would in the wild.
+    def instance_capturing(*values, clock_step: 3.0)
+      a = AgentState.new
+      q = values.dup
+      a.define_singleton_method(:capture_hash) { |_id| q.length > 1 ? q.shift : q.first }
+      t = 0.0
+      a.define_singleton_method(:monotonic) { t += clock_step }
+      a
+    end
+
     def test_a_fresh_hook_is_reported
       wt = worktree
       write_hook("thinking", wt)
@@ -114,9 +129,135 @@ module Switchboard
     def test_process_fallback_reports_done_when_no_hook
       wt = worktree
       stub_method(Agents, :active, ->(_paths) { Set[wt] }) do
-        stub_method(Agents, :tmux_panes, -> { [["%1", wt]] }) do
-          assert_equal :done, AgentState.new.scan([wt])[wt]
+        stub_method(Tmux, :work_panes, -> { [["%1", wt]] }) do
+          assert_equal :done, AgentState.new.scan([wt])[wt] # first sighting has no baseline -> done
         end
+      end
+    end
+
+    # REGRESSION (activity now rides pane_delta): a hook-less agent whose work pane
+    # keeps changing between scans still reads :thinking, exactly as before the
+    # refactor. Two scans on one instance so the second has a baseline to diff.
+    def test_process_fallback_reports_thinking_when_pane_changes
+      wt = worktree
+      a = instance_capturing(1, 2) # scan1 seeds, scan2 sees a different hash -> changed
+      stub_method(Agents, :active, ->(_paths) { Set[wt] }) do
+        stub_method(Tmux, :work_panes, -> { [["%1", wt]] }) do
+          a.scan([wt]) # baseline
+          assert_equal :thinking, a.scan([wt])[wt]
+        end
+      end
+    end
+
+    # --- :thinking corroboration against pane liveness (the interrupt fix) -------
+
+    # An agent interrupted mid-turn (Esc/Ctrl-C) fires no Stop hook, so its
+    # :thinking file lingers fresh. Its work pane goes STATIC at the prompt, so the
+    # second scan downgrades the dot to a resting :done — and, crucially, drops the
+    # worktree from last_hook_states so the completion edge rings no false chime.
+    def test_interrupted_thinking_pane_static_downgrades_to_done_silently
+      wt = worktree
+      write_hook("thinking", wt)
+      a = instance_capturing(9) # constant hash => pane reads static once there's a baseline
+      stub_method(Tmux, :work_panes, -> { [["%1", wt]] }) do
+        assert_equal :thinking, a.scan([wt])[wt], "scan 1 has no baseline -> trusts the hook"
+        assert_equal({ wt => :thinking }, a.last_hook_states)
+
+        assert_equal :done, a.scan([wt])[wt], "scan 2 sees a static pane -> resting dot"
+        assert_empty a.last_hook_states, "downgrade is render-only: absent from hook states -> no chime"
+      end
+    end
+
+    # The distinguishing case: a genuinely working agent animates its TUI every
+    # second, so the pane keeps changing and the dot stays :thinking (a long
+    # think / long tool run is NOT mistaken for an interrupt).
+    def test_working_thinking_pane_changes_stays_thinking
+      wt = worktree
+      write_hook("thinking", wt)
+      a = instance_capturing(1, 2) # pane content differs across scans
+      stub_method(Tmux, :work_panes, -> { [["%1", wt]] }) do
+        a.scan([wt]) # baseline
+        assert_equal :thinking, a.scan([wt])[wt]
+        assert_equal({ wt => :thinking }, a.last_hook_states, "still a live hook state")
+      end
+    end
+
+    # Fail-safe: with no SINGLE non-sidebar pane to hash (none found, or an
+    # ambiguous multi-pane window), corroboration can't tell -> it keeps the exact
+    # hook signal rather than invent a resting dot. This is the DEFAULT path on a
+    # real Claude before pane detection, so it must never downgrade blindly.
+    def test_thinking_with_no_single_work_pane_trusts_the_hook
+      wt = worktree
+      write_hook("thinking", wt)
+      [[], [["%1", wt], ["%2", wt]]].each do |panes| # zero, then ambiguous
+        a = instance_capturing(9)
+        stub_method(Tmux, :work_panes, -> { panes }) do
+          a.scan([wt]) # would-be baseline
+          assert_equal :thinking, a.scan([wt])[wt], "panes=#{panes.inspect} -> trust the hook"
+          assert_equal({ wt => :thinking }, a.last_hook_states)
+        end
+      end
+    end
+
+    # Fail-safe (adversarial F2): a FAILED capture-pane must not read as static. Before
+    # the fix, capture_hash returned a CONSTANT ("".hash / 0) on failure, so two failed
+    # captures compared equal -> :static -> a genuine :thinking downgraded to :done on a
+    # mere tmux hiccup. Uses the REAL capture_hash against a pane id that exists in no
+    # server (capture fails -> nil -> :unknown -> trust the hook).
+    def test_thinking_survives_a_failed_pane_capture
+      wt = worktree
+      write_hook("thinking", wt)
+      a = AgentState.new # real capture_hash; the stubbed work pane doesn't exist
+      stub_method(Tmux, :work_panes, -> { [["%999999", wt]] }) do
+        assert_equal :thinking, a.scan([wt])[wt], "scan 1"
+        assert_equal :thinking, a.scan([wt])[wt], "scan 2 — a failed capture is not 'static'"
+        assert_equal({ wt => :thinking }, a.last_hook_states, "still a live hook state, not downgraded")
+      end
+    end
+
+    # Adversarial F4: a sub-REFRESH rescan (a background PR-poke or an action reload
+    # landing a fraction of a second after the last scan) must NOT downgrade a pane
+    # that merely hashed identical across that tiny gap — a still-animating agent can
+    # show two equal frames 0.3s apart. Only content held identical for >=
+    # STATIC_MIN_AGE is trusted as static; age runs from when the content first appeared.
+    def test_a_rapid_rescan_does_not_downgrade_a_still_animating_pane
+      wt = worktree
+      write_hook("thinking", wt)
+      a = AgentState.new
+      a.define_singleton_method(:capture_hash) { |_id| 7 } # identical content every read
+      clock = [0.0, 0.3, 0.9, 5.0]                          # seed, +0.3, +0.9, then a full gap
+      a.define_singleton_method(:monotonic) { clock.shift }
+      stub_method(Tmux, :work_panes, -> { [["%1", wt]] }) do
+        assert_equal :thinking, a.scan([wt])[wt], "scan 1 seeds the content"
+        assert_equal :thinking, a.scan([wt])[wt], "rapid rescan (+0.3s) — too soon to call static"
+        assert_equal :thinking, a.scan([wt])[wt], "still rapid (+0.9s) — under STATIC_MIN_AGE"
+        assert_equal :done, a.scan([wt])[wt], "content held past STATIC_MIN_AGE -> now static"
+      end
+    end
+
+    # The warm/off-screen path must stay cheap: a hooks_only scan never corroborates
+    # (never shells out to work_panes), it just trusts the reported :thinking.
+    def test_hooks_only_thinking_skips_pane_corroboration
+      wt = worktree
+      write_hook("thinking", wt)
+      stub_method(Tmux, :work_panes, -> { flunk "hooks_only must not corroborate against panes" }) do
+        assert_equal({ wt => :thinking }, AgentState.new.scan([wt], hooks_only: true))
+      end
+    end
+
+    # Only :thinking is corroborated. A resting :done/:waiting is trusted as-is even
+    # when a static work pane is present (the pane can't distinguish waiting anyway).
+    def test_resting_states_are_not_downgraded_by_a_static_pane
+      a = worktree("a")
+      b = worktree("b")
+      write_hook("done", a)
+      write_hook("waiting", b)
+      inst = instance_capturing(9)
+      stub_method(Tmux, :work_panes, -> { [["%1", a], ["%2", b]] }) do
+        inst.scan([a, b])
+        result = inst.scan([a, b])
+        assert_equal :done, result[a]
+        assert_equal :waiting, result[b]
       end
     end
 

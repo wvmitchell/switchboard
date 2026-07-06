@@ -50,6 +50,28 @@ module Switchboard
       assert_equal 0, Tmux.count_sidebar_panes("")
     end
 
+    # --- parse_work_panes: the pure [id, path] extraction that finds an agent's
+    # WORK pane (every NON-sidebar pane). AgentState capture-hashes it for liveness;
+    # sidebar panes are dropped by exact title so the sidebar is never hashed.
+
+    def test_parse_work_panes_drops_sidebars_keeps_agent_panes
+      raw = "%1\t#{Tmux::SIDEBAR_TITLE}\t/wt/a\n" \
+            "%2\t✳ Fix the thing\t/wt/a\n" \
+            "%3\t2.1.201\t/wt/b\n" # agent pane names its version, not "claude"
+      assert_equal [["%2", "/wt/a"], ["%3", "/wt/b"]], Tmux.parse_work_panes(raw)
+    end
+
+    def test_parse_work_panes_is_tab_delimited_and_exact_on_the_marker
+      # A path with spaces survives (tab split); a title merely embedding the marker
+      # is still a work pane (exact match only, like count_sidebar_panes).
+      raw = "%1\tnot-#{Tmux::SIDEBAR_TITLE}\t/wt/with a space\n"
+      assert_equal [["%1", "/wt/with a space"]], Tmux.parse_work_panes(raw)
+    end
+
+    def test_parse_work_panes_empty_input
+      assert_empty Tmux.parse_work_panes("")
+    end
+
     # --- parse_ttys / parse_sidebar_processes / normalize_tty: the pure inputs to
     # prune's orphaned-sidebar reap (a THIS-SERVER sidebar process whose tty is no live
     # pane — parse_sidebar_processes scopes to our server's children by parent pid).

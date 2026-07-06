@@ -694,6 +694,27 @@ module Switchboard
       end
     end
 
+    # Every NON-sidebar pane across all sessions/windows as [id, path] — the
+    # inverse of all_sidebar_panes. AgentState uses it to find (and capture-hash)
+    # an agent's WORK pane. The pane is identified by NOT carrying SIDEBAR_TITLE,
+    # never by command: an agent's pane_current_command is unreliable (Claude
+    # reports its version, e.g. "2.1.201", not "claude"). Tab-delimited so a
+    # title/path with spaces survives the split (titles are Claude's turn text).
+    def work_panes
+      parse_work_panes(`tmux list-panes -a -F '#\{pane_id}\t#\{pane_title}\t#\{pane_current_path}' 2>/dev/null`)
+    rescue StandardError
+      [] # degrade like every other shell-out — a raise here would blank every dot for a scan
+    end
+
+    # Pure: [id, path] rows from `list-panes` output, dropping sidebar-titled
+    # panes. Split out so it's unit-testable without a server (like work_dir).
+    def parse_work_panes(raw)
+      raw.to_s.lines.filter_map do |line|
+        id, title, path = line.chomp.split("\t", 3)
+        [id, path] if id && path && title.to_s.strip != SIDEBAR_TITLE
+      end
+    end
+
     # Poke a session's sidebar by session name (vs. poke's pane id). reload_config:
     # sends C-r (the dedicated config-reload signal) instead of C-l, so only a
     # real edit re-reads config off disk. Returns nil when the session has no

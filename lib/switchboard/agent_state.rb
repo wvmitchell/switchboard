@@ -7,9 +7,15 @@ module Switchboard
   # of which means "an agent is here":
   #   hook state — what Claude Code reported via sb-agent-hook (exact, instant).
   #                A recent report IS presence: the hook only fires from inside
-  #                the worktree, so we don't second-guess it with a process scan
-  #                (the agent's process cwd can differ from its project dir, e.g.
-  #                when a wrapper launches it elsewhere — then the scan misses it).
+  #                the worktree, so we don't second-guess presence with a process
+  #                scan (the agent's process cwd can differ from its project dir).
+  #                ONE exception: a fresh :thinking. No hook fires when you
+  #                interrupt a turn (Esc/Ctrl-C), so a stale :thinking would spin
+  #                for the full TTL after a cancel. So a fresh :thinking is
+  #                corroborated against its work pane (pane_delta) — Claude's TUI
+  #                animates while working and freezes at the prompt, so a pane gone
+  #                static means the report is stale and the dot rests. Fail-safe:
+  #                anything but a POSITIVE static reading keeps the :thinking.
   #   process    — Agents.active (tmux/pgrep) for hook-less agents (codex/aider,
   #                or Claude before `enable-hooks`); their state is the coarser
   #                busy/idle `activity` read of the pane.
@@ -21,6 +27,9 @@ module Switchboard
     STATES = %w[thinking done waiting].freeze
     PRESENCE_TTL = 900 # seconds a hook report counts as a live agent
     STALE_GC = 86_400 # seconds; a still-existing-dir state file older than this is reaped (global codex hook hygiene)
+    STATIC_MIN_AGE = 2.0 # seconds a work pane must hold identical content before a :static
+                         # verdict — below REFRESH, above a rapid poke/reload rescan gap, so a
+                         # sub-second re-scan can't misread a still-animating pane as idle
 
     # Hook-derived states from the last scan (path => state), excluding the
     # coarse activity fallback. The sidebar's PR-refresh edge trigger reads this
@@ -28,7 +37,7 @@ module Switchboard
     attr_reader :last_hook_states
 
     def initialize
-      @seen = {} # pane_id => last capture hash, for the activity fallback
+      @seen = {} # pane_id => [last capture hash, monotonic when that content first appeared]
       @last_hook_states = {}
     end
 
@@ -70,10 +79,18 @@ module Switchboard
       hook_states = {} # the hook-only subset, stashed for last_hook_states
       states = worktree_paths.each_with_object({}) do |wt, out|
         state = fresh_hook(wt, hooks)
-        if state
+        if state == :thinking && !hooks_only && pane_delta(wt, panes ||= Tmux.work_panes) == :static
+          # A fresh :thinking whose work pane has gone STATIC is a stale report —
+          # the agent was interrupted / walked away (no Stop fires on Esc/Ctrl-C).
+          # Render it resting (:done) but keep it OUT of hook_states, so the
+          # completion edge (which rides hook_states only) rings no false chime —
+          # exactly like the activity fallback below. Anything but :static falls
+          # through to trust the hook (pane changed / no single pane / off-screen).
+          out[wt] = :done
+        elsif state
           out[wt] = hook_states[wt] = state
         elsif !hooks_only && (process ||= Agents.active(worktree_paths)).include?(wt)
-          out[wt] = activity(wt, panes ||= Agents.tmux_panes)
+          out[wt] = activity(wt, panes ||= Tmux.work_panes)
         end
       end
       @last_hook_states = hook_states
@@ -140,23 +157,61 @@ module Switchboard
       state if age.abs <= PRESENCE_TTL # abs so a backward clock step (future epoch) still ages out
     end
 
-    # Pane content changed since the last scan -> thinking, else done. Can't tell
-    # "wants input" apart from "done" without hooks, so it never returns :waiting.
-    def activity(worktree, panes)
+    # Did `worktree`'s agent WORK pane change since the last scan? The three-way
+    # answer the coarse fallback (activity) and the :thinking corroboration share:
+    #   :changed | :static | :unknown (no single pane, no baseline, failed capture,
+    #                                   or content not yet held long enough to trust)
+    # The pane is found by worktree PATH, not command — an agent's
+    # pane_current_command is unreliable (Claude reports its version). Requires
+    # EXACTLY ONE non-sidebar candidate; 0 or >1 (multi-window / extra shell) is
+    # :unknown, so the caller trusts the hook rather than hash the wrong pane. A
+    # :static verdict additionally requires the content to have held identical for
+    # >= STATIC_MIN_AGE — so a sub-REFRESH rescan (a PR-poke, an action reload)
+    # landing a fraction of a second after the last can't misread a still-animating
+    # pane (two equal frames 0.3s apart) as idle. Age is measured from when the
+    # content FIRST appeared, so a burst of rapid rescans can't keep resetting it.
+    def pane_delta(worktree, panes)
       wt = real(worktree)
-      id, = panes.find { |_id, path| under?(real(path), wt) }
-      return :done unless id
+      under = panes.select { |_id, path| under?(real(path), wt) }
+      return :unknown unless under.one?
 
+      id, = under.first
       now = capture_hash(id)
-      changed = @seen.key?(id) && @seen[id] != now
-      @seen[id] = now
-      changed ? :thinking : :done
+      return :unknown if now.nil? # a FAILED capture is indistinguishable from static by value,
+      #                             so treat it as "can't tell" — never downgrade on a tmux hiccup
+
+      prev = @seen[id] # [hash, monotonic-when-this-content-first-appeared], nil on first sighting
+      if prev.nil? || prev[0] != now
+        @seen[id] = [now, monotonic] # new content (or first sighting): stamp when it appeared
+        return prev.nil? ? :unknown : :changed
+      end
+      # Same content as last scan: only "static" once it has held long enough that a
+      # working pane's animated TUI would have moved; else keep trusting the hook.
+      monotonic - prev[1] >= STATIC_MIN_AGE ? :static : :unknown
     end
 
+    # Coarse busy/idle for a hook-less agent: pane changed since last scan ->
+    # thinking, else done. A missing pane / first sighting both read done (as
+    # before). Can't tell "wants input" from "done" without hooks -> never :waiting.
+    def activity(worktree, panes)
+      pane_delta(worktree, panes) == :changed ? :thinking : :done
+    end
+
+    # A hash of the pane's visible content, or nil when the capture failed/was empty.
+    # nil (not a constant like "".hash / 0) so pane_delta can tell a genuine read from
+    # a tmux hiccup — else two failed captures would compare equal and read as static.
     def capture_hash(pane_id)
-      `tmux capture-pane -p -t #{Shellwords.escape(pane_id)} 2>/dev/null`.hash
+      out = `tmux capture-pane -p -t #{Shellwords.escape(pane_id)} 2>/dev/null`
+      $?.success? && !out.empty? ? out.hash : nil
     rescue StandardError
-      0
+      nil
+    end
+
+    # Monotonic clock (a seam the tests stub) — pane_delta measures how long a work
+    # pane has held identical content against it. Monotonic, not wall-clock, so an
+    # NTP/DST step can't make a just-seen pane read as long-static.
+    def monotonic
+      Process.clock_gettime(Process::CLOCK_MONOTONIC)
     end
 
     def under?(path, root)

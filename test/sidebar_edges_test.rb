@@ -112,6 +112,30 @@ module Switchboard
       assert_equal({ "/wt/a" => :done }, e.instance_variable_get(:@prev_hook_states))
     end
 
+    # The interrupt fix from the edge's side: AgentState downgrades an interrupted
+    # :thinking to a resting dot by DROPPING the worktree from the hook-state map it
+    # hands us (render-only :done, never a hook state). So on_scan sees the worktree
+    # vanish from `now` — a non-completion — and must ring NO sound, bold NOTHING,
+    # spawn NO PR refresh. A cancel you triggered isn't a "come look" event.
+    def test_on_scan_thinking_downgraded_to_absent_rings_nothing
+      e = edges(prev: { "/wt/a" => :thinking })
+      prs = []
+      sounds = []
+      marked = []
+      e.define_singleton_method(:maybe_refresh_prs) { |p| prs << p }
+      e.define_singleton_method(:mark_attention_for) { |paths, _cur| marked.concat(paths) }
+      ret = nil
+      stub_method(Sound, :play, ->(spec, **) { sounds << spec }) do
+        ret = scan(e, {}, nodes: [ws("a", project: "app", path: "/wt/a")]) # wt absent -> downgraded
+      end
+      assert_empty ret, "thinking -> absent is not a completion edge"
+      assert_empty sounds, "no completion chime on an interrupt downgrade"
+      assert_empty marked, "no attention bold on an interrupt downgrade"
+      assert_empty prs, "no PR refresh on a non-edge"
+      assert_equal({ "/wt/a" => :thinking }, e.instance_variable_get(:@prev_hook_states),
+                   "baseline stays sticky, so a later genuine completion still fires")
+    end
+
     # A catch-up scan (switch-in / reappear) must NOT ring for a completion that
     # finished while that sidebar was off-screen — another sidebar already rang it.
     # The PR refresh and the baseline advance still ride: announce_sounds gates the

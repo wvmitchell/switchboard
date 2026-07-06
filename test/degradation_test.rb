@@ -29,12 +29,13 @@ module Switchboard
       assert_equal({}, Pr.for_project("app"))
     end
 
-    # An absent pane (or absent tmux) makes the backtick return "" and capture_hash
-    # hashes that — it returns an Integer, it does NOT return 0 and does NOT raise.
-    # The real invariant is "never crashes the scan". (On a box with tmux this
-    # exercises pane-absent; on a tmux-less CI runner, tmux-absent — same path.)
-    def test_capture_hash_returns_an_integer_when_the_pane_is_absent
-      assert_kind_of Integer, AgentState.new.send(:capture_hash, "%no-such-pane")
+    # An absent pane (or absent tmux) makes the capture fail — capture_hash returns
+    # nil (NOT a constant like "".hash / 0), so pane_delta can tell a failed read from
+    # a static pane and won't downgrade a working agent on a tmux hiccup. It must never
+    # raise. (On a box with tmux this exercises pane-absent; on a tmux-less CI runner,
+    # tmux-absent — same failed-capture path.)
+    def test_capture_hash_returns_nil_when_the_pane_is_absent
+      assert_nil AgentState.new.send(:capture_hash, "%no-such-pane")
     end
   end
 end
