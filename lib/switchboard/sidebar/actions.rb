@@ -201,6 +201,10 @@ module Switchboard
         flash(err) if err
         reload_config
         reload
+        # Every other window's sidebar caches its own @config; poke them to re-read
+        # so the new project shows there too (their rebuild's refresh_config picks it
+        # up), instead of only appearing after a sidebar respawn.
+        Tmux.broadcast_warm(except: ENV["TMUX_PANE"])
       end
 
       # Clone a URL under projects_root, then register it. The clone blocks the
@@ -216,17 +220,49 @@ module Switchboard
         flash(err) if err
         reload_config
         reload
+        Tmux.broadcast_warm(except: ENV["TMUX_PANE"]) # peer sidebars re-read the grown config (see add_local)
       end
 
       # Re-read config from disk so a freshly added project shows on the next
       # rebuild (@config is otherwise cached for the session). Config.new no longer
       # raises on malformed YAML (it degrades to empty + records load_error), so keep
       # the last good @config on a parse error and return the error for the caller to
-      # surface; nil on a clean reload.
+      # surface; nil on a clean reload. Stamp the file's mtime we're reading so the
+      # mtime-gated refresh_config (in rebuild) doesn't immediately re-parse the same
+      # file — the explicit force-read and the lazy change-gate share one baseline.
       def reload_config
+        @config_mtime = config_mtime
         fresh = Config.new
         @config = fresh unless fresh.load_error
         fresh.load_error
+      end
+
+      # Re-read config from disk when the file changed since we last read it — so a
+      # project added/removed in ANOTHER session (or a hand-edit outside the `e`
+      # editor) lands on this sidebar's next reload/warm, not only when its process is
+      # respawned (the cross-session "new project doesn't show" gap). Called from
+      # rebuild, the one chokepoint every reload path funnels through (switch-in poke,
+      # the ~15s tree-tick, the off-screen warm). mtime-gated: an unchanged config
+      # costs a single stat, never a YAML parse, so the frequent C-l reload stays as
+      # cheap as it was when it never re-read config at all. Adopts the new @config
+      # only on a clean parse (keeps the last good one on a syntax slip, like
+      # reload_config); the mtime is stamped either way so a known-broken file isn't
+      # re-parsed every rebuild until it changes again.
+      def refresh_config
+        mtime = config_mtime
+        return if mtime == @config_mtime
+
+        @config_mtime = mtime
+        fresh = Config.new
+        @config = fresh unless fresh.load_error
+      end
+
+      # mtime of the config file (nil when there's none yet) — the change signal
+      # shared by refresh_config's gate and warm_fingerprint's config entry.
+      def config_mtime
+        File.mtime(Config.path).to_f
+      rescue SystemCallError
+        nil
       end
 
       # e: edit config.yml in its own pane beside the home sidebar, then return to
@@ -302,6 +338,12 @@ module Switchboard
         # above makes the error unreachable today, but it keeps the kill honest.
         _, err = Registrar.unregister(@config, name)
         return flash(err) if err
+
+        # Every other window's sidebar caches its own @config; poke them all to
+        # re-read so the removed project disappears there too (their rebuild's
+        # refresh_config drops it). Fired before the kill/eject so our own imminent
+        # death can't abort it — like the home C-r poke below.
+        Tmux.broadcast_warm(except: ENV["TMUX_PANE"])
 
         ejecting = Tmux.session_of.to_s.start_with?(Tmux.session_prefix(name))
         Tmux.go_home if ejecting

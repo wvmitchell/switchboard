@@ -79,6 +79,7 @@ module Switchboard
 
     def initialize
       @config = Config.new
+      @config_mtime = config_mtime # config file's mtime at load; refresh_config re-reads on change
       resolve_keymap      # @keymap (key->action) + @bindings (action->key); re-run each rebuild (#108)
       @cursor = 0
       @offset = 0
@@ -463,9 +464,12 @@ module Switchboard
     # A cheap "has anything the pane draws changed?" signal for the off-screen warm
     # gate — stats only, no git/process shell-outs. Covers the dynamic content:
     # agent dots (state-dir file mtimes), bold (attention markers), diff counts
-    # (each tracked worktree's logs/HEAD mtime), and PR badges (the PR cache).
+    # (each tracked worktree's logs/HEAD mtime), PR badges (the PR cache), and the
+    # project registry (config mtime — a project added/removed in ANOTHER session,
+    # so its off-screen panes pre-warm the new tree instead of flashing it on the
+    # next switch-in; rebuild's refresh_config is what actually re-reads it).
     # Deliberately NOT covered (they refresh on the switch-in reload, as before):
-    # a worktree added/removed in ANOTHER session, and shared view-state
+    # a WORKTREE added/removed in another session, and shared view-state
     # (collapse/full-header/branch-fold/width). Fully rescued — a stat fault yields
     # a value that just triggers one harmless warm, never crashes the loop.
     def warm_fingerprint
@@ -481,6 +485,7 @@ module Switchboard
        file_fingerprint(FullHeader.marker),    # full-header toggle
        file_fingerprint(BranchFold.marker),    # branch-fold toggle
        file_fingerprint(Width.state_file),     # sidebar width
+       file_fingerprint(Config.path),          # project registry (add/remove project elsewhere)
        reflogs.sort]                           # diff counts (commits)
     rescue StandardError
       nil

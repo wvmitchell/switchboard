@@ -720,7 +720,7 @@ module Switchboard
     # real edit re-reads config off disk. Returns nil when the session has no
     # sidebar (e.g. it was killed mid-edit), so callers can fall back.
     def poke_sidebar_of(session, reload_config: false)
-      pane = sidebar_pane(session) or return
+      pane = window_sidebar_pane(session) or return
 
       key = reload_config ? RELOAD_CONFIG_POKE : "C-l"
       system("tmux", "send-keys", "-t", pane, key, out: File::NULL, err: File::NULL)

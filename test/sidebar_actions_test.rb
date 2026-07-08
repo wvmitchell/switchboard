@@ -35,6 +35,40 @@ module Switchboard
       assert_equal 1, bcast, "H (full header) pings other sidebars too"
     end
 
+    # Adding/removing a project changes the shared registry, so — like the view-state
+    # toggles above — it pings peer sidebars to re-read config now (their rebuild's
+    # refresh_config picks it up) instead of waiting for a respawn.
+    def test_add_local_broadcasts_warm_so_peers_pick_up_the_new_project
+      sb = sidebar(nodes: [])
+      sb.define_singleton_method(:prompt_line) { |*| "/repos/new" }
+      sb.define_singleton_method(:reload) { |**| }
+      bcast = 0
+      stub_method(Tmux, :broadcast_warm, ->(**) { bcast += 1 }) do
+        stub_method(Registrar, :register, ->(*, **) { [{ "name" => "new" }, nil] }) do
+          sb.send(:add_local)
+        end
+      end
+      assert_equal 1, bcast, "registering a project pings peer sidebars to re-read the grown config"
+    end
+
+    def test_remove_project_broadcasts_warm_so_peers_drop_it
+      File.write(Config.path, YAML.dump("projects" => [{ "name" => "app", "path" => "/repos/app" }]))
+      sb = sidebar(nodes: [proj("app")], cursor: 0)
+      sb.instance_variable_set(:@config, Config.new)
+      sb.define_singleton_method(:reload) { |**| }
+      bcast = 0
+      stub_method(Tmux, :broadcast_warm, ->(**) { bcast += 1 }) do
+        stub_method(Tmux, :session_of, ->(*) { "sb/home" }) do          # not in the project: no eject
+          stub_method(Tmux, :kill_project_sessions, ->(*) { [] }) do
+            stub_method(sb, :confirm, ->(*) { true }) do
+              sb.send(:remove_project, proj("app"))
+            end
+          end
+        end
+      end
+      assert_equal 1, bcast, "removing a project pings peer sidebars to re-read the smaller config"
+    end
+
     # --- remove: d routes by row kind ----------------------------------------
 
     def test_remove_routes_project_to_remove_project_and_workspace_to_delete

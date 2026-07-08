@@ -722,6 +722,20 @@ module Switchboard
       refute_equal after_collapse, sb.send(:warm_fingerprint), "a full-header toggle moves it too"
     end
 
+    # The project registry is shared state too: a project added/removed in another
+    # session must move the warm fingerprint, so an off-screen pane pre-warms the
+    # new tree instead of flashing it on the next switch-in.
+    def test_warm_fingerprint_tracks_the_config_file
+      sb = sidebar(nodes: [proj("app"), ws("a", path: "/wt/a")])
+      File.write(Config.path, YAML.dump("projects" => [{ "name" => "app", "path" => "/x" }]))
+      base = sb.send(:warm_fingerprint)
+      File.write(Config.path, YAML.dump("projects" => [{ "name" => "app", "path" => "/x" },
+                                                        { "name" => "api", "path" => "/y" }]))
+      t = File.mtime(Config.path) + 2
+      File.utime(t, t, Config.path) # strictly-newer mtime regardless of FS granularity
+      refute_equal base, sb.send(:warm_fingerprint), "registering a project moves the warm fingerprint"
+    end
+
     # warm_poke (the C-w broadcast handler): off screen -> warm_reload + render;
     # on screen -> silent reload + render; prewarm:false off screen -> nothing.
     def test_warm_poke_offscreen_warm_reloads_and_renders

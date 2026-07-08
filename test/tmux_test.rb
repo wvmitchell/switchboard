@@ -194,6 +194,44 @@ module Switchboard
       end
     end
 
+    # --- poke_sidebar_of: the config-reload / switch poke by session name ------
+    # It resolves the sidebar pane via window_sidebar_pane and send-keys the poke.
+    # Regression: it once called a nonexistent `sidebar_pane`, so EVERY real call
+    # (the `e`-editor reload trailer, remove_project's home poke) raised
+    # NoMethodError — invisible offline because unit tests always stub the method.
+
+    def test_poke_sidebar_of_sends_the_reload_config_key_to_the_resolved_pane
+      sent = nil
+      stub_method(Tmux, :window_sidebar_pane, ->(s) { s == "sb/app/x" ? "%7" : nil }) do
+        stub_method(Tmux, :system, ->(*args, **) { sent = args }) do
+          Tmux.poke_sidebar_of("sb/app/x", reload_config: true)
+        end
+      end
+      assert_equal ["tmux", "send-keys", "-t", "%7", "C-r"], sent,
+                   "resolves the pane via window_sidebar_pane and pokes it with C-r (not the old NoMethodError)"
+    end
+
+    def test_poke_sidebar_of_defaults_to_the_c_l_switch_key
+      sent = nil
+      stub_method(Tmux, :window_sidebar_pane, ->(*) { "%3" }) do
+        stub_method(Tmux, :system, ->(*args, **) { sent = args }) do
+          Tmux.poke_sidebar_of("sb/app/x")
+        end
+      end
+      assert_equal "C-l", sent&.last, "the plain poke is the switch-reload key"
+    end
+
+    def test_poke_sidebar_of_noops_without_a_sidebar_pane
+      sent = false
+      stub_method(Tmux, :window_sidebar_pane, ->(*) { nil }) do
+        stub_method(Tmux, :system, ->(*) { sent = true }) do
+          assert_nil Tmux.poke_sidebar_of("sb/app/x", reload_config: true),
+                     "no sidebar in that session -> nil so the caller can fall back"
+        end
+      end
+      refute sent, "and nothing is send-keys'd"
+    end
+
     # --- work_dir: the pure pane-cwd pick (drives the sidebar's -c) -----------
     # spawn_sidebar pins the sidebar pane's cwd to the worktree by reading the
     # window's work-pane path; if it picked the client's path instead the "you

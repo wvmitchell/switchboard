@@ -120,6 +120,23 @@ module Switchboard
       assert_equal %w[a b], names
     end
 
+    # Every config write must be atomic (temp+rename), not a raw File.write. A
+    # sidebar now re-reads config on every rebuild and stats it in warm_fingerprint,
+    # so a plain File.write's O_TRUNC window would let a peer read the empty file —
+    # valid YAML, so load_error wouldn't catch it — and adopt a zero-project config,
+    # blanking its whole tree. Assert all three write paths route through
+    # MarkerBlock.atomic_write, the shared symlink-/mode-aware temp+rename writer.
+    def test_every_config_write_is_atomic
+      calls = []
+      stub_method(MarkerBlock, :atomic_write, ->(f, c) { calls << f; File.write(f, c) }) do
+        Config.scaffold                        # first write (create)
+        Config.add_project("app", "/repos/app") # O_TRUNC an existing file — the hot race
+        Config.remove_project("app")            # ...and its inverse
+      end
+      assert_equal [Config.path, Config.path, Config.path], calls,
+                   "scaffold, add_project, and remove_project all persist via the atomic temp+rename writer"
+    end
+
     # --- remove_project: the inverse write path (single source of truth) ------
 
     def test_remove_project_drops_the_named_entry_and_keeps_the_rest

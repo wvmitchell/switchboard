@@ -17,6 +17,16 @@ module Switchboard
 
     def folded_ws_of(sb, path = "/wt/m") = rows_of(sb).find { |n| n.kind == "ws" && n.path == path }
 
+    # Project-header names in the rebuilt tree, in order.
+    def project_names(sb) = sb.instance_variable_get(:@nodes).select { |n| n.kind == "proj" }.map(&:project)
+
+    # Force a strictly-newer mtime so an mtime-gated re-read fires regardless of
+    # filesystem timestamp granularity (two writes can share a coarse mtime).
+    def bump_mtime(file, by: 2)
+      t = File.mtime(file) + by
+      File.utime(t, t, file)
+    end
+
     def test_z_folds_every_branch_row_and_writes_through_to_the_store
       sb = sidebar(nodes: multi_branch_tree)
       assert_equal %w[proj ws br br ws], rows_of(sb).map(&:kind), "expanded: the branch rows are present"
@@ -94,6 +104,50 @@ module Switchboard
       sb.send(:rebuild)
       assert sb.instance_variable_get(:@fold_branches),
              "rebuild picks up the branch-fold flag another sidebar wrote"
+    end
+
+    # The cross-session gap: @config is cached per sidebar process, so a project
+    # added in ANOTHER session used to stay invisible here until this pane's
+    # process was respawned. rebuild now re-reads config (mtime-gated) so it shows
+    # on the next reload/warm/switch-in.
+    def test_rebuild_picks_up_a_project_registered_in_another_session
+      app = temp_git_repo("app")
+      File.write(Config.path, YAML.dump("projects" => [{ "name" => "app", "path" => app }]))
+      sb = sidebar(nodes: [])
+      sb.instance_variable_set(:@config, Config.new)
+      sb.instance_variable_set(:@config_mtime, sb.send(:config_mtime))
+      sb.send(:rebuild)
+      assert_equal ["app"], project_names(sb)
+
+      api = temp_git_repo("api")                # another session runs `a` / `switchboard add`
+      File.write(Config.path, YAML.dump("projects" => [
+                   { "name" => "app", "path" => app }, { "name" => "api", "path" => api }
+                 ]))
+      bump_mtime(Config.path)                   # guarantee a strictly newer mtime for the gate
+
+      sb.send(:rebuild)
+      assert_equal %w[api app], project_names(sb).sort,
+                   "rebuild re-reads config, so the project added elsewhere appears without a respawn"
+    end
+
+    # The mtime gate is what keeps the frequent C-l reload cheap: an unchanged
+    # config file is never re-parsed, only re-read once it actually changes.
+    def test_refresh_config_only_re_reads_when_the_file_changed
+      File.write(Config.path, YAML.dump("projects" => []))
+      sb = sidebar(nodes: [])
+      cfg = Config.new
+      sb.instance_variable_set(:@config, cfg)
+      sb.instance_variable_set(:@config_mtime, sb.send(:config_mtime))
+
+      sb.send(:refresh_config)
+      assert_same cfg, sb.instance_variable_get(:@config),
+                  "an unchanged config file is not re-parsed (the mtime gate keeps C-l cheap)"
+
+      File.write(Config.path, YAML.dump("projects" => [{ "name" => "app", "path" => "/x" }]))
+      bump_mtime(Config.path)
+      sb.send(:refresh_config)
+      refute_same cfg, sb.instance_variable_get(:@config), "a changed config file IS re-read"
+      assert sb.instance_variable_get(:@config).project("app"), "with the new project now in @config"
     end
 
     # The #118 alignment invariant must hold for a folded ws even at the minimum

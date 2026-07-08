@@ -302,6 +302,11 @@ module Switchboard
       Tmux.switch(target) if target != Tmux.session_of
       Tmux.poke_sidebar_of(target, reload_config: true) ||
         Tmux.poke_sidebar_of(Tmux::HOME, reload_config: true)
+      # A `e` edit can add/remove a project too, so poke every OTHER sidebar to
+      # re-read the changed config (their rebuild's refresh_config picks it up),
+      # not just the origin session we C-r'd above — else the new project only
+      # shows in the session you edited from until the others respawn.
+      Tmux.broadcast_warm(except: Tmux.window_sidebar_pane(target))
       # DX1/DX2: re-apply tmux_keys so a changed toggle/home takes effect on save
       # (like every other knob), and announce the result so the user sees it.
       Installer.apply_keybindings(announce: true)

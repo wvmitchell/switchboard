@@ -7,6 +7,29 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.47.4] — a new project reaches every session, not just the one that added it (2026-07-08)
+
+### Fixed
+- **Adding/removing a project only updated the sidebar you did it in.** Each
+  session's sidebar caches the config in memory and only re-read it in the
+  session that made the change, so a project registered in one session stayed
+  invisible in the others until that sidebar's process was respawned. The reload
+  chokepoint (`rebuild`) now re-reads config when the file's mtime changed —
+  mtime-gated, so the frequent switch-in reload stays a single `stat` when
+  nothing changed — the config file joins the off-screen warm fingerprint, and
+  the add/remove/`e`-edit verbs broadcast a repaint so peer sidebars pick the
+  change up instantly instead of only on their next switch-in.
+- **The config-reload poke raised on every real call.** `Tmux.poke_sidebar_of`
+  called a method that no longer existed (`sidebar_pane`, renamed to
+  `window_sidebar_pane`), so the `e`-editor reload trailer and remove-project's
+  home poke both crashed with `NoMethodError` — invisible offline because the
+  unit tests always stubbed the method.
+- **A racing config write could blank a peer's tree.** Now that sidebars read
+  config concurrently, `add_project`/`remove_project`/`scaffold` write atomically
+  (temp+rename, via the existing symlink- and mode-aware writer) — a plain
+  `File.write`'s `O_TRUNC` window could otherwise be read as an empty (but valid)
+  YAML and silently adopted as a zero-project config.
+
 ## [0.47.3] — the dot settles when you interrupt a turn (2026-07-06)
 
 ### Fixed

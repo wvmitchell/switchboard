@@ -2,6 +2,7 @@
 
 require "yaml"
 require "fileutils"
+require_relative "marker_block"
 
 module Switchboard
   # Switchboard's own project registry — what lets it stand alone, with no
@@ -124,10 +125,7 @@ module Switchboard
     # want to read or seed it open the real file. Idempotent.
     def self.scaffold
       file = path
-      unless File.exist?(file)
-        FileUtils.mkdir_p(File.dirname(file))
-        File.write(file, SCAFFOLD_TEMPLATE)
-      end
+      MarkerBlock.atomic_write(file, SCAFFOLD_TEMPLATE) unless File.exist?(file) # atomic, like the other config writes
       file
     end
 
@@ -141,8 +139,13 @@ module Switchboard
       entry = { "name" => name, "path" => repo }
       entry["base"] = base if base
       (data["projects"] ||= []) << entry
-      FileUtils.mkdir_p(File.dirname(file))
-      File.write(file, YAML.dump(data))
+      # Atomic temp+rename (via MarkerBlock, symlink- + mode-aware for a stowed
+      # config): a peer sidebar now re-reads config on every rebuild + stats it in
+      # warm_fingerprint, so a plain File.write's O_TRUNC window would let a peer
+      # read the empty file — valid YAML, so load_error wouldn't catch it — and
+      # adopt a zero-project config, blanking its whole tree. Same invariant the
+      # marker stores / HookFile / MarkerBlock already hold.
+      MarkerBlock.atomic_write(file, YAML.dump(data))
       entry
     end
 
@@ -168,7 +171,7 @@ module Switchboard
       return nil unless idx
 
       removed = projects.delete_at(idx)
-      File.write(file, YAML.dump(data))
+      MarkerBlock.atomic_write(file, YAML.dump(data)) # atomic: peers re-read config mid-write (see add_project)
       removed
     end
 

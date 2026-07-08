@@ -14,6 +14,7 @@ module Switchboard
       # Structure + PR badges, NOT per-worktree dirty (16 git-status calls would
       # stall the paint). Fast.
       def rebuild
+        refresh_config # pick up a project added/removed in another session (mtime-gated; see actions.rb)
         @model = Model.new(@config, with_dirty: false)
         @nodes = Tree.nodes(@model, branch_cache: @branch_cache)
         resolve_keymap # re-read sidebar_keys so an `e` config edit re-binds the tree keys (#108)

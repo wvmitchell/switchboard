@@ -241,10 +241,34 @@ AND a cheap `warm_fingerprint` differs from the `@warm_fp` baseline, it runs
 costs ~one `Tmux.visible?` call per `IDLE` (today's dormancy). `warm_fingerprint`
 is stats only — a `dir_fingerprint` (name+mtime per file) over the agent-state,
 attention, PR-cache, and **collapse** dirs, the **full-header / branch-fold /
-width** marker files, plus each tracked worktree's `logs/HEAD` mtime — so it sees
-agent dots, bold, badges, commits, **and the shared view-state** move without a
-git/process shell-out. It deliberately does NOT cover a worktree added/removed in
-**another** session; that refreshes on the switch-in reload as before.
+width** marker files, the **config file** (`Config.path`) mtime, plus each tracked
+worktree's `logs/HEAD` mtime — so it sees agent dots, bold, badges, commits, the
+**project registry** (a project added/removed in another session), **and the
+shared view-state** move without a git/process shell-out. It deliberately does NOT
+cover a *worktree* added/removed in **another** session; that refreshes on the
+switch-in reload as before.
+
+**A project added/removed in another session propagates like shared view-state.**
+`@config` is cached per sidebar process (git is the runtime truth; the config is
+just the project registry), so a project registered elsewhere used to stay
+invisible until the pane's process was respawned. `rebuild` — the one chokepoint
+every reload path funnels through (switch-in poke, the ~15s tree-tick, the
+off-screen warm) — now calls `refresh_config` (`sidebar/actions.rb`): an
+**mtime-gated** re-read that costs one `stat` when the file is unchanged and a
+`Config.new` only when it actually changed (keeping the last-good `@config` on a
+parse error, like `reload_config`, which shares the same `@config_mtime` baseline).
+So the frequent `C-l` reload stays as cheap as when it never re-read config, yet a
+changed registry lands on the next reload. The config-mutating verbs
+(`add_local`/`add_clone`/`remove_project`, and the `e`/CLI `reload-config` path)
+also `Tmux.broadcast_warm` so every *other* sidebar re-reads immediately, and the
+config mtime rides `warm_fingerprint` as the lazy backstop — the same
+broadcast-plus-fingerprint shape as the shared view-state. Because peers now read
+the config concurrently with a writer, `Config.add_project`/`remove_project`/
+`scaffold` write **atomically** (`MarkerBlock.atomic_write`, temp+rename, symlink-
+and mode-aware) — the same invariant the marker stores / `HookFile` / `MarkerBlock`
+already hold: a plain `File.write`'s `O_TRUNC` window would let a peer read the
+empty file, which is *valid YAML* (`load_error` wouldn't catch it), and adopt a
+zero-project config that blanks its whole tree.
 
 **Shared view-state propagates instantly via a broadcast, not just the lazy
 fingerprint.** A collapse/branch-fold/full-header toggle in one sidebar is a user
