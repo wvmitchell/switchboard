@@ -85,6 +85,172 @@ module Switchboard
       assert_equal [:delete], routed, "a workspace row deletes the worktree"
     end
 
+    # --- delete: off-loop removal + shared row-hide (the delete-hang fix) -------
+
+    # A sidebar whose cursor sits on a real, configured workspace row.
+    def deletable_sidebar(ws_path: "/wt/a", branch: "feature")
+      File.write(Config.path, YAML.dump("projects" => [{ "name" => "app", "path" => "/repos/app" }]))
+      node = ws("a", path: ws_path)
+      node[:branch] = branch
+      sb = sidebar(nodes: [proj("app"), node], cursor: 1)
+      sb.instance_variable_set(:@config, Config.new)
+      sb
+    end
+
+    def test_delete_clean_hides_the_row_spawns_the_reaper_and_reloads_hooks_only
+      sb = deletable_sidebar
+      ENV["SWITCHBOARD_BIN"] = "/bin/switchboard"
+      spawned = nil
+      detached = false
+      reload_kwargs = :never
+      sb.define_singleton_method(:reload) { |**kw| reload_kwargs = kw }
+      stub_method(Git, :clean?, ->(*) { true }) do
+        stub_method(Tmux, :session_of, ->(*) { "sb/home" }) do        # not the current session
+          stub_method(Tmux, :session_name, ->(*) { "sb/app/a" }) do
+            stub_method(Tmux, :kill, ->(*) {}) do
+              stub_method(Process, :spawn, ->(*a, **) { spawned = a; 4242 }) do
+                stub_method(Process, :detach, ->(pid) { detached = (pid == 4242) }) do
+                  stub_method(sb, :confirm, ->(*) { true }) do
+                    sb.send(:delete)
+                  end
+                end
+              end
+            end
+          end
+        end
+      end
+      assert_includes PendingDelete.pending(["/wt/a"]), "/wt/a", "the row is hidden via a shared marker"
+      assert_includes sb.instance_variable_get(:@pending_delete), "/wt/a", "...and this pane same-frame"
+      assert_equal ["/bin/switchboard", "reap-worktree", "/repos/app", "/wt/a", "feature"], spawned,
+                   "hands the removal to the detached reaper (repo, path, branch)"
+      assert detached, "and detaches it so it outlives us"
+      assert_equal({ hooks_only: true }, reload_kwargs, "the non-current reload skips the lsof fallback (Option C)")
+    ensure
+      ENV.delete("SWITCHBOARD_BIN")
+    end
+
+    def test_delete_dirty_prompts_to_force_and_aborts_when_declined
+      sb = deletable_sidebar
+      ENV["SWITCHBOARD_BIN"] = "/bin/switchboard"
+      confirms = []
+      marked = false
+      stub_method(Git, :clean?, ->(*) { false }) do            # not clean ⇒ force prompt
+        stub_method(PendingDelete, :mark, ->(*) { marked = true }) do
+          sb.define_singleton_method(:confirm) do |msg|
+            confirms << msg
+            !msg.include?("uncommitted")                       # yes to "delete?", NO to "force?"
+          end
+          sb.send(:delete)
+        end
+      end
+      assert_equal 2, confirms.size, "asks to delete, then to force"
+      assert_match(/uncommitted changes/, confirms.last)
+      refute marked, "declining force deletes nothing (no hide, no reaper)"
+    ensure
+      ENV.delete("SWITCHBOARD_BIN")
+    end
+
+    # Deleting the session you're in: fall back to home first, then kill — and DON'T
+    # reload in-process (this process dies with the session; home + the reaper drive).
+    def test_delete_current_session_goes_home_and_kills_without_reloading
+      sb = deletable_sidebar
+      ENV["SWITCHBOARD_BIN"] = "/bin/switchboard"
+      went_home = false
+      killed = false
+      reloaded = false
+      sb.define_singleton_method(:reload) { |**| reloaded = true }
+      stub_method(Git, :clean?, ->(*) { true }) do
+        stub_method(Tmux, :session_name, ->(*) { "sb/app/a" }) do
+          stub_method(Tmux, :session_of, ->(*) { "sb/app/a" }) do   # WE are that session
+            stub_method(Tmux, :go_home, -> { went_home = true }) do
+              stub_method(Tmux, :kill, ->(*) { killed = true }) do
+                stub_method(Process, :spawn, ->(*, **) { 1 }) do
+                  stub_method(Process, :detach, ->(*) {}) do
+                    stub_method(sb, :confirm, ->(*) { true }) do
+                      sb.send(:delete)
+                    end
+                  end
+                end
+              end
+            end
+          end
+        end
+      end
+      assert went_home, "falls back to home before killing the session we live in"
+      assert killed, "then kills it"
+      refute reloaded, "home + the reaper's broadcast drive the repaint, not this dying process"
+    ensure
+      ENV.delete("SWITCHBOARD_BIN")
+    end
+
+    # No self-invoke available (no SWITCHBOARD_BIN): remove synchronously so delete
+    # still works (the old inline hang, but correct) and leaves no dangling hide.
+    def test_delete_falls_back_to_synchronous_removal_without_the_binary
+      sb = deletable_sidebar
+      ENV.delete("SWITCHBOARD_BIN")
+      removed = nil
+      branch_deleted = nil
+      sb.define_singleton_method(:reload) { |**| }
+      stub_method(Git, :clean?, ->(*) { true }) do
+        stub_method(Git, :remove_worktree, ->(repo, p, **) { removed = [repo, p]; true }) do
+          stub_method(Git, :delete_branch, ->(_repo, b, **) { branch_deleted = b; true }) do
+            stub_method(Tmux, :session_of, ->(*) { "sb/home" }) do
+              stub_method(Tmux, :session_name, ->(*) { "sb/app/a" }) do
+                stub_method(Tmux, :kill, ->(*) {}) do
+                  stub_method(sb, :confirm, ->(*) { true }) do
+                    sb.send(:delete)
+                  end
+                end
+              end
+            end
+          end
+        end
+      end
+      assert_equal ["/repos/app", "/wt/a"], removed, "no binary ⇒ remove synchronously"
+      assert_equal "feature", branch_deleted
+      assert_empty PendingDelete.pending(["/wt/a"]), "the sync fallback leaves no hide marker"
+    end
+
+    # bin present but the reaper spawn raises (e.g. a stale/broken SWITCHBOARD_BIN):
+    # un-hide the row and remove synchronously so the delete still lands — never a
+    # workspace hidden forever behind a reaper that never started.
+    def test_delete_falls_back_to_sync_when_the_reaper_spawn_raises
+      sb = deletable_sidebar
+      ENV["SWITCHBOARD_BIN"] = "/bin/switchboard"
+      removed = nil
+      sb.define_singleton_method(:reload) { |**| }
+      stub_method(Git, :clean?, ->(*) { true }) do
+        stub_method(Process, :spawn, ->(*_a, **_k) { raise Errno::ENOENT }) do
+          stub_method(Git, :remove_worktree, ->(repo, p, **) { removed = [repo, p]; true }) do
+            stub_method(Git, :delete_branch, ->(*, **) { true }) do
+              stub_method(Tmux, :session_of, ->(*) { "sb/home" }) do
+                stub_method(Tmux, :session_name, ->(*) { "sb/app/a" }) do
+                  stub_method(Tmux, :kill, ->(*) {}) do
+                    stub_method(sb, :confirm, ->(*) { true }) do
+                      sb.send(:delete)
+                    end
+                  end
+                end
+              end
+            end
+          end
+        end
+      end
+      assert_equal ["/repos/app", "/wt/a"], removed, "a failed spawn falls back to synchronous removal"
+      assert_empty PendingDelete.pending(["/wt/a"]), "and clears the optimistic hide marker"
+      refute_includes sb.instance_variable_get(:@pending_delete), "/wt/a", "...in-memory too"
+    ensure
+      ENV.delete("SWITCHBOARD_BIN")
+    end
+
+    # The optimistic hide is a plain row transform: a pending path vanishes at once.
+    def test_a_pending_delete_path_is_hidden_from_the_rows
+      sb = sidebar(nodes: [proj("app"), ws("a", path: "/wt/a"), ws("b", path: "/wt/b")])
+      sb.instance_variable_set(:@pending_delete, Set.new(["/wt/a"]))
+      sb.send(:recompute_rows)
+      assert_equal ["b"], ws_names(sb), "the workspace being deleted disappears immediately"
+    end
+
     # --- remove_project: confirm -> unregister + close sessions ----------------
 
     def test_remove_project_unregisters_and_closes_sessions_when_confirmed

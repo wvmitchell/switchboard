@@ -23,6 +23,11 @@ module Switchboard
         # names (the stable registry, not the git-built tree, so a project that
         # momentarily fails to build doesn't lose its fold).
         @collapsed = Collapse.collapsed(@config.projects.map { |p| p["name"] })
+        # Workspaces mid-deletion: hidden in every window while a detached daemon runs
+        # the slow `git worktree remove` (the marker is cleared when it finishes, or
+        # aged out by TTL if the daemon dies). Git still lists the worktree until the
+        # removal lands, so it's in @nodes — the filter below drops it from the rows.
+        @pending_delete = PendingDelete.pending(@nodes.select { |n| n.kind == "ws" }.map(&:path))
         @full_header = FullHeader.enabled? # shared toggle: full header on every session
         @fold_branches = BranchFold.folded? # shared toggle: fold every workspace's branches (#107)
         # Shared pane width: a ←/→ resize in any window lands here. Skip the hydrate
@@ -64,6 +69,7 @@ module Switchboard
         active_pr, counts = fold_lookup
         rows = []
         @nodes.each do |n|
+          next if n.kind != "proj" && @pending_delete.include?(n.path) # being deleted: hide the ws + its branch rows
           next if n.kind != "proj" && @collapsed.include?(n.project) # collapsed project hides its children
           next if n.kind == "br" && @fold_branches                   # folded: hide every branch row
           rows << (foldable_ws?(n) ? fold_ws(n, active_pr[n.path], counts[n.path]) : n)
@@ -121,7 +127,7 @@ module Switchboard
             header = n
             keep_header = self.class.fuzzy_match?(n.project, @filter)
             matches = []
-          elsif n.kind == "ws" && self.class.fuzzy_match?(filter_text(n), @filter)
+          elsif n.kind == "ws" && !@pending_delete.include?(n.path) && self.class.fuzzy_match?(filter_text(n), @filter)
             matches << n
           end
         end

@@ -7,6 +7,39 @@ module Switchboard
   # parsing and the emdash-free `init`. (install/uninstall themselves are thin
   # delegations covered by InstallerTest; doctor's rows are ANSI formatting.)
   class CLITest < SandboxTest
+    # --- reap-worktree: the background removal core (daemonizing is split off) -----
+
+    # The off-loop removal actually removes the worktree + its (merged) branch, clears
+    # the hide marker, and pokes every pane to repaint. Driven against a real repo.
+    def test_reap_worktree_removes_the_worktree_branch_and_clears_the_marker
+      repo = temp_git_repo("app")
+      git(repo, "worktree", "add", "-q", path("wt"), "-b", "feature")
+      PendingDelete.mark(path("wt"))
+      bcast = 0
+      stub_method(Tmux, :broadcast_warm, ->(**) { bcast += 1 }) do
+        CLI.send(:reap_worktree!, repo, path("wt"), "feature")
+      end
+      refute(Git.worktrees(repo).any? { |w| w[:path] == path("wt") }, "the worktree is removed")
+      refute File.exist?(path("wt")), "and its dir is gone"
+      refute_includes git(repo, "branch", "--format=%(refname:short)").split, "feature", "merged branch dropped"
+      assert_empty PendingDelete.pending([path("wt")]), "the hide marker is cleared"
+      assert_equal 1, bcast, "every pane is told to repaint from git truth"
+    end
+
+    # If the removal fails, the marker is still cleared so the (undeleted) row
+    # REAPPEARS rather than staying hidden — a delete that didn't take mustn't be masked.
+    def test_reap_worktree_clears_the_marker_even_when_removal_fails
+      PendingDelete.mark("/wt/gone")
+      stub_method(Git, :remove_worktree, ->(*, **) { false }) do
+        stub_method(Git, :delete_branch, ->(*, **) { false }) do
+          stub_method(Tmux, :broadcast_warm, ->(**) {}) do
+            CLI.send(:reap_worktree!, "/repos/app", "/wt/gone", "feature")
+          end
+        end
+      end
+      assert_empty PendingDelete.pending(["/wt/gone"]), "marker cleared so the row reappears"
+    end
+
     def test_flag_value_returns_the_value_after_the_flag
       assert_equal "/x.conf", CLI.flag_value(["--tmux-conf", "/x.conf"], "--tmux-conf")
     end

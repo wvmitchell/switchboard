@@ -7,6 +7,24 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.47.5] — deleting a workspace no longer freezes the sidebar (2026-07-10)
+
+### Fixed
+- **Deleting a workspace could hang the whole TUI for seconds.** `d` ran
+  `git worktree remove` synchronously on the sidebar's input loop, and that does an
+  inline `rm -rf` of the entire working tree — including gitignored `node_modules` /
+  `vendor/bundle` / build output. A workspace with deps installed (100k+ files) froze
+  every keystroke for the duration; a light one was instant, which is why it only bit
+  sometimes. Delete now hides the row immediately (a shared `PendingDelete` marker, so
+  every window's sidebar hides it at once) and hands the removal to a detached
+  `reap-worktree` daemon (`Process.daemon`, so it outlives the session kill when you
+  delete the workspace you're *in*) that runs `git worktree remove --force` off the
+  loop, then repaints every pane from git truth. git still owns the removal's
+  correctness (dirty/locked/submodule checks, freeing the branch); the up-front
+  `Git.clean?` is fail-closed, so an undeterminable `git status` still prompts before a
+  force-delete instead of silently skipping the guard. Falls back to the old
+  synchronous removal when it can't self-invoke, so delete always lands.
+
 ## [0.47.4] — a new project reaches every session, not just the one that added it (2026-07-08)
 
 ### Fixed

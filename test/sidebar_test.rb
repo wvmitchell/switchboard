@@ -134,6 +134,22 @@ module Switchboard
       assert_equal 1, recounts, "diff counts recompute exactly on the edge"
     end
 
+    # Option C: reload threads its hooks_only kwarg into the agent scan, so the
+    # post-delete reload skips the tmux/pgrep/lsof process fallback. The delete test
+    # pins that delete PASSES hooks_only: true; this pins that reload HONORS it.
+    def test_reload_threads_hooks_only_into_the_agent_scan
+      sb = sidebar(nodes: [])
+      got = :unset
+      sb.define_singleton_method(:rebuild) {}
+      sb.define_singleton_method(:locate) {}
+      sb.define_singleton_method(:refresh_diffs) {}
+      sb.define_singleton_method(:warm_fingerprint) { nil }
+      sb.define_singleton_method(:refresh_agents) { |announce_sounds: true, hooks_only: false| got = hooks_only }
+      sb.instance_variable_get(:@edges).define_singleton_method(:refresh_stale_prs) { |_| }
+      sb.send(:reload, hooks_only: true)
+      assert_equal true, got, "reload passes hooks_only through to refresh_agents"
+    end
+
     # The maybe_refresh_prs delegator is the T2/T4 seam — pin that it actually
     # reaches the collaborator (its body runs under every sidebar-side stub).
     def test_maybe_refresh_prs_delegates_to_the_edge_collaborator

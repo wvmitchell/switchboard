@@ -89,6 +89,9 @@ module Switchboard
       @agents = {}         # worktree path => :thinking | :done | :waiting
       @attention = Set.new # worktree paths with an unviewed completion (rendered bold)
       @monitoring = Set.new # worktree paths with a live background-monitor marker (∞)
+      @pending_delete = Set.new # worktree paths being deleted right now — hidden from the
+                           # tree while a detached daemon runs `git worktree remove` off the
+                           # input loop (shared PendingDelete marker, hydrated every rebuild)
       @agent_state = AgentState.new
       @collapsed = Set.new # collapsed project names; hydrated from the shared
                            # on-disk store (Collapse) on every rebuild, so all
@@ -440,7 +443,11 @@ module Switchboard
     # or the session-switch poke) — re-baseline + refresh PRs without ringing for
     # completions another sidebar already announced. Defaults true: continuous
     # while-visible scans ring as they always have.
-    def reload(announce_sounds: true)
+    # hooks_only: true skips the tmux/pgrep/lsof process fallback in the agent scan —
+    # passed by the post-delete reload (a delete doesn't need the coarse fallback to
+    # refine other workspaces' dots; they refresh on the next tick). Defaults false so
+    # every other caller is unchanged.
+    def reload(announce_sounds: true, hooks_only: false)
       rebuild
       locate # before refresh_agents: marks below skip the workspace you're in, and viewing it clears its bold
       # Capture the warm-gate fingerprint BEFORE the scan, so @warm_fp can never
@@ -448,7 +455,7 @@ module Switchboard
       # warm_reload guards against): a change landing mid-reload leaves fp behind, so
       # the next off-screen warm re-fires instead of suppressing forever.
       fp = warm_fingerprint
-      refresh_agents(announce_sounds: announce_sounds)
+      refresh_agents(announce_sounds: announce_sounds, hooks_only: hooks_only)
       refresh_diffs # branch-vs-base counts, gated on each worktree's reflog mtime
       @edges.refresh_stale_prs(@config) # T3 idle backstop (the cadence lives with the spawn logic)
       # Stamp BOTH clocks: @last_reload throttles the next switch poke (reload_due?),
@@ -480,6 +487,7 @@ module Switchboard
       [dir_fingerprint(AgentState.state_dir),  # agent dots
        dir_fingerprint(Attention.state_dir),   # bold markers
        dir_fingerprint(Monitoring.state_dir),  # background-monitor ∞ markers
+       dir_fingerprint(PendingDelete.state_dir), # being-deleted row-hides (so off-screen panes hide too)
        dir_fingerprint(Pr.cache_dir),          # PR badges
        dir_fingerprint(Collapse.state_dir),    # shared project folds (the originally-missed case)
        file_fingerprint(FullHeader.marker),    # full-header toggle

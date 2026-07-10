@@ -72,6 +72,34 @@ module Switchboard
       assert Git.dirty?(repo)
     end
 
+    # clean? is the fail-CLOSED twin used by the delete force-confirm.
+    def test_clean_true_only_when_confirmed_clean
+      repo = temp_git_repo
+      assert Git.clean?(repo)
+      File.write(File.join(repo, "new.txt"), "x")
+      refute Git.clean?(repo), "an untracked file makes it not clean"
+    end
+
+    # The point of the fail-closed twin: an undeterminable status (not a repo / git
+    # errored) is NOT clean, so the destructive delete prompts to force rather than
+    # silently skipping the guard — unlike dirty?, which reads a git error as "clean".
+    def test_clean_is_false_when_status_cannot_be_determined
+      refute Git.clean?(path("notarepo")), "git error ⇒ not clean (fail-closed)"
+      assert Git.dirty?(path("notarepo")) == false, "dirty? stays fail-open (reads as clean)"
+    end
+
+    # A fully-ignored heavy dir (node_modules) isn't dirty, so the check both matches
+    # what `git worktree remove` allowed AND stays fast (porcelain skips ignored dirs).
+    def test_clean_ignores_gitignored_dirs
+      repo = temp_git_repo
+      File.write(File.join(repo, ".gitignore"), "node_modules/\n")
+      git(repo, "add", ".gitignore")
+      git(repo, "commit", "-qm", "ignore")
+      FileUtils.mkdir_p(File.join(repo, "node_modules"))
+      File.write(File.join(repo, "node_modules", "x"), "y")
+      assert Git.clean?(repo), "an ignored dir doesn't make the worktree dirty"
+    end
+
     def test_branch_history_reads_checkout_reflog_newest_first
       repo = temp_git_repo
       git(repo, "checkout", "-q", "-b", "feature")

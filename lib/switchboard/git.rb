@@ -29,6 +29,20 @@ module Switchboard
       !capture(worktree, "status", "--porcelain").strip.empty?
     end
 
+    # Fail-CLOSED clean check for the destructive delete path: true ONLY when
+    # `git status` runs cleanly AND reports nothing. `dirty?` above is deliberately
+    # fail-OPEN (capture swallows the exit status, so a git error reads as ""), which
+    # is right for the render path — a transient error must not flag a workspace dirty
+    # — but WRONG for gating a force-delete confirm: an undeterminable state ("git
+    # status failed") would read as clean and skip the "you have uncommitted changes"
+    # prompt. So here a non-zero exit ⇒ not clean ⇒ the caller prompts to force. Still
+    # fast: porcelain skips fully-ignored dirs, so a huge node_modules doesn't stall.
+    def clean?(worktree)
+      out = capture(worktree, "status", "--porcelain")
+      ok = $?&.success? # set by capture's backtick; grab before anything else runs
+      !!ok && out.strip.empty?
+    end
+
     # Best-effort refresh so a base ref like origin/main is current before we
     # branch a new worktree from it. Fetches the remote the base lives on
     # (origin for origin/main) when that's a real remote; else the default.

@@ -142,6 +142,41 @@ module Switchboard
       assert_nil Tmux.live_editor_pane, "a dead editor pane is filtered, not reused"
     end
 
+    # The delete-hang fix end-to-end: deleting the workspace you're IN hands the slow
+    # `git worktree remove` to a DETACHED daemon that must outlive the session kill
+    # (Process.daemon / setsid, immune to the pane-teardown SIGHUP) and then falls home.
+    # Offline stubs can't reach this — it's real processes + a real session kill. The
+    # assertion is end-state (worktree + branch gone, we're home), never a wall-clock
+    # bound. Sending `d` then `y` drives the real sidebar confirm (a clean placeholder
+    # needs no force prompt); `j` first lands the cursor on the workspace row.
+    def test_deleting_the_current_workspace_falls_home_and_the_daemon_removes_it
+      sess = create_workspace          # client is now on sess (a clean placeholder)
+      leaf = sess.split("/").last
+      wt = worktree_path(leaf)
+      pane = sidebar_pane_ids(sess).first or flunk "no sidebar in the workspace to drive"
+
+      tmux!("send-keys", "-t", pane, "j") # proj header is row 0; move onto the workspace row
+      tmux!("send-keys", "-t", pane, "d") # delete
+      # Wait for the confirm prompt before sending `y`: if `d` and `y` land in one read
+      # they tokenize together and confirm's read_char blocks after `d`, never seeing the
+      # buffered `y`. Waiting for [y/N] guarantees read_char is blocking on a fresh read —
+      # and that `d` hit the WORKSPACE row (a project row would prompt "remove", not "delete").
+      wait_until("the delete confirm prompt is up") do
+        tmux("capture-pane", "-p", "-t", pane).include?("delete #{leaf}")
+      end
+      tmux!("send-keys", "-t", pane, "y") # confirm (clean placeholder ⇒ no force prompt)
+
+      wait_until("we fall home and the workspace session is gone") do
+        !session?(sess) && client_session == HOME
+      end
+      wait_until("the detached daemon finishes the removal (it survived the session kill)") do
+        !Dir.exist?(wt) && Git.worktrees(@project).none? { |w| w[:path] == wt }
+      end
+      refute session?(sess), "the deleted workspace's session is gone"
+      assert_equal HOME, client_session, "and we've fallen back to home"
+      refute Dir.exist?(wt), "the daemon removed the worktree dir off-loop"
+    end
+
     # quit: full teardown — every sb/ session gone (current one last), agent state cleared.
     def test_quit_tears_down_every_sb_session
       create_workspace

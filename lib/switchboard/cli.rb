@@ -25,6 +25,7 @@ module Switchboard
       when "remove", "rm"      then remove_project(argv[1])
       when "clone"             then clone_project(argv[1], argv[2])
       when "refresh"           then refresh(*refresh_args(argv))
+      when "reap-worktree"     then reap_worktree(argv[1], argv[2], argv[3])
       when "enable-hooks"      then enable_hooks(argv[1])
       when "disable-hooks"     then disable_hooks(argv[1])
       when "rename"            then exit(1) unless rename(argv[1])
@@ -118,6 +119,38 @@ module Switchboard
       poke_after(poke_pane)
     end
 
+    # Background worktree reaper (issue: delete hang). `Sidebar#delete` hides the row
+    # via a PendingDelete marker and spawns this DETACHED so the slow `git worktree
+    # remove` (an inline rm -rf of node_modules et al.) never blocks the input loop.
+    # We daemonize FIRST — Process.daemon setsids into a new session with no
+    # controlling terminal, the only thing that survives the pane-teardown SIGHUP when
+    # the caller kills its own session (deleting the workspace you're in). Then the
+    # removal core clears the marker and repaints every pane from git truth.
+    def reap_worktree(repo, path, branch)
+      return unless repo && path
+
+      Process.daemon(true, true) # new session, no ctty; keep the already-/dev/null'd stdio
+      reap_worktree!(repo, path, branch)
+    end
+
+    # The removal itself, split out so tests exercise it WITHOUT daemonizing (which
+    # would detach the test process). `remove_worktree --force` owns all the
+    # correctness git already enforces (dirty/locked/submodule, freeing the branch);
+    # `delete_branch` is the safe `-d` (git refuses a still-checked-out or unmerged
+    # branch, so it's a no-op when the remove failed). The marker is cleared
+    # UNCONDITIONALLY: on success the row is gone from git anyway; on failure the row
+    # must REAPPEAR so a delete that didn't take isn't masked. broadcast_warm makes
+    # every sidebar rebuild from git truth now instead of lagging to its next tick.
+    def reap_worktree!(repo, path, branch)
+      Git.remove_worktree(repo, path, force: true)
+      Git.delete_branch(repo, branch) if branch && !branch.empty?
+      PendingDelete.clear(path)
+      Tmux.broadcast_warm
+    rescue StandardError
+      PendingDelete.clear(path) # never leave the row stuck hidden on an unexpected fault
+      nil
+    end
+
     # Parse `refresh [name] [--poke PANE]`: the optional project name (first
     # non-flag arg after the subcommand) and the sidebar pane to redraw.
     def refresh_args(argv)
@@ -180,9 +213,10 @@ module Switchboard
     # Tear down switchboard: kill every sb/ session, the one you're in last (so
     # it never orphans the others). Like prune, works outside tmux.
     def quit
-      AgentState.clear_all # killing every agent makes their last hook state stale — drop it now
-      Monitoring.clear_all # ...and every monitoring declaration is now stale too
-      Notify.clear_all     # ...and any pending "come look" alert is moot once the agents are gone
+      AgentState.clear_all  # killing every agent makes their last hook state stale — drop it now
+      Monitoring.clear_all  # ...and every monitoring declaration is now stale too
+      Notify.clear_all      # ...and any pending "come look" alert is moot once the agents are gone
+      PendingDelete.clear_all # ...and any in-flight delete's row-hide (the daemon still finishes the removal)
       killed = Tmux.kill_all
       puts(killed.empty? ? "no switchboard sessions to close" : "closed #{killed.size} switchboard session(s)")
     end

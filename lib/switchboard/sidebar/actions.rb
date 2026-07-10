@@ -61,9 +61,10 @@ module Switchboard
       def quit
         return true unless confirm("quit all switchboard sessions?")
 
-        AgentState.clear_all # killing every agent makes their last hook state stale — drop it now
-        Monitoring.clear_all # ...and every monitoring declaration is now stale too
-        Notify.clear_all     # ...and any pending "come look" alert is moot once the agents are gone
+        AgentState.clear_all  # killing every agent makes their last hook state stale — drop it now
+        Monitoring.clear_all  # ...and every monitoring declaration is now stale too
+        Notify.clear_all      # ...and any pending "come look" alert is moot once the agents are gone
+        PendingDelete.clear_all # ...and any in-flight delete's row-hide (its daemon still finishes)
         Tmux.kill_all
         false
       end
@@ -355,8 +356,11 @@ module Switchboard
         reload
       end
 
-      # Delete a workspace: remove the worktree (force-confirm if dirty), drop the
-      # branch if safely merged, and kill its tmux session.
+      # Delete a workspace: hide its row instantly and hand the slow `git worktree
+      # remove` (an inline rm -rf of node_modules et al.) to a detached daemon, so the
+      # input loop never freezes — the whole point of this path (the delete-hang fix).
+      # git owns the removal's correctness (dirty/locked/submodule, freeing the branch);
+      # we only decide whether to force-confirm and where the row goes.
       def delete
         node = current
         return unless node && node.kind == "ws"
@@ -368,24 +372,53 @@ module Switchboard
         label = File.basename(node.path)
         return unless confirm("delete #{label}?")
 
-        unless Git.remove_worktree(repo, node.path)
-          return unless confirm("#{label} has uncommitted changes — force?")
+        # Fail-CLOSED clean check (Git.clean?, not the fail-open Git.dirty?): an
+        # undeterminable git-status state prompts to force rather than silently
+        # skipping the guard. Porcelain skips ignored dirs, so this stays fast.
+        return if !Git.clean?(node.path) && !confirm("#{label} has uncommitted changes — force?")
 
-          Git.remove_worktree(repo, node.path, force: true)
-        end
-        Git.delete_branch(repo, node.branch) # safe -d; unmerged branches are kept
+        start_removal(repo, node.path, node.branch) # marks + hides the row, spawns the reaper
 
         worktree = Worktree.new(project: node.project, path: node.path, branch: node.branch,
                                 dirty: false, pr: nil, base: nil, primary: false)
         # If we're deleting the very session we're attached to, killing it would
         # eject us from switchboard (this sidebar lives inside it). Fall back to
         # the persistent home session first, then kill — "the one you're in, last".
-        # Our process dies with that session, so home's own sidebar drives from
-        # here (it reloads to the post-deletion tree, which git already reflects).
+        # Our process dies with that session, so home's own sidebar drives from here
+        # (it hydrates the PendingDelete hide, and the reaper's broadcast_warm repaints
+        # every pane once the removal lands). hooks_only on the non-current reload skips
+        # the intermittent lsof fallback (the other dots refresh on the next tick).
         deleting_current = Tmux.session_of == Tmux.session_name(worktree)
-        Tmux.go_home if deleting_current
-        Tmux.kill(worktree)
-        reload unless deleting_current
+        if deleting_current
+          Tmux.go_home
+          Tmux.kill(worktree)
+        else
+          Tmux.kill(worktree)
+          reload(hooks_only: true)
+        end
+      end
+
+      # Hand the removal to the background `reap-worktree` daemon and hide the row now
+      # (a shared PendingDelete marker, so every window's sidebar hides it). Falls back
+      # to a SYNCHRONOUS removal (the old inline hang, but correct) when we can't
+      # self-invoke — no SWITCHBOARD_BIN, or the spawn raises — so delete always works.
+      def start_removal(repo, path, branch)
+        bin = ENV["SWITCHBOARD_BIN"]
+        return sync_remove(repo, path, branch) unless bin
+
+        PendingDelete.mark(path)      # shared: hides the row in every pane
+        @pending_delete.add(path)     # ...and this pane same-frame, before the reaper runs
+        Process.detach(Process.spawn(bin, "reap-worktree", repo, path, branch.to_s,
+                                     in: File::NULL, out: File::NULL, err: File::NULL))
+      rescue SystemCallError
+        PendingDelete.clear(path)     # spawn failed: un-hide and remove synchronously instead
+        @pending_delete.delete(path)
+        sync_remove(repo, path, branch)
+      end
+
+      def sync_remove(repo, path, branch)
+        Git.remove_worktree(repo, path, force: true)
+        Git.delete_branch(repo, branch) # safe -d; unmerged branches are kept
       end
 
       # Rename a workspace: move its worktree directory (the display name) + rename
