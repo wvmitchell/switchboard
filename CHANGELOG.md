@@ -7,6 +7,20 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.47.6] — long-lived open PRs keep their badge (2026-07-10)
+
+### Fixed
+- **An older-but-still-open PR silently lost its sidebar badge.** The PR cache was
+  populated by a single `gh pr list --state all --limit 200` — the 200 *newest* PRs
+  across all states. On an active repo that window fills with merged/closed PRs, so an
+  open PR more than ~200 PRs old fell off the edge and rendered no badge, even though
+  it was backing a live worktree. Open PRs are the ones that matter for active
+  worktrees and are few, so they now get their own `--state open --limit 500` query
+  that's merged in on top of the recent all-states sweep (the sweep stays — it's what
+  gives merged/closed branches their MERGED/CLOSED badge). A reused head branch
+  resolves to the OPEN badge since the open query is applied last, and the fetch still
+  fails as a whole (no half-populated cache) if *either* query fails.
+
 ## [0.47.5] — deleting a workspace no longer freezes the sidebar (2026-07-10)
 
 ### Fixed

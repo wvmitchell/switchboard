@@ -42,23 +42,51 @@ module Switchboard
 
     # Returns the branch->PR map, or nil to signal failure (so refresh won't
     # clobber a good cache). A repo with no GitHub remote legitimately has no PRs
-    # -> {}. But empty gh output means the call failed (a real empty list prints
-    # "[]"), and malformed JSON is a failure too -> nil.
+    # -> {}.
+    #
+    # Two queries, because the all-states sweep is capped at the 200 *newest* PRs:
+    # on an active repo that window fills with merged/closed ones, so an
+    # older-but-still-open PR falls off the edge and loses its badge. Open PRs are
+    # the ones backing live worktrees and must never drop, so they get their own
+    # generous-limit query and are merged in LAST (a reused head branch — an old
+    # merged PR and a new open one sharing a name — resolves to the OPEN badge).
+    # The all-states sweep stays: it's what gives merged/closed branches their
+    # MERGED/CLOSED badge. If EITHER query fails the whole fetch fails (nil), so a
+    # half-populated cache is never written.
     def fetch(repo_path)
       repo = repo_slug(repo_path)
       return {} unless repo
 
-      out = `gh pr list -R #{Shellwords.escape(repo)} --state all --limit 200 \
-             --json number,state,isDraft,headRefName 2>/dev/null`
-      return nil if out.strip.empty?
+      recent = gh_pr_list(repo, "all", 200) # merged/closed + recent open badges
+      return nil if recent.nil?
 
-      JSON.parse(out).each_with_object({}) do |pr, acc|
+      open = gh_pr_list(repo, "open", 500) # every open PR, however old
+      return nil if open.nil?
+
+      (recent + open).each_with_object({}) do |pr, acc|
         acc[pr["headRefName"]] = {
           "identifier" => "##{pr['number']}",
           "status" => pr["state"],
           "is_draft" => pr["isDraft"] ? 1 : 0
         }
       end
+    end
+
+    # One `gh pr list` query -> the parsed PR array, or nil on failure. Shared by
+    # fetch's two queries so both honor the same no-clobber contract.
+    def gh_pr_list(repo, state, limit)
+      parse_pr_json(`gh pr list -R #{Shellwords.escape(repo)} --state #{Shellwords.escape(state)} --limit #{limit.to_i} \
+             --json number,state,isDraft,headRefName 2>/dev/null`)
+    end
+
+    # gh stdout -> the parsed PR array, or nil on failure. Empty output means the
+    # call failed (a real empty list prints "[]"), and malformed JSON is a failure
+    # too -> nil. This nil-vs-{} distinction is the crux of the no-clobber cache
+    # guard, so it's a pure seam refresh's tests can exercise without shelling out.
+    def parse_pr_json(out)
+      return nil if out.strip.empty?
+
+      JSON.parse(out)
     rescue JSON::ParserError
       nil
     end
