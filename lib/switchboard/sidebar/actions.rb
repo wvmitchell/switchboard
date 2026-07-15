@@ -171,9 +171,54 @@ module Switchboard
         if dest
           Tmux.go(Worktree.new(project: node.project, path: dest, branch: nil,
                                dirty: false, pr: nil, base: nil, primary: false),
-                  start: @config.session_command_for(node.project))
+                  start: start_command(node.project, dest))
         end
         reload
+      end
+
+      # What gets typed into a NEW worktree's window: its setup script (#83), then the
+      # agent. Composed here, on the create path only — `switch` passes the bare
+      # session_command, so setup runs once per worktree, never again on re-entry.
+      #
+      # The script goes to `sh -ec` as ONE argument rather than being spliced into the
+      # chain: that keeps a multi-line script (if/loop/heredoc/comment) valid shell, and
+      # `-e` stops it at the first failing step. Only the wrapper joins the `&&`, so a
+      # failed setup means the agent never starts — you land at a shell with the error
+      # still on screen, rather than an agent working a half-built tree. (A setup step
+      # allowed to fail says so itself: `cp x . || true`. Known limit: a COMPOUND
+      # session_command using `;` — `export X=1; claude` — runs regardless, since
+      # `a && b; c` always runs `c`; chain it with `&&` instead.)
+      #
+      # Only STRINGS compose. `compact` alone would let a `session_command: false` (this
+      # config's disable idiom — YAML hands us the boolean) through: it isn't nil, so it
+      # would join into the literal word `false` and get typed into the shell. Tmux's
+      # `if start && created` gate used to swallow that raw false for us; once it's part
+      # of a joined String it's just another truthy token.
+      #
+      # Empty must then collapse back to nil for the same reason: "" is truthy, so a bare
+      # "" would type an empty Enter into every new shell on the default config.
+      def start_command(project, dest)
+        cmd = setup_invocation(project, dest)
+        start = [cmd, @config.session_command_for(project)].grep(String).map(&:strip).reject(&:empty?)
+        start.empty? ? nil : start.join(" && ")
+      end
+
+      # The setup script, wrapped for the shell. A worktree lives at
+      # `<worktree_root>/<project>/<leaf>` while the project's canonical checkout lives
+      # wherever it's registered — two unrelated trees, so a setup script has NO relative
+      # way to name the checkout it wants to copy `.env`/config out of (the whole point of
+      # #83). Switchboard knows both paths right here, so it hands them over: `env` (not a
+      # bare `VAR=v` prefix, which fish doesn't support) exports them for the `sh -ec`
+      # child, letting one GLOBAL setup script serve every project —
+      # `cp "$SWITCHBOARD_PROJECT_PATH/.env" .`.
+      def setup_invocation(project, dest)
+        script = @config.worktree_creation_command_for(project)
+        return nil unless script
+
+        exports = { "SWITCHBOARD_PROJECT_PATH" => @config.project(project)&.fetch("path", nil),
+                    "SWITCHBOARD_WORKTREE_PATH" => dest }.compact
+                                                         .map { |k, v| "#{k}=#{Shellwords.escape(v)}" }
+        ["env", *exports, "sh", "-ec", Shellwords.escape(script)].join(" ")
       end
 
       # a: register a new project. n only makes worktrees *inside* a project, so

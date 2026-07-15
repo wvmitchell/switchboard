@@ -68,9 +68,13 @@ agent name it — see [`switchboard rename`](reference-cli.md#switchboard-rename
 branch is named `<name>`, or `<branch_prefix>/<name>` if you set `branch_prefix` in
 config.
 
-The new session runs the project's `session_command` (e.g. `claude`) on creation
-if you've set one — see [How-to: agent state & sounds](howto-agent-state-and-sounds.md)
-for that and the auto-wired hooks.
+On creation the new session runs the project's
+[`worktree_creation_command`](reference-config.md#worktree_creation_command) — the
+setup a fresh checkout needs (`.env`, `bundle install`), which a new worktree never
+inherits — and then its `session_command` (e.g. `claude`). Either can be unset. A
+failing setup stops the agent starting, so it never opens on a half-built checkout.
+See [How-to: agent state & sounds](howto-agent-state-and-sounds.md) for the
+session_command and the auto-wired hooks.
 
 **Verify:** you're dropped into the new worktree's shell; `git worktree list` in
 the project shows the new path.

@@ -93,6 +93,14 @@ Each worktree maps to exactly one tmux session named `sb/<project>/<leaf>`.
   sidebar pane. On *creation only* (never a re-switch), switchboard types the
   project's resolved `session_command` into the window — the "how the agent
   starts" knob. A live session is never disturbed.
+- **Creating** (`n`) types more than that: a new worktree also gets its
+  `worktree_creation_command` (the setup a fresh checkout needs — `.env`,
+  `bundle install`), composed *ahead* of the agent as
+  `sh -ec '<script>' && <session_command>`. The script goes to `sh -ec` as one
+  argument so a multi-line script survives intact, and only the wrapper joins the
+  `&&` — so a failed setup short-circuits the chain and the agent never opens on a
+  half-built tree. Setup rides the create path alone; a later switch back carries
+  the bare `session_command`, so it runs once per *worktree*, not per session.
 - **The `sb/` prefix is the ownership signal.** There's no separate session
   registry; a session named `sb/…` is switchboard's, anything else isn't. This is
   what lets `prune` reconcile sessions against worktrees (`reconcile.rb`) without

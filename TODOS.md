@@ -242,3 +242,45 @@ and where to start.
   a non-render concern). *Start in:* `lib/switchboard/sidebar/render.rb` — the
   paint paths are already the leaf of the call graph. If none of the triggers
   ever fire, this entry is correctly ignored forever.
+
+## Creator / Tmux
+
+- **`Creator` should retry past a colliding tmux SESSION, not just a dir/branch.**
+  `Creator.create` retries a generated placeholder past a directory or branch
+  collision (`creator.rb:29-33`) but never checks for a colliding tmux session.
+  `Tmux.ensure_session` (`tmux.rb:294`) early-returns `if has_session?(name)` —
+  *before* the `created` gate that fires the start command (`tmux.rb:307`). So a
+  stale `sb/<project>/<leaf>` session that outlived its worktree (exactly what
+  `switchboard prune` reaps) can collide with a fresh placeholder: you get
+  switched into the OLD session, whose cwd is the deleted directory, and NEITHER
+  `session_command` NOR `worktree_creation_command` runs. Silently.
+  *Why it matters more now:* pre-#83 the symptom was "claude didn't start, weird"
+  — you notice at once. With a setup command, the symptom becomes "the workspace
+  came up but `.env` is missing and bundle never ran" — a silent, half-built
+  worktree that LOOKS fine, which is the exact failure class the setup knob
+  exists to eliminate. It is also why `worktree_creation_command` is documented
+  as "at most once on session creation", not "exactly once per worktree".
+  *Odds:* low — needs a stale session AND a random adjective-noun placeholder
+  drawing that same name; `prune` reaps them.
+  *Fix:* add a `Tmux.has_session?` check to the placeholder retry loop
+  (`creator.rb` ~:30) and to the named-create path (~:42). Deliberately kept out
+  of the #83 PR (a `Creator`/`Tmux` collision fix does not belong in a
+  config-knob feature). Depends on nothing.
+
+- **`worktree_creation_command`: a multi-line script is typed as a multi-line
+  literal.** `Shellwords.escape` renders each newline inside the `sh -ec` argument as a
+  real (quoted) LF, so `send-keys -l` types a payload whose lines the pane's interactive
+  shell only reassembles via its open-quote PS2 continuation. It works (pinned by
+  `test/smoke/worktree_creation_command_smoke_test.rb` on zsh, and on bash in CI), but it
+  makes the payload's correctness depend on the interactive shell and on nothing in the
+  user's shell startup consuming queued stdin. The smoke harness's own
+  `quiet_shell_startup` exists because zsh's `zsh-newuser-install` wizard did exactly
+  that — ate the first keystrokes — and a real user's rc can too (direnv's allow prompt,
+  `p10k configure`, an ssh-add, any `read`). Under the old single-line `session_command` a
+  partial eat merely failed to launch the agent; now it could leave *fragments* of a setup
+  script running at the prompt with no `set -e`.
+  *Fix:* make the typed payload a single physical line — write the script to a temp file
+  in `Sidebar#create` and type `sh -e <path> && <session_command>` — at the cost of the
+  pane no longer showing the command it ran (which is part of the feature's UX). Deferred
+  deliberately: the current shape is smoke-proven on both shells CI and the author use,
+  and the failure needs an rc that reads stdin. Revisit if anyone reports a mangled setup.

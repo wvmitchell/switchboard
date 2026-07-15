@@ -29,7 +29,7 @@ module Switchboard
     # w` at the margin instead of under `sidebar_keys:`): it parses fine but is never
     # read, so the setting silently does nothing. `doctor` flags these (CLI#doctor_unknown_keys).
     KNOWN_KEYS = %w[
-      worktree_root projects_root base branch_prefix session_command
+      worktree_root projects_root base branch_prefix session_command worktree_creation_command
       agent_state_hooks prune_on_launch auto_rename diff_counts prewarm background_presence
       sounds tmux_keys sidebar_keys projects
     ].freeze
@@ -72,6 +72,7 @@ module Switchboard
       # base: origin/main                          # default ref new worktrees branch from
       # branch_prefix: ""                          # new branches become <prefix>/<name>
       # session_command: ""                        # run on a worktree's first session (e.g. claude --dangerously-skip-permissions)
+      # worktree_creation_command: ""              # run ONCE in a NEW worktree, before session_command (e.g. bundle install). A list runs its steps in order; `false` on a project turns it off
       # agent_state_hooks: true                    # auto-wire the agent-state dots on worktree create
       # prune_on_launch: true                      # prune orphaned sb/ sessions when landing on home
       # auto_rename: true                          # nudge the agent to rename a placeholder-named workspace once it knows the work
@@ -314,6 +315,35 @@ module Switchboard
       cmd.to_s.empty? ? nil : cmd
     end
 
+    # The setup script run ONCE in a freshly created worktree, before the agent
+    # (#83). Global default here; `worktree_creation_command_for` resolves the
+    # per-project override. nil ⇒ run nothing (as before).
+    def worktree_creation_command
+      setup_script(@data["worktree_creation_command"])
+    end
+
+    # Resolved setup script for a project. THREE states, unlike session_command's
+    # two — which is why this reads the raw node (like auto_rename_for) instead of
+    # riding the `projects` map: that map resolves `value || global`, so it can't
+    # tell "no key" from "explicitly off" and a per-project `false` would silently
+    # inherit the global and run it anyway.
+    #   key absent           ⇒ inherit the global
+    #   key set to a value   ⇒ override
+    #   key set to false/""  ⇒ OFF (nil), never falling back to the global
+    #
+    # It deliberately does NOT ride `project_key` (which the other per-project readers
+    # do): that helper returns nil for a key set to nil, which here is indistinguishable
+    # from the key being absent — so a bare `worktree_creation_command:` (no value, a
+    # documented way to say OFF) would silently inherit the global and run it. The
+    # `key?` test has to happen HERE, where the absent branch is still reachable.
+    def worktree_creation_command_for(name)
+      key = "worktree_creation_command"
+      node = project_node(name)
+      return setup_script(node[key]) if node&.key?(key)
+
+      worktree_creation_command
+    end
+
     # Resolved tmux key for a role ("toggle"/"home"): the configured value when it's
     # a usable key token, else the role default (toggle ⇒ "s", home ⇒ nil/unbound).
     # A `home` that resolves equal to the toggle is dropped — one key can't carry two
@@ -421,11 +451,44 @@ module Switchboard
 
     private
 
+    # A String (one line or a whole multi-line script) or a list of steps ⇒ one
+    # script; anything else ⇒ nil. Deliberately NOT line-split: the caller hands
+    # this to `sh -ec` as a single argument, so an if/loop/heredoc has to survive
+    # verbatim. Splicing it into a `&&` chain instead would corrupt it —
+    # "if [ -f x ]; then\n cp x .\nfi" becomes "if [ -f x ]; then && cp x . && fi",
+    # and a trailing "# comment" would swallow whatever we appended after it.
+    # A list with a non-String entry is rejected WHOLESALE (nil, no setup): a
+    # partial setup is worse than none. So is any other type — `false` is the
+    # config's disable idiom (`sounds: false`), and must not become the shell
+    # builtin `false`, which exits 1 and would block the agent forever.
+    def setup_script(value)
+      steps = Array(value)
+      return nil unless steps.all?(String)
+
+      script = steps.join("\n")
+      script.strip.empty? ? nil : script
+    end
+
     # nil unless `v` is a non-empty string — so an absent/blank per-state value
     # falls through to the next source rather than muting.
     def present(v)
       s = v.to_s.strip
       s.empty? ? nil : s
+    end
+
+    # The raw `projects` entry for `name`, or nil.
+    def project_node(name)
+      return nil unless name
+
+      Array(@data["projects"]).find { |e| e.is_a?(Hash) && e["name"] == name }
+    end
+
+    # A project's raw value for `key`, or nil when the project doesn't set the key
+    # at all — so the caller falls back to the global. nil (absent) and false (set
+    # to off) stay distinct, which is the whole point.
+    def project_key(name, key)
+      node = project_node(name)
+      node&.key?(key) ? node[key] : nil
     end
 
     def global_sounds
@@ -440,28 +503,19 @@ module Switchboard
     # The raw `sounds` node for a project: a Hash, `false`, or nil when the
     # project has no `sounds` key at all (the three cases sounds_enabled? splits).
     def project_sounds_node(name)
-      return nil unless name
-
-      p = Array(@data["projects"]).find { |e| e.is_a?(Hash) && e["name"] == name }
-      p&.key?("sounds") ? p["sounds"] : nil
+      project_key(name, "sounds")
     end
 
     # The project's raw `auto_rename` value, or nil when the project doesn't set the
     # key (so auto_rename_for falls back to the global). nil vs false are distinct.
     def project_auto_rename_node(name)
-      return nil unless name
-
-      p = Array(@data["projects"]).find { |e| e.is_a?(Hash) && e["name"] == name }
-      p&.key?("auto_rename") ? p["auto_rename"] : nil
+      project_key(name, "auto_rename")
     end
 
     # The project's raw `background_presence` value, or nil when unset (falls back to the
     # global). nil vs false are distinct, like project_auto_rename_node.
     def project_background_presence_node(name)
-      return nil unless name
-
-      p = Array(@data["projects"]).find { |e| e.is_a?(Hash) && e["name"] == name }
-      p&.key?("background_presence") ? p["background_presence"] : nil
+      project_key(name, "background_presence")
     end
   end
 end

@@ -80,7 +80,11 @@ Every name prompt (`a` add local/clone, `r` rename) edits in raw mode:
 submits, `Backspace` edits. The prompt shows `(esc cancel)` until you start typing.
 
 `↵` on a workspace **creates the session on first switch** and runs the project's
-`session_command` then (only then — never on a re-switch into a live session). A
+`session_command` then (only then — never on a re-switch into a live session). `n`
+additionally runs the project's
+[`worktree_creation_command`](reference-config.md#worktree_creation_command) — the
+setup a brand-new worktree needs — *before* that agent command, and a failing setup
+stops the agent starting. A
 workspace that has held more than one branch expands into inline branch rows
 (read from its HEAD reflog) you move between with the same `↑`/`↓`. Those rows are
 history with their PR badges — `↵` on any of them switches to that one worktree's

@@ -525,5 +525,135 @@ module Switchboard
       end
       assert_match(/reload-config\s*('')?\z/, captured.to_s, "empty origin still produces a reload trailer")
     end
+
+    # --- start_command: the setup script + the agent (#83) -------------------
+    #
+    # What `n` types into a NEW worktree's window. The setup script is handed to
+    # `sh -ec` as ONE argument (so a multi-line script stays valid shell) and only
+    # the wrapper joins the `&&` — so a failed setup means the agent never starts.
+
+    # A sidebar whose @config is the given YAML data.
+    def sidebar_with_config(data, nodes: [proj("app")])
+      File.write(Config.path, YAML.dump(data))
+      sb = sidebar(nodes: nodes)
+      sb.instance_variable_set(:@config, Config.new)
+      sb
+    end
+
+    def test_start_command_wraps_setup_and_chains_the_agent
+      sb = sidebar_with_config({ "session_command" => "claude",
+                                "projects" => [{ "name" => "app", "path" => "/p",
+                                                 "worktree_creation_command" => "bundle install" }] })
+      assert_equal "env SWITCHBOARD_PROJECT_PATH=/p sh -ec bundle\\ install && claude",
+                   sb.send(:start_command, "app", nil)
+    end
+
+    # The escaping has to survive a real multi-line script — that's the whole reason
+    # for the sh -ec wrapper instead of splicing the script into the && chain.
+    def test_start_command_survives_a_multiline_script
+      script = "if [ -f ../.env ]; then\n  cp ../.env .\nfi"
+      sb = sidebar_with_config({ "session_command" => "claude",
+                                "projects" => [{ "name" => "app", "path" => "/p",
+                                                 "worktree_creation_command" => script }] })
+      start = sb.send(:start_command, "app", "/wt/new")
+      assert_equal ["env", "SWITCHBOARD_PROJECT_PATH=/p", "SWITCHBOARD_WORKTREE_PATH=/wt/new",
+                    "sh", "-ec", script, "&&", "claude"], Shellwords.split(start),
+                   "the script reaches sh -ec as ONE argument, verbatim"
+    end
+
+    # The composed line is typed into an interactive shell, so an apostrophe in the script
+    # (`echo "it's done"`, a path like /Users/o'brien) is the classic escaping trap — the
+    # same one CLAUDE.md calls out for the codex TOML block. Shellwords must neutralize it.
+    def test_start_command_survives_an_apostrophe_in_the_script
+      script = "echo it's done"
+      sb = sidebar_with_config({ "session_command" => "claude",
+                                 "projects" => [{ "name" => "app", "path" => "/p",
+                                                  "worktree_creation_command" => script }] })
+      assert_equal ["env", "SWITCHBOARD_PROJECT_PATH=/p", "sh", "-ec", script, "&&", "claude"],
+                   Shellwords.split(sb.send(:start_command, "app", nil)),
+                   "an apostrophe survives the round-trip as ONE argument"
+    end
+
+    def test_start_command_setup_alone_when_no_session_command
+      sb = sidebar_with_config({ "projects" => [{ "name" => "app", "path" => "/p",
+                                                 "worktree_creation_command" => "bundle install" }] })
+      assert_equal "env SWITCHBOARD_PROJECT_PATH=/p sh -ec bundle\\ install", sb.send(:start_command, "app", nil)
+    end
+
+    def test_start_command_is_just_the_session_command_when_no_setup
+      sb = sidebar_with_config({ "session_command" => "claude",
+                                "projects" => [{ "name" => "app", "path" => "/p" }] })
+      assert_equal "claude", sb.send(:start_command, "app", nil)
+    end
+
+    # REGRESSION: "" is truthy in Ruby, and Tmux gates the send-keys on `if start &&
+    # created` — so an empty compose would type a bare Enter into every new worktree
+    # shell on the DEFAULT config (no setup, no session_command). It must be nil.
+    def test_start_command_is_nil_not_empty_string_when_nothing_is_configured
+      sb = sidebar_with_config({ "projects" => [{ "name" => "app", "path" => "/p" }] })
+      assert_nil sb.send(:start_command, "app", nil), "an empty compose must be nil, or tmux types a bare Enter"
+    end
+
+    # REGRESSION: `session_command: false` (the config's disable idiom — YAML hands us the
+    # boolean, and `Config#session_command` passes it through) must stay OFF. `compact`
+    # alone would keep it, join it into the literal word `false`, and type that into every
+    # new worktree's shell — a regression on a config that has nothing to do with #83.
+    # Tmux's `if start && created` gate used to swallow the raw false; once it's part of a
+    # joined String it's just another truthy token.
+    def test_start_command_ignores_a_false_session_command
+      sb = sidebar_with_config({ "session_command" => false,
+                                 "projects" => [{ "name" => "app", "path" => "/p" }] })
+      assert_nil sb.send(:start_command, "app", nil), "a false session_command is OFF, not the word `false`"
+
+      with_setup = sidebar_with_config({ "session_command" => false,
+                                         "projects" => [{ "name" => "app", "path" => "/p",
+                                                          "worktree_creation_command" => "bundle install" }] })
+      refute_includes with_setup.send(:start_command, "app", nil).to_s, "false",
+                      "and it must not tack `&& false` onto the setup script"
+    end
+
+    # The worktree lives under worktree_root; the project's checkout lives wherever it's
+    # registered — two unrelated trees, so a setup script has NO relative way to reach the
+    # checkout it wants to copy .env out of. Switchboard hands both paths over.
+    def test_start_command_exports_the_project_and_worktree_paths_to_the_script
+      sb = sidebar_with_config({ "projects" => [{ "name" => "app", "path" => "/repos/app",
+                                                  "worktree_creation_command" =>
+                                                    'cp "$SWITCHBOARD_PROJECT_PATH/.env" .' }] })
+      parts = Shellwords.split(sb.send(:start_command, "app", "/wt/new"))
+      assert_equal %w[env SWITCHBOARD_PROJECT_PATH=/repos/app SWITCHBOARD_WORKTREE_PATH=/wt/new sh -ec],
+                   parts.first(5), "env (not a bare VAR=v prefix, which fish rejects) exports both paths"
+      assert_equal 'cp "$SWITCHBOARD_PROJECT_PATH/.env" .', parts.last,
+                   "the script is still ONE argument, and its $VAR is left for the sh child to expand"
+    end
+
+    # REGRESSION: setup runs once per WORKTREE, not once per session. Re-entering an
+    # existing workspace must carry the agent command only.
+    def test_switch_never_carries_the_setup_command
+      sb = sidebar_with_config({ "session_command" => "claude",
+                                 "projects" => [{ "name" => "app", "path" => "/p",
+                                                  "worktree_creation_command" => "bundle install" }] },
+                               nodes: [proj("app"), ws("a", path: "/wt/a")])
+      captured = :unset
+      stub_method(Tmux, :go, ->(_wt, start:) { captured = start }) do
+        sb.send(:switch, ws("a", path: "/wt/a"))
+      end
+      assert_equal "claude", captured, "switching into an existing workspace must not re-run setup"
+    end
+
+    # The create path (`n`, and filter-mode ↵ on a project header) is the ONE place
+    # the setup script is composed in.
+    def test_create_passes_the_composed_start_command_to_tmux
+      sb = sidebar_with_config({ "session_command" => "claude",
+                                "projects" => [{ "name" => "app", "path" => "/p",
+                                                 "worktree_creation_command" => "bundle install" }] })
+      captured = :unset
+      stub_method(Creator, :create, ->(*) { "/wt/new" }) do
+        stub_method(Tmux, :go, ->(_wt, start:) { captured = start }) do
+          capture_io { sb.send(:create, proj("app")) }
+        end
+      end
+      assert_equal "env SWITCHBOARD_PROJECT_PATH=/p SWITCHBOARD_WORKTREE_PATH=/wt/new sh -ec bundle\\ install && claude",
+                   captured
+    end
   end
 end

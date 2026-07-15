@@ -182,6 +182,57 @@ resolved `session_command` (`Config#session_command_for`, global default +
 per-project override) into the window — this is the "how the agent starts" knob,
 e.g. `claude --dangerously-skip-permissions`. Empty ⇒ a plain shell, as before.
 
+**A NEW worktree also gets a setup script** (`worktree_creation_command`, #83) —
+the `.env` / `bundle install` a fresh checkout never inherits. It rides the same
+`start:` seam, composed in `Sidebar#start_command` (`sidebar/actions.rb`) on the
+**create path only**: `switch` passes the bare `session_command`, so setup runs once
+per *worktree*, never again on re-entry. It could NOT live in `Creator.create` —
+that runs on the sidebar's input loop (`Sidebar#create` is its only caller), so a
+`bundle install` there would freeze the whole TUI under `creating…` with no visible
+output; typed into the window it's non-blocking, and its output lands in the pane
+you're about to look at. Two non-obvious pieces: (1) the script is handed to
+**`sh -ec` as ONE `Shellwords`-escaped argument** rather than spliced into the chain
+— splicing corrupts real shell (a line-split `if …; then` becomes `if …; then && cp
+x . && fi`, and a trailing `# comment` swallows the `&& claude` appended after it) —
+so a multi-line script survives verbatim, `-e` stops it at the first failing step,
+and only the wrapper joins the `&&`, meaning a failed setup short-circuits and the
+agent never opens on a half-built tree; (2) an empty compose must collapse back to
+**nil**, because `""` is truthy and `run_in_session` is gated on `if start &&
+created` — a bare `""` would type an empty Enter into every new shell on the default
+config; and (3) only **Strings** compose — `compact` alone would let a
+`session_command: false` (the config's disable idiom; YAML hands us the boolean)
+join into the literal word `false` and get *typed into the shell*, a regression on a
+key that has nothing to do with #83 (tmux's `if start && created` used to swallow the
+raw false for us; inside a joined String it's just another truthy token).
+`Config#worktree_creation_command_for` is **three-state** (absent ⇒ inherit,
+value ⇒ override, `false`/empty/valueless ⇒ OFF), which is why it reads the raw project
+node like `auto_rename_for` instead of riding the `projects` map OR the `project_key`
+helper: both collapse "no key" into "key set to nil", so an opted-out project would
+silently inherit the global. `setup_script` rejects a mixed list wholesale (a partial
+setup is worse than none).
+
+**The script gets `$SWITCHBOARD_PROJECT_PATH` + `$SWITCHBOARD_WORKTREE_PATH`**
+(`setup_invocation`, via `env` — not a bare `VAR=v` prefix, which fish rejects). Not a
+convenience: a worktree lives at `<worktree_root>/<project>/<leaf>` while the project's
+checkout lives at its registered `path`, so there is **no relative path** between them
+— without the export, the feature's whole headline use case (`cp` the untracked `.env`
+your new worktree didn't inherit) is *inexpressible*, and a plausible-looking
+`cp ../../main/.env .` fails, which under the fail-closed `&&` blocks the agent on every
+create. A setup script must NOT copy `.claude/settings.local.json` wholesale — `Creator`
+writes switchboard's hooks there *before* setup runs, so a broad `cp -R .claude .`
+silently kills that worktree's agent dot.
+
+The runtime contract — setup really runs in the new worktree, before the agent, a
+failure really blocks it, and the exported path really reaches the script — is pinned by
+`test/smoke/worktree_creation_command_smoke_test.rb` (stubs prove only the string). Its
+fixtures are **mutation-checked**: the failure case fails on a real command (not
+`exit 1`, which aborts with or without `-e`, pinning nothing), and the happy case carries
+a *quoted* trailing `#` comment (unquoted, YAML eats it) so a regression to the rejected
+`&&`-splice actually fails the suite. Honest limits: it's **at most once, on session
+creation** (a stale same-named session makes `ensure_session` early-return before the
+`created` gate, so setup is skipped — see TODOS), and the fail-closed gate assumes a
+*simple* `session_command` (a compound `export X=1; claude` sequences regardless).
+
 **Workspace naming is deferred** (issues #94, #114). `n` in the sidebar (and
 filter-mode ↵ on a project header) creates a worktree with **no name prompt** —
 one keystroke, you drop straight in. It gets a **placeholder** — a throwaway

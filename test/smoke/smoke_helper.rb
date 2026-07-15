@@ -71,6 +71,7 @@ module Switchboard
       # every pane it spawns, inherits it (matching SandboxSmokeTest's ordering).
       ENV["SWITCHBOARD_SANDBOX"] = "1"
 
+      quiet_shell_startup
       write_project_and_config
       seed_pr_cache                          # fresh cache -> visible reloads don't fork `switchboard refresh`
       boot_server
@@ -92,6 +93,17 @@ module Switchboard
     end
 
     # --- setup steps ---------------------------------------------------------
+
+    # SandboxTest walls HOME off into a tmpdir — which has no zsh startup files, so a
+    # pane's zsh greets us with the interactive `zsh-newuser-install` wizard and EATS
+    # the first keystrokes sent to it. Anything typed into a work pane (a
+    # session_command, a worktree_creation_command) then arrives mangled: `sh -ec …`
+    # lands as `h -ec …` -> "command not found: h". The wizard's own advice is the fix,
+    # and it only ever fires under a HOME this bare — never a real user's. Do it before
+    # boot_server, so every pane the server spawns inherits a quiet shell.
+    def quiet_shell_startup
+      File.write(File.join(ENV.fetch("HOME"), ".zshrc"), "# smoke: silence zsh-newuser-install\n")
+    end
 
     def write_project_and_config
       @project = temp_git_repo("proj") # SandboxTest helper: hermetic repo, `main`, seeded commit, NO origin
@@ -219,9 +231,22 @@ module Switchboard
     end
 
     # Switch the attached client to a session (fires the real client-session-changed hook).
+    # RE-issues the switch on every poll, rather than firing it once and waiting. A single
+    # switch-client can LOSE a race: right after `create_workspace`, the new session's
+    # sidebar is a separate process still finishing its own `Tmux.go` (which switches and
+    # pins), so a late switch of its own can bounce the client back off HOME the instant
+    # after ours lands. The one-shot version then polls a condition that will never come
+    # true and burns the full WAIT — which is exactly the CI flake this fixes ("timed out
+    # after 15s waiting for the client lands on sb/home", every time hitting the ceiling
+    # rather than landing late, the signature of a bounce and not of slowness). Switching
+    # to a session you're already on is a no-op, so re-issuing just means we win by being
+    # last. Same posture as every other wait here: poll the outcome, never assume one
+    # async tmux command took.
     def switch_client(session)
-      tmux!("switch-client", "-t", session)
-      wait_until("the client lands on #{session}") { client_session == session }
+      wait_until("the client lands on #{session}") do
+        tmux!("switch-client", "-t", session)
+        client_session == session
+      end
     end
 
     # Run a switchboard subcommand as a subprocess. It inherits the sandbox ENV

@@ -97,6 +97,24 @@ session_command: claude --dangerously-skip-permissions
 Set it globally or override it per project (a different agent, different flags).
 It fires only on session *creation*, never on a re-switch, so a running agent is
 never disturbed — and leave it unset and `n` just drops you in a plain shell.
+
+## Making a new worktree usable
+
+A fresh worktree has none of the untracked, git-ignored files your main checkout
+picked up — no `.env`, no `node_modules`. `worktree_creation_command` is the setup
+that fixes that. It runs **once, in the new worktree, before your agent**:
+
+```yaml
+worktree_creation_command:
+  - cp "$SWITCHBOARD_PROJECT_PATH/.env" .
+  - bundle install
+```
+
+A string works too (one line or a whole script), and a project can override it —
+or set it to `false` to opt out. It's run with `sh -ec`, so it stops at the first
+failing step, and a failed setup means your agent never starts: you land at a shell
+with the error on screen instead of an agent working a broken checkout.
+
 Every config knob is in the [config reference](docs/reference-config.md).
 
 ## Documentation

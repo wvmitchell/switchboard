@@ -41,7 +41,8 @@ module Switchboard
     end
 
     def test_scaffold_template_advertises_the_optional_knobs
-      %w[tmux_keys sidebar_keys sounds session_command base prune_on_launch projects_root auto_rename diff_counts prewarm].each do |knob|
+      %w[tmux_keys sidebar_keys sounds session_command worktree_creation_command base prune_on_launch
+         projects_root auto_rename diff_counts prewarm].each do |knob|
         assert_includes Config::SCAFFOLD_TEMPLATE, knob, "a fresh config should advertise #{knob}"
       end
     end
@@ -297,6 +298,121 @@ module Switchboard
     def test_session_command_for_nil_when_no_global_and_no_override
       c = cfg("projects" => [{ "name" => "app", "path" => "/p" }])
       assert_nil c.session_command_for("app")
+    end
+
+    # --- worktree_creation_command (#83) ------------------------------------
+    #
+    # The setup script run ONCE in a new worktree, before the agent. Two things
+    # make it more than a second session_command: the value is normalized (a list
+    # of steps, or a whole multi-line script, which must survive VERBATIM because
+    # the caller hands it to `sh -ec`), and the per-project override is THREE-state
+    # (absent ⇒ inherit, value ⇒ override, false ⇒ off) so a project can opt out of
+    # a global setup.
+
+    def test_worktree_creation_command_global_is_nil_unless_set
+      assert_nil cfg({}).worktree_creation_command
+      assert_nil cfg("worktree_creation_command" => "").worktree_creation_command
+      assert_nil cfg("worktree_creation_command" => "   ").worktree_creation_command
+      assert_equal "bundle install", cfg("worktree_creation_command" => "bundle install").worktree_creation_command
+    end
+
+    # A list is a list of STEPS, joined for `sh -ec` (which runs them under set -e).
+    def test_worktree_creation_command_accepts_a_list_of_steps
+      c = cfg("worktree_creation_command" => ["cp ../.env .", "bundle install"])
+      assert_equal "cp ../.env .\nbundle install", c.worktree_creation_command
+      assert_nil cfg("worktree_creation_command" => []).worktree_creation_command
+    end
+
+    # The load-bearing one: a multi-line script must NOT be split and re-joined
+    # with `&&` (that turns an if-block into "if …; then && cp x . && fi" — syntax
+    # garbage — and lets a trailing `# comment` swallow the agent launch appended
+    # after it). It rides through to `sh -ec` exactly as written.
+    def test_worktree_creation_command_preserves_a_multiline_script_verbatim
+      script = "if [ -f ../.env ]; then\n  cp ../.env .\nfi"
+      assert_equal script, cfg("worktree_creation_command" => script).worktree_creation_command
+
+      commented = "cp ../.env . # bring the env over"
+      assert_equal commented, cfg("worktree_creation_command" => commented).worktree_creation_command
+    end
+
+    # `false` is this config's disable idiom (`sounds: false`). It must resolve to
+    # "no setup" — NOT to the shell builtin `false`, which exits 1 and (under the
+    # && that gates the agent) would stop the agent starting, forever.
+    def test_worktree_creation_command_non_string_values_mean_no_setup
+      assert_nil cfg("worktree_creation_command" => false).worktree_creation_command
+      assert_nil cfg("worktree_creation_command" => true).worktree_creation_command
+      assert_nil cfg("worktree_creation_command" => 42).worktree_creation_command
+    end
+
+    # A list with a junk entry is rejected WHOLESALE: running half a setup script
+    # is worse than running none of it.
+    def test_worktree_creation_command_rejects_a_mixed_list_entirely
+      c = cfg("worktree_creation_command" => ["prepare", false, "install"])
+      assert_nil c.worktree_creation_command, "a partial setup is worse than no setup"
+      assert_nil cfg("worktree_creation_command" => ["", "   "]).worktree_creation_command,
+                 "an all-blank list is nothing to run"
+    end
+
+    # Junk at the PROJECT level must resolve to OFF, not fall back to the global — the
+    # same fail-safe as `false`, on the three-state path.
+    def test_worktree_creation_command_for_junk_override_is_off_not_inherited
+      c = cfg("worktree_creation_command" => "bundle install",
+              "projects" => [{ "name" => "app", "path" => "/p",
+                               "worktree_creation_command" => ["prepare", 42] }])
+      assert_nil c.worktree_creation_command_for("app"), "junk means OFF, never the global"
+    end
+
+    def test_worktree_creation_command_for_uses_global_default
+      c = cfg("worktree_creation_command" => "bundle install",
+              "projects" => [{ "name" => "app", "path" => "/p" }])
+      assert_equal "bundle install", c.worktree_creation_command_for("app")
+    end
+
+    def test_worktree_creation_command_for_honors_per_project_override
+      c = cfg("worktree_creation_command" => "bundle install",
+              "projects" => [{ "name" => "app", "path" => "/p",
+                               "worktree_creation_command" => ["cp ../.env .", "yarn"] }])
+      assert_equal "cp ../.env .\nyarn", c.worktree_creation_command_for("app")
+    end
+
+    # The three-state gate, and the reason this key does NOT ride the `projects`
+    # map like session_command: that map resolves `value || global`, so it can't
+    # tell "no key" from "explicitly off" — an opted-out project would silently
+    # inherit the global setup and run it anyway.
+    def test_worktree_creation_command_for_false_disables_and_does_not_inherit
+      c = cfg("worktree_creation_command" => "bundle install",
+              "projects" => [{ "name" => "app", "path" => "/p", "worktree_creation_command" => false }])
+      assert_nil c.worktree_creation_command_for("app"), "false means OFF, not 'inherit the global'"
+
+      empty = cfg("worktree_creation_command" => "bundle install",
+                  "projects" => [{ "name" => "app", "path" => "/p", "worktree_creation_command" => "" }])
+      assert_nil empty.worktree_creation_command_for("app"), "an explicit empty value means OFF too"
+    end
+
+    # A bare `worktree_creation_command:` with no value parses to a PRESENT key holding
+    # nil — which must read as OFF, not as "absent, so inherit". This is exactly why the
+    # resolver can't ride `project_key` (which collapses a nil value into the same nil it
+    # returns for a missing key); a DRY cleanup that did would silently run the global here.
+    def test_worktree_creation_command_for_a_bare_key_means_off_not_inherit
+      c = cfg("worktree_creation_command" => "bundle install",
+              "projects" => [{ "name" => "app", "path" => "/p", "worktree_creation_command" => nil }])
+      assert_nil c.worktree_creation_command_for("app"), "a valueless key is OFF, not 'inherit the global'"
+    end
+
+    def test_worktree_creation_command_for_unknown_project_uses_global
+      c = cfg("worktree_creation_command" => "bundle install", "projects" => [])
+      assert_equal "bundle install", c.worktree_creation_command_for("nope")
+    end
+
+    def test_worktree_creation_command_for_nil_when_no_global_and_no_override
+      c = cfg("projects" => [{ "name" => "app", "path" => "/p" }])
+      assert_nil c.worktree_creation_command_for("app")
+    end
+
+    # Without this the key is a stray top-level key and `doctor` flags it.
+    def test_worktree_creation_command_is_a_known_key
+      c = cfg("worktree_creation_command" => "bundle install", "projects" => [])
+      assert_empty c.unknown_keys
     end
 
     def test_projects_resolves_paths_and_base_ref

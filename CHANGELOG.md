@@ -7,6 +7,41 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.48.0] — a new worktree can set itself up (2026-07-13)
+
+### Added
+- **`worktree_creation_command`: the setup a fresh worktree needs, run before your
+  agent.** A new worktree is a clean checkout — it has none of the untracked,
+  git-ignored files your main one accumulated (`.env`, `node_modules`, build caches),
+  so you'd repopulate them by hand before the workspace was usable. Now a global (or
+  per-project) setup script runs **once, in the new worktree, before `session_command`**:
+
+  ```yaml
+  worktree_creation_command:
+    - cp "$SWITCHBOARD_PROJECT_PATH/.env" .
+    - bundle install
+  ```
+
+  It's a shell script (one line, a multi-line script, or a list of steps) handed to
+  `sh -ec`, so an `if`/loop/heredoc survives intact and it stops at the first failing
+  step. It rides the same seam that types `session_command` into a new session's window
+  — composed as `sh -ec '<script>' && <session_command>` — which means it never blocks
+  the sidebar (a `bundle install` runs in the work pane, not the TUI), its output lands
+  where you're already looking, and a **failed setup stops the agent from starting**: you
+  land at a shell with the error on screen instead of an agent working a broken checkout.
+  Setup rides the *create* path only, so switching back into a workspace never re-runs it.
+
+  A worktree lives under `worktree_root` while its project's checkout lives wherever you
+  registered it — two unrelated trees — so the script is handed
+  **`$SWITCHBOARD_PROJECT_PATH`** and **`$SWITCHBOARD_WORKTREE_PATH`**; without them there
+  is no way to name the checkout you want to copy out of, and one global setup script
+  couldn't serve every project. Resolution is three-state: a per-project key overrides the
+  global, and `worktree_creation_command: false` turns setup **off** for that project
+  rather than inheriting the global. Closes the setup-script half of #83.
+
+  Don't copy `.claude/settings.local.json` wholesale — switchboard writes its agent-state
+  hooks there before your script runs, so a broad `cp -R .claude .` clobbers them.
+
 ## [0.47.6] — long-lived open PRs keep their badge (2026-07-10)
 
 ### Fixed

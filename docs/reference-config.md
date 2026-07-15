@@ -30,6 +30,7 @@ or `e` in the sidebar — both reload on save.
 | `diff_counts` | bool | `true` | Show the `+adds −dels` diff count on each workspace/branch row. `false` hides it and skips the per-worktree `git diff` entirely. |
 | `prewarm` | bool | `true` | Keep off-screen sidebars warm so switching sessions doesn't flash a stale tree. `false` restores full dormancy (no off-screen work). See [`prewarm`](#prewarm). |
 | `session_command` | string | _(none)_ | Command typed into a worktree's window the first time its session is created. Per-project override wins. |
+| `worktree_creation_command` | string or list | _(none)_ | Setup script run **once in a new worktree**, before `session_command` — the `.env` / `bundle install` a fresh checkout needs. Per-project override wins; a per-project `false` turns it off. See [`worktree_creation_command`](#worktree_creation_command). |
 | `sounds` | map or `false` | _(on, built-ins)_ | Completion sounds. See [`sounds`](#sounds). |
 | `tmux_keys` | map | _(toggle `s`)_ | Which prefix keys switchboard binds. See [`tmux_keys`](#tmux_keys). |
 | `sidebar_keys` | map | _(defaults)_ | Remap the keys *inside* the sidebar, by action name. See [`sidebar_keys`](#sidebar_keys). |
@@ -50,6 +51,9 @@ auto_rename: true                        # let the agent name a placeholder work
 diff_counts: true                        # show +adds −dels on each row (false skips the git diff)
 prewarm: true                            # keep off-screen sidebars warm (false = full dormancy)
 session_command: claude                  # run this on a worktree's first session
+worktree_creation_command:               # run ONCE in a new worktree, before the agent
+  - cp "$SWITCHBOARD_PROJECT_PATH/.env" .
+  - bundle install
 sounds:
   enabled: true
   done: train
@@ -65,6 +69,7 @@ projects:
     path: ~/code/myapp
     base: origin/main                                       # per-project base
     session_command: claude --dangerously-skip-permissions  # per-project command
+    worktree_creation_command: bin/setup                    # per-project setup script
     sounds:
       done: ~/sounds/celebrate.wav                          # per-project sound
 ```
@@ -252,6 +257,79 @@ never drifts from a remap).
 
 ---
 
+## `worktree_creation_command`
+
+A freshly created worktree has **none** of the untracked, git-ignored files your
+main checkout accumulated — no `.env`, no `node_modules`, no build cache. This is
+the script that makes a new checkout usable. It runs **once, in the new worktree,
+before `session_command`**, so your agent never opens on a half-built tree.
+
+The value is a shell script (one line, or a whole multi-line script), or a list of
+steps:
+
+```yaml
+worktree_creation_command:               # global default
+  - cp "$SWITCHBOARD_PROJECT_PATH/.env" .
+  - bundle install
+
+projects:
+  - name: myapp
+    path: ~/code/myapp
+    worktree_creation_command: bin/setup # override for this project
+  - name: scratch
+    path: ~/scratch
+    worktree_creation_command: false     # no setup for this one
+```
+
+The script is handed to `sh -ec`, which means:
+
+- **A multi-line script stays a script.** `if` blocks, loops, heredocs, and
+  comments all work; nothing is reformatted or spliced.
+- **It stops at the first failing step** (`set -e`), and a failed setup **stops the
+  agent from starting** — you land at a shell with the error still on screen,
+  rather than an agent working in a broken checkout. A step that's *allowed* to
+  fail should say so: `cp "$SWITCHBOARD_PROJECT_PATH/.env" . || true`.
+- **It runs in the new worktree**, so relative paths are relative to it.
+
+### The two paths it gets
+
+A new worktree lives under `worktree_root`, while the project's canonical checkout
+lives wherever you registered its `path:` — two unrelated trees. So there is **no
+relative path** from the worktree back to the checkout you want to copy your
+untracked files out of. Switchboard exports both, so one *global* setup script can
+serve every project:
+
+| Variable | Is |
+|---|---|
+| `$SWITCHBOARD_PROJECT_PATH` | the project's canonical checkout (its registered `path`) |
+| `$SWITCHBOARD_WORKTREE_PATH` | the new worktree (also just `.`, the cwd) |
+
+```yaml
+worktree_creation_command: cp "$SWITCHBOARD_PROJECT_PATH/.env" .
+```
+
+> **Don't copy `.claude/settings.local.json`.** Switchboard writes that file into
+> each new worktree (the agent-state hooks, the rename nudge) *before* your setup
+> script runs, so a broad `cp -R "$SWITCHBOARD_PROJECT_PATH/.claude" .` will clobber
+> it and the workspace's agent dot will silently stop moving. Copy the files you
+> want individually, or re-wire afterwards with `switchboard enable-hooks`.
+
+Resolution is three-state, unlike `session_command`: an **absent** per-project key
+inherits the global, a **value** overrides it, and **`false`** (or an empty value)
+turns setup off for that project without falling back to the global.
+
+Two limits worth knowing:
+
+- It fires **at most once**, when the worktree's session is first created — not on
+  a re-switch. There's no retry: if that first session is never created (say a
+  stale `sb/…` session of the same name is still around), setup doesn't run.
+- The "a failed setup blocks the agent" guarantee assumes a **simple**
+  `session_command` (`claude`, `codex`, `claude --flag`). A compound one using `;`
+  — `session_command: export X=1; claude` — runs regardless, because `a && b; c`
+  always runs `c`. Chain it with `&&` instead.
+
+---
+
 ## `projects`
 
 The registry: which repos switchboard scans for worktrees. A project needs only
@@ -263,6 +341,7 @@ projects:
     path: ~/code/myapp
     base: origin/develop                 # optional: override the global base
     session_command: codex               # optional: override the global command
+    worktree_creation_command: bin/setup # optional: override the global setup script
     sounds:                              # optional: override the global sounds
       enabled: false                     #   this repo stays quiet
 ```
@@ -273,6 +352,7 @@ projects:
 | `path` | path | yes | The repo's working directory (the primary checkout). |
 | `base` | git ref | no | Per-project base ref. Falls back to the global `base`. |
 | `session_command` | string | no | Per-project session command. Empty/absent ⇒ inherit the global. |
+| `worktree_creation_command` | string, list, or `false` | no | Per-project setup script. **Absent** ⇒ inherit the global; a value ⇒ override; **`false`** ⇒ off for this project (does *not* inherit). |
 | `sounds` | map or `false` | no | Per-project sound overrides (same shape as the global). Per-state keys inherit the global when absent. |
 
 A project entry missing `name` or `path` is silently skipped. A project whose
