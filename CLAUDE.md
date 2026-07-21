@@ -141,6 +141,22 @@ the add-project flow grows it (the old emdash SQLite seed import was removed in
 issue #3). PR badges come from `gh`, cached on disk (`~/.cache/switchboard/prs`)
 so the UI never blocks on the network.
 
+The **add-project flow** (`Registrar`, `registrar.rb`; sidebar `a`, CLI
+`add`/`clone`/`create`) has **three modes** that all funnel through one
+`Config.add_project` write so the CLI and sidebar never drift: **register** a repo
+already on disk, **clone** one from a URL under `projects_root`, or **create** a
+brand-new empty one there. The subtle one is create (`Git.init`): a bare `git init`
+leaves an **unborn HEAD**, and `Creator`'s `git worktree add … <base>` (what `n`
+runs) fails `invalid reference` against it — so `Git.init` makes an **empty initial
+commit** to birth the repo, immediately worktree-able. No `-b`: it honors the user's
+`init.defaultBranch` and `register` derives the base from `current_branch`.
+`--no-gpg-sign`/`--no-verify` keep a global signing key or pre-commit hook from
+failing the synthetic commit, and it removes `dest` on any failure so a same-name
+retry isn't blocked by a half-made repo. The name is free user input, so
+`Registrar.create` rejects anything not sanitize-stable (`\A[\w.-]+\z`, no leading
+dot) — keeping the source dir, the project name, and Creator's worktree segment
+identical (no `my repo` vs `my-repo` divergence).
+
 **One data model, one front-end.** `Model` (`model.rb`) assembles the
 `project → worktree` tree from `Config` + `Git` + cached `Pr` data. `Tree.nodes`
 (`tree.rb`) turns that into ordered `Node` structs, which the **persistent
@@ -310,7 +326,7 @@ off-screen warm) — now calls `refresh_config` (`sidebar/actions.rb`): an
 parse error, like `reload_config`, which shares the same `@config_mtime` baseline).
 So the frequent `C-l` reload stays as cheap as when it never re-read config, yet a
 changed registry lands on the next reload. The config-mutating verbs
-(`add_local`/`add_clone`/`remove_project`, and the `e`/CLI `reload-config` path)
+(`add_local`/`add_clone`/`add_create`/`remove_project`, and the `e`/CLI `reload-config` path)
 also `Tmux.broadcast_warm` so every *other* sidebar re-reads immediately, and the
 config mtime rides `warm_fingerprint` as the lazy backstop — the same
 broadcast-plus-fingerprint shape as the shared view-state. Because peers now read

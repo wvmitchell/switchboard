@@ -51,6 +51,36 @@ module Switchboard
       assert_equal 1, bcast, "registering a project pings peer sidebars to re-read the grown config"
     end
 
+    def test_add_create_broadcasts_warm_so_peers_pick_up_the_new_project
+      sb = sidebar(nodes: [])
+      sb.define_singleton_method(:prompt_line) { |*| "fresh" }
+      sb.define_singleton_method(:reload) { |**| }
+      bcast = 0
+      stub_method(Tmux, :broadcast_warm, ->(**) { bcast += 1 }) do
+        stub_method(Registrar, :create, ->(*, **) { [{ "name" => "fresh" }, nil] }) do
+          sb.send(:add_create)
+        end
+      end
+      assert_equal 1, bcast, "creating a repo pings peer sidebars to re-read the grown config"
+    end
+
+    # A blank name cancels: Registrar.create is never reached and nothing is
+    # broadcast — just a repaint.
+    def test_add_create_blank_name_cancels
+      sb = sidebar(nodes: [])
+      sb.define_singleton_method(:prompt_line) { |*| "" }
+      reloaded = 0
+      sb.define_singleton_method(:reload) { |**| reloaded += 1 }
+      created = 0
+      stub_method(Registrar, :create, ->(*, **) { created += 1; [nil, nil] }) do
+        stub_method(Tmux, :broadcast_warm, ->(**) {}) do
+          sb.send(:add_create)
+        end
+      end
+      assert_equal 0, created, "blank name never reaches Registrar.create"
+      assert_equal 1, reloaded, "blank cancels with a repaint"
+    end
+
     def test_remove_project_broadcasts_warm_so_peers_drop_it
       File.write(Config.path, YAML.dump("projects" => [{ "name" => "app", "path" => "/repos/app" }]))
       sb = sidebar(nodes: [proj("app")], cursor: 0)

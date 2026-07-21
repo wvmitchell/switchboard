@@ -24,6 +24,7 @@ module Switchboard
       when "add"               then add_project(argv[1], argv[2], argv[3])
       when "remove", "rm"      then remove_project(argv[1])
       when "clone"             then clone_project(argv[1], argv[2])
+      when "create"            then create_project(argv[1])
       when "refresh"           then refresh(*refresh_args(argv))
       when "reap-worktree"     then reap_worktree(argv[1], argv[2], argv[3])
       when "enable-hooks"      then enable_hooks(argv[1])
@@ -377,6 +378,18 @@ module Switchboard
       return warn(err) if err
 
       puts "cloned + added #{entry['name']} -> #{entry['path']}"
+    end
+
+    # Create a brand-new empty repo under `projects_root` and register it — the
+    # CLI twin of the sidebar's add → [n] new. The repo is born with an empty
+    # initial commit so `n` (a worktree) works right away.
+    def create_project(name)
+      return warn("usage: switchboard create <name>") if name.nil?
+
+      entry, err = Registrar.create(config, name)
+      return warn(err) if err
+
+      puts "created + added #{entry['name']} -> #{entry['path']}"
     end
 
     # Wire agent-state hooks into a single worktree's local agent settings
@@ -923,6 +936,7 @@ module Switchboard
           switchboard add N P [B]  register an existing repo (name, path, base ref)
           switchboard remove N     unregister a project (its repo on disk stays; alias: rm)
           switchboard clone U [N]  clone a repo under projects_root, then register
+          switchboard create N     create a brand-new empty repo under projects_root, then register
           switchboard refresh      re-fetch PR badges from gh (normally automatic)
           switchboard enable-hooks [P]   wire agent-state dots in a worktree (default: cwd)
           switchboard disable-hooks [P]  remove them from that worktree
@@ -940,7 +954,7 @@ module Switchboard
           ↑↓ ^N/^P move (projects, workspaces, and a workspace's branches)
           /        filter — type to jump to a workspace by name (↵ open, esc cancel)
           ↵        switch to the workspace's tmux session (or collapse a project)
-          a        add a project (register a local repo or clone a URL)
+          a        add a project (register a local repo, clone a URL, or create a new one)
           n        create a new worktree in the highlighted project
           o        open the highlighted PR in the browser (gh pr view --web)
           R        refresh PR badges now (catch a PR merged/closed on GitHub)

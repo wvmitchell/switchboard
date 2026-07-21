@@ -223,17 +223,18 @@ module Switchboard
 
       # a: register a new project. n only makes worktrees *inside* a project, so
       # this is the keyboard path to the first project — switchboard can now stand
-      # up from an empty sidebar with no CLI round-trip. Two modes: point at a repo
-      # already on disk, or clone one from a URL.
+      # up from an empty sidebar with no CLI round-trip. Three modes: point at a
+      # repo already on disk, clone one from a URL, or create a brand-new one.
       def add
         rows, cols = winsize
-        print "\e[#{rows};1H\e[K\e[?25h#{trunc('add — [l] local repo · [c] clone url', cols)}"
+        print "\e[#{rows};1H\e[K\e[?25h#{trunc('add — [l] local · [c] clone · [n] new', cols)}"
         $stdout.flush
         choice = read_char
         print "\e[?25l"
         case choice&.downcase
         when "l" then add_local
         when "c" then add_clone
+        when "n" then add_create
         else reload
         end
       end
@@ -244,13 +245,7 @@ module Switchboard
         return reload if blank_input?(path)
 
         _, err = Registrar.register(@config, path)
-        flash(err) if err
-        reload_config
-        reload
-        # Every other window's sidebar caches its own @config; poke them to re-read
-        # so the new project shows there too (their rebuild's refresh_config picks it
-        # up), instead of only appearing after a sidebar respawn.
-        Tmux.broadcast_warm(except: ENV["TMUX_PANE"])
+        after_project_change(err)
       end
 
       # Clone a URL under projects_root, then register it. The clone blocks the
@@ -263,10 +258,30 @@ module Switchboard
         print "\e[#{rows};1H\e[K#{trunc("cloning #{url}…", cols)}"
         $stdout.flush
         _, err = Registrar.clone(@config, url)
+        after_project_change(err)
+      end
+
+      # Create a brand-new empty repo under projects_root, then register it — the
+      # third add mode. No name prompt beyond the repo name; you drop into `n` from
+      # here to start the first worktree.
+      def add_create
+        name = prompt_line("name for the new repo")
+        return reload if blank_input?(name)
+
+        _, err = Registrar.create(@config, name)
+        after_project_change(err)
+      end
+
+      # Shared tail of the add verbs: surface any error, re-read the now-grown
+      # config so the new project shows on the next rebuild (@config is otherwise
+      # cached for the session), repaint, and poke every other window's sidebar to
+      # re-read too (their rebuild's refresh_config picks it up), instead of the
+      # project only appearing there after a sidebar respawn.
+      def after_project_change(err)
         flash(err) if err
         reload_config
         reload
-        Tmux.broadcast_warm(except: ENV["TMUX_PANE"]) # peer sidebars re-read the grown config (see add_local)
+        Tmux.broadcast_warm(except: ENV["TMUX_PANE"])
       end
 
       # Re-read config from disk so a freshly added project shows on the next

@@ -5,9 +5,9 @@ require "fileutils"
 module Switchboard
   # Registers projects into the config — the capability that lets switchboard
   # stand up from an empty sidebar with no CLI round-trip (and finally decouple
-  # from emdash's project seeding). Two ways in: point at a repo already on disk,
-  # or clone one from a URL first. Both land in the same Config.add_project write
-  # path, so the CLI and the sidebar action never drift.
+  # from emdash's project seeding). Three ways in: point at a repo already on
+  # disk, clone one from a URL, or create a brand-new empty one. All land in the
+  # same Config.add_project write path, so the CLI and the sidebar never drift.
   module Registrar
     module_function
 
@@ -58,6 +58,28 @@ module Switchboard
 
       FileUtils.mkdir_p(root)
       return [nil, "clone failed: #{url}"] unless Git.clone(url, dest)
+
+      register(config, dest, name: name, base: base)
+    end
+
+    # Create a brand-new empty repo under the projects root, then register it —
+    # the third add mode beside register/clone. The name is free user input, so
+    # validate it to a sanitize-stable charset (letters/digits/._-, no leading
+    # dot): that keeps the source-checkout dir, the project name, and Creator's
+    # worktree-root segment identical (no "my repo" vs "my-repo" divergence) and
+    # blocks path-traversal. Returns [entry, nil] on success or [nil, error].
+    def create(config, name, base: nil)
+      name = name.to_s.strip
+      return [nil, "name required"] if name.empty?
+      return [nil, "invalid name (letters, digits, . _ - only)"] unless name.match?(/\A[\w.-]+\z/) && !name.start_with?(".")
+      return [nil, "name taken: #{name}"] if config.project(name)
+
+      root = config.projects_root
+      dest = File.join(root, name)
+      return [nil, "already exists: #{dest}"] if File.exist?(dest)
+
+      FileUtils.mkdir_p(root)
+      return [nil, "create failed: #{name}"] unless Git.init(dest)
 
       register(config, dest, name: name, base: base)
     end

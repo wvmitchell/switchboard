@@ -40,6 +40,24 @@ module Switchboard
       assert_empty PendingDelete.pending(["/wt/gone"]), "marker cleared so the row reappears"
     end
 
+    # --- create: the CLI twin of the sidebar's add → [n] new ------------------
+    # The handler is a thin wrapper over Registrar.create (covered in
+    # registrar_test); these pin the CLI surface: the usage guard and that it
+    # actually registers.
+
+    def test_create_project_warns_without_a_name
+      assert_output("", /usage: switchboard create/) { CLI.send(:create_project, nil) }
+    end
+
+    def test_create_project_creates_and_registers
+      git(nil, "config", "--global", "user.email", "test@example.com")
+      git(nil, "config", "--global", "user.name", "Switchboard Test")
+      Config.scaffold
+      CLI.instance_variable_set(:@config, nil) # config memoizes; re-read this sandbox's file
+      assert_output(/created \+ added shiny/, "") { CLI.send(:create_project, "shiny") }
+      assert Config.new.project("shiny"), "the new repo is registered"
+    end
+
     def test_flag_value_returns_the_value_after_the_flag
       assert_equal "/x.conf", CLI.flag_value(["--tmux-conf", "/x.conf"], "--tmux-conf")
     end

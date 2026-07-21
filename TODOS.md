@@ -15,8 +15,11 @@ and where to start.
   (you can't tell the two apart by name). Same root cause as the raw-name path
   traversal in `Creator` (`switchboard add` passes the project name straight into
   `File.join(worktree_root, project_name, name)`). One validation point closes
-  both. *Start in:* `Registrar.register` / `CLI#add_project`; decide the collision
-  policy (reject vs auto-suffix). Low priority — the collision needs unusual names
+  both. *Start in:* `Registrar.register`/`create` / `CLI#add_project`; decide the
+  collision policy (reject vs auto-suffix). Note `Registrar.create`'s
+  `/\A[\w.-]+\z/` already blocks traversal + spaces but still permits the dot/dash
+  collapse (`example.com` and `example-com` both map to `sb/example-com/`), so the
+  fix belongs at this shared point, not a create-only regex tweak. Low priority — the collision needs unusual names
   and `prune --dry-run` makes it visible before anything is killed. *Also covers
   the leaf:* `switchboard rename` (issue #42) and the sidebar `r` produce a new
   workspace leaf that `Tmux.session_name` sanitizes the same way, so `rename
@@ -32,6 +35,25 @@ and where to start.
   is the read-only place to surface it before orphans accumulate. *Start in:*
   `CLI#doctor` (a `Dir.exist?` loop over `config.projects`). Independent of the
   above.
+
+## Add-project error handling (create/clone) follow-ups
+
+- **Guard `mkdir_p(projects_root)` and give clone/create actionable errors.**
+  Both `Registrar.clone` and `Registrar.create` (`registrar.rb`) call
+  `FileUtils.mkdir_p(config.projects_root)` unguarded — a non-writable
+  `projects_root` raises straight up through the sidebar input loop instead of
+  flashing a message. Both also surface a generic tail error (`"clone failed"` /
+  `"create failed: <name>"`) that doesn't name the cause: for `create` the usual
+  culprit is a missing git identity (the `--allow-empty` initial commit fails
+  when git can't derive `user.name`/`user.email` and `user.useConfigOnly` is set)
+  or a global `commit.gpgsign` with no key; for `clone` it's usually no network
+  or a bad URL. *Why deferred:* pre-existing and shared with `clone`, so folding
+  it into the create-repo feature would mix unrelated cleanup into a focused diff
+  (per the 2026-07 plan-eng-review). *Start in:* rescue the `mkdir_p` in
+  `Registrar.clone`/`create` (→ `[nil, err]`), and have `Git.init`/`Git.clone`
+  distinguish the failing step so the message can hint at identity vs permissions
+  vs network. Low priority — `projects_root` defaults to `~` (writable) and the
+  generic errors match today's posture.
 
 ## Rename / worktree-move (issue #42) follow-ups
 

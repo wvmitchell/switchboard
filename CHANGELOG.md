@@ -7,6 +7,19 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+## [0.49.0] — create a brand-new repo, not just clone one (2026-07-21)
+
+### Added
+- **A third add-project mode: create a brand-new empty repo.** The sidebar's `a`
+  (add) menu was `[l] local · [c] clone`; it's now `[l] local · [c] clone · [n] new`.
+  `[n]` prompts for a name and stands up a fresh git repo under `projects_root`,
+  registers it, and drops it into the tree — no existing checkout or URL required.
+  There's a matching `switchboard create <name>` CLI verb. The new repo is born with
+  an empty initial commit so it's **immediately worktree-able** (`n` works right away
+  — a bare `git init` leaves an unborn HEAD that `git worktree add` refuses). It
+  honors your `init.defaultBranch`, cleans up after itself if creation fails, and the
+  name is validated to a filesystem-safe charset.
+
 ## [0.48.0] — a new worktree can set itself up (2026-07-13)
 
 ### Added

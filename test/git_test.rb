@@ -244,6 +244,34 @@ module Switchboard
       assert_nil Git.remote_head(temp_git_repo("noremote"))
     end
 
+    # --- init: create a brand-new repo (create-new-repo feature) --------------
+
+    # A fresh repo must be immediately worktree-able: the empty initial commit
+    # births HEAD so `git worktree add` (and thus `n`) works — a bare `git init`
+    # leaves an unborn HEAD and worktree add fails. Seed an identity in the
+    # walled-off global so the commit is deterministic, not reliant on git's
+    # author auto-derivation (which fails on some runners).
+    def test_init_creates_a_worktree_able_repo
+      git(nil, "config", "--global", "user.email", "test@example.com")
+      git(nil, "config", "--global", "user.name", "Switchboard Test")
+      dest = path("fresh")
+      assert Git.init(dest), "init succeeds"
+      assert Git.toplevel(dest), "dest is a git repo"
+      refute_empty Git.current_branch(dest), "HEAD is born, not unborn"
+      git(dest, "worktree", "add", "-q", path("wt"), "-b", "feat") # the whole point
+      assert_equal "feat", Git.current_branch(path("wt"))
+    end
+
+    # init is atomic: if the commit fails (here forced via useConfigOnly + no
+    # identity, so git can't auto-derive one), dest is removed so a same-name
+    # retry isn't blocked by a half-made repo.
+    def test_init_cleans_up_when_the_commit_fails
+      File.write(path("gitconfig"), "[user]\n\tuseConfigOnly = true\n")
+      dest = path("doomed")
+      refute Git.init(dest), "init reports failure when the commit can't be made"
+      refute File.exist?(dest), "the half-made repo is cleaned up"
+    end
+
     def test_ahead_behind_counts_relative_to_base
       repo = temp_git_repo("app", origin: true)
       assert_equal [0, 0], Git.ahead_behind(repo, "origin/main")

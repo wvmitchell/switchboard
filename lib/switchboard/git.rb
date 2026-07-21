@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "shellwords"
+require "fileutils"
 
 module Switchboard
   # Git is the source of truth for what worktrees exist and what they contain.
@@ -78,6 +79,24 @@ module Switchboard
     # sidebar TUI). `--` guards against a URL that looks like a flag.
     def clone(url, dest)
       system("git", "clone", "--quiet", "--", url.to_s, dest.to_s, out: File::NULL, err: File::NULL)
+    end
+
+    # Create a fresh repo at dest with an initial (empty) commit, so it's
+    # immediately worktree-able — `git worktree add` refuses an unborn HEAD, so a
+    # bare `git init` would leave `n` (Creator branches off the recorded base)
+    # broken. No `-b`: honor the user's init.defaultBranch (register derives the
+    # base from current_branch, whatever it is). --no-gpg-sign/--no-verify keep a
+    # global signing key or a pre-commit hook from failing the synthetic commit.
+    # Atomic: clean dest on any failure so a same-name retry isn't blocked by a
+    # half-made repo. Output swallowed like clone.
+    def init(dest)
+      dest = dest.to_s
+      ok = system("git", "init", "--quiet", dest, out: File::NULL, err: File::NULL) &&
+           system("git", "-C", dest, "commit", "--quiet", "--allow-empty",
+                  "--no-gpg-sign", "--no-verify", "-m", "Initial commit",
+                  out: File::NULL, err: File::NULL)
+      FileUtils.remove_entry(dest, true) unless ok
+      ok
     end
 
     # Rename a worktree by moving its directory (keeps the branch/PR intact).
