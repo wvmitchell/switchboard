@@ -15,8 +15,8 @@ module Switchboard
       # closes a PR the instant its head branch is deleted, so an open (or draft —
       # status is still "OPEN") PR guarantees the branch is on the remote and
       # /tree/<branch> resolves rather than 404s. A merged/closed PR keeps its badge
-      # (Pr.fetch lists --state all) after the branch is gone, so it is NOT a deep-link
-      # signal. No open PR — and the project header, which has neither pr nor branch —
+      # (Pr.refresh's sticky cache keeps the entry) after the branch is gone, so it is
+      # NOT a deep-link signal. No open PR — and the project header, which has neither pr nor branch —
       # opens the repo home / default branch. node.pr is already loaded for the badge,
       # so this costs no extra I/O; an open PR also implies a valid pushed branch name,
       # so no dash-led guard is needed.

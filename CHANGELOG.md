@@ -7,7 +7,32 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
-## [0.49.0] — create a brand-new repo, not just clone one (2026-07-21)
+## [0.49.1] — PR badges never disappear while their row renders (2026-08-24)
+
+### Fixed
+- **A PR badge no longer vanishes as newer PRs pile up.** The badge cache was
+  rebuilt from scratch on every refresh out of gh's *newest-200* window, so on an
+  active repo a merged PR's badge silently dropped once 200 newer PRs existed —
+  even though the worktree was still sitting right there (#156 had already
+  rescued *open* PRs; merged/closed ones still fell off). The cache is now
+  **sticky**: a fetched badge is only ever updated, never dropped — it goes away
+  when you remove the branch or the workspace, not because the repo got busier.
+- **Badges that were already lost come back on their own.** Branches the sidebar
+  renders (worktrees and their branch-history rows) that have no cached badge get
+  a targeted per-branch lookup, a few per refresh — so a badge that fell off
+  before this fix, or a fresh worktree on an old branch, recovers without a
+  manual `R`.
+- **Stale badges self-correct.** The sweep is now ordered by *update* recency, so
+  a state flip on an old PR (finally merged, closed, reopened) re-enters the
+  window and fixes its badge; a cached OPEN badge for a branch the open query no
+  longer lists is re-checked (it provably can't still be open); and if GitHub's
+  search API is unavailable the refresh degrades to the old query instead of
+  freezing.
+
+### Changed
+- The badge cache write is atomic under concurrent refreshers (a torn write
+  could previously wipe cached badges), and a project name re-registered for a
+  different repository no longer inherits the old repo's badges.
 
 ### Added
 - **A third add-project mode: create a brand-new empty repo.** The sidebar's `a`

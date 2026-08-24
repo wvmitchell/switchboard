@@ -103,6 +103,49 @@ and where to start.
 
 ## PR-badge refresh (issue #19) follow-ups
 
+- **Opt-in gh-runtime smoke for the sticky-cache query contracts.** The sweep now
+  rides `gh pr list --state all --search "sort:updated-desc"` and backfill rides
+  `--head <branch> --state all --limit 1` — gh runtime contracts the offline suite
+  can only pin as command *strings* (verified live against gh 2.96.0 during the
+  sticky-cache work, including that `--search` still returns `isDraft`/
+  `headRefName`). If a future gh rejects either combo, the sweep degrades to the
+  plain creation-ordered fallback (`Pr.fetch`) rather than failing — but backfill
+  has no fallback and would silently stop rescuing badges. An opt-in networked
+  smoke (the `SWITCHBOARD_CODEX_SMOKE` shape, needs `gh` auth + a real repo)
+  would make the contract auditable. Low priority — the fallback bounds the blast
+  radius to pre-sticky behavior.
+
+- **Residual sticky-cache freeze: a PR opened AND closed inside one unseen gap.**
+  The stale-OPEN backfill re-query fixes the frozen-wrong-OPEN case (absence from
+  the open query proves staleness), and a PR that's still open always lands via
+  the open-500 query. The one remaining freeze: a branch negative-cached as null
+  whose PR is opened *and* merged/closed while no refresh runs and >200 other PRs
+  get updated (a weeks-long absence on a very active repo) — the null suppresses
+  backfill and the state flip aged out of the sweep. Self-heals on ANY later
+  activity on that PR (comment/label/merge touches `updatedAt`). If ever felt in
+  practice: make `R` (`refresh_prs_now`) drop null entries, or expire nulls when
+  the cache mtime shows a long refresh gap. Start in `Pr.backfill` /
+  `Sidebar#refresh_prs_now`.
+
+- **Unify the two "is this the primary checkout?" predicates.** `Model#build_worktrees`
+  marks primary by string equality (`w[:path] == project["path"]`) while
+  `Pr.rendered_branches` uses `File.identical?` (symlink-proof) — under a symlinked
+  config-path spelling the true primary can render as a phantom workspace row
+  (pre-existing Model quirk) while backfill correctly excludes it. Safe direction,
+  but two predicates in two files will drift; extract one `File.identical?`-based
+  helper both use (which also fixes the phantom row). Surfaced by the sticky-cache
+  red-team pass. Related: the sanitized `Pr.cache_file` name can collide for two
+  registered projects (`app one` / `app_one`) — pre-existing shadowing that the
+  new REPO_KEY identity guard turns into a wipe-and-refill alternation; the add-time
+  name validation TODO (top of this file) is the right chokepoint for both.
+
+- **`Pr.repo_slug` doesn't pin the host.** It parses `owner/repo` out of any
+  origin URL, so a GitLab/self-hosted origin queries the same-named *GitHub* repo
+  via `gh` — and sticky now makes any resulting wrong badges durable (pre-existing
+  exposure, worsened at the margin). Fix: return nil unless the origin host is
+  github.com (or the `gh`-configured host), so non-GitHub projects cleanly show no
+  badges. Start in `Pr.repo_slug`; surfaced by the sticky-cache adversarial review.
+
 - **Trailing/coalescing debounce.** The per-project background refresh uses a
   *leading* debounce (`Edges::PR_DEBOUNCE`, `sidebar/edges.rb`): a second distinct event for
   the same project inside the window is dropped. Today the idle backstop and the

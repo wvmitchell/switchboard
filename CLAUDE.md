@@ -139,7 +139,19 @@ Conductor are peer tools whose worktrees still show up (git finds them), but
 there's **no database coupling** — `install`/`init` write an empty config and
 the add-project flow grows it (the old emdash SQLite seed import was removed in
 issue #3). PR badges come from `gh`, cached on disk (`~/.cache/switchboard/prs`)
-so the UI never blocks on the network.
+so the UI never blocks on the network. The cache is **sticky** (`Pr.refresh`
+merges each fetch ONTO the previous map, never replaces): gh's queries are
+windows — the 200 most recently *updated* PRs (`--search sort:updated-desc`,
+falling back to the plain creation-ordered list if the search API fails) plus
+every open PR up to `OPEN_LIMIT` — so a long-quiet merged PR falls out of both,
+but its badge must outlive that for as long as its row renders (you remove a
+workspace or branch, never a badge). Rendered branches the windows never saw get
+a capped per-branch `--head` backfill (`rendered_branches` = each non-primary
+worktree's reflog lineage; no-PR branches are negative-cached as null so they're
+asked once); a cached OPEN badge absent from a *non-full* open query is provably
+stale and re-queried; a `//repo` identity marker keeps a project name reused for
+a different repo from inheriting the old badges; and the write rides
+`MarkerBlock.atomic_write` because concurrent sidebar refreshers share the file.
 
 The **add-project flow** (`Registrar`, `registrar.rb`; sidebar `a`, CLI
 `add`/`clone`/`create`) has **three modes** that all funnel through one

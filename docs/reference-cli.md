@@ -85,8 +85,10 @@ URL's basename (`git@host:org/repo.git` → `repo`). Errors if the name is taken
 the destination exists.
 
 ### `switchboard refresh [name] [--poke PANE]`
-Re-fetch PR badges from `gh` and rewrite the on-disk cache. With a project name,
-just that project; otherwise all. Normally you don't run this — the sidebar
+Re-fetch PR badges from `gh` and merge the result onto the on-disk cache (a
+cached badge is only ever updated, never dropped — it persists even after its
+PR falls out of gh's query windows, until the branch or workspace goes away).
+With a project name, just that project; otherwise all. Normally you don't run this — the sidebar
 refreshes badges automatically (on agent completion, on switch-in, and on an idle
 backstop). Run it to catch a PR you merged or closed *on GitHub* (which fires no
 local signal). `--poke PANE` is used internally by the sidebar to redraw a
