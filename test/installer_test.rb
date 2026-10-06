@@ -421,6 +421,16 @@ module Switchboard
       assert_equal File.join(other, "thing"), File.readlink(Installer.symlink_path)
     end
 
+    # Homebrew already put `switchboard` on PATH; install must not also plant
+    # ~/.local/bin links (they'd point into a keg that upgrade deletes).
+    def test_homebrew_install_skips_the_path_symlinks
+      out = stub_method(Installer, :homebrew?, -> { true }) { silently { Installer.install(no_tmux: true) } }
+      refute File.exist?(Installer.symlink_path)
+      refute File.exist?(Installer.symlink_path("sb"))
+      assert_includes out, "on PATH via Homebrew"
+      refute_includes out, "isn't on your PATH"
+    end
+
     # --- install: config -----------------------------------------------------
 
     def test_install_scaffolds_an_empty_config
@@ -455,6 +465,12 @@ module Switchboard
       silently { Installer.uninstall(conf: conf) }
       assert_equal "# mine\nbind-key x display hi\n", File.read(conf)
       refute File.symlink?(Installer.symlink_path)
+    end
+
+    # PATH belongs to brew under Homebrew — uninstall leaves it to `brew uninstall`.
+    def test_homebrew_uninstall_leaves_path_to_brew
+      out = stub_method(Installer, :homebrew?, -> { true }) { silently { Installer.uninstall } }
+      assert_includes out, "brew uninstall switchboard"
     end
 
     def test_uninstall_leaves_foreign_symlink

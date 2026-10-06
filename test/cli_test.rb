@@ -449,6 +449,14 @@ module Switchboard
       assert_includes out, "PATH symlink: #{Installer.symlink_path('sb')}"
     end
 
+    # Under Homebrew there are no symlinks to check; doctor reports the brew PATH
+    # entry instead of two ✗ rows for links install deliberately didn't make.
+    def test_doctor_reports_homebrew_path_instead_of_symlinks
+      out = stub_method(Installer, :homebrew?, -> { true }) { capture { run_doctor } }
+      refute_includes out, "PATH symlink:"
+      assert_match(/Homebrew/, out)
+    end
+
     # A missing `sb` is a soft note, never a hard ✗ — doctor must agree with
     # install that the optional shorthand isn't a failure.
     def test_doctor_marks_missing_sb_as_optional_not_a_failure

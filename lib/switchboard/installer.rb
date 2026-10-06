@@ -44,9 +44,15 @@ module Switchboard
 
     # Repo root from this file (lib/switchboard/installer.rb → ../..). Works
     # through a PATH symlink: require resolves to the real file, so __dir__ is
-    # the real lib dir.
+    # the real lib dir — which StablePath lifts out of a versioned Homebrew keg.
     def repo_root
-      File.expand_path("../..", __dir__)
+      StablePath.resolve(File.expand_path("../..", __dir__))
+    end
+
+    # Installed by Homebrew, which already put `switchboard` on PATH — so install
+    # skips the ~/.local/bin symlinks (and uninstall leaves PATH to `brew uninstall`).
+    def homebrew?
+      StablePath.homebrew?(File.expand_path("../..", __dir__))
     end
 
     def bin_path
@@ -165,6 +171,8 @@ module Switchboard
     end
 
     def step_symlink
+      return ok("on PATH via Homebrew: #{bin_path}") if homebrew?
+
       FileUtils.mkdir_p(bin_dir)
       SYMLINK_NAMES.each { |name| link_one(symlink_path(name), primary: name == COMMAND_NAME) }
     end
@@ -259,6 +267,8 @@ module Switchboard
     end
 
     def unlink_symlink
+      return note("PATH: installed by Homebrew — `brew uninstall switchboard` removes the command") if homebrew?
+
       symlink_paths.each { |link| unlink_one(link) }
     end
 
@@ -561,6 +571,7 @@ module Switchboard
     end
 
     def warn_path
+      return if homebrew?
       return if ENV["PATH"].to_s.split(File::PATH_SEPARATOR).map { |p| File.expand_path(p) }.include?(bin_dir)
 
       note "#{bin_dir} isn't on your PATH — add this to your shell profile:"

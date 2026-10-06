@@ -881,6 +881,8 @@ module Switchboard
     # imply switchboard is broken — matching install, which skips a collided
     # shorthand rather than failing.
     def doctor_symlinks
+      return doctor_homebrew_path if Installer.homebrew?
+
       Installer.symlink_targets.each do |link, optional|
         if Installer.linked?(link)
           puts row(true, "PATH symlink: #{link}")
@@ -890,6 +892,13 @@ module Switchboard
           puts row(false, "PATH symlink: #{link}")
         end
       end
+    end
+
+    # Homebrew owns PATH, so the check is just that `switchboard` resolves to it.
+    def doctor_homebrew_path
+      found = `command -v switchboard 2>/dev/null`.strip
+      ok = !found.empty? && File.identical?(found, Installer.bin_path)
+      puts row(ok, ok ? "on PATH via Homebrew: #{found}" : "Homebrew install, but `switchboard` on PATH is #{found.empty? ? 'missing' : found} — run `brew link switchboard`")
     end
 
     # ✓/✗ status line shared by the doctor checks.
