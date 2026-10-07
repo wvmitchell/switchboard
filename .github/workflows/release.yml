@@ -11,7 +11,7 @@ name: release
 # file gathers facts.
 on:
   workflow_run:
-    workflows: [test, formula]
+    workflows: [test, formula] # must match GATES below
     types: [completed]
     branches: [main]
   workflow_dispatch:
@@ -21,16 +21,20 @@ permissions:
   contents: write
   actions: read
 
-concurrency:
-  group: release
-  cancel-in-progress: false
-
 jobs:
   release:
+    # No conclusion filter: Plan checks both gates for the tip itself, and a run
+    # skipped here would still have displaced the tip's queued run.
     if: >-
       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
-      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+      github.event.workflow_run.event == 'push'
+    # Job-level, so only runs that will actually judge the tip queue here.
+    concurrency:
+      group: release
+      cancel-in-progress: false
     runs-on: ubuntu-latest
+    env:
+      GATES: test formula
     defaults:
       run:
         shell: bash # -eo pipefail: a failed command inside a pipe fails the step
@@ -54,12 +58,13 @@ jobs:
           is_tip=false
           [ "$sha" = "$tip" ] && is_tip=true # main moved mid-run: the newer run acts
           version="$(ruby packaging/release.rb version)"
-          tagged=false
-          git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null && tagged=true
+          rc=0
+          git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null || rc=$?
+          case $rc in 0) tagged=true ;; 2) tagged=false ;; *) exit "$rc" ;; esac # 2 = no such ref
           # Both gates must have passed on main's push run for this commit (a PR run
           # for the same sha doesn't count; pending/missing reads as not green).
           green=true
-          for gate in test formula; do
+          for gate in $GATES; do
             conclusion="$(gh run list -w "$gate" -c "$sha" -e push -b main -L 1 --json conclusion --jq '.[0].conclusion // ""')"
             [ "$conclusion" = success ] || green=false
           done

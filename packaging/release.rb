@@ -56,7 +56,7 @@ module Release
   # late-enabled update), tagging only for a new version.
   def plan(tip:, tagged:, checks_green:)
     return { release: false, tap: false, reason: "not main's tip; the tip's run acts instead#{' (version still untagged)' unless tagged}" } unless tip
-    return { release: false, tap: false, reason: "waiting on test + formula to both pass for main's tip" } unless checks_green
+    return { release: false, tap: false, reason: "waiting on every CI gate to pass for main's tip" } unless checks_green
 
     { release: !tagged, tap: true, reason: tagged ? "already tagged; refreshing the tap" : "new version" }
   end
