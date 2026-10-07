@@ -3,10 +3,12 @@ name: release
 # Once main's tip is green on BOTH gating workflows (test, and formula's brew
 # audit/install/test): tag + GitHub Release when version.rb carries a version
 # that isn't tagged yet, and (idempotently, every time) point the Homebrew tap at
-# the latest tagged release. Each gate's completion triggers a run; whichever
-# finishes second acts. Versions are still picked in the PR (the vX.Y.Z
-# convention). A red, untested, or superseded commit never ships. Decisions and
-# rendering live in packaging/release.rb (unit-tested); this file gathers facts.
+# the latest tagged release. Each gate's completion triggers a run, and every run
+# judges main's CURRENT tip (not the commit that triggered it), so whichever run
+# survives the one-pending concurrency queue still releases the tip. Versions are
+# still picked in the PR (the vX.Y.Z convention). A red or untested commit never
+# ships. Decisions and rendering live in packaging/release.rb (unit-tested); this
+# file gathers facts.
 on:
   workflow_run:
     workflows: [test, formula]
@@ -14,8 +16,10 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Listing any permission zeroes the rest; the gate check reads Actions runs.
 permissions:
   contents: write
+  actions: read
 
 concurrency:
   group: release
@@ -33,7 +37,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          ref: main
       - uses: ruby/setup-ruby@14594264cd68ce8a2345dd349bc3d138a4ef85c8 # v1.327.0
         with:
           ruby-version: '3.3'
@@ -43,19 +47,23 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # A failed lookup fails the step: reading it as "not green" would make every
+          # run a silent no-op (exactly how a missing actions:read once hid).
           sha="$(git rev-parse HEAD)"
-          tip=false
-          [ "$sha" = "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)" ] && tip=true
+          tip="$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)"
+          is_tip=false
+          [ "$sha" = "$tip" ] && is_tip=true # main moved mid-run: the newer run acts
           version="$(ruby packaging/release.rb version)"
           tagged=false
           git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null && tagged=true
-          # Both gates must have passed on main's push run for this commit (a
-          # PR run for the same sha doesn't count; pending/missing reads as not green).
+          # Both gates must have passed on main's push run for this commit (a PR run
+          # for the same sha doesn't count; pending/missing reads as not green).
           green=true
           for gate in test formula; do
-            [ "$(gh run list -w "$gate" -c "$sha" -e push -b main -L 1 --json conclusion --jq '.[0].conclusion')" = success ] || green=false
+            conclusion="$(gh run list -w "$gate" -c "$sha" -e push -b main -L 1 --json conclusion --jq '.[0].conclusion // ""')"
+            [ "$conclusion" = success ] || green=false
           done
-          plan="$(ruby packaging/release.rb plan "$tip" "$tagged" "$green")"
+          plan="$(ruby packaging/release.rb plan "$is_tip" "$tagged" "$green")"
           { echo "version=$version"; echo "$plan"; } >> "$GITHUB_OUTPUT"
           echo "::notice::v$version: $(sed -n 's/^reason=//p' <<<"$plan")"
 
