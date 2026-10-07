@@ -11,13 +11,16 @@ clone install over to Homebrew, or remove it cleanly.
 
 ## Install with Homebrew
 
-1. Install the formula from the tap:
+1. Add the tap once, then install by the short name:
 
    ```sh
-   brew install wvmitchell/switchboard/switchboard
+   brew tap wvmitchell/switchboard
+   brew install switchboard
    ```
 
-   This puts `switchboard` and the short alias `sb` on your PATH.
+   This puts `switchboard` and the short alias `sb` on your PATH. With the tap
+   added, `brew upgrade switchboard` and `brew uninstall switchboard` work by the
+   short name too.
 
 2. Wire it into tmux and write a starter config:
 
@@ -78,7 +81,8 @@ the new version, so nothing goes stale when the old version is cleaned up. See
    `tmux source-file ~/.tmux.conf`:
 
    ```sh
-   brew install wvmitchell/switchboard/switchboard
+   brew tap wvmitchell/switchboard
+   brew install switchboard
    switchboard install
    ```
 
