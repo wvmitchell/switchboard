@@ -82,6 +82,20 @@ module Switchboard
       refute IO.popen([RbConfig.ruby, script, "bogus"], err: File::NULL, &:read).then { $?.success? }
     end
 
+    # Value: protects=release.yml's positional `plan TIP GREEN VERSION LATEST TAGGED RELEASED`
+    # reaching the right keywords; fails_when=the CLI swaps VERSION/LATEST or TAGGED/RELEASED, or
+    # drops a non-empty LATEST (the backwards-tap guard silently bypassed in CI); why_new=the CLI
+    # test passes an empty LATEST and false/false, so any such swap still prints the same; seam=none
+    def test_cli_plan_maps_each_positional_arg
+      script = File.join(Release::ROOT, "packaging/release.rb")
+      plan = ->(*args) { IO.popen([RbConfig.ruby, script, "plan", *args], err: File::NULL, &:read) }
+      assert_includes plan.call("true", "true", "1.2.0", "1.10.0", "false", "false"), "tap=false\nreason=version.rb (1.2.0) is behind"
+      assert_equal "release=true\ntag_exists=true\ntap=true\nreason=tag exists without a Release; creating it\n",
+                   plan.call("true", "true", "1.2.0", "1.2.0", "true", "false")
+      assert_includes plan.call("false", "true", "1.2.0", "", "false", "false"), "reason=not main's tip"
+      assert_includes plan.call("true", "false", "1.2.0", "", "false", "false"), "reason=waiting on every CI gate"
+    end
+
     def test_notes_without_an_entry_raise
       assert_raises(RuntimeError) { Release.notes("## [0.1.0] — x (2026-01-01)\n", "0.2.0") }
     end
