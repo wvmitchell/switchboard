@@ -6,7 +6,7 @@
 #   ruby packaging/release.rb version                 # → 0.50.0
 #   ruby packaging/release.rb notes 0.50.0 TITLE_FILE NOTES_FILE
 #   ruby packaging/release.rb tarball-url 0.50.0
-#   ruby packaging/release.rb plan true false false true   # → release=…/tap=…/reason=…
+#   ruby packaging/release.rb plan true false true   # → release=…/tap=…/reason=…
 #   ruby packaging/release.rb formula 0.50.0 SHA256 [TEMPLATE]   # rendered formula → stdout
 module Release
   module_function
@@ -49,13 +49,14 @@ module Release
   end
 
   # What a release run should do. Only main's tip acts (a pending run can be
-  # superseded and test runs finish out of order, so anything else could tag a
-  # stale commit or move the tap backwards); a manual run also needs that tip's
-  # tests green. The tap update is idempotent, so it runs on every acting run
-  # (healing a failed or late-enabled update), tagging only for a new version.
-  def plan(tip:, tagged:, dispatch:, tests_green:)
+  # superseded and runs finish out of order, so anything else could tag a stale
+  # commit or move the tap backwards), and only once every gating CI workflow
+  # (test AND formula) is green for it, so whichever finishes second acts. The
+  # tap update is idempotent, so it runs on every acting run (healing a failed or
+  # late-enabled update), tagging only for a new version.
+  def plan(tip:, tagged:, checks_green:)
     return { release: false, tap: false, reason: "not main's tip; the tip's run acts instead#{' (version still untagged)' unless tagged}" } unless tip
-    return { release: false, tap: false, reason: "main's latest test run isn't green" } if dispatch && !tests_green
+    return { release: false, tap: false, reason: "waiting on test + formula to both pass for main's tip" } unless checks_green
 
     { release: !tagged, tap: true, reason: tagged ? "already tagged; refreshing the tap" : "new version" }
   end
@@ -74,13 +75,13 @@ if $PROGRAM_NAME == __FILE__
     File.write(ARGV[3], "#{body}\n")
   when "tarball-url" then puts Release.tarball_url(ARGV[1])
   when "plan"
-    flags = ARGV[1, 4].map { |a| a == "true" }
-    Release.plan(**%i[tip tagged dispatch tests_green].zip(flags).to_h).each { |k, v| puts "#{k}=#{v}" }
+    tip, tagged, green = ARGV[1, 3].map { |a| a == "true" }
+    Release.plan(tip: tip, tagged: tagged, checks_green: green).each { |k, v| puts "#{k}=#{v}" }
   when "formula"
     template = ARGV[3] || File.join(Release::ROOT, "packaging/homebrew/switchboard.rb")
     print Release.render_formula(File.read(template), ARGV[1], ARGV[2])
   else
     abort "usage: release.rb version | notes VERSION TITLE_FILE NOTES_FILE | tarball-url VERSION | " \
-          "plan TIP TAGGED DISPATCH TESTS_GREEN | formula VERSION SHA256 [TEMPLATE]"
+          "plan TIP TAGGED CHECKS_GREEN | formula VERSION SHA256 [TEMPLATE]"
   end
 end

@@ -78,7 +78,7 @@ module Switchboard
       assert_equal Release.render_formula(template, "9.9.9", SHA), run.call("formula", "9.9.9", SHA)
       tagged = path("tagged-formula.rb").tap { |f| File.write(f, template.sub("desc ", "desc \"tagged\" # ")) }
       assert_includes run.call("formula", "9.9.9", SHA, tagged), %(desc "tagged")
-      assert_equal "release=true\ntap=true\nreason=new version\n", run.call("plan", "true", "false", "false", "true")
+      assert_equal "release=true\ntap=true\nreason=new version\n", run.call("plan", "true", "false", "true")
       refute IO.popen([RbConfig.ruby, script, "bogus"], err: File::NULL, &:read).then { $?.success? }
     end
 
@@ -116,22 +116,22 @@ module Switchboard
       assert_raises(RuntimeError) { Release.render_formula(other, "1.0.0", SHA) }
     end
 
-    # Value: protects=release.yml's skip/tag/heal decisions; fails_when=a non-tip or red manual
-    # run acts, a tagged version re-releases, or a tagged tip stops healing the tap;
-    # why_new=the decision used to be untested workflow shell; seam=none
-    def test_plan_only_lets_main_tip_act
+    # Value: protects=release.yml's skip/tag/heal decisions; fails_when=a non-tip commit or one
+    # whose test/formula checks aren't both green acts, a tagged version re-releases, or a tagged
+    # tip stops healing the tap; why_new=the decision used to be untested workflow shell; seam=none
+    def test_plan_only_lets_a_fully_green_main_tip_act
       table = {
-        # tip,  tagged, dispatch, green  => release, tap
-        [false, false, false, true]  => [false, false], # superseded commit
-        [false, true,  true,  true]  => [false, false],
-        [true,  false, false, true]  => [true,  true],  # new version on the tip
-        [true,  true,  false, true]  => [false, true],  # tagged: heal the tap only
-        [true,  false, true,  false] => [false, false], # manual run on a red/pending main
-        [true,  false, true,  true]  => [true,  true]
+        # tip,  tagged, checks green => release, tap
+        [false, false, true]  => [false, false], # superseded commit
+        [false, true,  true]  => [false, false],
+        [true,  false, false] => [false, false], # test or formula not (yet) green
+        [true,  true,  false] => [false, false],
+        [true,  false, true]  => [true,  true],  # new version on the tip
+        [true,  true,  true]  => [false, true]   # tagged: heal the tap only
       }
-      table.each do |(tip, tagged, dispatch, green), want|
-        got = Release.plan(tip: tip, tagged: tagged, dispatch: dispatch, tests_green: green)
-        assert_equal want, got.values_at(:release, :tap), "tip=#{tip} tagged=#{tagged} dispatch=#{dispatch} green=#{green}"
+      table.each do |(tip, tagged, green), want|
+        got = Release.plan(tip: tip, tagged: tagged, checks_green: green)
+        assert_equal want, got.values_at(:release, :tap), "tip=#{tip} tagged=#{tagged} green=#{green}"
         refute_empty got[:reason]
       end
     end

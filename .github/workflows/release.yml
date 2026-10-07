@@ -1,14 +1,15 @@
 name: release
 
-# After `test` goes green on main: tag + GitHub Release when version.rb carries a
-# version that isn't tagged yet, and (idempotently, every time) point the
-# Homebrew tap at the latest tagged release. Versions are still picked in the PR
-# (the vX.Y.Z convention). Only main's tip ever acts, and a manual run also needs
-# that tip's tests green, so a red or superseded commit never ships. Decisions
-# and rendering live in packaging/release.rb (unit-tested); this file gathers facts.
+# Once main's tip is green on BOTH gating workflows (test, and formula's brew
+# audit/install/test): tag + GitHub Release when version.rb carries a version
+# that isn't tagged yet, and (idempotently, every time) point the Homebrew tap at
+# the latest tagged release. Each gate's completion triggers a run; whichever
+# finishes second acts. Versions are still picked in the PR (the vX.Y.Z
+# convention). A red, untested, or superseded commit never ships. Decisions and
+# rendering live in packaging/release.rb (unit-tested); this file gathers facts.
 on:
   workflow_run:
-    workflows: [test]
+    workflows: [test, formula]
     types: [completed]
     branches: [main]
   workflow_dispatch:
@@ -41,7 +42,6 @@ jobs:
         id: v
         env:
           GH_TOKEN: ${{ github.token }}
-          DISPATCH: ${{ github.event_name == 'workflow_dispatch' }}
         run: |
           sha="$(git rev-parse HEAD)"
           tip=false
@@ -49,11 +49,13 @@ jobs:
           version="$(ruby packaging/release.rb version)"
           tagged=false
           git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null && tagged=true
+          # Both gates must have passed on main's push run for this commit (a
+          # PR run for the same sha doesn't count; pending/missing reads as not green).
           green=true
-          if [ "$DISPATCH" = true ]; then
-            [ "$(gh run list -w test -c "$sha" -L 1 --json conclusion --jq '.[0].conclusion')" = success ] || green=false
-          fi
-          plan="$(ruby packaging/release.rb plan "$tip" "$tagged" "$DISPATCH" "$green")"
+          for gate in test formula; do
+            [ "$(gh run list -w "$gate" -c "$sha" -e push -b main -L 1 --json conclusion --jq '.[0].conclusion')" = success ] || green=false
+          done
+          plan="$(ruby packaging/release.rb plan "$tip" "$tagged" "$green")"
           { echo "version=$version"; echo "$plan"; } >> "$GITHUB_OUTPUT"
           echo "::notice::v$version: $(sed -n 's/^reason=//p' <<<"$plan")"
 
