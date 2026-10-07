@@ -47,10 +47,11 @@ The trigger list must match the job's `GATES` env (`test formula`).
    |------|-----|
    | `is_tip` | The checked-out sha equals `gh api repos/:repo/commits/main` (false if main moved mid-run). |
    | `version` | `release.rb version` (from `version.rb`). |
-   | `tagged` | `git ls-remote --exit-code --tags origin refs/tags/vX.Y.Z`: exit 0 = tagged, 2 = not; anything else fails the step. |
-   | `latest` | The highest `vX.Y.Z` tag on origin (`sort -V`), or empty. |
+   | `tagged` | `vX.Y.Z` appears in `git ls-remote --tags origin`, matched by **exact** ref name (ls-remote's own patterns match by suffix, so a decoy like `refs/tags/x/refs/tags/vX.Y.Z` would otherwise count). A failed listing fails the step. |
+   | `latest` | The highest exact `refs/tags/vX.Y.Z` on origin (`sort -V`), or empty. |
    | `released` | When tagged: `gh api …/releases/tags/vX.Y.Z` succeeds = true; `HTTP 404` = false; any other error fails the step. |
    | `tag_green` | When tagged: the tag's commit (the peeled `^{}` commit for an annotated tag) passes the same gate check as `green`. |
+   | `tag_version` | When tagged: `version.rb` at the tag's commit, fetched with `gh api …/contents/lib/switchboard/version.rb?ref=<sha>`. |
    | `green` | Every gate in `GATES` has a `success` conclusion for this sha on main, event `push` (`gh run list -w <gate> -c <sha> -e push -b main -L 1`). Pending or missing reads as not green; a failed lookup fails the step. |
 
    It writes `version`, `release`, `tag_exists`, `tap`, `reason` to the step's
@@ -79,7 +80,7 @@ The trigger list must match the job's `GATES` env (`test formula`).
 
 ## `Release.plan` decision table
 
-`plan(tip:, checks_green:, version:, latest_tag:, tagged:, released:, tag_green:)` returns
+`plan(tip:, checks_green:, version:, latest_tag:, tagged:, released:, tag_green:, tag_version:)` returns
 `{release:, tag_exists:, tap:, reason:}`. Rows are checked top to bottom.
 
 | Condition | release | tap | reason |
@@ -87,7 +88,8 @@ The trigger list must match the job's `GATES` env (`test formula`).
 | not main's tip | no | no | not main's tip; the tip's run acts instead |
 | a gate isn't green | no | no | waiting on every CI gate to pass for main's tip |
 | `version` < `latest_tag` (semver order) | no | no | version.rb … is behind the newest tag …; not moving the tap backwards |
-| tagged, but the tag's commit didn't pass every gate on main | no | no | vX.Y.Z points at a commit that didn't pass every CI gate on main; … |
+| tagged, but the tag's commit has no passing run of every gate on main | no | no | vX.Y.Z points at a commit without a passing run of every CI gate on main; … |
+| tagged, but `version.rb` at the tag's commit isn't `version` | no | no | vX.Y.Z points at a commit whose version.rb says "…"; … |
 | not tagged | **yes** (new tag) | yes | new version |
 | tagged, no Release | **yes** (`--verify-tag`) | yes | tag exists without a Release; creating it |
 | tagged and released | no | yes | already released; refreshing the tap |
@@ -109,15 +111,15 @@ Run as `ruby packaging/release.rb <subcommand>` from the repo root.
 
 | Subcommand | Output | Notes |
 |------------|--------|-------|
-| `version` | `0.50.0` | Reads `lib/switchboard/version.rb`; raises if no `X.Y.Z` constant. |
+| `version [FILE]` | `0.50.0` | Reads `lib/switchboard/version.rb` (or `FILE`); raises if no `X.Y.Z` constant. |
 | `notes VERSION TITLE_FILE NOTES_FILE` | writes both files | Title `vX.Y.Z — <heading>` (date stripped); body is the entry up to the next `## [`. Raises if the version has no CHANGELOG entry, or only a heading. |
 | `tarball-url VERSION` | `https://github.com/wvmitchell/switchboard/archive/refs/tags/vVERSION.tar.gz` | |
-| `plan TIP CHECKS_GREEN VERSION LATEST_TAG TAGGED RELEASED TAG_GREEN` | `release=…`, `tag_exists=…`, `tap=…`, `reason=…` lines | Booleans are the strings `true`/`false`; `LATEST_TAG` may be empty. |
+| `plan TIP CHECKS_GREEN VERSION LATEST_TAG TAGGED RELEASED TAG_GREEN TAG_VERSION` | `release=…`, `tag_exists=…`, `tap=…`, `reason=…` lines | Booleans are the strings `true`/`false`; `LATEST_TAG` and `TAG_VERSION` may be empty. |
 | `formula VERSION SHA256 [TEMPLATE]` | rendered formula on stdout | `TEMPLATE` defaults to `packaging/homebrew/switchboard.rb`. Raises on a non-hex sha, the empty-file sha (`e3b0c442…b855`), or a template without exactly one `url` and one `sha256` line for this repo. |
 | anything else | usage on stderr, exit 1 | |
 
 ```sh
-$ ruby packaging/release.rb plan true true 0.50.0 "" false false false
+$ ruby packaging/release.rb plan true true 0.50.0 "" false false false ""
 release=true
 tag_exists=false
 tap=true

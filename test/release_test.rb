@@ -67,6 +67,7 @@ module Switchboard
       run = ->(*args) { IO.popen([RbConfig.ruby, script, *args], err: File::NULL, &:read) }
       v = Release.version
       assert_equal "#{v}\n", run.call("version")
+      assert_equal "3.4.5\n", run.call("version", path("v.rb").tap { |f| File.write(f, %(VERSION = "3.4.5"\n)) })
       assert_equal "https://github.com/wvmitchell/switchboard/archive/refs/tags/v#{v}.tar.gz\n", run.call("tarball-url", v)
 
       title_file, notes_file = path("title.txt"), path("notes.md")
@@ -82,19 +83,20 @@ module Switchboard
       refute IO.popen([RbConfig.ruby, script, "bogus"], err: File::NULL, &:read).then { $?.success? }
     end
 
-    # Value: protects=release.yml's positional `plan TIP GREEN VERSION LATEST TAGGED RELEASED TAG_GREEN`
+    # Value: protects=release.yml's positional `plan TIP GREEN VERSION LATEST TAGGED RELEASED TAG_GREEN TAG_VERSION`
     # reaching the right keywords; fails_when=the CLI swaps VERSION/LATEST or TAGGED/RELEASED, or
     # drops a non-empty LATEST (the backwards-tap guard silently bypassed in CI); why_new=the CLI
     # test passes an empty LATEST and false/false, so any such swap still prints the same; seam=none
     def test_cli_plan_maps_each_positional_arg
       script = File.join(Release::ROOT, "packaging/release.rb")
       plan = ->(*args) { IO.popen([RbConfig.ruby, script, "plan", *args], err: File::NULL, &:read) }
-      assert_includes plan.call("true", "true", "1.2.0", "1.10.0", "false", "false", "false"), "tap=false\nreason=version.rb (1.2.0) is behind"
+      assert_includes plan.call("true", "true", "1.2.0", "1.10.0", "false", "false", "false", ""), "tap=false\nreason=version.rb (1.2.0) is behind"
       assert_equal "release=true\ntag_exists=true\ntap=true\nreason=tag exists without a Release; creating it\n",
-                   plan.call("true", "true", "1.2.0", "1.2.0", "true", "false", "true")
-      assert_includes plan.call("false", "true", "1.2.0", "", "false", "false", "false"), "reason=not main's tip"
-      assert_includes plan.call("true", "false", "1.2.0", "", "false", "false", "false"), "reason=waiting on every CI gate"
-      assert_includes plan.call("true", "true", "1.2.0", "1.2.0", "true", "true", "false"), "tap=false\nreason=v1.2.0 points at a commit"
+                   plan.call("true", "true", "1.2.0", "1.2.0", "true", "false", "true", "1.2.0")
+      assert_includes plan.call("false", "true", "1.2.0", "", "false", "false", "false", ""), "reason=not main's tip"
+      assert_includes plan.call("true", "false", "1.2.0", "", "false", "false", "false", ""), "reason=waiting on every CI gate"
+      assert_includes plan.call("true", "true", "1.2.0", "1.2.0", "true", "true", "false", "1.2.0"), "tap=false\nreason=v1.2.0 points at a commit without"
+      assert_includes plan.call("true", "true", "1.2.0", "1.2.0", "true", "true", "true", "1.1.0"), "tap=false\nreason=v1.2.0 points at a commit whose version.rb says \"1.1.0\""
     end
 
     def test_notes_without_an_entry_raise
@@ -143,17 +145,19 @@ module Switchboard
     # version re-releases, or a tag without its Release is never repaired; why_new=the decision
     # used to be untested workflow shell; seam=none
     def test_plan_only_lets_a_fully_green_current_main_tip_act
-      base = { tip: true, checks_green: true, version: "1.2.0", latest_tag: "1.1.0", tagged: false, released: false, tag_green: false }
+      base = { tip: true, checks_green: true, version: "1.2.0", latest_tag: "1.1.0", tagged: false, released: false,
+               tag_green: false, tag_version: nil }
       table = [
         [{ tip: false },                                     [false, false, false]], # superseded commit
         [{ checks_green: false },                            [false, false, false]], # a gate not (yet) green
         [{ latest_tag: "1.10.0" },                           [false, false, false]], # behind the newest tag (semver, not string, order)
         [{},                                                 [true,  false, true]],  # new version
         [{ latest_tag: nil },                                [true,  false, true]],  # first release ever
-        [{ latest_tag: "1.2.0", tagged: true, tag_green: true },                 [true,  true,  true]],  # tag without a Release: create it
-        [{ latest_tag: "1.2.0", tagged: true, released: true, tag_green: true }, [false, true, true]],  # released: heal the tap only
-        [{ latest_tag: "1.2.0", tagged: true },                  [false, false, false]], # tag on an ungated commit: hands off
-        [{ latest_tag: "1.2.0", tagged: true, released: true },  [false, false, false]]
+        [{ latest_tag: "1.2.0", tagged: true, tag_green: true, tag_version: "1.2.0" },                 [true,  true,  true]],  # tag without a Release: create it
+        [{ latest_tag: "1.2.0", tagged: true, released: true, tag_green: true, tag_version: "1.2.0" }, [false, true, true]],  # released: heal the tap only
+        [{ latest_tag: "1.2.0", tagged: true, tag_version: "1.2.0" },                  [false, false, false]], # tag on an ungated commit: hands off
+        [{ latest_tag: "1.2.0", tagged: true, released: true, tag_version: "1.2.0" },  [false, false, false]],
+        [{ latest_tag: "1.2.0", tagged: true, released: true, tag_green: true, tag_version: "1.1.0" }, [false, false, false]] # tag moved to older code
       ]
       table.each do |overrides, want|
         got = Release.plan(**base.merge(overrides))

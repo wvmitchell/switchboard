@@ -91,11 +91,14 @@ Each release run prints its decision as a notice, for example
   `formula` hasn't passed on main for the tip yet. The run triggered by the second
   gate to finish will act. If a gate failed, fix main and push. If the tip has no
   gate runs at all (a `[skip ci]` commit, or disabled workflows), nothing will
-  trigger: push a commit that runs CI, or re-run the gates on the tip.
-- **The run says `vX.Y.Z points at a commit that didn't pass every CI gate`.** The
-  tag exists but points somewhere CI never approved (pushed or moved by hand).
-  Delete the tag (`git push origin :refs/tags/vX.Y.Z`) and let the pipeline
-  re-create it, or point it at a gated commit on main.
+  trigger and re-running won't help: push a new commit that runs CI.
+- **The run says `vX.Y.Z points at a commit without a passing run of every CI
+  gate`, or `… whose version.rb says …`.** The tag exists but points somewhere CI
+  never approved or at different code: it was pushed or moved by hand, a gate was
+  re-run on that commit and failed, or its run history expired. If the tag has a
+  GitHub Release, remove both with `gh release delete vX.Y.Z --cleanup-tag`;
+  otherwise `git push origin :refs/tags/vX.Y.Z`. The next green run re-creates it.
+  If the runs simply expired, bump the version instead.
 - **The run says `not main's tip`.** Main moved during the run; the newer
   commit's run handles it.
 - **The run says `version.rb (…) is behind the newest tag`.** `version.rb` went

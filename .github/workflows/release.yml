@@ -58,11 +58,15 @@ jobs:
           is_tip=false
           [ "$sha" = "$tip" ] && is_tip=true # main moved mid-run: the newer run acts
           version="$(ruby packaging/release.rb version)"
-          rc=0
-          git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null || rc=$?
-          case $rc in 0) tagged=true ;; 2) tagged=false ;; *) exit "$rc" ;; esac # 2 = no such ref
+          # One listing, matched EXACTLY: ls-remote patterns match by suffix, so a decoy
+          # like refs/tags/x/refs/tags/vX.Y.Z would otherwise count as vX.Y.Z.
+          refs="$(git ls-remote --tags origin)"
+          # The tag's commit (the peeled ^{} line of an annotated tag), or empty.
+          tag_sha="$(awk -v t="refs/tags/v$version" '$2==t"^{}"{p=$1} $2==t{l=$1} END{print (p?p:l)}' <<<"$refs")"
+          tagged=false
+          [ -n "$tag_sha" ] && tagged=true
           # Highest vX.Y.Z tag, so a version.rb that went backwards never moves the tap.
-          latest="$(git ls-remote --tags --refs origin 'refs/tags/v*' | sed -n 's#.*refs/tags/v\([0-9]*\.[0-9]*\.[0-9]*\)$#\1#p' | sort -V | tail -n 1)"
+          latest="$(awk '$2 ~ /^refs\/tags\/v[0-9]+\.[0-9]+\.[0-9]+$/ {sub(/^refs\/tags\/v/, "", $2); print $2}' <<<"$refs" | sort -V | tail -n 1)"
           # A tag can exist without its Release (gh release create failed midway).
           released=false
           if [ "$tagged" = true ]; then
@@ -85,14 +89,17 @@ jobs:
             echo true
           }
           green="$(gates_green "$sha")"
-          # An existing tag is trusted only if ITS commit passed the gates on main too
-          # (prefer the peeled ^{} line of an annotated tag).
+          # An existing tag is trusted only if ITS commit passed the gates on main AND
+          # carries this version (a tag moved to older code would ship it as vX.Y.Z).
           tag_green=false
+          tag_version=""
           if [ "$tagged" = true ]; then
-            tag_sha="$(git ls-remote origin "refs/tags/v$version" "refs/tags/v$version^{}" | sort -k2 | tail -n 1 | cut -f1)"
             tag_green="$(gates_green "$tag_sha")"
+            gh api -H "Accept: application/vnd.github.raw" \
+              "repos/$GITHUB_REPOSITORY/contents/lib/switchboard/version.rb?ref=$tag_sha" > "$RUNNER_TEMP/tag_version.rb"
+            tag_version="$(ruby packaging/release.rb version "$RUNNER_TEMP/tag_version.rb")"
           fi
-          plan="$(ruby packaging/release.rb plan "$is_tip" "$green" "$version" "$latest" "$tagged" "$released" "$tag_green")"
+          plan="$(ruby packaging/release.rb plan "$is_tip" "$green" "$version" "$latest" "$tagged" "$released" "$tag_green" "$tag_version")"
           { echo "version=$version"; echo "$plan"; } >> "$GITHUB_OUTPUT"
           echo "::notice::v$version: $(sed -n 's/^reason=//p' <<<"$plan")"
 

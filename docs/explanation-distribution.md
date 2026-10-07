@@ -114,9 +114,10 @@ modes are quiet:
   Whichever gate finishes second triggers the run that acts.
 - **Never backwards.** If `version.rb` is behind the newest tag (a reverted bump,
   or a version collision settled lower), nothing is tagged and the tap isn't touched.
-- **Trust a tag only if its commit was gated.** When the version's tag already
-  exists, the commit it points at must also have passed both gates on main, so a
-  hand-pushed or moved tag can't publish an untested tarball.
+- **Trust a tag only if its commit was gated and carries the version.** When the
+  version's tag already exists, the commit it points at (matched by exact tag
+  name) must also have passed both gates on main, and its `version.rb` must say
+  that version, so a hand-pushed or moved tag can't publish untested or older code.
 - **Render from the tag.** The formula is built from the template *at the release
   tag* and hashed against that tag's tarball, so it always describes the code it
   downloads. A failed download can't turn into a checksum either: the empty-file

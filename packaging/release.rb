@@ -3,10 +3,10 @@
 # The pure half of .github/workflows/release.yml, kept here so it's unit-tested
 # offline (test/release_test.rb) instead of living as untestable YAML shell.
 #
-#   ruby packaging/release.rb version                 # → 0.50.0
+#   ruby packaging/release.rb version [FILE]          # → 0.50.0
 #   ruby packaging/release.rb notes 0.50.0 TITLE_FILE NOTES_FILE
 #   ruby packaging/release.rb tarball-url 0.50.0
-#   ruby packaging/release.rb plan true true 0.50.0 0.49.0 false false false   # → release=…/tap=…/reason=…
+#   ruby packaging/release.rb plan true true 0.50.0 0.49.0 false false false ""   # → release=…/tap=…/reason=…
 #   ruby packaging/release.rb formula 0.50.0 SHA256 [TEMPLATE]   # rendered formula → stdout
 module Release
   module_function
@@ -56,16 +56,19 @@ module Release
   # so the tap can't move backwards. The tap update is idempotent, so it runs on
   # every acting run (healing a failed or late-enabled update); the Release is
   # (re)created whenever it's missing, even if its tag already exists. An existing
-  # tag is only trusted if ITS commit passed every gate on main too, so a hand-pushed
-  # or moved tag can't publish an untested tarball.
-  def plan(tip:, checks_green:, version:, latest_tag:, tagged:, released:, tag_green:)
+  # tag is only trusted if ITS commit passed every gate on main and carries this
+  # version, so a hand-pushed or moved tag can't publish untested or older code.
+  def plan(tip:, checks_green:, version:, latest_tag:, tagged:, released:, tag_green:, tag_version:)
     return none("not main's tip; the tip's run acts instead") unless tip
     return none("waiting on every CI gate to pass for main's tip") unless checks_green
     if latest_tag && Gem::Version.new(version) < Gem::Version.new(latest_tag)
       return none("version.rb (#{version}) is behind the newest tag (v#{latest_tag}); not moving the tap backwards")
     end
     if tagged && !tag_green
-      return none("v#{version} points at a commit that didn't pass every CI gate on main; not releasing or publishing it")
+      return none("v#{version} points at a commit without a passing run of every CI gate on main; not releasing or publishing it")
+    end
+    if tagged && tag_version != version
+      return none("v#{version} points at a commit whose version.rb says #{tag_version.inspect}; not releasing or publishing it")
     end
 
     reason = if !tagged then "new version"
@@ -86,22 +89,23 @@ end
 
 if $PROGRAM_NAME == __FILE__
   case ARGV[0]
-  when "version" then puts Release.version
+  when "version" then puts(ARGV[1] ? Release.version(ARGV[1]) : Release.version)
   when "notes"
     title, body = Release.notes(File.read(File.join(Release::ROOT, "CHANGELOG.md")), ARGV[1])
     File.write(ARGV[2], title)
     File.write(ARGV[3], "#{body}\n")
   when "tarball-url" then puts Release.tarball_url(ARGV[1])
   when "plan"
-    tip, green, version, latest, tagged, released, tag_green = ARGV[1, 7]
+    tip, green, version, latest, tagged, released, tag_green, tag_version = ARGV[1, 8]
     flag = ->(a) { a == "true" }
     Release.plan(tip: flag[tip], checks_green: flag[green], version: version, latest_tag: latest.to_s.empty? ? nil : latest,
-                 tagged: flag[tagged], released: flag[released], tag_green: flag[tag_green]).each { |k, v| puts "#{k}=#{v}" }
+                 tagged: flag[tagged], released: flag[released], tag_green: flag[tag_green],
+                 tag_version: tag_version.to_s.empty? ? nil : tag_version).each { |k, v| puts "#{k}=#{v}" }
   when "formula"
     template = ARGV[3] || File.join(Release::ROOT, "packaging/homebrew/switchboard.rb")
     print Release.render_formula(File.read(template), ARGV[1], ARGV[2])
   else
-    abort "usage: release.rb version | notes VERSION TITLE_FILE NOTES_FILE | tarball-url VERSION | " \
-          "plan TIP CHECKS_GREEN VERSION LATEST_TAG TAGGED RELEASED TAG_GREEN | formula VERSION SHA256 [TEMPLATE]"
+    abort "usage: release.rb notes VERSION TITLE_FILE NOTES_FILE | tarball-url VERSION | " \
+          "version [FILE] | plan TIP CHECKS_GREEN VERSION LATEST_TAG TAGGED RELEASED TAG_GREEN TAG_VERSION | formula VERSION SHA256 [TEMPLATE]"
   end
 end
