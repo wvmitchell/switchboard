@@ -145,7 +145,68 @@ module Switchboard
     end
 
     def test_remove_global_on_absent_config_is_a_noop
-      assert_nil CodexHook.remove_global
+      refute CodexHook.remove_global
+      File.write(config, %(model = "x"\n))
+      refute CodexHook.remove_global, "no block ⇒ nothing removed"
+      assert_equal %(model = "x"\n), body
+    end
+
+    # What codex appends after our [hooks] table once the user runs `/hooks` (trimmed).
+    TRUST = <<~TOML
+      [hooks.state]
+
+      [hooks.state."/home/u/.codex/config.toml:pre_tool_use:0:0"]
+      trusted_hash = "sha256:aaaa"
+
+      [hooks.state."/home/u/.codex/config.toml:session_start:0:0"]
+      trusted_hash = "sha256:bbbb"
+    TOML
+
+    # A block as older releases wrote it: note on the begin line, single-quoted
+    # commands, and codex's trust tables inside the markers.
+    def legacy_block
+      "#{CodexHook::BEGIN_MARK} (managed by switchboard; remove this block to disable)\n" \
+        "[hooks]\nStop = [{ hooks = [{ type = \"command\", command = '/old/sb-agent-hook done' }] }]\n" \
+        "#{TRUST}#{CodexHook::END_MARK}\n"
+    end
+
+    # Value: protects=uninstall actually removing a block an older release wrote;
+    # fails_when=strip needs the bare begin mark again (the block survives while uninstall
+    # says ✓) or remove_global reports success without a change; why_new=the strip test
+    # above uses a block the current release wrote; seam=none
+    def test_remove_global_strips_a_legacy_block
+      File.write(config, %(model = "x"\n#{legacy_block}[tui]\ntheme = "dark"\n))
+      assert CodexHook.remove_global
+      refute CodexHook.installed?
+      assert_equal %(model = "x"\n[tui]\ntheme = "dark"\n), body, "the whole block goes, foreign config stays"
+    end
+
+    # Value: protects=re-installing over an older block (the brew-upgrade path) without a
+    # false collision, while keeping the user's codex trust; fails_when=the stale block's
+    # [hooks] reads as foreign (install refuses, codex dots go dark) or codex's trust tables
+    # are dropped; why_new=no test installs over a block in the old format; seam=none
+    def test_install_replaces_a_legacy_block_and_keeps_codex_trust
+      File.write(config, %(model = "x"\n#{legacy_block}))
+      assert_equal config, CodexHook.install_global
+      assert_equal 1, body.scan(/^\[hooks\]/).size
+      assert_match(/^#{Regexp.escape(CodexHook::BEGIN_MARK)}\n/, body, "rewritten with the current marker")
+      refute_includes body, "/old/sb-agent-hook", "the stale commands are gone"
+      assert_includes MarkerBlock.inner(body, CodexHook::BEGIN_MARK, CodexHook::END_MARK), TRUST.strip
+    end
+
+    # Value: protects=codex's /hooks approval surviving `switchboard install` (re-run after
+    # every upgrade); fails_when=install_global stops carrying the [hooks.state…] tables
+    # codex wrote inside our markers, forcing a re-approval every upgrade; why_new=the
+    # idempotency test re-installs a block codex never touched; seam=none
+    def test_install_carries_codex_trust_across_reinstall_and_uninstall_drops_it
+      CodexHook.install_global
+      File.write(config, body.sub(CodexHook::END_MARK, "\n#{TRUST}#{CodexHook::END_MARK}")) # codex trusts the hooks
+      CodexHook.install_global
+      CodexHook.install_global
+      assert_equal 1, body.scan(%(:pre_tool_use:0:0"])).size, "trust kept once, not stacked"
+      assert_includes MarkerBlock.inner(body, CodexHook::BEGIN_MARK, CodexHook::END_MARK), TRUST.strip
+      CodexHook.remove_global
+      refute_includes body, "hooks.state", "uninstall removes the trust for hooks it removed"
     end
 
     def test_install_writes_a_first_write_backup

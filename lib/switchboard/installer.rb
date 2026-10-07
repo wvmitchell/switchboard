@@ -269,8 +269,11 @@ module Switchboard
     def step_codex_unhooks
       return unless CodexHook.installed?
 
-      CodexHook.remove_global
-      ok "removed global codex hooks from #{CodexHook.config_path}"
+      if CodexHook.remove_global
+        ok "removed global codex hooks from #{CodexHook.config_path}"
+      else
+        bad "couldn't remove the codex hooks block from #{CodexHook.config_path} — delete it by hand (between its # >>> / # <<< markers)"
+      end
     end
 
     def unlink_symlink
@@ -295,8 +298,14 @@ module Switchboard
     def unwire_tmux(conf_override)
       conf = tmux_conf(conf_override)
       if File.exist?(conf) && File.read(conf).include?(BEGIN_MARK)
+        body = File.read(conf)
+        stripped = strip_block(body)
+        if stripped == body
+          return bad("couldn't remove the switchboard block from #{conf} — delete it by hand (between its # >>> / # <<< markers)")
+        end
+
         backup(conf)
-        atomic_write(conf, strip_block(File.read(conf)))
+        atomic_write(conf, stripped)
         reload(conf)
         ok "removed tmux block from #{conf}"
       else

@@ -636,6 +636,20 @@ module Switchboard
       assert_includes File.read(CodexHook.config_path), %(model = "gpt-5.5"), "foreign config kept"
     end
 
+    # Value: protects=uninstall's report matching what happened to the codex config;
+    # fails_when=step_codex_unhooks prints ✓ without checking remove_global (the false
+    # "removed" a real uninstall printed); why_new=the test above only covers a removal
+    # that works; seam=stub_method on CodexHook.remove_global (forces the failure branch)
+    def test_uninstall_reports_a_codex_block_it_could_not_remove
+      codex_home!
+      with_codex { CodexHook.install_global }
+      conf = path("tmux.conf")
+      File.write(conf, "# mine\n")
+      out = stub_method(CodexHook, :remove_global, -> { false }) { silently { Installer.uninstall(conf: conf) } }
+      assert_includes out, "couldn't remove the codex hooks block"
+      refute_includes out, "removed global codex hooks"
+    end
+
     private
 
     # Swallow the install/uninstall progress output and return it as a string.
