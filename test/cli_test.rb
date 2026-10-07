@@ -533,6 +533,20 @@ module Switchboard
       refute_includes sb_line, "rm "
     end
 
+    # Value: protects=doctor's ✗ + PATH-order advice when `switchboard` on PATH is some other program;
+    # fails_when=the required branch is dropped (a foreign switchboard reads as a soft note) or it's
+    # offered for `rm` like a clone link (deleting a program that isn't ours); why_new=the shadow test
+    # covers only a clone link and a foreign `sb`, never a foreign `switchboard`; seam=none
+    def test_doctor_homebrew_path_flags_a_foreign_switchboard_without_offering_rm
+      bin = path("foreign-bin").tap { |d| FileUtils.mkdir_p(d) }
+      File.write(File.join(bin, "switchboard"), "#!/bin/sh\n").then { File.chmod(0o755, File.join(bin, "switchboard")) }
+      ENV["PATH"] = bin
+      out = stub_method(Installer, :homebrew?, -> { true }) { capture { CLI.send(:doctor_symlinks) } }
+      line = out.lines.find { |l| l.include?("`switchboard` on PATH") }
+      assert_match(/✗.*`switchboard` on PATH is #{Regexp.escape(File.join(bin, 'switchboard'))}, another program — put Homebrew's bin earlier on PATH/, line)
+      refute_includes line, "rm "
+    end
+
     # A missing `sb` is a soft note, never a hard ✗ — doctor must agree with
     # install that the optional shorthand isn't a failure.
     def test_doctor_marks_missing_sb_as_optional_not_a_failure
