@@ -78,7 +78,7 @@ module Switchboard
       assert_equal Release.render_formula(template, "9.9.9", SHA), run.call("formula", "9.9.9", SHA)
       tagged = path("tagged-formula.rb").tap { |f| File.write(f, template.sub("desc ", "desc \"tagged\" # ")) }
       assert_includes run.call("formula", "9.9.9", SHA, tagged), %(desc "tagged")
-      assert_equal "release=true\ntap=true\nreason=new version\n", run.call("plan", "true", "false", "true")
+      assert_equal "release=true\ntag_exists=false\ntap=true\nreason=new version\n", run.call("plan", "true", "true", "0.50.0", "", "false", "false")
       refute IO.popen([RbConfig.ruby, script, "bogus"], err: File::NULL, &:read).then { $?.success? }
     end
 
@@ -116,22 +116,24 @@ module Switchboard
       assert_raises(RuntimeError) { Release.render_formula(other, "1.0.0", SHA) }
     end
 
-    # Value: protects=release.yml's skip/tag/heal decisions; fails_when=a non-tip commit or one
-    # whose test/formula checks aren't both green acts, a tagged version re-releases, or a tagged
-    # tip stops healing the tap; why_new=the decision used to be untested workflow shell; seam=none
-    def test_plan_only_lets_a_fully_green_main_tip_act
-      table = {
-        # tip,  tagged, checks green => release, tap
-        [false, false, true]  => [false, false], # superseded commit
-        [false, true,  true]  => [false, false],
-        [true,  false, false] => [false, false], # test or formula not (yet) green
-        [true,  true,  false] => [false, false],
-        [true,  false, true]  => [true,  true],  # new version on the tip
-        [true,  true,  true]  => [false, true]   # tagged: heal the tap only
-      }
-      table.each do |(tip, tagged, green), want|
-        got = Release.plan(tip: tip, tagged: tagged, checks_green: green)
-        assert_equal want, got.values_at(:release, :tap), "tip=#{tip} tagged=#{tagged} green=#{green}"
+    # Value: protects=release.yml's skip/tag/heal decisions; fails_when=a non-tip or not-fully-
+    # green commit acts, a version behind the newest tag moves the tap backwards, a released
+    # version re-releases, or a tag without its Release is never repaired; why_new=the decision
+    # used to be untested workflow shell; seam=none
+    def test_plan_only_lets_a_fully_green_current_main_tip_act
+      base = { tip: true, checks_green: true, version: "1.2.0", latest_tag: "1.1.0", tagged: false, released: false }
+      table = [
+        [{ tip: false },                                     [false, false, false]], # superseded commit
+        [{ checks_green: false },                            [false, false, false]], # a gate not (yet) green
+        [{ latest_tag: "1.10.0" },                           [false, false, false]], # behind the newest tag (semver, not string, order)
+        [{},                                                 [true,  false, true]],  # new version
+        [{ latest_tag: nil },                                [true,  false, true]],  # first release ever
+        [{ latest_tag: "1.2.0", tagged: true },              [true,  true,  true]],  # tag without a Release: create it
+        [{ latest_tag: "1.2.0", tagged: true, released: true }, [false, true, true]] # released: heal the tap only
+      ]
+      table.each do |overrides, want|
+        got = Release.plan(**base.merge(overrides))
+        assert_equal want, got.values_at(:release, :tag_exists, :tap), overrides.inspect
         refute_empty got[:reason]
       end
     end

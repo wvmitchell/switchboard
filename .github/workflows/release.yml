@@ -61,6 +61,17 @@ jobs:
           rc=0
           git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null || rc=$?
           case $rc in 0) tagged=true ;; 2) tagged=false ;; *) exit "$rc" ;; esac # 2 = no such ref
+          # Highest vX.Y.Z tag, so a version.rb that went backwards never moves the tap.
+          latest="$(git ls-remote --tags --refs origin 'refs/tags/v*' | sed -n 's#.*refs/tags/v\([0-9]*\.[0-9]*\.[0-9]*\)$#\1#p' | sort -V | tail -n 1)"
+          # A tag can exist without its Release (gh release create failed midway).
+          released=false
+          if [ "$tagged" = true ]; then
+            if out="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/v$version" 2>&1)"; then
+              released=true
+            elif ! grep -q "HTTP 404" <<<"$out"; then
+              echo "$out"; exit 1
+            fi
+          fi
           # Both gates must have passed on main's push run for this commit (a PR run
           # for the same sha doesn't count; pending/missing reads as not green).
           green=true
@@ -68,7 +79,7 @@ jobs:
             conclusion="$(gh run list -w "$gate" -c "$sha" -e push -b main -L 1 --json conclusion --jq '.[0].conclusion // ""')"
             [ "$conclusion" = success ] || green=false
           done
-          plan="$(ruby packaging/release.rb plan "$is_tip" "$tagged" "$green")"
+          plan="$(ruby packaging/release.rb plan "$is_tip" "$green" "$version" "$latest" "$tagged" "$released")"
           { echo "version=$version"; echo "$plan"; } >> "$GITHUB_OUTPUT"
           echo "::notice::v$version: $(sed -n 's/^reason=//p' <<<"$plan")"
 
@@ -77,9 +88,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.v.outputs.version }}
+          TAG_EXISTS: ${{ steps.v.outputs.tag_exists }}
         run: |
           ruby packaging/release.rb notes "$VERSION" title.txt notes.md
-          gh release create "v$VERSION" --target "$(git rev-parse HEAD)" --title "$(cat title.txt)" --notes-file notes.md
+          if [ "$TAG_EXISTS" = true ]; then # repair: attach the missing Release to the existing tag
+            gh release create "v$VERSION" --verify-tag --title "$(cat title.txt)" --notes-file notes.md
+          else
+            gh release create "v$VERSION" --target "$(git rev-parse HEAD)" --title "$(cat title.txt)" --notes-file notes.md
+          fi
 
       # Idempotent, so it runs on every acting run: a failed push, or a token or
       # visibility change made after a release, heals on the next green main push

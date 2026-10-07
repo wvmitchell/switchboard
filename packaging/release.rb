@@ -6,7 +6,7 @@
 #   ruby packaging/release.rb version                 # → 0.50.0
 #   ruby packaging/release.rb notes 0.50.0 TITLE_FILE NOTES_FILE
 #   ruby packaging/release.rb tarball-url 0.50.0
-#   ruby packaging/release.rb plan true false true   # → release=…/tap=…/reason=…
+#   ruby packaging/release.rb plan true true 0.50.0 0.49.0 false false   # → release=…/tap=…/reason=…
 #   ruby packaging/release.rb formula 0.50.0 SHA256 [TEMPLATE]   # rendered formula → stdout
 module Release
   module_function
@@ -50,15 +50,27 @@ module Release
 
   # What a release run should do. Only main's tip acts (a pending run can be
   # superseded and runs finish out of order, so anything else could tag a stale
-  # commit or move the tap backwards), and only once every gating CI workflow
-  # (test AND formula) is green for it, so whichever finishes second acts. The
-  # tap update is idempotent, so it runs on every acting run (healing a failed or
-  # late-enabled update), tagging only for a new version.
-  def plan(tip:, tagged:, checks_green:)
-    return { release: false, tap: false, reason: "not main's tip; the tip's run acts instead#{' (version still untagged)' unless tagged}" } unless tip
-    return { release: false, tap: false, reason: "waiting on every CI gate to pass for main's tip" } unless checks_green
+  # commit), and only once every gating CI workflow is green for it. A version.rb
+  # behind the newest tag (a reverted bump, a collision settled lower) never acts,
+  # so the tap can't move backwards. The tap update is idempotent, so it runs on
+  # every acting run (healing a failed or late-enabled update); the Release is
+  # (re)created whenever it's missing, even if its tag already exists.
+  def plan(tip:, checks_green:, version:, latest_tag:, tagged:, released:)
+    return none("not main's tip; the tip's run acts instead") unless tip
+    return none("waiting on every CI gate to pass for main's tip") unless checks_green
+    if latest_tag && Gem::Version.new(version) < Gem::Version.new(latest_tag)
+      return none("version.rb (#{version}) is behind the newest tag (v#{latest_tag}); not moving the tap backwards")
+    end
 
-    { release: !tagged, tap: true, reason: tagged ? "already tagged; refreshing the tap" : "new version" }
+    reason = if !tagged then "new version"
+             elsif !released then "tag exists without a Release; creating it"
+             else "already released; refreshing the tap"
+             end
+    { release: !(tagged && released), tag_exists: tagged, tap: true, reason: reason }
+  end
+
+  def none(reason)
+    { release: false, tag_exists: false, tap: false, reason: reason }
   end
 
   def tarball_url(version)
@@ -75,13 +87,15 @@ if $PROGRAM_NAME == __FILE__
     File.write(ARGV[3], "#{body}\n")
   when "tarball-url" then puts Release.tarball_url(ARGV[1])
   when "plan"
-    tip, tagged, green = ARGV[1, 3].map { |a| a == "true" }
-    Release.plan(tip: tip, tagged: tagged, checks_green: green).each { |k, v| puts "#{k}=#{v}" }
+    tip, green, version, latest, tagged, released = ARGV[1, 6]
+    flag = ->(a) { a == "true" }
+    Release.plan(tip: flag[tip], checks_green: flag[green], version: version, latest_tag: latest.to_s.empty? ? nil : latest,
+                 tagged: flag[tagged], released: flag[released]).each { |k, v| puts "#{k}=#{v}" }
   when "formula"
     template = ARGV[3] || File.join(Release::ROOT, "packaging/homebrew/switchboard.rb")
     print Release.render_formula(File.read(template), ARGV[1], ARGV[2])
   else
     abort "usage: release.rb version | notes VERSION TITLE_FILE NOTES_FILE | tarball-url VERSION | " \
-          "plan TIP TAGGED CHECKS_GREEN | formula VERSION SHA256 [TEMPLATE]"
+          "plan TIP CHECKS_GREEN VERSION LATEST_TAG TAGGED RELEASED | formula VERSION SHA256 [TEMPLATE]"
   end
 end
