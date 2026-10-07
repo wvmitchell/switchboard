@@ -33,8 +33,9 @@ class Switchboard < Formula
       checks the setup.
 
       Moving from a git clone? Run `switchboard uninstall` from the clone
-      first, then `switchboard install` here, then `switchboard enable-hooks`
-      in each existing worktree so its agent hooks point at this install.
+      first, then `switchboard install` here, then `switchboard quit` so the
+      sidebars restart from this install, then `switchboard enable-hooks` in
+      each existing worktree so its agent hooks point here too.
     EOS
   end
 

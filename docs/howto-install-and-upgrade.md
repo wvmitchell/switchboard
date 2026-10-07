@@ -81,7 +81,15 @@ the new version, so nothing goes stale when the old version is cleaned up. See
 
    Add `--codex-hooks` if you used the codex agent dots before.
 
-3. Point each existing worktree's Claude hooks at the new install. Hooks are
+3. Restart the sidebars so they run the Homebrew copy. Running sidebars keep the
+   path of the binary that started them, and would keep spawning the clone's
+   sidebars (and wiring new worktrees to it):
+
+   ```sh
+   switchboard quit      # closes every sb/ session; `switchboard` brings you back
+   ```
+
+4. Point each existing worktree's Claude hooks at the new install. Hooks are
    written per worktree with the install path baked in, so re-enable them in
    every worktree that had them:
 
@@ -143,13 +151,15 @@ switchboard doctor
 - **`✗ tmux is wired to a missing install (…)`.** The install tmux.conf points at
   is gone (a deleted clone). Run `switchboard install`.
 - **`✗ … on PATH is ~/.local/bin/switchboard, which shadows Homebrew's`.** A
-  clone-era symlink comes first on your PATH. Run `switchboard uninstall` from that
-  clone, or delete the symlink.
+  clone-era symlink comes first on your PATH. Delete just that link
+  (`rm ~/.local/bin/switchboard ~/.local/bin/sb`). Don't run the clone's
+  `uninstall` now: it would also remove the tmux and codex wiring the Homebrew
+  install is using (if you already did, run `switchboard install` again).
 - **`✗ Homebrew install, but switchboard isn't on PATH`.** Run
   `brew link switchboard`. If brew reports a conflict on `sb`, another program
   owns that name; `brew link --overwrite switchboard` takes it over.
 - **Workspaces stopped getting auto-named, or the ∞ monitoring dot doesn't clear,
-  after the move.** Step 3 wasn't run for that worktree, so its hooks still call
+  after the move.** Step 4 wasn't run for that worktree, so its hooks still call
   the old install (or nothing, if the clone is gone). The status dots keep working
   either way. Run `switchboard enable-hooks` there.
 - **Codex dots stopped after the move.** The codex hook commands changed path, so

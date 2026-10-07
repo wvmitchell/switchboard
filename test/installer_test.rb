@@ -490,8 +490,11 @@ module Switchboard
 
     # PATH belongs to brew under Homebrew — uninstall leaves it to `brew uninstall`.
     def test_homebrew_uninstall_leaves_path_to_brew
+      FileUtils.mkdir_p(File.dirname(Installer.symlink_path))
+      File.symlink(Installer.bin_path, Installer.symlink_path)
       out = stub_method(Installer, :homebrew?, -> { true }) { silently { Installer.uninstall } }
       assert_includes out, "brew uninstall switchboard"
+      assert File.symlink?(Installer.symlink_path), "brew mode never touches ~/.local/bin links"
     end
 
     def test_uninstall_leaves_foreign_symlink

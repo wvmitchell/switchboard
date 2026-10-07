@@ -508,6 +508,8 @@ module Switchboard
       shadow = File.join(ENV["PATH"], "switchboard").tap { |f| File.write(f, "#!/bin/sh\n"); File.chmod(0o755, f) }
       out = stub_method(Installer, :homebrew?, -> { true }) { capture { CLI.send(:doctor_symlinks) } }
       assert_match(/✗.*on PATH is #{Regexp.escape(shadow)}, which shadows Homebrew's/, out)
+      assert_includes out, "`rm #{shadow}`"
+      refute_includes out, "switchboard uninstall"
       refute_includes out, "brew link"
     end
 

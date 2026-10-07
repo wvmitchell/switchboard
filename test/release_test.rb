@@ -79,7 +79,7 @@ module Switchboard
       assert_equal Release.render_formula(template, "9.9.9", SHA), run.call("formula", "9.9.9", SHA)
       tagged = path("tagged-formula.rb").tap { |f| File.write(f, template.sub("desc ", "desc \"tagged\" # ")) }
       assert_includes run.call("formula", "9.9.9", SHA, tagged), %(desc "tagged")
-      assert_equal "release=true\ntag_exists=false\ntap=true\nreason=new version\n", run.call("plan", "true", "true", "0.50.0", "", "false", "false")
+      assert_equal "release=true\ntag_exists=false\ntap=true\nreason=new version\n", run.call("plan", "true", "true", "0.50.0", "", "false", "false", "false", "")
       refute IO.popen([RbConfig.ruby, script, "bogus"], err: File::NULL, &:read).then { $?.success? }
     end
 

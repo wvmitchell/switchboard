@@ -920,8 +920,9 @@ module Switchboard
       elsif File.identical?(found, Installer.bin_path)
         puts row(true, "on PATH via Homebrew: #{found}")
       else
-        # Most likely a clone's ~/.local/bin link left ahead of brew's bin on PATH.
-        puts row(false, "`switchboard` on PATH is #{found}, which shadows Homebrew's — remove it (e.g. `switchboard uninstall` from that clone)")
+        # Most likely a clone's ~/.local/bin link left ahead of brew's bin on PATH. Just the
+        # link: the clone's `uninstall` would also strip the tmux/codex wiring brew now owns.
+        puts row(false, "`switchboard` on PATH is #{found}, which shadows Homebrew's — delete that link (`rm #{found}`)")
       end
     end
 
