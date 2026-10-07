@@ -1,0 +1,83 @@
+name: release
+
+# Tag + GitHub Release + tap update whenever main carries a version.rb that isn't
+# tagged yet. Versions are still picked in the PR (the vX.Y.Z convention); this
+# automates everything after merge. Runs only once `test` is green on main, so a
+# red build never ships. The pure logic lives in packaging/release.rb (tested).
+on:
+  workflow_run:
+    workflows: [test]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+
+      - name: Resolve version
+        id: v
+        run: |
+          version="$(ruby packaging/release.rb version)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null; then
+            echo "v$version already tagged; nothing to release."
+            echo "new=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "new=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Tag + GitHub Release
+        if: steps.v.outputs.new == 'true'
+        run: |
+          v="${{ steps.v.outputs.version }}"
+          ruby packaging/release.rb notes "$v" title.txt notes.md
+          gh release create "v$v" --target "$(git rev-parse HEAD)" --title "$(cat title.txt)" --notes-file notes.md
+
+      # Brew downloads the public archive tarball, so a private repo has nothing to
+      # point the tap at yet; and the cross-repo push needs a PAT (contents:write on
+      # wvmitchell/homebrew-switchboard only). Either missing ⇒ skip, don't fail.
+      - name: Update Homebrew tap
+        if: steps.v.outputs.new == 'true'
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          v="${{ steps.v.outputs.version }}"
+          if [ "$(gh repo view "$GITHUB_REPOSITORY" --json isPrivate -q .isPrivate)" = "true" ]; then
+            echo "::notice::repo is private; skipping the tap update (brew can't download a private tarball)"
+            exit 0
+          fi
+          if [ -z "$TAP_TOKEN" ]; then
+            echo "::warning::HOMEBREW_TAP_TOKEN not set; skipping the tap update for v$v"
+            exit 0
+          fi
+          sha="$(curl -fsSL "https://github.com/$GITHUB_REPOSITORY/archive/refs/tags/v$v.tar.gz" | sha256sum | cut -d' ' -f1)"
+          git clone "https://x-access-token:$TAP_TOKEN@github.com/wvmitchell/homebrew-switchboard.git" tap
+          mkdir -p tap/Formula
+          ruby packaging/release.rb formula "$v" "$sha" > tap/Formula/switchboard.rb
+          git -C tap config user.name "github-actions[bot]"
+          git -C tap config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C tap add Formula/switchboard.rb
+          if git -C tap diff --cached --quiet; then
+            echo "tap already at v$v"
+          else
+            git -C tap commit -m "switchboard $v"
+            git -C tap push origin HEAD:main
+          fi

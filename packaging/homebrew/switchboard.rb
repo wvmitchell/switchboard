@@ -1,5 +1,6 @@
-# Homebrew formula for switchboard. The source of truth lives here; a release
-# copies it into the wvmitchell/homebrew-switchboard tap with url + sha256 filled in.
+# Homebrew formula for switchboard. The source of truth lives here; on each
+# release, .github/workflows/release.yml (packaging/release.rb) points url +
+# sha256 at the new tag and pushes it to the wvmitchell/homebrew-switchboard tap.
 class Switchboard < Formula
   desc "Keyboard-only tmux switcher/creator for git-worktree workspaces"
   homepage "https://github.com/wvmitchell/switchboard"
