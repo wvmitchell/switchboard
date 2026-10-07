@@ -192,6 +192,15 @@ module Switchboard
       assert_equal "1.0.0\n", run.call("latest-tag")
     end
 
+    # Value: protects=the backwards-tap guard's newest-tag input once versions reach two digits;
+    # fails_when=latest_tag compares strings (max/sort) instead of semver, so v0.9.0 outranks
+    # v0.10.0 and a real 0.9.x→0.10.x release reads as current; why_new=the listing above has
+    # v1.0.0 as both the string and semver max, so a string compare still passes it; seam=none
+    def test_latest_tag_orders_by_semver_not_string
+      listing = "ccc\trefs/tags/v0.9.0\nddd\trefs/tags/v0.10.0\neee\trefs/tags/v0.10.0^{}\n"
+      assert_equal "0.10.0", Release.latest_tag(listing)
+    end
+
     def test_render_formula_rejects_a_bad_sha
       assert_raises(RuntimeError) { Release.render_formula(template, "1.0.0", "nope") }
     end
