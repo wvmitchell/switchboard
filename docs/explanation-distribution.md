@@ -65,7 +65,8 @@ installs behave exactly as before.
   the same as a `git pull` upgrade; `switchboard doctor` tells you when.
 - **Under brew, PATH belongs to brew.** `install` skips the `~/.local/bin`
   symlinks and `uninstall` leaves PATH to `brew uninstall`; `doctor` checks that
-  `switchboard` on your PATH is this install.
+  `switchboard` and `sb` on your PATH are this install, and says how to fix
+  whatever shadows them.
 
 ## Part 2: a release pipeline that can't ship the wrong thing
 

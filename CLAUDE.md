@@ -31,7 +31,7 @@ here.
 ```sh
 bin/switchboard            # start: attach home from a shell, or toggle the sidebar inside tmux (alias: sb)
 bin/switchboard install    # symlinks (switchboard + sb) onto PATH (skipped under Homebrew) + wire tmux bindings + empty config (--no-tmux/--print-tmux/--tmux-conf)
-bin/switchboard uninstall  # reverse install (both symlinks, left to `brew uninstall` under Homebrew + tmux marker block + live unbind)
+bin/switchboard uninstall  # reverse install (both symlinks — left to `brew uninstall` under Homebrew — + tmux marker block + live unbind)
 bin/switchboard doctor     # check that tmux/git/gh + config + install wiring exist
 bin/switchboard init       # create ~/.config/switchboard/config.yml (empty; grown by the add-project flow)
 bin/switchboard config     # open config.yml in $EDITOR (sidebar `e` does the same)
@@ -46,8 +46,8 @@ bin/test                   # run the stdlib-Minitest suite (offline; bin/test <f
 bin/test-smoke             # run the real-tmux smoke layer (boots a server; needs tmux; out of bin/test — #104)
 ```
 
-Setup is one command: `git clone && bin/switchboard install` (`Installer`,
-`installer.rb`). It symlinks `bin/switchboard` to `~/.local/bin` (plus a short
+Setup is one command: `git clone && bin/switchboard install` (or `brew install
+wvmitchell/switchboard/switchboard && switchboard install`) (`Installer`, `installer.rb`). It symlinks `bin/switchboard` to `~/.local/bin` (plus a short
 `sb` alias beside it; a collided `sb` is skipped, the real command still
 installs), adds a
 marker-delimited line to the tmux.conf tmux actually loads (found via
@@ -135,8 +135,8 @@ rewrites a switchboard keg path to its `opt/switchboard` twin (fails safe to the
 realpath when no opt link exists). Under brew (`Installer.homebrew?`) install/uninstall
 skip the `~/.local/bin` symlinks and `doctor` checks the brew PATH entry instead.
 
-**Releases are automated after merge** (`.github/workflows/release.yml`; issues #105,
-#106). The PR still picks the version (`version.rb` + CHANGELOG entry, `vX.Y.Z` title);
+**Releases are automated after merge** (`.github/workflows/release.yml`; issue #106 —
+#105, assigning the version after merge, is still open). The PR still picks the version (`version.rb` + CHANGELOG entry, `vX.Y.Z` title);
 once `test` AND `formula` (macOS: formula installed from a local tap, `brew audit
 --strict` + `brew test`) are green on main, a `workflow_run` job tags it, creates the
 GitHub Release from the CHANGELOG entry, and pushes the formula to

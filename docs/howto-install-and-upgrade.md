@@ -159,7 +159,7 @@ switchboard doctor
   from the install you want to keep.
 - **`✗ tmux is wired to a missing install (…)`.** The install tmux.conf points at
   is gone (a deleted clone). Run `switchboard install`.
-- **`✗ … on PATH is ~/.local/bin/switchboard, which shadows Homebrew's`.** A
+- **`✗ … on PATH is …/.local/bin/switchboard, which shadows Homebrew's`.** A
   clone-era symlink comes first on your PATH (doctor checks `sb` the same way).
   Delete just the links it names (usually
   `rm ~/.local/bin/switchboard ~/.local/bin/sb`). Don't run the clone's
@@ -168,6 +168,8 @@ switchboard doctor
 - **`✗ … which shadows Homebrew's — take <dir> off your PATH`.** A clone's own
   `bin/` directory is on your PATH ahead of Homebrew's. Remove it from your shell
   profile. Don't delete the file: it's the clone's launcher.
+- **`✗ switchboard on PATH is …, another program`.** Something else named
+  `switchboard` comes first. Put `$(brew --prefix)/bin` earlier on your PATH.
 - **`✗ Homebrew install, but switchboard isn't on PATH`.** Run
   `brew link switchboard`. If brew reports a conflict on `sb`, another program
   owns that name; `brew link --overwrite switchboard` takes it over.

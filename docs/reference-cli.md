@@ -198,8 +198,8 @@ working). Works outside tmux. The sidebar's `q` does the same (with a confirm).
 ### `switchboard doctor`
 Check the install and report anything off: `tmux`/`git`/`gh` on PATH, config
 present + parseable, unrecognized top-level config keys (the misindented-nested-key
-trap), PATH symlinks (under Homebrew: that `switchboard` on PATH is this install, not
-missing or shadowed by an old clone's link), which install tmux.conf is wired to (this
+trap), PATH symlinks (under Homebrew: that `switchboard` and `sb` on PATH are this install, not
+missing or shadowed by an old clone's link, a clone's `bin/` directory, or another program), which install tmux.conf is wired to (this
 one ✓, another that still exists –, or one that's gone ✗), tmux wiring (bound keys +
 hooks, and whether they're *live* in the running server vs only in config), a bad or clashing `sidebar_keys` remap, `gh`
 auth + per-project badge staleness, audio player +
