@@ -118,8 +118,10 @@ modes are quiet:
   version's tag already exists, the commit it points at (matched by exact tag
   name) must also have passed both gates on main, and its `version.rb` must say
   that version, so a hand-pushed or moved tag can't publish untested or older code.
-- **Render from the tag.** The formula is built from the template *at the release
-  tag* and hashed against that tag's tarball, so it always describes the code it
+  Plan pins that exact commit, and the Release and tap steps fail if the tag no
+  longer resolves to it, so a tag moved mid-run can't slip through either.
+- **Render from the tag.** The formula is built from the template *at the verified
+  tag commit* and hashed against that tag's tarball, so it always describes the code it
   downloads. A failed download can't turn into a checksum either: the empty-file
   hash is rejected.
 - **Idempotent and self-healing.** The tap update runs on every acting run and

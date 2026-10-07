@@ -157,13 +157,39 @@ module Switchboard
         [{ latest_tag: "1.2.0", tagged: true, released: true, tag_green: true, tag_version: "1.2.0" }, [false, true, true]],  # released: heal the tap only
         [{ latest_tag: "1.2.0", tagged: true, tag_version: "1.2.0" },                  [false, false, false]], # tag on an ungated commit: hands off
         [{ latest_tag: "1.2.0", tagged: true, released: true, tag_version: "1.2.0" },  [false, false, false]],
-        [{ latest_tag: "1.2.0", tagged: true, released: true, tag_green: true, tag_version: "1.1.0" }, [false, false, false]] # tag moved to older code
+        [{ latest_tag: "1.2.0", tagged: true, released: true, tag_green: true, tag_version: "1.1.0" }, [false, false, false]], # tag moved to older code
+        [{ latest_tag: "1.2.0", tagged: true, tag_green: true, tag_version: "1.1.0" },  [false, false, false]], # …even when repairing a Release
+        [{ latest_tag: "1.2.0", tagged: true, tag_green: true, tag_version: nil },      [false, false, false]]  # version unreadable at the tag
       ]
       table.each do |overrides, want|
         got = Release.plan(**base.merge(overrides))
         assert_equal want, got.values_at(:release, :tag_exists, :tap), overrides.inspect
         refute_empty got[:reason]
       end
+    end
+
+    # Value: protects=the tag the pipeline verifies and publishes being the real vX.Y.Z;
+    # fails_when=ref matching goes back to suffix/prefix (a decoy refs/tags/x/refs/tags/vX wins)
+    # or the peeled commit of an annotated tag is ignored; why_new=this lookup used to be
+    # untested awk in the workflow; seam=none
+    def test_tag_sha_and_latest_tag_match_exact_refs_only
+      listing = <<~REFS
+        aaa\trefs/tags/v1.0.0
+        bbb\trefs/tags/v1.0.0^{}
+        ddd\trefs/tags/x/refs/tags/v1.0.0
+        eee\trefs/tags/x/refs/tags/v1.0.0^{}
+        fff\trefs/tags/x/refs/tags/v9.9.9
+        ggg\trefs/tags/v0.10.0
+        hhh\trefs/tags/v0.9.0
+      REFS
+      assert_equal "bbb", Release.tag_sha(listing, "1.0.0")  # annotated: the peeled commit
+      assert_equal "ggg", Release.tag_sha(listing, "0.10.0") # lightweight
+      assert_nil Release.tag_sha(listing, "9.9.9")            # only a decoy
+      assert_equal "1.0.0", Release.latest_tag(listing)       # decoy 9.9.9 ignored; semver order
+      assert_nil Release.latest_tag("")
+      run = ->(*args) { IO.popen([RbConfig.ruby, File.join(Release::ROOT, "packaging/release.rb"), *args], "r+") { |io| io.write(listing); io.close_write; io.read } }
+      assert_equal "bbb\n", run.call("tag-sha", "1.0.0")
+      assert_equal "1.0.0\n", run.call("latest-tag")
     end
 
     def test_render_formula_rejects_a_bad_sha

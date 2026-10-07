@@ -6,6 +6,8 @@
 #   ruby packaging/release.rb version [FILE]          # → 0.50.0
 #   ruby packaging/release.rb notes 0.50.0 TITLE_FILE NOTES_FILE
 #   ruby packaging/release.rb tarball-url 0.50.0
+#   git ls-remote --tags origin | ruby packaging/release.rb tag-sha 0.50.0   # exact-match commit
+#   git ls-remote --tags origin | ruby packaging/release.rb latest-tag
 #   ruby packaging/release.rb plan true true 0.50.0 0.49.0 false false false ""   # → release=…/tap=…/reason=…
 #   ruby packaging/release.rb formula 0.50.0 SHA256 [TEMPLATE]   # rendered formula → stdout
 module Release
@@ -82,6 +84,21 @@ module Release
     { release: false, tag_exists: false, tap: false, reason: reason }
   end
 
+  # The commit `vVERSION` names in a `git ls-remote --tags` listing (the peeled
+  # `^{}` line for an annotated tag), or nil. Matched by EXACT ref name: ls-remote's
+  # own patterns match by suffix, so a decoy refs/tags/x/refs/tags/vX would count.
+  def tag_sha(listing, version)
+    ref = "refs/tags/v#{version}"
+    rows = listing.lines.map { |l| l.chomp.split("\t", 2) }
+    (rows.find { |_, r| r == "#{ref}^{}" } || rows.find { |_, r| r == ref })&.first
+  end
+
+  # The highest exact `refs/tags/vX.Y.Z` in a listing (semver order), or nil.
+  def latest_tag(listing)
+    listing.lines.filter_map { |l| l.chomp.split("\t", 2)[1]&.[](%r{\Arefs/tags/v(\d+\.\d+\.\d+)\z}, 1) }
+           .max_by { |v| Gem::Version.new(v) }
+  end
+
   def tarball_url(version)
     "https://github.com/#{REPO}/archive/refs/tags/v#{version}.tar.gz"
   end
@@ -95,6 +112,8 @@ if $PROGRAM_NAME == __FILE__
     File.write(ARGV[2], title)
     File.write(ARGV[3], "#{body}\n")
   when "tarball-url" then puts Release.tarball_url(ARGV[1])
+  when "tag-sha" then puts Release.tag_sha($stdin.read, ARGV[1])
+  when "latest-tag" then puts Release.latest_tag($stdin.read)
   when "plan"
     tip, green, version, latest, tagged, released, tag_green, tag_version = ARGV[1, 8]
     flag = ->(a) { a == "true" }
@@ -106,6 +125,6 @@ if $PROGRAM_NAME == __FILE__
     print Release.render_formula(File.read(template), ARGV[1], ARGV[2])
   else
     abort "usage: release.rb notes VERSION TITLE_FILE NOTES_FILE | tarball-url VERSION | " \
-          "version [FILE] | plan TIP CHECKS_GREEN VERSION LATEST_TAG TAGGED RELEASED TAG_GREEN TAG_VERSION | formula VERSION SHA256 [TEMPLATE]"
+          "version [FILE] | tag-sha VERSION < LISTING | latest-tag < LISTING | plan TIP CHECKS_GREEN VERSION LATEST_TAG TAGGED RELEASED TAG_GREEN TAG_VERSION | formula VERSION SHA256 [TEMPLATE]"
   end
 end

@@ -142,7 +142,7 @@ once `test` AND `formula` (macOS: formula installed from a local tap, `brew audi
 GitHub Release from the CHANGELOG entry, and pushes the formula to
 `wvmitchell/homebrew-switchboard`. Every run judges main's CURRENT tip (GitHub keeps one
 pending run per group, and gates finish out of order), never moves the tap backwards,
-renders the formula from the TAGGED template, and fails loudly on any lookup error (a
+trusts an existing tag only if its exact ref's commit passed the gates and carries the version, pins that commit so later steps fail if the tag moves, renders the formula from it, and fails loudly on any lookup error (a
 missing `actions: read` once made every run a silent no-op). All decisions live in the
 pure, table-tested `Release.plan` (`packaging/release.rb`); the YAML only gathers facts.
 The tap step skips while the repo is private or `HOMEBREW_TAP_TOKEN` is unset. Full

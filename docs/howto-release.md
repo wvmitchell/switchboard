@@ -106,6 +106,9 @@ Each release run prints its decision as a notice, for example
   it past the newest tag.
 - **The tap step says `HOMEBREW_TAP_TOKEN not set` or `repo is private`.** Finish
   the one-time setup above.
+- **A step fails with `vX.Y.Z moved since Plan` or `vX.Y.Z resolves to …,
+  expected …`.** The tag was created or moved by hand while the run was going.
+  Check what it points at, fix or delete it (see above), and re-run the workflow.
 - **The tap clone or push fails with 401 or 403.** The token expired, or it
   lacks Contents write on the tap repo. Create a new one and `gh secret set` it again, then run
   the workflow by hand.
