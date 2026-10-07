@@ -82,6 +82,14 @@ module Switchboard
       ENV["XDG_CACHE_HOME"]    = path("xdg-cache")
       ENV["GIT_CONFIG_GLOBAL"] = path("gitconfig") # need not exist; isolates host global
       ENV["GIT_CONFIG_SYSTEM"] = File::NULL        # ignore /etc/gitconfig
+      # Newer git detaches `maintenance --auto` after commands; one still writing
+      # objects/maintenance.lock races teardown's remove_entry (ENOENT mid-walk).
+      # Env-scoped config so it covers the code under test's git shell-outs too.
+      ENV["GIT_CONFIG_COUNT"]   = "2"
+      ENV["GIT_CONFIG_KEY_0"]   = "maintenance.auto"
+      ENV["GIT_CONFIG_VALUE_0"] = "false"
+      ENV["GIT_CONFIG_KEY_1"]   = "gc.auto"
+      ENV["GIT_CONFIG_VALUE_1"] = "0"
       ENV["GH_CONFIG_DIR"]     = path("gh")
       ENV.delete("GH_TOKEN")
       ENV.delete("TMUX")
