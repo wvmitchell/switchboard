@@ -3,7 +3,7 @@
 Deferred work, captured so the reasoning isn't lost. Each item says what, why,
 and where to start.
 
-## Release automation (issues #105, #106) follow-ups
+## Release automation (issues #8, #9) follow-ups
 
 - **Test that release.yml's trigger list and `GATES` agree.** *Why:* the
   `workflow_run.workflows: [test, formula]` trigger and the job's `GATES: test

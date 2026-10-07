@@ -124,7 +124,7 @@ Ruby **>= 3.0** is required (`Config` uses `YAML.safe_load_file`, added in Psych
 on macOS system Ruby 2.6 — relevant because tmux panes run a non-interactive shell
 that skips rbenv.
 
-**Baked paths must survive `brew upgrade`** (issue #106). The install path gets
+**Baked paths must survive `brew upgrade`** (issue #9). The install path gets
 written into long-lived wiring — the tmux.conf marker line, the tmux hooks/bindings,
 per-worktree Claude hooks, the global codex block. A clone's realpath is stable; a
 Homebrew keg's (`<prefix>/Cellar/switchboard/<ver>/…`) is deleted by upgrade+cleanup,
@@ -135,8 +135,8 @@ rewrites a switchboard keg path to its `opt/switchboard` twin (fails safe to the
 realpath when no opt link exists). Under brew (`Installer.homebrew?`) install/uninstall
 skip the `~/.local/bin` symlinks and `doctor` checks the brew PATH entry instead.
 
-**Releases are automated after merge** (`.github/workflows/release.yml`; issue #106 —
-#105, assigning the version after merge, is still open). The PR still picks the version (`version.rb` + CHANGELOG entry, `vX.Y.Z` title);
+**Releases are automated after merge** (`.github/workflows/release.yml`; issue #9 —
+#8, assigning the version after merge, is still open). The PR still picks the version (`version.rb` + CHANGELOG entry, `vX.Y.Z` title);
 once `test` AND `formula` (macOS: formula installed from a local tap, `brew audit
 --strict` + `brew test`) are green on main, a `workflow_run` job tags it, creates the
 GitHub Release from the CHANGELOG entry, and pushes the formula to
@@ -1068,6 +1068,9 @@ pane), with the pure pieces (`sandbox_env`, `isolated_socket?`, `stale_sock_dirs
 
 ### Conventions
 
+- Issue/PR numbers in comments and docs from before v0.50.0 (e.g. `#57`, `#94`)
+  refer to the private `switchboard-archive` repo; the public tracker restarted at #1
+  (#8 = assign versions after merge, #9 = open-source readiness tracking).
 - Every file starts with `# frozen_string_literal: true`.
 - Stateless helpers are `module_function` modules (`ClaudeHook`, `CodexHook`,
   `MarkerBlock`, `Tmux`, `Installer`, …); only `Model`, `Config`, `Sidebar`, and

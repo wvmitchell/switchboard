@@ -142,7 +142,7 @@ modes are quiet:
 
 - **Versions are still chosen in the PR.** The workflow releases whatever
   `version.rb` says; it doesn't pick numbers. Parallel branches can still race for
-  the same next version (issue #105 tracks assigning versions after merge).
+  the same next version (issue #8 tracks assigning versions after merge).
 - **A superseded version isn't tagged.** If two bumps land before the first one's
   gates finish, only the newer version gets a tag.
 - **macOS CI minutes.** The formula job runs on every push to main and on PRs

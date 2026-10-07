@@ -7,19 +7,22 @@ prefixes in the git history and `lib/switchboard/version.rb`.
 After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
 tmux bindings/hooks go live — see the "Upgrading" section in the README.
 
+Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
+refer to the project's earlier, private repository; the public tracker starts at #1.
+
 ## [0.50.0] — Homebrew distribution and automated releases (2026-10-07)
 
 ### Added
 - **Homebrew formula** (`packaging/homebrew/switchboard.rb`): `brew install
   wvmitchell/switchboard/switchboard` installs `switchboard` and `sb` with Homebrew
   Ruby, tmux, git and gh. Caveats walk through `switchboard install`, moving over
-  from a clone, and uninstalling in the right order (#106).
+  from a clone, and uninstalling in the right order (#9).
 - **Automated releases** (`.github/workflows/release.yml`, `packaging/release.rb`):
   once `test` and the new macOS `formula` job pass on main's tip, a merged version
   bump is tagged, gets a GitHub Release from its CHANGELOG entry, and is pushed to
   the tap. All decisions live in the table-tested `Release.plan`; tags are matched
   exactly, created atomically, and pinned to the verified commit, whose tarball id
-  is checked before the formula is published (#106; toward #105).
+  is checked before the formula is published (#9; toward #8).
 - **`formula` CI job**: installs the formula from a local tap on macOS and runs
   `brew audit --strict` and `brew test` on every push to main and on packaging PRs.
 - **`doctor` names the install tmux is wired to** (this one, another one, or a
