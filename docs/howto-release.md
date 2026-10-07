@@ -89,7 +89,13 @@ Each release run prints its decision as a notice, for example
 
 - **The run says `waiting on every CI gate to pass for main's tip`.** `test` or
   `formula` hasn't passed on main for the tip yet. The run triggered by the second
-  gate to finish will act. If a gate failed, fix main and push.
+  gate to finish will act. If a gate failed, fix main and push. If the tip has no
+  gate runs at all (a `[skip ci]` commit, or disabled workflows), nothing will
+  trigger: push a commit that runs CI, or re-run the gates on the tip.
+- **The run says `vX.Y.Z points at a commit that didn't pass every CI gate`.** The
+  tag exists but points somewhere CI never approved (pushed or moved by hand).
+  Delete the tag (`git push origin :refs/tags/vX.Y.Z`) and let the pipeline
+  re-create it, or point it at a gated commit on main.
 - **The run says `not main's tip`.** Main moved during the run; the newer
   commit's run handles it.
 - **The run says `version.rb (…) is behind the newest tag`.** `version.rb` went
@@ -97,8 +103,8 @@ Each release run prints its decision as a notice, for example
   it past the newest tag.
 - **The tap step says `HOMEBREW_TAP_TOKEN not set` or `repo is private`.** Finish
   the one-time setup above.
-- **The tap push fails with 403.** The token expired, or it lacks Contents
-  write on the tap repo. Create a new one and `gh secret set` it again, then run
+- **The tap clone or push fails with 401 or 403.** The token expired, or it
+  lacks Contents write on the tap repo. Create a new one and `gh secret set` it again, then run
   the workflow by hand.
 - **The Plan step fails with an error instead of a notice.** A lookup failed
   (GitHub API outage, permissions). The step fails on purpose, so it can't be

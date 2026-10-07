@@ -72,14 +72,27 @@ jobs:
               echo "$out"; exit 1
             fi
           fi
-          # Both gates must have passed on main's push run for this commit (a PR run
-          # for the same sha doesn't count; pending/missing reads as not green).
-          green=true
-          for gate in $GATES; do
-            conclusion="$(gh run list -w "$gate" -c "$sha" -e push -b main -L 1 --json conclusion --jq '.[0].conclusion // ""')"
-            [ "$conclusion" = success ] || green=false
-          done
-          plan="$(ruby packaging/release.rb plan "$is_tip" "$green" "$version" "$latest" "$tagged" "$released")"
+          # Every gate must have passed on main's push run for a commit (a PR run for the
+          # same sha doesn't count; pending/missing reads as not green).
+          # Prints true/false; returns 2 on a lookup error, which the assignment's -e
+          # turns into a failed step (inside `cmd && x`, -e would be suspended).
+          gates_green() {
+            local gate conclusion
+            for gate in $GATES; do
+              conclusion="$(gh run list -w "$gate" -c "$1" -e push -b main -L 1 --json conclusion --jq '.[0].conclusion // ""')" || return 2
+              [ "$conclusion" = success ] || { echo false; return 0; }
+            done
+            echo true
+          }
+          green="$(gates_green "$sha")"
+          # An existing tag is trusted only if ITS commit passed the gates on main too
+          # (prefer the peeled ^{} line of an annotated tag).
+          tag_green=false
+          if [ "$tagged" = true ]; then
+            tag_sha="$(git ls-remote origin "refs/tags/v$version" "refs/tags/v$version^{}" | sort -k2 | tail -n 1 | cut -f1)"
+            tag_green="$(gates_green "$tag_sha")"
+          fi
+          plan="$(ruby packaging/release.rb plan "$is_tip" "$green" "$version" "$latest" "$tagged" "$released" "$tag_green")"
           { echo "version=$version"; echo "$plan"; } >> "$GITHUB_OUTPUT"
           echo "::notice::v$version: $(sed -n 's/^reason=//p' <<<"$plan")"
 

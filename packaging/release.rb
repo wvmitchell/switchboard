@@ -6,7 +6,7 @@
 #   ruby packaging/release.rb version                 # → 0.50.0
 #   ruby packaging/release.rb notes 0.50.0 TITLE_FILE NOTES_FILE
 #   ruby packaging/release.rb tarball-url 0.50.0
-#   ruby packaging/release.rb plan true true 0.50.0 0.49.0 false false   # → release=…/tap=…/reason=…
+#   ruby packaging/release.rb plan true true 0.50.0 0.49.0 false false false   # → release=…/tap=…/reason=…
 #   ruby packaging/release.rb formula 0.50.0 SHA256 [TEMPLATE]   # rendered formula → stdout
 module Release
   module_function
@@ -24,12 +24,13 @@ module Release
 
   # [title, body] for the `## [x.y.z] — title (date)` CHANGELOG section. A version
   # with no entry is an error — releasing without notes means the bump skipped the
-  # CHANGELOG half of the convention.
+  # CHANGELOG half of the convention, and so does an entry that's only a heading.
   def notes(changelog, version)
     lines = changelog.lines
     start = lines.index { |l| l.start_with?("## [#{version}]") } or raise "no CHANGELOG entry for #{version}"
     stop = lines[(start + 1)..].index { |l| l.start_with?("## [") }
     body = lines[(start + 1)...(stop ? start + 1 + stop : lines.size)].join.strip
+    raise "empty CHANGELOG entry for #{version}" if body.empty?
     heading = lines[start].sub(/\A## \[#{Regexp.escape(version)}\]\s*(—|-)?\s*/, "").sub(/\s*\(\d{4}-\d{2}-\d{2}\)\s*\z/, "").strip
     ["v#{version}#{" — #{heading}" unless heading.empty?}", body]
   end
@@ -54,12 +55,17 @@ module Release
   # behind the newest tag (a reverted bump, a collision settled lower) never acts,
   # so the tap can't move backwards. The tap update is idempotent, so it runs on
   # every acting run (healing a failed or late-enabled update); the Release is
-  # (re)created whenever it's missing, even if its tag already exists.
-  def plan(tip:, checks_green:, version:, latest_tag:, tagged:, released:)
+  # (re)created whenever it's missing, even if its tag already exists. An existing
+  # tag is only trusted if ITS commit passed every gate on main too, so a hand-pushed
+  # or moved tag can't publish an untested tarball.
+  def plan(tip:, checks_green:, version:, latest_tag:, tagged:, released:, tag_green:)
     return none("not main's tip; the tip's run acts instead") unless tip
     return none("waiting on every CI gate to pass for main's tip") unless checks_green
     if latest_tag && Gem::Version.new(version) < Gem::Version.new(latest_tag)
       return none("version.rb (#{version}) is behind the newest tag (v#{latest_tag}); not moving the tap backwards")
+    end
+    if tagged && !tag_green
+      return none("v#{version} points at a commit that didn't pass every CI gate on main; not releasing or publishing it")
     end
 
     reason = if !tagged then "new version"
@@ -87,15 +93,15 @@ if $PROGRAM_NAME == __FILE__
     File.write(ARGV[3], "#{body}\n")
   when "tarball-url" then puts Release.tarball_url(ARGV[1])
   when "plan"
-    tip, green, version, latest, tagged, released = ARGV[1, 6]
+    tip, green, version, latest, tagged, released, tag_green = ARGV[1, 7]
     flag = ->(a) { a == "true" }
     Release.plan(tip: flag[tip], checks_green: flag[green], version: version, latest_tag: latest.to_s.empty? ? nil : latest,
-                 tagged: flag[tagged], released: flag[released]).each { |k, v| puts "#{k}=#{v}" }
+                 tagged: flag[tagged], released: flag[released], tag_green: flag[tag_green]).each { |k, v| puts "#{k}=#{v}" }
   when "formula"
     template = ARGV[3] || File.join(Release::ROOT, "packaging/homebrew/switchboard.rb")
     print Release.render_formula(File.read(template), ARGV[1], ARGV[2])
   else
     abort "usage: release.rb version | notes VERSION TITLE_FILE NOTES_FILE | tarball-url VERSION | " \
-          "plan TIP CHECKS_GREEN VERSION LATEST_TAG TAGGED RELEASED | formula VERSION SHA256 [TEMPLATE]"
+          "plan TIP CHECKS_GREEN VERSION LATEST_TAG TAGGED RELEASED TAG_GREEN | formula VERSION SHA256 [TEMPLATE]"
   end
 end

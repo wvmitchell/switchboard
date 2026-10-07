@@ -82,22 +82,30 @@ module Switchboard
       refute IO.popen([RbConfig.ruby, script, "bogus"], err: File::NULL, &:read).then { $?.success? }
     end
 
-    # Value: protects=release.yml's positional `plan TIP GREEN VERSION LATEST TAGGED RELEASED`
+    # Value: protects=release.yml's positional `plan TIP GREEN VERSION LATEST TAGGED RELEASED TAG_GREEN`
     # reaching the right keywords; fails_when=the CLI swaps VERSION/LATEST or TAGGED/RELEASED, or
     # drops a non-empty LATEST (the backwards-tap guard silently bypassed in CI); why_new=the CLI
     # test passes an empty LATEST and false/false, so any such swap still prints the same; seam=none
     def test_cli_plan_maps_each_positional_arg
       script = File.join(Release::ROOT, "packaging/release.rb")
       plan = ->(*args) { IO.popen([RbConfig.ruby, script, "plan", *args], err: File::NULL, &:read) }
-      assert_includes plan.call("true", "true", "1.2.0", "1.10.0", "false", "false"), "tap=false\nreason=version.rb (1.2.0) is behind"
+      assert_includes plan.call("true", "true", "1.2.0", "1.10.0", "false", "false", "false"), "tap=false\nreason=version.rb (1.2.0) is behind"
       assert_equal "release=true\ntag_exists=true\ntap=true\nreason=tag exists without a Release; creating it\n",
-                   plan.call("true", "true", "1.2.0", "1.2.0", "true", "false")
-      assert_includes plan.call("false", "true", "1.2.0", "", "false", "false"), "reason=not main's tip"
-      assert_includes plan.call("true", "false", "1.2.0", "", "false", "false"), "reason=waiting on every CI gate"
+                   plan.call("true", "true", "1.2.0", "1.2.0", "true", "false", "true")
+      assert_includes plan.call("false", "true", "1.2.0", "", "false", "false", "false"), "reason=not main's tip"
+      assert_includes plan.call("true", "false", "1.2.0", "", "false", "false", "false"), "reason=waiting on every CI gate"
+      assert_includes plan.call("true", "true", "1.2.0", "1.2.0", "true", "true", "false"), "tap=false\nreason=v1.2.0 points at a commit"
     end
 
     def test_notes_without_an_entry_raise
       assert_raises(RuntimeError) { Release.notes("## [0.1.0] — x (2026-01-01)\n", "0.2.0") }
+    end
+
+    # Value: protects=a Release never ships with empty notes; fails_when=a heading-only entry
+    # (the next `## [` right after it) yields an empty body that release.yml publishes;
+    # why_new=only a missing entry raised before; seam=none
+    def test_notes_with_only_a_heading_raise
+      assert_raises(RuntimeError) { Release.notes("## [1.0.0] — x (2026-01-01)\n\n## [0.9.0] — y (2026-01-01)\n- old\n", "1.0.0") }
     end
 
     # The real CHANGELOG's current version must have an entry, or release.yml fails.
@@ -135,15 +143,17 @@ module Switchboard
     # version re-releases, or a tag without its Release is never repaired; why_new=the decision
     # used to be untested workflow shell; seam=none
     def test_plan_only_lets_a_fully_green_current_main_tip_act
-      base = { tip: true, checks_green: true, version: "1.2.0", latest_tag: "1.1.0", tagged: false, released: false }
+      base = { tip: true, checks_green: true, version: "1.2.0", latest_tag: "1.1.0", tagged: false, released: false, tag_green: false }
       table = [
         [{ tip: false },                                     [false, false, false]], # superseded commit
         [{ checks_green: false },                            [false, false, false]], # a gate not (yet) green
         [{ latest_tag: "1.10.0" },                           [false, false, false]], # behind the newest tag (semver, not string, order)
         [{},                                                 [true,  false, true]],  # new version
         [{ latest_tag: nil },                                [true,  false, true]],  # first release ever
-        [{ latest_tag: "1.2.0", tagged: true },              [true,  true,  true]],  # tag without a Release: create it
-        [{ latest_tag: "1.2.0", tagged: true, released: true }, [false, true, true]] # released: heal the tap only
+        [{ latest_tag: "1.2.0", tagged: true, tag_green: true },                 [true,  true,  true]],  # tag without a Release: create it
+        [{ latest_tag: "1.2.0", tagged: true, released: true, tag_green: true }, [false, true, true]],  # released: heal the tap only
+        [{ latest_tag: "1.2.0", tagged: true },                  [false, false, false]], # tag on an ungated commit: hands off
+        [{ latest_tag: "1.2.0", tagged: true, released: true },  [false, false, false]]
       ]
       table.each do |overrides, want|
         got = Release.plan(**base.merge(overrides))

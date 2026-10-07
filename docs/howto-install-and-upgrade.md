@@ -57,7 +57,7 @@ switchboard install        # or: tmux source-file ~/.tmux.conf
 Either way the new code runs immediately, but a running tmux server keeps the key
 bindings and hooks it loaded at startup. Re-running `install` (idempotent) or
 reloading tmux picks up any new ones. Under Homebrew every path switchboard wrote
-into your config points at `/opt/homebrew/opt/switchboard`, which brew moves to
+into your config points at `$(brew --prefix)/opt/switchboard`, which brew moves to
 the new version, so nothing goes stale when the old version is cleaned up. See
 [Explanation: distribution](explanation-distribution.md).
 
@@ -89,12 +89,12 @@ the new version, so nothing goes stale when the old version is cleaned up. See
    switchboard enable-hooks <worktree path>
    ```
 
-   For every worktree of a repo at once:
+   For every worktree of a repo that already had switchboard's hooks:
 
    ```sh
    git -C <repo> worktree list --porcelain | sed -n 's/^worktree //p' |
      while read -r wt; do
-       [ -f "$wt/.claude/settings.local.json" ] && switchboard enable-hooks "$wt"
+       grep -qs switchboard "$wt/.claude/settings.local.json" && switchboard enable-hooks "$wt"
      done
    ```
 
@@ -103,11 +103,20 @@ the new version, so nothing goes stale when the old version is cleaned up. See
 
 ## Uninstall
 
+Run `switchboard uninstall` **first**, while the command still exists:
+
 ```sh
 switchboard uninstall                     # tmux wiring, live bindings, codex block
 brew uninstall switchboard                # Homebrew installs
 brew untap wvmitchell/switchboard         # optional
 ```
+
+If you already ran `brew uninstall`, tmux will complain about a missing
+`switchboard.tmux` on every reload. Delete the block between
+`# >>> switchboard install >>>` and `# <<< switchboard install <<<` in your
+tmux.conf by hand, then reload tmux. Worktrees whose Claude hooks you enabled keep
+switchboard entries in `.claude/settings.local.json`; they no-op once the command
+is gone, or run `switchboard disable-hooks <worktree>` first to remove them.
 
 For a clone install, `switchboard uninstall` also removes the `~/.local/bin`
 symlinks; delete the clone afterwards if you like. Your config
@@ -139,8 +148,10 @@ switchboard doctor
 - **`✗ Homebrew install, but switchboard isn't on PATH`.** Run
   `brew link switchboard`. If brew reports a conflict on `sb`, another program
   owns that name; `brew link --overwrite switchboard` takes it over.
-- **The agent dots stopped moving after the move.** Step 3 wasn't run for that
-  worktree; run `switchboard enable-hooks` there.
+- **Workspaces stopped getting auto-named, or the ∞ monitoring dot doesn't clear,
+  after the move.** Step 3 wasn't run for that worktree, so its hooks still call
+  the old install (or nothing, if the clone is gone). The status dots keep working
+  either way. Run `switchboard enable-hooks` there.
 - **Codex dots stopped after the move.** The codex hook commands changed path, so
   codex wants them approved again. Run `/hooks` in codex once.
 - **`prefix-s` does nothing after an upgrade.** tmux still has the old bindings.
