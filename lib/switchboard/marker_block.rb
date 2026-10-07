@@ -20,7 +20,18 @@ module Switchboard
 
     # Drop the marked region (markers included) from `body`. Absent ⇒ unchanged.
     def strip(body, begin_mark, end_mark)
-      body.gsub(/^#{Regexp.escape(begin_mark)}\n.*?^#{Regexp.escape(end_mark)}\n?/m, "")
+      body.gsub(region(begin_mark, end_mark), "")
+    end
+
+    # The text between the markers, or nil when there's no region.
+    def inner(body, begin_mark, end_mark)
+      body[region(begin_mark, end_mark), 1]
+    end
+
+    # A marker line may carry trailing text: older releases wrote
+    # `# >>> … >>> (managed by …)`, so `strip` and `present?` must both accept it.
+    def region(begin_mark, end_mark)
+      /^#{Regexp.escape(begin_mark)}[^\n]*\n(.*?)^#{Regexp.escape(end_mark)}[^\n]*\n?/m
     end
 
     # `body` with the marked region holding `inner` appended at the end. Assumes
@@ -39,7 +50,7 @@ module Switchboard
     end
 
     def present?(body, begin_mark)
-      body.include?(begin_mark)
+      body.match?(/^#{Regexp.escape(begin_mark)}/)
     end
 
     # First-write-only backup: capture the user's pristine file once, never clobber a

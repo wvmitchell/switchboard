@@ -474,10 +474,16 @@ in `CodexHook.installed?` so the global block counts as "on" for every worktree,
 
 Two consequences of codex being global:
 - **Trust.** Codex runs no hook until `/hooks`-approved (or `--dangerously-bypass-hook-trust`).
-  The approval is keyed by the command HASH in codex's state sqlite — NOT the block — so
-  a re-`install_global` preserves trust AS LONG AS the commands stay byte-stable
-  (deterministic paths + fixed event order; why `command_entries` is centralized). A
-  present block isn't proof the dot moves; `doctor` flags the caveat.
+  Codex records each approval in `config.toml` itself, as `[hooks.state."<file>:<event>:…"]`
+  tables holding the command's `trusted_hash`, appended right after our `[hooks]` table —
+  i.e. INSIDE our markers. So `install_global` carries those tables into the rewritten
+  block (`codex_trust`), and trust survives a re-install (run after every upgrade) AS LONG
+  AS the commands stay byte-stable (deterministic paths + fixed event order; why
+  `command_entries` is centralized); `remove_global` drops them with the block. A present
+  block isn't proof the dot moves; `doctor` flags the caveat. `MarkerBlock` accepts
+  trailing text on a marker line (older releases wrote `# >>> … >>> (managed by …)`), and
+  `remove_global` returns whether it changed anything, so uninstall never reports a removal
+  that didn't happen.
 - **Nesting (#130).** A global hook fires for EVERY codex, including a nested `codex exec`
   (a `/codex` under Claude). A `GUARD` (`[ -n "$CLAUDECODE" ] || [ -n
   "$CLAUDE_CODE_SESSION_ID" ] && exit 0`, equal-precedence left-assoc sh) prefixes every

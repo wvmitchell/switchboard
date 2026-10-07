@@ -16,11 +16,14 @@ module Switchboard
   # the same agent-neutral reporter Claude uses. `AgentState` only renders tracked
   # worktrees, so the block firing for non-switchboard codex sessions is inert there.
   #
-  # Trust: Codex won't run any hook until it's `/hooks`-approved (or bypassed). The
-  # approval is keyed by the command HASH and persisted in Codex's state sqlite — NOT in
-  # this block — so a re-`install_global` preserves the approval AS LONG AS the emitted
-  # commands stay byte-stable (deterministic paths + fixed event order; see
-  # HookFile.command_entries). Changing a command re-triggers a one-time `/hooks` review.
+  # Trust: Codex won't run any hook until it's `/hooks`-approved (or bypassed). Codex
+  # records each approval as a `[hooks.state."<file>:<event>:<i>:<j>"]` table holding the
+  # command's `trusted_hash`, appended right after our `[hooks]` table — i.e. INSIDE this
+  # block. So a re-`install_global` carries those tables into the new block, and the
+  # approval survives AS LONG AS the emitted commands stay byte-stable (deterministic
+  # paths + fixed event order; see HookFile.command_entries). Changing a command
+  # re-triggers a one-time `/hooks` review. `remove_global` drops them with the block:
+  # they only describe our hooks.
   #
   # Nesting: a global hook fires for EVERY codex, including a nested `codex exec` (a
   # `/codex` under Claude). The GUARD suppresses it when a Claude-Code parent is detected
@@ -36,6 +39,7 @@ module Switchboard
     BEGIN_MARK = "# >>> switchboard codex hooks >>>"
     NOTE_MARK  = "# managed by switchboard — edits between the markers are overwritten; delete the block to disable"
     END_MARK   = "# <<< switchboard codex hooks <<<"
+    TRUST_TABLE = /^\[hooks\.state[\].]/
 
     # Skip the codex reporter/nudge when running under another agent. Equal-precedence,
     # left-associative sh: `(A || B) && exit 0` — exit 0 (suppress) if EITHER marker is
@@ -75,6 +79,8 @@ module Switchboard
       raise Collision if foreign_hooks?(MarkerBlock.strip(body, BEGIN_MARK, END_MARK))
 
       inner = "#{NOTE_MARK}\n[hooks]\n#{toml_hooks(script, bin)}"
+      trust = codex_trust(MarkerBlock.inner(body, BEGIN_MARK, END_MARK))
+      inner += "\n\n#{trust}" if trust
       new_body = MarkerBlock.replace(body, BEGIN_MARK, END_MARK, inner)
 
       MarkerBlock.backup(config_path) # first-write-only .bak (a pristine on-disk copy)
@@ -96,15 +102,26 @@ module Switchboard
       nil
     end
 
+    # True only when the block was actually removed, so uninstall can't report a
+    # removal that didn't happen.
     def remove_global
-      return unless File.exist?(config_path)
+      return false unless File.exist?(config_path)
 
       body = File.read(config_path)
-      return unless MarkerBlock.present?(body, BEGIN_MARK)
+      stripped = MarkerBlock.strip(body, BEGIN_MARK, END_MARK)
+      return false if stripped == body
 
-      MarkerBlock.atomic_write(config_path, MarkerBlock.strip(body, BEGIN_MARK, END_MARK))
+      MarkerBlock.atomic_write(config_path, stripped)
+      true
     rescue StandardError
-      nil
+      false
+    end
+
+    # Codex's trust tables from inside our block (everything from the first
+    # `[hooks.state…]` header on, since codex appends them after our hooks), or nil.
+    def codex_trust(region)
+      start = region && region =~ TRUST_TABLE
+      start && region[start..].strip
     end
 
     def installed?

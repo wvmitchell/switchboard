@@ -10,6 +10,21 @@ tmux bindings/hooks go live — see the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
+## [0.50.1] — uninstall removes old codex blocks; install keeps codex trust (2026-10-07)
+
+### Fixed
+- **`uninstall` could leave the codex hooks block behind while reporting ✓.** A block
+  written by an older release carries text after its begin marker; the presence check
+  matched it but the removal didn't, so the file was rewritten unchanged. Marker lines
+  may now carry trailing text, and `uninstall` (codex and tmux) reports a ✗ with the fix
+  if a block it found couldn't be removed. `install` also replaces an old-format block
+  instead of refusing it as a foreign `[hooks]` table.
+- **Re-running `install` no longer voids codex `/hooks` trust.** Codex stores each
+  approval as a `[hooks.state…]` table right after switchboard's `[hooks]`, inside its
+  markers, so every `install` (run after each upgrade) wiped them and codex asked for
+  approval again. `install` now carries those tables into the rewritten block;
+  `uninstall` still removes them with it.
+
 ## [0.50.0] — Homebrew distribution and automated releases (2026-10-07)
 
 ### Added

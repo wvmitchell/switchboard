@@ -45,6 +45,19 @@ module Switchboard
       assert MarkerBlock.present?(MarkerBlock.build("", B, E, "x"), B)
     end
 
+    # Value: protects=strip/present? agreeing on a marker line with trailing text (older
+    # releases wrote `# >>> … >>> (managed by …)`); fails_when=strip goes back to needing
+    # the bare mark + newline, so present? says "there" while strip removes nothing — the
+    # false "removed" uninstall reported on a real machine; why_new=every other test
+    # builds its region with the current bare marks; seam=none
+    def test_strip_and_inner_accept_trailing_text_on_marker_lines
+      body = "keep\n#{B} (managed by an older release)\nold\n#{E}\ntail\n"
+      assert MarkerBlock.present?(body, B)
+      assert_equal "old\n", MarkerBlock.inner(body, B, E)
+      assert_equal "keep\ntail\n", MarkerBlock.strip(body, B, E)
+      assert_nil MarkerBlock.inner("no region\n", B, E)
+    end
+
     # --- backup --------------------------------------------------------------
 
     def test_backup_is_first_write_only_and_skips_a_missing_source
