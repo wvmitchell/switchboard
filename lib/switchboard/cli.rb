@@ -914,15 +914,19 @@ module Switchboard
 
     # Homebrew owns PATH, so the check is just that `switchboard` resolves to it.
     def doctor_homebrew_path
-      found = `command -v switchboard 2>/dev/null`.strip
-      if found.empty?
-        puts row(false, "Homebrew install, but `switchboard` isn't on PATH — run `brew link switchboard`")
-      elsif File.identical?(found, Installer.bin_path)
-        puts row(true, "on PATH via Homebrew: #{found}")
-      else
-        # Most likely a clone's ~/.local/bin link left ahead of brew's bin on PATH. Just the
-        # link: the clone's `uninstall` would also strip the tmux/codex wiring brew now owns.
-        puts row(false, "`switchboard` on PATH is #{found}, which shadows Homebrew's — delete that link (`rm #{found}`)")
+      Installer::SYMLINK_NAMES.each do |name|
+        found = `command -v #{name} 2>/dev/null`.strip
+        if found.empty? && name != Installer::COMMAND_NAME
+          puts "  \e[33m–\e[0m `#{name}` isn't on PATH (optional shorthand)"
+        elsif found.empty?
+          puts row(false, "Homebrew install, but `switchboard` isn't on PATH — run `brew link switchboard`")
+        elsif File.identical?(found, Installer.bin_path)
+          puts row(true, "on PATH via Homebrew: #{found}")
+        else
+          # Most likely a clone's ~/.local/bin link left ahead of brew's bin on PATH. Just the
+          # link: the clone's `uninstall` would also strip the tmux/codex wiring brew now owns.
+          puts row(false, "`#{name}` on PATH is #{found}, which shadows Homebrew's — delete that link (`rm #{Shellwords.escape(found)}`)")
+        end
       end
     end
 

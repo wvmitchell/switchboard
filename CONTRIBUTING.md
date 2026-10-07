@@ -149,7 +149,8 @@ Release, and updates the Homebrew tap, once `test` and `formula` are green on
 main. Never tag by hand. See [How to cut a release](docs/howto-release.md) and
 [the release pipeline reference](docs/reference-release.md).
 
-After upgrading, users re-run `bin/switchboard install` (or reload tmux) so new
+After upgrading (`brew upgrade switchboard` or `git pull`), users re-run
+`switchboard install` (or reload tmux) so new
 tmux bindings/hooks go live — the CHANGELOG header says so.
 
 ## Where things live

@@ -511,6 +511,11 @@ module Switchboard
       assert_includes out, "`rm #{shadow}`"
       refute_includes out, "switchboard uninstall"
       refute_includes out, "brew link"
+
+      # The `sb` shorthand is checked too: a clone's `sb` keeps running the clone.
+      sb = File.join(ENV["PATH"], "sb").tap { |f| File.write(f, "#!/bin/sh\n"); File.chmod(0o755, f) }
+      out = stub_method(Installer, :homebrew?, -> { true }) { capture { CLI.send(:doctor_symlinks) } }
+      assert_match(/✗.*`sb` on PATH is #{Regexp.escape(sb)}, which shadows Homebrew's/, out)
     end
 
     # A missing `sb` is a soft note, never a hard ✗ — doctor must agree with
