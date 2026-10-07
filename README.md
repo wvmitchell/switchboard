@@ -53,7 +53,8 @@ keyboard-driven view over all of them, and discovers worktrees straight from
 With Homebrew (installs tmux, git, gh, and Ruby for you):
 
 ```sh
-brew install wvmitchell/switchboard/switchboard
+brew tap wvmitchell/switchboard
+brew install switchboard
 switchboard install                          # tmux wiring + starter config (idempotent)
 switchboard                                  # launch — drops you in the sidebar
 ```
