@@ -54,6 +54,7 @@ With Homebrew (installs tmux, git, gh, and Ruby for you):
 
 ```sh
 brew tap wvmitchell/switchboard
+brew trust wvmitchell/switchboard             # Homebrew 7+ asks you to trust a tap
 brew install switchboard
 switchboard install                          # tmux wiring + starter config (idempotent)
 switchboard                                  # launch — drops you in the sidebar
