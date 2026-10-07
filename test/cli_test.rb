@@ -457,6 +457,18 @@ module Switchboard
       assert_match(/Homebrew/, out)
     end
 
+    # Value: protects=doctor's ✓/✗ verdict on the brew PATH entry; fails_when=the identity check
+    # is dropped/inverted or compares strings (brew's bin/ entry is a symlink, not bin_path itself);
+    # why_new=the test above only matches /Homebrew/, which both ✓ and ✗ rows contain; seam=none
+    def test_doctor_homebrew_path_passes_when_path_resolves_to_this_install
+      dir = path("brew-bin").tap { |d| FileUtils.mkdir_p(d) }
+      File.symlink(Installer.bin_path, File.join(dir, "switchboard"))
+      ENV["PATH"] = dir
+      out = stub_method(Installer, :homebrew?, -> { true }) { capture { CLI.send(:doctor_symlinks) } }
+      assert_includes out, "✓"
+      assert_includes out, "on PATH via Homebrew: #{File.join(dir, 'switchboard')}"
+    end
+
     # A missing `sb` is a soft note, never a hard ✗ — doctor must agree with
     # install that the optional shorthand isn't a failure.
     def test_doctor_marks_missing_sb_as_optional_not_a_failure

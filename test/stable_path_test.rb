@@ -52,6 +52,24 @@ module Switchboard
                     "true"], out.lines.map(&:chomp)
     end
 
+    # Value: protects=bin/switchboard's SWITCHBOARD_BIN (the bin baked into codex/claude hook
+    # commands) staying on the opt/ twin under brew; fails_when=bin/switchboard reverts to the bare
+    # File.realpath (keg path ⇒ every upgrade changes the hook bytes, voiding codex /hooks trust);
+    # why_new=the keg test above loads lib only and the formula test checks repo_root, neither runs
+    # bin/switchboard's own resolution; seam=none (real `install --codex-hooks` from a fake keg)
+    def test_bin_run_from_a_keg_bakes_the_opt_path_into_codex_hooks
+      prefix = brew_prefix
+      keg = "#{prefix}/Cellar/switchboard/0.50.0/libexec"
+      FileUtils.mkdir_p(keg)
+      %w[bin lib switchboard.tmux].each { |f| FileUtils.cp_r(File.expand_path("../#{f}", __dir__), keg) }
+      env = { "CODEX_HOME" => path("codex"), "SWITCHBOARD_BIN" => nil }
+      IO.popen(env, [RbConfig.ruby, "#{keg}/bin/switchboard", "install", "--no-tmux", "--codex-hooks"],
+               err: File::NULL, &:read)
+      toml = File.read(File.join(path("codex"), "config.toml"))
+      assert_includes toml, "#{prefix}/opt/switchboard/libexec/bin/switchboard"
+      refute_includes toml, "Cellar"
+    end
+
     private
 
     # A prefix whose opt/switchboard exists, like a linked brew install.

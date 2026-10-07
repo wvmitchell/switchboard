@@ -41,6 +41,35 @@ module Switchboard
       assert_equal ["v0.1.1 — earlier", "- one"], Release.notes(log, "0.1.1")
     end
 
+    # Value: protects=the GitHub release title for `-`-separated and title-less headings;
+    # fails_when=the separator/date stripping regresses (title "v1.0.0 — (2026-01-01)" or
+    # a dangling "v1.0.0 — "); why_new=existing tests only assert titles for the `—` + date form; seam=none
+    def test_notes_title_handles_a_hyphen_and_a_missing_title
+      assert_equal "v0.1.0 — first", Release.notes("## [0.1.0] - first (2026-01-01)\n- hi\n", "0.1.0").first
+      assert_equal "v1.0.0", Release.notes("## [1.0.0] (2026-01-01)\n- hi\n", "1.0.0").first
+      assert_equal "v1.0.0", Release.notes("## [1.0.0]\n- hi\n", "1.0.0").first
+    end
+
+    # Value: protects=the argv/file contract release.yml calls (version, notes V TITLE NOTES,
+    # formula V SHA → stdout); fails_when=the CLI swaps the title/notes files, reads the wrong
+    # template, or drops a subcommand; why_new=other tests call the module, never the CLI the
+    # workflow actually runs; seam=none
+    def test_cli_subcommands_match_the_workflow_contract
+      script = File.join(Release::ROOT, "packaging/release.rb")
+      run = ->(*args) { IO.popen([RbConfig.ruby, script, *args], err: File::NULL, &:read) }
+      v = Release.version
+      assert_equal "#{v}\n", run.call("version")
+
+      title_file, notes_file = path("title.txt"), path("notes.md")
+      run.call("notes", v, title_file, notes_file)
+      expected_title, expected_body = Release.notes(File.read(File.join(Release::ROOT, "CHANGELOG.md")), v)
+      assert_equal expected_title, File.read(title_file)
+      assert_equal "#{expected_body}\n", File.read(notes_file)
+
+      assert_equal Release.render_formula(template, "9.9.9", SHA), run.call("formula", "9.9.9", SHA)
+      refute IO.popen([RbConfig.ruby, script, "bogus"], err: File::NULL, &:read).then { $?.success? }
+    end
+
     def test_notes_without_an_entry_raise
       assert_raises(RuntimeError) { Release.notes("## [0.1.0] — x (2026-01-01)\n", "0.2.0") }
     end
