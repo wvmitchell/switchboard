@@ -1,0 +1,155 @@
+# How to install, upgrade, or move to Homebrew
+
+Install switchboard with Homebrew or from a git clone, keep it up to date, move a
+clone install over to Homebrew, or remove it cleanly.
+
+## Prerequisites
+
+- macOS or Linux with **tmux ≥ 3.0**, **git**, and **gh**. Homebrew installs all
+  three (plus Ruby) for you; for a clone install on macOS, `brew install tmux git gh`.
+- For a clone install, **Ruby ≥ 3.0** (`ruby -v`). No gems.
+
+## Install with Homebrew
+
+1. Install the formula from the tap:
+
+   ```sh
+   brew install wvmitchell/switchboard/switchboard
+   ```
+
+   This puts `switchboard` and the short alias `sb` on your PATH.
+
+2. Wire it into tmux and write a starter config:
+
+   ```sh
+   switchboard install
+   ```
+
+   Under Homebrew, `install` reports `on PATH via Homebrew` and skips the
+   `~/.local/bin` symlinks.
+
+## Install from a git clone
+
+```sh
+git clone https://github.com/wvmitchell/switchboard
+cd switchboard && bin/switchboard install
+```
+
+`install` symlinks `switchboard` and `sb` into `~/.local/bin`. If it warns that
+`~/.local/bin` isn't on your PATH, add the line it prints to your shell profile.
+
+## Upgrade
+
+**Homebrew:**
+
+```sh
+brew upgrade switchboard
+switchboard install        # or: tmux source-file ~/.tmux.conf
+```
+
+**Clone:**
+
+```sh
+git -C <your clone> pull --ff-only
+switchboard install        # or: tmux source-file ~/.tmux.conf
+```
+
+Either way the new code runs immediately, but a running tmux server keeps the key
+bindings and hooks it loaded at startup. Re-running `install` (idempotent) or
+reloading tmux picks up any new ones. Under Homebrew every path switchboard wrote
+into your config points at `/opt/homebrew/opt/switchboard`, which brew moves to
+the new version, so nothing goes stale when the old version is cleaned up. See
+[Explanation: distribution](explanation-distribution.md).
+
+## Move from a git clone to Homebrew
+
+1. From the clone, remove its wiring (PATH symlinks, the tmux.conf line, live key
+   bindings and hooks, and the global codex block if you installed it):
+
+   ```sh
+   <your clone>/bin/switchboard uninstall
+   ```
+
+   Your config and agent state are left alone.
+
+2. Install with Homebrew and wire it up:
+
+   ```sh
+   brew install wvmitchell/switchboard/switchboard
+   switchboard install
+   ```
+
+   Add `--codex-hooks` if you used the codex agent dots before.
+
+3. Point each existing worktree's Claude hooks at the new install. Hooks are
+   written per worktree with the install path baked in, so re-enable them in
+   every worktree that had them:
+
+   ```sh
+   switchboard enable-hooks <worktree path>
+   ```
+
+   For every worktree of a repo at once:
+
+   ```sh
+   git -C <repo> worktree list --porcelain | sed -n 's/^worktree //p' |
+     while read -r wt; do
+       [ -f "$wt/.claude/settings.local.json" ] && switchboard enable-hooks "$wt"
+     done
+   ```
+
+   `enable-hooks` replaces switchboard's own entries and leaves yours alone.
+   Restart `claude` in each workspace (or run `/hooks`) to pick it up.
+
+## Uninstall
+
+```sh
+switchboard uninstall                     # tmux wiring, live bindings, codex block
+brew uninstall switchboard                # Homebrew installs
+brew untap wvmitchell/switchboard         # optional
+```
+
+For a clone install, `switchboard uninstall` also removes the `~/.local/bin`
+symlinks; delete the clone afterwards if you like. Your config
+(`~/.config/switchboard/config.yml`) is kept either way.
+
+## Verification
+
+```sh
+switchboard version
+switchboard doctor
+```
+
+`doctor` should show:
+
+- `✓ on PATH via Homebrew: …` (Homebrew) or `✓ PATH symlink: ~/.local/bin/switchboard` (clone);
+- `✓ tmux bindings wired (switchboard.tmux)`;
+- `✓ tmux hooks live`, when you run it inside tmux.
+
+## Troubleshooting
+
+- **`– tmux is wired to another install (…)`.** Your tmux.conf still sources a
+  different copy, usually the clone you moved from. Run `switchboard install`
+  from the install you want to keep.
+- **`✗ tmux is wired to a missing install (…)`.** The install tmux.conf points at
+  is gone (a deleted clone). Run `switchboard install`.
+- **`✗ … on PATH is ~/.local/bin/switchboard, which shadows Homebrew's`.** A
+  clone-era symlink comes first on your PATH. Run `switchboard uninstall` from that
+  clone, or delete the symlink.
+- **`✗ Homebrew install, but switchboard isn't on PATH`.** Run
+  `brew link switchboard`. If brew reports a conflict on `sb`, another program
+  owns that name; `brew link --overwrite switchboard` takes it over.
+- **The agent dots stopped moving after the move.** Step 3 wasn't run for that
+  worktree; run `switchboard enable-hooks` there.
+- **Codex dots stopped after the move.** The codex hook commands changed path, so
+  codex wants them approved again. Run `/hooks` in codex once.
+- **`prefix-s` does nothing after an upgrade.** tmux still has the old bindings.
+  Run `switchboard install` or `tmux source-file ~/.tmux.conf`; `doctor` confirms
+  with `prefix-s bound (toggle-sidebar)`.
+
+## Related
+
+- [Tutorial: getting started](tutorial-getting-started.md)
+- [CLI reference](reference-cli.md): `install`, `uninstall`, `enable-hooks`, `doctor`
+- [Explanation: distribution](explanation-distribution.md)
+- [How-to: housekeeping & diagnostics](howto-housekeeping.md)

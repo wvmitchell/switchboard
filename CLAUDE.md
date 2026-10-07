@@ -21,8 +21,8 @@ attaches a stdlib-`PTY` client so the sidebar renders, polls via `wait_until`); 
 kept OUT of `bin/test` so the offline suite stays the inner loop. See `README.md`
 for the user-facing feature tour, and `docs/` for the full Diataxis documentation
 set. The explanation docs (`docs/explanation-architecture.md`,
-`explanation-agent-presence.md`, `explanation-sidebar-lifecycle.md`) are the
-human-readable companions to this file; `CONTRIBUTING.md` collects the
+`explanation-agent-presence.md`, `explanation-sidebar-lifecycle.md`,
+`explanation-distribution.md`) are the human-readable companions to this file; `CONTRIBUTING.md` collects the
 test/zero-gem/release conventions; `AGENTS.md` is the tool-neutral pointer back
 here.
 
@@ -134,6 +134,19 @@ So both sources of that path — `SWITCHBOARD_BIN` (`bin/switchboard`) and
 rewrites a switchboard keg path to its `opt/switchboard` twin (fails safe to the
 realpath when no opt link exists). Under brew (`Installer.homebrew?`) install/uninstall
 skip the `~/.local/bin` symlinks and `doctor` checks the brew PATH entry instead.
+
+**Releases are automated after merge** (`.github/workflows/release.yml`; issues #105,
+#106). The PR still picks the version (`version.rb` + CHANGELOG entry, `vX.Y.Z` title);
+once `test` AND `formula` (macOS: formula installed from a local tap, `brew audit
+--strict` + `brew test`) are green on main, a `workflow_run` job tags it, creates the
+GitHub Release from the CHANGELOG entry, and pushes the formula to
+`wvmitchell/homebrew-switchboard`. Every run judges main's CURRENT tip (GitHub keeps one
+pending run per group, and gates finish out of order), never moves the tap backwards,
+renders the formula from the TAGGED template, and fails loudly on any lookup error (a
+missing `actions: read` once made every run a silent no-op). All decisions live in the
+pure, table-tested `Release.plan` (`packaging/release.rb`); the YAML only gathers facts.
+The tap step skips while the repo is private or `HOMEBREW_TAP_TOKEN` is unset. Full
+detail: `docs/reference-release.md`, `docs/howto-release.md`.
 
 Useful env overrides when running locally without disturbing real state:
 `SWITCHBOARD_CONFIG` (config path), `SWITCHBOARD_STATE_DIR` (agent-state files),

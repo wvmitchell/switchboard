@@ -133,14 +133,21 @@ deferred work) rather than expanding the PR.
 
 ## Releasing (maintainer)
 
-Versions follow the `vX.Y.Z` prefixes in the git history. To cut one:
+Versions follow the `vX.Y.Z` prefixes in the git history. To cut one, in your PR:
 
 1. Bump `Switchboard::VERSION` in `lib/switchboard/version.rb`.
 2. Add a `## [X.Y.Z] — <summary> (<date>)` entry to
    [CHANGELOG.md](CHANGELOG.md), grouped into Added / Changed / Fixed. Write the
    entry as *why it matters*, in the project's voice — see the existing entries.
-3. Commit with a `vX.Y.Z type(scope): summary (#PR)` subject (the format the git
-   log already uses).
+   The GitHub Release notes come from it, and `test/release_test.rb` fails if the
+   current version has none.
+3. Title the PR `vX.Y.Z type(scope): summary` (the squash commit becomes the
+   format the git log already uses).
+
+After merge, `.github/workflows/release.yml` tags `vX.Y.Z`, creates the GitHub
+Release, and updates the Homebrew tap, once `test` and `formula` are green on
+main. Never tag by hand. See [How to cut a release](docs/howto-release.md) and
+[the release pipeline reference](docs/reference-release.md).
 
 After upgrading, users re-run `bin/switchboard install` (or reload tmux) so new
 tmux bindings/hooks go live — the CHANGELOG header says so.
@@ -154,7 +161,8 @@ tmux bindings/hooks go live — the CHANGELOG header says so.
 | The data model + tree | `lib/switchboard/model.rb`, `tree.rb` |
 | The sidebar TUI | `lib/switchboard/sidebar.rb` (run-loop core) + `lib/switchboard/sidebar/{edges,render,input,actions,prompt,rows}.rb` (its test files: `test/sidebar_*_test.rb`, sharing `test/support/sidebar_case.rb`) |
 | tmux integration | `lib/switchboard/tmux.rb`, `switchboard.tmux` |
-| Install / keybindings | `lib/switchboard/installer.rb` |
+| Install / keybindings | `lib/switchboard/installer.rb`, `stable_path.rb` (Homebrew `opt/` paths) |
+| Packaging / releases | `packaging/homebrew/switchboard.rb` (formula), `packaging/release.rb`, `.github/workflows/{release,formula}.yml` |
 | Marker-block surgery (tmux.conf + `~/.codex/config.toml`) | `lib/switchboard/marker_block.rb` |
 | Agent state / hooks | `lib/switchboard/agent_state.rb`, `agents.rb`; adapters `claude_hook.rb` (Claude, per-worktree) + `codex_hook.rb` (Codex, global `~/.codex/config.toml` block) over shared base `hook_file.rb`, behind registry `agent_hooks.rb` |
 | Sounds / bold / collapse | `lib/switchboard/sound.rb`, `attention.rb`, `collapse.rb` (shared base: `keyed_marker_store.rb`) |
