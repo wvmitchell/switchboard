@@ -64,7 +64,14 @@ step logs why it skipped.
 
    (Paste the token when prompted, so it doesn't end up in your shell history.)
 
-5. **Publish the current release to the tap.** Either push anything to main, or
+5. **Protect the release tags.** The pipeline checks the tag at every step, but
+   only a ruleset stops someone with push access from moving one mid-run. Settings
+   → Rules → Rulesets → New tag ruleset: target `v*`, enable **Restrict updates**
+   and **Restrict deletions**, and leave **Restrict creations** off (the pipeline
+   creates tags with `GITHUB_TOKEN`). Add yourself to the bypass list so you can
+   still clean up a bad tag by hand.
+
+6. **Publish the current release to the tap.** Either push anything to main, or
    run the workflow by hand:
 
    ```sh
@@ -99,8 +106,13 @@ Each release run prints its decision as a notice, for example
   GitHub Release, remove both with `gh release delete vX.Y.Z --cleanup-tag`;
   otherwise `git push origin :refs/tags/vX.Y.Z`. The next green run re-creates it.
   If the runs simply expired, bump the version instead.
-- **The run says `not main's tip`.** Main moved during the run; the newer
-  commit's run handles it.
+- **The run says `not main's tip`, or `main moved since Plan`.** Main moved
+  during the run; the newer commit's run handles it.
+- **The release step fails with `could not create vX.Y.Z`.** The tag appeared
+  between Plan and tagging. Check what it points at; delete it if it's wrong (see
+  above) and re-run the workflow.
+- **The tap step fails with `vX.Y.Z tarball is commit …`.** The tag moved while
+  the tarball downloaded. Fix the tag and re-run; the tap was not changed.
 - **The run says `version.rb (…) is behind the newest tag`.** `version.rb` went
   backwards, from a reverted bump or a collision settled on a lower number. Bump
   it past the newest tag.

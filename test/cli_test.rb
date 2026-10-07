@@ -547,6 +547,21 @@ module Switchboard
       refute_includes line, "rm "
     end
 
+    # Value: protects=a clone's tracked bin/switchboard from doctor's `rm` advice when the clone's
+    # bin/ itself is on PATH; fails_when=the symlink check is dropped (doctor tells the user to delete
+    # the clone's real launcher); why_new=the shadow test only puts symlinks to a clone on PATH; seam=none
+    def test_doctor_homebrew_path_never_offers_rm_for_a_clones_own_launcher
+      clone = path("clone").tap { |d| FileUtils.mkdir_p(File.join(d, "bin")); FileUtils.mkdir_p(File.join(d, "lib")) }
+      File.write(File.join(clone, "lib", "switchboard.rb"), "")
+      launcher = File.join(clone, "bin", "switchboard")
+      File.write(launcher, "#!/bin/sh\n").then { File.chmod(0o755, launcher) }
+      ENV["PATH"] = File.join(clone, "bin")
+      out = stub_method(Installer, :homebrew?, -> { true }) { capture { CLI.send(:doctor_symlinks) } }
+      line = out.lines.find { |l| l.include?("`switchboard` on PATH") }
+      assert_match(/✗.*shadows Homebrew's — take #{Regexp.escape(File.join(clone, 'bin'))} off your PATH/, line)
+      refute_includes out, "rm "
+    end
+
     # A missing `sb` is a soft note, never a hard ✗ — doctor must agree with
     # install that the optional shorthand isn't a failure.
     def test_doctor_marks_missing_sb_as_optional_not_a_failure

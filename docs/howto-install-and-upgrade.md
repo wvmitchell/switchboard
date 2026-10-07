@@ -82,7 +82,9 @@ the new version, so nothing goes stale when the old version is cleaned up. See
    switchboard install
    ```
 
-   Add `--codex-hooks` if you used the codex agent dots before.
+   Add `--codex-hooks` if you used the codex agent dots before. If the shell says
+   `switchboard: No such file or directory`, it remembered the clone's deleted
+   link: run `hash -r` (bash) or `rehash` (zsh), or open a new shell.
 
 3. Point each existing worktree's Claude hooks at the new install. Hooks are
    written per worktree with the install path baked in, so re-enable them in
@@ -163,6 +165,9 @@ switchboard doctor
   `rm ~/.local/bin/switchboard ~/.local/bin/sb`). Don't run the clone's
   `uninstall` now: it would also remove the tmux and codex wiring the Homebrew
   install is using (if you already did, run `switchboard install` again).
+- **`✗ … which shadows Homebrew's — take <dir> off your PATH`.** A clone's own
+  `bin/` directory is on your PATH ahead of Homebrew's. Remove it from your shell
+  profile. Don't delete the file: it's the clone's launcher.
 - **`✗ Homebrew install, but switchboard isn't on PATH`.** Run
   `brew link switchboard`. If brew reports a conflict on `sb`, another program
   owns that name; `brew link --overwrite switchboard` takes it over.

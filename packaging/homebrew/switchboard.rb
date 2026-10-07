@@ -38,6 +38,9 @@ class Switchboard < Formula
       press your sidebar toggle key (prefix-s by default) twice in each session
       so its sidebars restart from this install. Full steps:
       docs/howto-install-and-upgrade.md in the repo.
+
+      Before `brew uninstall switchboard`, run `switchboard uninstall` so tmux
+      stops sourcing a file that is about to disappear.
     EOS
   end
 

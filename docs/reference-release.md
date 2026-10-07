@@ -59,15 +59,21 @@ The trigger list must match the job's `GATES` env (`test formula`).
    the step's outputs, and prints `reason` as a notice (a warning when an existing
    tag is refused).
 3. **Tag + GitHub Release** (when `release == true`): builds the title and body
-   from the CHANGELOG entry, checks the tag is still absent (or still at
-   `expect_sha`), then `gh release create`: with `--target <expect_sha>` for a new
-   tag, or `--verify-tag` to attach a missing Release to an existing tag. Afterwards
-   the tag must resolve to `expect_sha`, or the step fails.
+   from the CHANGELOG entry. For a **new** tag it re-reads main's tip and, if main
+   has moved past `expect_sha`, stops with a notice (the tap step is skipped too;
+   the newer commit's run acts). Otherwise it creates `refs/tags/vX.Y.Z` at
+   `expect_sha` through the refs API, which refuses a tag that already exists
+   (`gh release create --target` would silently reuse one). For a **repair** it
+   checks the existing tag still resolves to `expect_sha`. Either way it then runs
+   `gh release create --verify-tag`, and afterwards the tag must resolve to
+   `expect_sha`, or the step fails.
 4. **Update Homebrew tap** (when `tap == true`). Skips with a notice while the
    repo is private, and with a warning when `HOMEBREW_TAP_TOKEN` is unset.
    Otherwise:
    1. downloads the tag's archive tarball (`curl --retry 3`) and hashes the file;
-   2. re-checks that the tag still resolves to `expect_sha` (fails otherwise);
+   2. checks the tarball's embedded commit id (`git get-tar-commit-id`, from the
+      header `git archive` writes) equals `expect_sha`, then that the tag still
+      resolves to it (fails otherwise), so the hashed bytes are the verified commit's;
    3. reads the formula template **at that commit** (`gh api …/contents/packaging/homebrew/switchboard.rb?ref=<expect_sha>`)
       and renders it with `release.rb formula`;
    4. clones `wvmitchell/homebrew-switchboard`, writes `Formula/switchboard.rb`,
@@ -141,7 +147,8 @@ reason=new version
 - **Installs** `bin/`, `lib/`, `switchboard.tmux` into `libexec`, rewrites
   `bin/switchboard`'s shebang to Homebrew Ruby, and links `switchboard` and `sb`
   into Homebrew's `bin`.
-- **Caveats** tell the user to run `switchboard install`, and how to move from a clone.
+- **Caveats** tell the user to run `switchboard install`, how to move from a clone,
+  and to run `switchboard uninstall` before `brew uninstall`.
 - **Test** checks `switchboard --version` (any `X.Y.Z` for `--HEAD` builds) and
   that `install --print-tmux` writes the `opt/` fragment path, never a `Cellar` one.
 

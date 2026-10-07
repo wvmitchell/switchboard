@@ -111,6 +111,7 @@ jobs:
           echo "::$level::v$version: $(sed -n 's/^reason=//p' <<<"$plan")"
 
       - name: Tag + GitHub Release
+        id: r
         if: steps.v.outputs.release == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -120,28 +121,35 @@ jobs:
         run: |
           ruby packaging/release.rb notes "$VERSION" title.txt notes.md
           tag_now() { git ls-remote --tags origin | ruby packaging/release.rb tag-sha "$VERSION"; }
-          # The tag must still be what Plan verified (or still absent): gh release create
-          # ignores --target when the tag already exists.
-          now="$(tag_now)"
-          if [ "$TAG_EXISTS" = true ]; then want="$EXPECT_SHA"; else want=""; fi
-          [ "$now" = "$want" ] || { echo "::error::v$VERSION moved since Plan (now '$now', expected '$want')"; exit 1; }
-          if [ "$TAG_EXISTS" = true ]; then # repair: attach the missing Release to the existing tag
-            gh release create "v$VERSION" --verify-tag --title "$(cat title.txt)" --notes-file notes.md
+          if [ "$TAG_EXISTS" = true ]; then # repair: the existing tag must still be what Plan verified
+            now="$(tag_now)"
+            [ "$now" = "$EXPECT_SHA" ] || { echo "::error::v$VERSION moved since Plan (now '$now', expected $EXPECT_SHA)"; exit 1; }
           else
-            gh release create "v$VERSION" --target "$EXPECT_SHA" --title "$(cat title.txt)" --notes-file notes.md
+            # Plan's tip check is minutes old by now; never tag a commit main has left.
+            tip="$(gh api "repos/$GITHUB_REPOSITORY/commits/main" -q .sha)"
+            if [ "$tip" != "$EXPECT_SHA" ]; then
+              echo "::notice::main moved since Plan (now $tip); its own run releases instead"
+              echo "superseded=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            # Create the tag through the refs API, which refuses an existing ref. (gh
+            # release create --target silently reuses a tag pushed meanwhile.)
+            gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/v$VERSION" -f sha="$EXPECT_SHA" >/dev/null ||
+              { echo "::error::could not create v$VERSION at $EXPECT_SHA (did it appear since Plan?)"; exit 1; }
           fi
+          gh release create "v$VERSION" --verify-tag --title "$(cat title.txt)" --notes-file notes.md
           now="$(tag_now)"
           [ "$now" = "$EXPECT_SHA" ] || { echo "::error::v$VERSION resolves to '$now', expected $EXPECT_SHA"; exit 1; }
 
       # Idempotent, so it runs on every acting run: a failed push, or a token or
       # visibility change made after a release, heals on the next green main push
       # (or a manual run). The formula is rendered from the verified tag commit's
-      # template, and the tag is re-checked after the download, so the tarball and
-      # formula are always that commit's. Brew needs the tarball public and
-      # the push needs a PAT (contents:write on wvmitchell/homebrew-switchboard
+      # template, and the downloaded tarball's embedded commit id must match it, so
+      # the tarball and formula are always that commit's. Brew needs the tarball
+      # public and the push needs a PAT (contents:write on wvmitchell/homebrew-switchboard
       # only); either missing ⇒ skip, don't fail.
       - name: Update Homebrew tap
-        if: steps.v.outputs.tap == 'true'
+        if: steps.v.outputs.tap == 'true' && steps.r.outputs.superseded != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
@@ -161,7 +169,12 @@ jobs:
           tarball="$RUNNER_TEMP/switchboard.tar.gz"
           curl -fsSL --retry 3 -o "$tarball" "$(ruby packaging/release.rb tarball-url "$VERSION")"
           sha="$(sha256sum "$tarball" | cut -d' ' -f1)"
-          # The tarball came by tag name; make sure that name still meant the verified commit.
+          # Bind the downloaded bytes to the verified commit: GitHub's archive carries its
+          # commit id in the tar header, so a tag moved around the download fails here.
+          gunzip -c "$tarball" > "$RUNNER_TEMP/switchboard.tar"
+          got="$(git get-tar-commit-id < "$RUNNER_TEMP/switchboard.tar")" || got=""
+          [ "$got" = "$EXPECT_SHA" ] || { echo "::error::v$VERSION tarball is commit '$got', expected $EXPECT_SHA"; exit 1; }
+          # And the tag users will download must still name it.
           now="$(git ls-remote --tags origin | ruby packaging/release.rb tag-sha "$VERSION")"
           [ "$now" = "$EXPECT_SHA" ] || { echo "::error::v$VERSION resolves to '$now', expected $EXPECT_SHA"; exit 1; }
           gh api -H "Accept: application/vnd.github.raw" \

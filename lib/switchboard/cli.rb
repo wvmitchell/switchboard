@@ -803,8 +803,9 @@ module Switchboard
       [procs - panes, 0].max
     end
 
-    # Report install wiring: PATH symlink, the tmux marker block, and a tmux new
-    # enough for the session-switch refresh. Read-only; logic lives in Installer.
+    # Report install wiring: the PATH entry (symlinks, or brew's bin under Homebrew),
+    # which install tmux.conf is wired to, and a tmux new enough for the
+    # session-switch refresh. Read-only; logic lives in Installer.
     def doctor_install
       doctor_symlinks
       doctor_tmux_wired
@@ -925,8 +926,10 @@ module Switchboard
                         : "  \e[33m–\e[0m `#{name}` isn't on PATH (optional shorthand)")
         elsif File.identical?(found, Installer.bin_path)
           puts row(true, "on PATH via Homebrew: #{found}")
-        elsif switchboard_bin?(found)
+        elsif switchboard_bin?(found) && File.symlink?(found)
           puts row(false, "`#{name}` on PATH is #{found}, which shadows Homebrew's — delete that link (`rm #{Shellwords.escape(found)}`)")
+        elsif switchboard_bin?(found) # a clone's own launcher: deleting it would break the clone
+          puts row(false, "`#{name}` on PATH is #{found}, which shadows Homebrew's — take #{File.dirname(found)} off your PATH")
         elsif required
           puts row(false, "`switchboard` on PATH is #{found}, another program — put Homebrew's bin earlier on PATH")
         else

@@ -62,6 +62,7 @@ module Switchboard
       keg = "#{prefix}/Cellar/switchboard/0.50.0/libexec"
       FileUtils.mkdir_p(keg)
       %w[bin lib switchboard.tmux].each { |f| FileUtils.cp_r(File.expand_path("../#{f}", __dir__), keg) }
+      FileUtils.mkdir_p(path("codex")) # install only writes the codex block where codex lives
       env = { "CODEX_HOME" => path("codex"), "SWITCHBOARD_BIN" => nil }
       IO.popen(env, [RbConfig.ruby, "#{keg}/bin/switchboard", "install", "--no-tmux", "--codex-hooks"],
                err: File::NULL, &:read)

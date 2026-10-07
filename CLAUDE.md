@@ -31,7 +31,7 @@ here.
 ```sh
 bin/switchboard            # start: attach home from a shell, or toggle the sidebar inside tmux (alias: sb)
 bin/switchboard install    # symlinks (switchboard + sb) onto PATH (skipped under Homebrew) + wire tmux bindings + empty config (--no-tmux/--print-tmux/--tmux-conf)
-bin/switchboard uninstall  # reverse install (both symlinks + tmux marker block + live unbind)
+bin/switchboard uninstall  # reverse install (both symlinks, left to `brew uninstall` under Homebrew + tmux marker block + live unbind)
 bin/switchboard doctor     # check that tmux/git/gh + config + install wiring exist
 bin/switchboard init       # create ~/.config/switchboard/config.yml (empty; grown by the add-project flow)
 bin/switchboard config     # open config.yml in $EDITOR (sidebar `e` does the same)
