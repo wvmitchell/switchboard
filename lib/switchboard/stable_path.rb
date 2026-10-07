@@ -10,7 +10,9 @@ module Switchboard
   # worse, changing the codex hook commands' bytes, which voids codex's hash-keyed
   # `/hooks` trust on every release. So a keg path is rewritten to its `opt/`
   # twin (`<prefix>/opt/switchboard/…`), the symlink brew repoints at the current
-  # keg on each upgrade. Fails safe: no opt link ⇒ the realpath, as before.
+  # keg on each upgrade. Fails safe: no opt link ⇒ the realpath, as before (brew
+  # creates opt/ on every install and keeps it through `brew unlink`, so a keg
+  # without one means a hand-broken prefix; that's treated as a clone install).
   module StablePath
     module_function
 

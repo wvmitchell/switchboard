@@ -46,13 +46,17 @@ module Switchboard
     # through a PATH symlink: require resolves to the real file, so __dir__ is
     # the real lib dir — which StablePath lifts out of a versioned Homebrew keg.
     def repo_root
-      StablePath.resolve(File.expand_path("../..", __dir__))
+      StablePath.resolve(real_root)
     end
 
     # Installed by Homebrew, which already put `switchboard` on PATH — so install
     # skips the ~/.local/bin symlinks (and uninstall leaves PATH to `brew uninstall`).
     def homebrew?
-      StablePath.homebrew?(File.expand_path("../..", __dir__))
+      StablePath.homebrew?(real_root)
+    end
+
+    def real_root
+      File.expand_path("../..", __dir__)
     end
 
     def bin_path
@@ -489,6 +493,21 @@ module Switchboard
       File.exist?(c) && File.read(c).include?(BEGIN_MARK)
     rescue StandardError
       false
+    end
+
+    # The fragment path our marker block sources, or nil when not wired. Lets doctor
+    # tell "wired to THIS install" from "wired to another one" — e.g. a clone left
+    # behind after moving to brew, which keeps running until `install` re-wires.
+    def wired_fragment(conf = nil)
+      c = tmux_conf(conf)
+      return nil unless File.exist?(c)
+
+      body = File.read(c)
+      block = body[/#{Regexp.escape(BEGIN_MARK)}(.*?)#{Regexp.escape(END_MARK)}/m, 1]
+      line = block&.lines&.find { |l| l.start_with?("run-shell '") }
+      line && Shellwords.split(line.strip.delete_prefix("run-shell '").delete_suffix("'")).first
+    rescue StandardError
+      nil
     end
 
     # Major.minor as a Float (e.g. "3.6a" → 3.6); nil if tmux is absent.

@@ -449,6 +449,31 @@ module Switchboard
       assert_includes out, "PATH symlink: #{Installer.symlink_path('sb')}"
     end
 
+    # --- doctor: which install tmux is wired to (clone → brew moves) ---
+
+    # Value: protects=doctor telling "wired to this install" from "wired to another" or "to one
+    # that's gone"; fails_when=the check regresses to marker-presence only (a deleted clone reads
+    # ✓ while the toggle/hooks fail silently); why_new=tmux_wired? only checks the marker; seam=none
+    def test_doctor_tmux_wired_names_which_install_tmux_runs
+      conf = File.expand_path("~/.tmux.conf")
+      wire = ->(fragment) { File.write(conf, "#{Installer::BEGIN_MARK}\nrun-shell '#{Shellwords.escape(fragment)}'\n#{Installer::END_MARK}\n") }
+
+      wire.call(Installer.fragment_path)
+      assert_match(/✓.*tmux bindings wired/, capture { CLI.send(:doctor_tmux_wired) })
+
+      other = path("old clone", "switchboard.tmux").tap { |f| FileUtils.mkdir_p(File.dirname(f)); File.write(f, "") }
+      wire.call(other)
+      out = capture { CLI.send(:doctor_tmux_wired) }
+      assert_includes out, "wired to another install (#{other})"
+      refute_includes out, "✗"
+
+      File.delete(other)
+      assert_match(/✗.*tmux is wired to a missing install \(#{Regexp.escape(other)}\)/, capture { CLI.send(:doctor_tmux_wired) })
+
+      File.delete(conf)
+      assert_match(/✗.*tmux bindings wired/, capture { CLI.send(:doctor_tmux_wired) })
+    end
+
     # Under Homebrew there are no symlinks to check; doctor reports the brew PATH
     # entry instead of two ✗ rows for links install deliberately didn't make.
     def test_doctor_reports_homebrew_path_instead_of_symlinks

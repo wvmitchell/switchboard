@@ -14,70 +14,92 @@ on:
 permissions:
   contents: write
 
+# Only one release at a time. A pending run can be cancelled by a newer one, and
+# test runs can finish out of order, so each run acts only if the commit it was
+# triggered for is still main's tip (see "Resolve"): a superseded commit never
+# tags, and the tap can never move backwards.
 concurrency:
   group: release
   cancel-in-progress: false
 
 jobs:
   release:
-    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
     runs-on: ubuntu-latest
-    env:
-      GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
-      - uses: ruby/setup-ruby@v1
+      - uses: ruby/setup-ruby@14594264cd68ce8a2345dd349bc3d138a4ef85c8 # v1.327.0
         with:
           ruby-version: '3.3'
 
-      - name: Resolve version
+      - name: Resolve
         id: v
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
+          sha="$(git rev-parse HEAD)"
+          tip="$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)"
+          if [ "$sha" != "$tip" ]; then
+            echo "$sha is no longer main's tip ($tip); the run for the tip releases instead."
+            echo "tip=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "tip=true" >> "$GITHUB_OUTPUT"
           version="$(ruby packaging/release.rb version)"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           if git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null; then
-            echo "v$version already tagged; nothing to release."
+            echo "v$version already tagged."
             echo "new=false" >> "$GITHUB_OUTPUT"
           else
             echo "new=true" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Tag + GitHub Release
-        if: steps.v.outputs.new == 'true'
-        run: |
-          v="${{ steps.v.outputs.version }}"
-          ruby packaging/release.rb notes "$v" title.txt notes.md
-          gh release create "v$v" --target "$(git rev-parse HEAD)" --title "$(cat title.txt)" --notes-file notes.md
-
-      # Brew downloads the public archive tarball, so a private repo has nothing to
-      # point the tap at yet; and the cross-repo push needs a PAT (contents:write on
-      # wvmitchell/homebrew-switchboard only). Either missing ⇒ skip, don't fail.
-      - name: Update Homebrew tap
-        if: steps.v.outputs.new == 'true'
+        if: steps.v.outputs.tip == 'true' && steps.v.outputs.new == 'true'
         env:
-          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.v.outputs.version }}
         run: |
-          v="${{ steps.v.outputs.version }}"
+          ruby packaging/release.rb notes "$VERSION" title.txt notes.md
+          gh release create "v$VERSION" --target "$(git rev-parse HEAD)" --title "$(cat title.txt)" --notes-file notes.md
+
+      # Runs on every tip run, not just a new tag, and is idempotent, so a failed
+      # push or a token/visibility change made after a release heals on the next
+      # green main push (or a manual dispatch). Brew downloads the public archive
+      # tarball, so a private repo has nothing to point the tap at; the cross-repo
+      # push needs a PAT (contents:write on wvmitchell/homebrew-switchboard only).
+      # Either missing ⇒ skip, don't fail.
+      - name: Update Homebrew tap
+        if: steps.v.outputs.tip == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
           if [ "$(gh repo view "$GITHUB_REPOSITORY" --json isPrivate -q .isPrivate)" = "true" ]; then
             echo "::notice::repo is private; skipping the tap update (brew can't download a private tarball)"
             exit 0
           fi
           if [ -z "$TAP_TOKEN" ]; then
-            echo "::warning::HOMEBREW_TAP_TOKEN not set; skipping the tap update for v$v"
+            echo "::warning::HOMEBREW_TAP_TOKEN not set; skipping the tap update for v$VERSION"
             exit 0
           fi
-          sha="$(curl -fsSL "https://github.com/$GITHUB_REPOSITORY/archive/refs/tags/v$v.tar.gz" | sha256sum | cut -d' ' -f1)"
-          git clone "https://x-access-token:$TAP_TOKEN@github.com/wvmitchell/homebrew-switchboard.git" tap
+          sha="$(curl -fsSL "$(ruby packaging/release.rb tarball-url "$VERSION")" | sha256sum | cut -d' ' -f1)"
+          # Auth as a per-command header so the PAT never lands in tap/.git/config.
+          auth="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$TAP_TOKEN" | base64 -w0)"
+          git -c http.extraheader="$auth" clone https://github.com/wvmitchell/homebrew-switchboard.git tap
           mkdir -p tap/Formula
-          ruby packaging/release.rb formula "$v" "$sha" > tap/Formula/switchboard.rb
+          ruby packaging/release.rb formula "$VERSION" "$sha" > tap/Formula/switchboard.rb
           git -C tap config user.name "github-actions[bot]"
           git -C tap config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git -C tap add Formula/switchboard.rb
           if git -C tap diff --cached --quiet; then
-            echo "tap already at v$v"
+            echo "tap already at v$VERSION"
           else
-            git -C tap commit -m "switchboard $v"
-            git -C tap push origin HEAD:main
+            git -C tap commit -m "switchboard $VERSION"
+            git -C tap -c http.extraheader="$auth" push origin HEAD:main
           fi

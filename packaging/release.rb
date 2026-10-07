@@ -5,12 +5,14 @@
 #
 #   ruby packaging/release.rb version                 # → 0.50.0
 #   ruby packaging/release.rb notes 0.50.0 TITLE_FILE NOTES_FILE
+#   ruby packaging/release.rb tarball-url 0.50.0
 #   ruby packaging/release.rb formula 0.50.0 SHA256   # rendered formula → stdout
 module Release
   module_function
 
   ROOT = File.expand_path("..", __dir__)
-  FORMULA_URL = %r{^(\s*url ")https://github\.com/wvmitchell/switchboard/archive/refs/tags/v[^"]+\.tar\.gz(")$}
+  REPO = "wvmitchell/switchboard"
+  FORMULA_URL = %r{^(\s*url ")#{Regexp.escape("https://github.com/#{REPO}/archive/refs/tags/v")}[^"]+\.tar\.gz(")$}
   FORMULA_SHA = /^(\s*sha256 ")[^"]*(")$/
 
   def version(path = File.join(ROOT, "lib/switchboard/version.rb"))
@@ -34,12 +36,16 @@ module Release
   def render_formula(template, version, sha)
     raise "bad sha256: #{sha.inspect}" unless sha.match?(/\A\h{64}\z/)
 
-    url = "https://github.com/wvmitchell/switchboard/archive/refs/tags/v#{version}.tar.gz"
+    url = tarball_url(version)
     [FORMULA_URL, FORMULA_SHA].each do |re|
       n = template.scan(re).size
       raise "formula template: expected one #{re.source} line, found #{n}" unless n == 1
     end
     template.sub(FORMULA_URL) { "#{$1}#{url}#{$2}" }.sub(FORMULA_SHA) { "#{$1}#{sha}#{$2}" }
+  end
+
+  def tarball_url(version)
+    "https://github.com/#{REPO}/archive/refs/tags/v#{version}.tar.gz"
   end
 end
 
@@ -50,9 +56,10 @@ if $PROGRAM_NAME == __FILE__
     title, body = Release.notes(File.read(File.join(Release::ROOT, "CHANGELOG.md")), ARGV[1])
     File.write(ARGV[2], title)
     File.write(ARGV[3], "#{body}\n")
+  when "tarball-url" then puts Release.tarball_url(ARGV[1])
   when "formula"
     print Release.render_formula(File.read(File.join(Release::ROOT, "packaging/homebrew/switchboard.rb")), ARGV[1], ARGV[2])
   else
-    abort "usage: release.rb version | notes VERSION TITLE_FILE NOTES_FILE | formula VERSION SHA256"
+    abort "usage: release.rb version | notes VERSION TITLE_FILE NOTES_FILE | tarball-url VERSION | formula VERSION SHA256"
   end
 end

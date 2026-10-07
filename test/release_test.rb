@@ -13,6 +13,14 @@ module Switchboard
       assert_equal VERSION, Release.version
     end
 
+    # Value: protects=release.yml never tags an empty version; fails_when=the raise becomes a
+    # nil return (the workflow would test refs/tags/v and `gh release create v`); why_new=only
+    # the happy path read is tested; seam=none
+    def test_version_without_a_constant_raises
+      f = path("version.rb").tap { |p| File.write(p, "module X; end\n") }
+      assert_raises(RuntimeError) { Release.version(f) }
+    end
+
     def test_notes_split_title_and_body_at_the_next_entry
       log = <<~MD
         # Changelog
@@ -59,6 +67,7 @@ module Switchboard
       run = ->(*args) { IO.popen([RbConfig.ruby, script, *args], err: File::NULL, &:read) }
       v = Release.version
       assert_equal "#{v}\n", run.call("version")
+      assert_equal "https://github.com/wvmitchell/switchboard/archive/refs/tags/v#{v}.tar.gz\n", run.call("tarball-url", v)
 
       title_file, notes_file = path("title.txt"), path("notes.md")
       run.call("notes", v, title_file, notes_file)

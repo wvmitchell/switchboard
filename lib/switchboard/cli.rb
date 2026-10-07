@@ -807,11 +807,27 @@ module Switchboard
     # enough for the session-switch refresh. Read-only; logic lives in Installer.
     def doctor_install
       doctor_symlinks
-      puts row(Installer.tmux_wired?, "tmux bindings wired (switchboard.tmux)")
+      doctor_tmux_wired
       doctor_binding_live
       doctor_hooks_live
       v = Installer.tmux_version
       puts row(!v.nil? && v >= 3.0, v ? "tmux #{v} (>= 3.0 for the session-switch refresh)" : "tmux not found")
+    end
+
+    # Wired to this install ✓; to another install that still exists, a note (a dev
+    # running a worktree's bin, or a clone left behind after moving to brew); to one
+    # that's gone, ✗ — the toggle and hooks would fail silently.
+    def doctor_tmux_wired
+      wired = Installer.tmux_wired? && Installer.wired_fragment
+      if !wired
+        puts row(false, "tmux bindings wired (switchboard.tmux)")
+      elsif File.identical?(wired, Installer.fragment_path)
+        puts row(true, "tmux bindings wired (switchboard.tmux)")
+      elsif File.exist?(wired)
+        puts "  \e[33m–\e[0m tmux is wired to another install (#{wired}) — `switchboard install` re-wires it to this one"
+      else
+        puts row(false, "tmux is wired to a missing install (#{wired}) — re-run `switchboard install`")
+      end
     end
 
     # Is prefix-s actually bound to toggle-sidebar in the running server? The sibling

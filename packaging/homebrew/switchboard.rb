@@ -31,11 +31,17 @@ class Switchboard < Formula
 
       Then run `switchboard` (or `sb`) from any shell. `switchboard doctor`
       checks the setup.
+
+      Moving from a git clone? Run `switchboard uninstall` from the clone
+      first, then `switchboard install` here, then `switchboard enable-hooks`
+      in each existing worktree so its agent hooks point at this install.
     EOS
   end
 
   test do
-    assert_match "switchboard #{version}", shell_output("#{bin}/switchboard --version")
+    # A --HEAD build's formula version is HEAD-<sha>; the binary reports version.rb.
+    expected = build.head? ? /switchboard \d+\.\d+\.\d+/ : "switchboard #{version}"
+    assert_match expected, shell_output("#{bin}/switchboard --version")
 
     # Wiring must bake the upgrade-proof opt/ path, never the versioned keg.
     ENV["SWITCHBOARD_CONFIG"] = testpath/"config.yml"
