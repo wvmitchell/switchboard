@@ -4,7 +4,7 @@ name: formula
 # tarball of this commit, then runs brew audit + brew test, so a broken layout,
 # shebang rewrite, or baked Cellar path fails here instead of in a user's
 # `brew install` after release.yml has pushed the tap. macOS minutes are costly,
-# so it only runs when something the formula installs or tests changes.
+# so PRs only run it when something the formula installs or tests changes.
 on:
   pull_request:
     paths:
@@ -17,18 +17,9 @@ on:
       - lib/switchboard/cli.rb
       - lib/switchboard/config.rb
       - .github/workflows/formula.yml
+  # Every commit that can be released gets a brew test, whatever it touched.
   push:
     branches: [main]
-    paths:
-      - packaging/**
-      - bin/switchboard
-      - switchboard.tmux
-      - lib/switchboard.rb
-      - lib/switchboard/stable_path.rb
-      - lib/switchboard/installer.rb
-      - lib/switchboard/cli.rb
-      - lib/switchboard/config.rb
-      - .github/workflows/formula.yml
 
 permissions:
   contents: read

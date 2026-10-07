@@ -76,6 +76,9 @@ module Switchboard
       assert_equal "#{expected_body}\n", File.read(notes_file)
 
       assert_equal Release.render_formula(template, "9.9.9", SHA), run.call("formula", "9.9.9", SHA)
+      tagged = path("tagged-formula.rb").tap { |f| File.write(f, template.sub("desc ", "desc \"tagged\" # ")) }
+      assert_includes run.call("formula", "9.9.9", SHA, tagged), %(desc "tagged")
+      assert_equal "release=true\ntap=true\nreason=new version\n", run.call("plan", "true", "false", "false", "true")
       refute IO.popen([RbConfig.ruby, script, "bogus"], err: File::NULL, &:read).then { $?.success? }
     end
 
@@ -96,6 +99,41 @@ module Switchboard
       assert_includes out, %(sha256 "#{SHA}")
       assert_includes out, %(head "https://github.com/wvmitchell/switchboard.git") # untouched
       RubyVM::InstructionSequence.compile(out) # still valid Ruby
+    end
+
+    # Value: protects=the tap never gets a checksum no download can match; fails_when=the
+    # empty-digest guard is dropped (a failed curl hashes to it and is valid hex); why_new=the
+    # bad-sha test only covers malformed strings; seam=none
+    def test_render_formula_rejects_the_empty_file_digest
+      assert_raises(RuntimeError) { Release.render_formula(template, "1.0.0", Release::EMPTY_SHA) }
+    end
+
+    # Value: protects=REPO and the template's url staying in step; fails_when=one is changed
+    # without the other and the url silently stops being rewritten; why_new=the CLI test reads
+    # tarball-url back from the same constant; seam=none
+    def test_render_formula_rejects_a_template_for_another_repo
+      other = template.sub("github.com/#{Release::REPO}/archive", "github.com/someone/else/archive")
+      assert_raises(RuntimeError) { Release.render_formula(other, "1.0.0", SHA) }
+    end
+
+    # Value: protects=release.yml's skip/tag/heal decisions; fails_when=a non-tip or red manual
+    # run acts, a tagged version re-releases, or a tagged tip stops healing the tap;
+    # why_new=the decision used to be untested workflow shell; seam=none
+    def test_plan_only_lets_main_tip_act
+      table = {
+        # tip,  tagged, dispatch, green  => release, tap
+        [false, false, false, true]  => [false, false], # superseded commit
+        [false, true,  true,  true]  => [false, false],
+        [true,  false, false, true]  => [true,  true],  # new version on the tip
+        [true,  true,  false, true]  => [false, true],  # tagged: heal the tap only
+        [true,  false, true,  false] => [false, false], # manual run on a red/pending main
+        [true,  false, true,  true]  => [true,  true]
+      }
+      table.each do |(tip, tagged, dispatch, green), want|
+        got = Release.plan(tip: tip, tagged: tagged, dispatch: dispatch, tests_green: green)
+        assert_equal want, got.values_at(:release, :tap), "tip=#{tip} tagged=#{tagged} dispatch=#{dispatch} green=#{green}"
+        refute_empty got[:reason]
+      end
     end
 
     def test_render_formula_rejects_a_bad_sha

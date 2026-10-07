@@ -818,9 +818,11 @@ module Switchboard
     # running a worktree's bin, or a clone left behind after moving to brew); to one
     # that's gone, ✗ — the toggle and hooks would fail silently.
     def doctor_tmux_wired
-      wired = Installer.tmux_wired? && Installer.wired_fragment
+      return puts(row(false, "tmux bindings wired (switchboard.tmux)")) unless Installer.tmux_wired?
+
+      wired = Installer.wired_fragment
       if !wired
-        puts row(false, "tmux bindings wired (switchboard.tmux)")
+        puts row(false, "tmux.conf has a switchboard block but no line it recognizes — re-run `switchboard install`")
       elsif File.identical?(wired, Installer.fragment_path)
         puts row(true, "tmux bindings wired (switchboard.tmux)")
       elsif File.exist?(wired)
@@ -913,8 +915,14 @@ module Switchboard
     # Homebrew owns PATH, so the check is just that `switchboard` resolves to it.
     def doctor_homebrew_path
       found = `command -v switchboard 2>/dev/null`.strip
-      ok = !found.empty? && File.identical?(found, Installer.bin_path)
-      puts row(ok, ok ? "on PATH via Homebrew: #{found}" : "Homebrew install, but `switchboard` on PATH is #{found.empty? ? 'missing' : found} — run `brew link switchboard`")
+      if found.empty?
+        puts row(false, "Homebrew install, but `switchboard` isn't on PATH — run `brew link switchboard`")
+      elsif File.identical?(found, Installer.bin_path)
+        puts row(true, "on PATH via Homebrew: #{found}")
+      else
+        # Most likely a clone's ~/.local/bin link left ahead of brew's bin on PATH.
+        puts row(false, "`switchboard` on PATH is #{found}, which shadows Homebrew's — remove it (e.g. `switchboard uninstall` from that clone)")
+      end
     end
 
     # ✓/✗ status line shared by the doctor checks.

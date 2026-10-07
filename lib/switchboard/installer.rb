@@ -102,6 +102,9 @@ module Switchboard
       "run-shell '#{Shellwords.escape(fragment_path)}'"
     end
 
+    # The inverse of marker_line, kept beside it so writer and parser can't drift.
+    MARKER_LINE = /\Arun-shell '(.+)'\z/
+
     # A quote in the repo path can't be nested safely in the two quoting contexts
     # we emit: a single quote closes the marker line's tmux '...' early, a double
     # quote closes the fragment's run-shell "'$BIN' ..." early, and a newline or
@@ -502,10 +505,9 @@ module Switchboard
       c = tmux_conf(conf)
       return nil unless File.exist?(c)
 
-      body = File.read(c)
-      block = body[/#{Regexp.escape(BEGIN_MARK)}(.*?)#{Regexp.escape(END_MARK)}/m, 1]
-      line = block&.lines&.find { |l| l.start_with?("run-shell '") }
-      line && Shellwords.split(line.strip.delete_prefix("run-shell '").delete_suffix("'")).first
+      block = File.read(c)[/#{Regexp.escape(BEGIN_MARK)}(.*?)#{Regexp.escape(END_MARK)}/m, 1]
+      escaped = block&.lines&.map(&:strip)&.filter_map { |l| l[MARKER_LINE, 1] }&.first
+      escaped && Shellwords.split(escaped).first
     rescue StandardError
       nil
     end

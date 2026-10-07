@@ -245,6 +245,27 @@ module Switchboard
       assert_nil Installer.foreign_binding("", "b", "toggle-sidebar")
     end
 
+    # Value: protects=doctor reading back exactly the fragment install wired; fails_when=
+    # marker_line's format changes without wired_fragment (every healthy install reads ✗);
+    # why_new=the doctor test writes its own copy of the line; seam=none
+    def test_wired_fragment_round_trips_what_install_writes
+      conf = path("tmux.conf")
+      File.write(conf, Installer.with_block("set -g mouse on\n"))
+      assert_equal Installer.fragment_path, Installer.wired_fragment(conf)
+    end
+
+    # Value: protects=wired_fragment degrading to nil (never raising into doctor) on a missing
+    # conf, a hand-edited block, or an unbalanced quote; fails_when=the guards or rescue go;
+    # why_new=only the well-formed block is exercised; seam=none
+    def test_wired_fragment_is_nil_when_unreadable_or_unrecognized
+      conf = path("tmux.conf")
+      assert_nil Installer.wired_fragment(conf)
+      File.write(conf, "#{Installer::BEGIN_MARK}\n# edited by hand\n#{Installer::END_MARK}\n")
+      assert_nil Installer.wired_fragment(conf)
+      File.write(conf, "#{Installer::BEGIN_MARK}\nrun-shell '/a/\"b'\n#{Installer::END_MARK}\n")
+      assert_nil Installer.wired_fragment(conf)
+    end
+
     def test_strip_block_is_inverse_of_with_block
       base = "# my conf\nbind-key x display-message hi\n"
       wired = Installer.with_block(base)

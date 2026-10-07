@@ -470,6 +470,9 @@ module Switchboard
       File.delete(other)
       assert_match(/✗.*tmux is wired to a missing install \(#{Regexp.escape(other)}\)/, capture { CLI.send(:doctor_tmux_wired) })
 
+      File.write(conf, "#{Installer::BEGIN_MARK}\n# edited by hand\n#{Installer::END_MARK}\n")
+      assert_match(/✗.*switchboard block but no line it recognizes/, capture { CLI.send(:doctor_tmux_wired) })
+
       File.delete(conf)
       assert_match(/✗.*tmux bindings wired/, capture { CLI.send(:doctor_tmux_wired) })
     end
@@ -492,6 +495,20 @@ module Switchboard
       out = stub_method(Installer, :homebrew?, -> { true }) { capture { CLI.send(:doctor_symlinks) } }
       assert_includes out, "✓"
       assert_includes out, "on PATH via Homebrew: #{File.join(dir, 'switchboard')}"
+    end
+
+    # Value: protects=doctor's ✗ and its fix advice under brew; fails_when=a missing command
+    # and a shadowing clone link get the same (wrong) `brew link` advice, or either reads ✓;
+    # why_new=the brew dispatch test only matches /Homebrew/, present in every row; seam=none
+    def test_doctor_homebrew_path_fails_when_switchboard_is_missing_or_shadowed
+      ENV["PATH"] = path("empty-bin").tap { |d| FileUtils.mkdir_p(d) }
+      out = stub_method(Installer, :homebrew?, -> { true }) { capture { CLI.send(:doctor_symlinks) } }
+      assert_match(/✗.*isn't on PATH — run `brew link switchboard`/, out)
+
+      shadow = File.join(ENV["PATH"], "switchboard").tap { |f| File.write(f, "#!/bin/sh\n"); File.chmod(0o755, f) }
+      out = stub_method(Installer, :homebrew?, -> { true }) { capture { CLI.send(:doctor_symlinks) } }
+      assert_match(/✗.*on PATH is #{Regexp.escape(shadow)}, which shadows Homebrew's/, out)
+      refute_includes out, "brew link"
     end
 
     # A missing `sb` is a soft note, never a hard ✗ — doctor must agree with

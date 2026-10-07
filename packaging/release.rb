@@ -6,7 +6,8 @@
 #   ruby packaging/release.rb version                 # → 0.50.0
 #   ruby packaging/release.rb notes 0.50.0 TITLE_FILE NOTES_FILE
 #   ruby packaging/release.rb tarball-url 0.50.0
-#   ruby packaging/release.rb formula 0.50.0 SHA256   # rendered formula → stdout
+#   ruby packaging/release.rb plan true false false true   # → release=…/tap=…/reason=…
+#   ruby packaging/release.rb formula 0.50.0 SHA256 [TEMPLATE]   # rendered formula → stdout
 module Release
   module_function
 
@@ -14,6 +15,8 @@ module Release
   REPO = "wvmitchell/switchboard"
   FORMULA_URL = %r{^(\s*url ")#{Regexp.escape("https://github.com/#{REPO}/archive/refs/tags/v")}[^"]+\.tar\.gz(")$}
   FORMULA_SHA = /^(\s*sha256 ")[^"]*(")$/
+  # sha256 of zero bytes: what a failed/empty tarball download hashes to.
+  EMPTY_SHA = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 
   def version(path = File.join(ROOT, "lib/switchboard/version.rb"))
     File.read(path)[/VERSION = "(\d+\.\d+\.\d+)"/, 1] or raise "no VERSION in #{path}"
@@ -35,6 +38,7 @@ module Release
   # each must be replaced — a template that drifted would otherwise ship stale.
   def render_formula(template, version, sha)
     raise "bad sha256: #{sha.inspect}" unless sha.match?(/\A\h{64}\z/)
+    raise "sha256 of an empty file: the tarball download failed" if sha == EMPTY_SHA
 
     url = tarball_url(version)
     [FORMULA_URL, FORMULA_SHA].each do |re|
@@ -42,6 +46,18 @@ module Release
       raise "formula template: expected one #{re.source} line, found #{n}" unless n == 1
     end
     template.sub(FORMULA_URL) { "#{$1}#{url}#{$2}" }.sub(FORMULA_SHA) { "#{$1}#{sha}#{$2}" }
+  end
+
+  # What a release run should do. Only main's tip acts (a pending run can be
+  # superseded and test runs finish out of order, so anything else could tag a
+  # stale commit or move the tap backwards); a manual run also needs that tip's
+  # tests green. The tap update is idempotent, so it runs on every acting run
+  # (healing a failed or late-enabled update), tagging only for a new version.
+  def plan(tip:, tagged:, dispatch:, tests_green:)
+    return { release: false, tap: false, reason: "not main's tip; the tip's run acts instead#{' (version still untagged)' unless tagged}" } unless tip
+    return { release: false, tap: false, reason: "main's latest test run isn't green" } if dispatch && !tests_green
+
+    { release: !tagged, tap: true, reason: tagged ? "already tagged; refreshing the tap" : "new version" }
   end
 
   def tarball_url(version)
@@ -57,9 +73,14 @@ if $PROGRAM_NAME == __FILE__
     File.write(ARGV[2], title)
     File.write(ARGV[3], "#{body}\n")
   when "tarball-url" then puts Release.tarball_url(ARGV[1])
+  when "plan"
+    flags = ARGV[1, 4].map { |a| a == "true" }
+    Release.plan(**%i[tip tagged dispatch tests_green].zip(flags).to_h).each { |k, v| puts "#{k}=#{v}" }
   when "formula"
-    print Release.render_formula(File.read(File.join(Release::ROOT, "packaging/homebrew/switchboard.rb")), ARGV[1], ARGV[2])
+    template = ARGV[3] || File.join(Release::ROOT, "packaging/homebrew/switchboard.rb")
+    print Release.render_formula(File.read(template), ARGV[1], ARGV[2])
   else
-    abort "usage: release.rb version | notes VERSION TITLE_FILE NOTES_FILE | tarball-url VERSION | formula VERSION SHA256"
+    abort "usage: release.rb version | notes VERSION TITLE_FILE NOTES_FILE | tarball-url VERSION | " \
+          "plan TIP TAGGED DISPATCH TESTS_GREEN | formula VERSION SHA256 [TEMPLATE]"
   end
 end
