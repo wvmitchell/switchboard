@@ -21,8 +21,8 @@ attaches a stdlib-`PTY` client so the sidebar renders, polls via `wait_until`); 
 kept OUT of `bin/test` so the offline suite stays the inner loop. See `README.md`
 for the user-facing feature tour, and `docs/` for the full Diataxis documentation
 set. The explanation docs (`docs/explanation-architecture.md`,
-`explanation-agent-presence.md`, `explanation-sidebar-lifecycle.md`) are the
-human-readable companions to this file; `CONTRIBUTING.md` collects the
+`explanation-agent-presence.md`, `explanation-sidebar-lifecycle.md`,
+`explanation-distribution.md`) are the human-readable companions to this file; `CONTRIBUTING.md` collects the
 test/zero-gem/release conventions; `AGENTS.md` is the tool-neutral pointer back
 here.
 
@@ -30,8 +30,8 @@ here.
 
 ```sh
 bin/switchboard            # start: attach home from a shell, or toggle the sidebar inside tmux (alias: sb)
-bin/switchboard install    # symlinks (switchboard + sb) onto PATH + wire tmux bindings + empty config (--no-tmux/--print-tmux/--tmux-conf)
-bin/switchboard uninstall  # reverse install (both symlinks + tmux marker block + live unbind)
+bin/switchboard install    # symlinks (switchboard + sb) onto PATH (skipped under Homebrew) + wire tmux bindings + empty config (--no-tmux/--print-tmux/--tmux-conf)
+bin/switchboard uninstall  # reverse install (both symlinks — left to `brew uninstall` under Homebrew — + tmux marker block + live unbind)
 bin/switchboard doctor     # check that tmux/git/gh + config + install wiring exist
 bin/switchboard init       # create ~/.config/switchboard/config.yml (empty; grown by the add-project flow)
 bin/switchboard config     # open config.yml in $EDITOR (sidebar `e` does the same)
@@ -46,8 +46,8 @@ bin/test                   # run the stdlib-Minitest suite (offline; bin/test <f
 bin/test-smoke             # run the real-tmux smoke layer (boots a server; needs tmux; out of bin/test — #104)
 ```
 
-Setup is one command: `git clone && bin/switchboard install` (`Installer`,
-`installer.rb`). It symlinks `bin/switchboard` to `~/.local/bin` (plus a short
+Setup is one command: `git clone && bin/switchboard install` (or `brew install
+wvmitchell/switchboard/switchboard && switchboard install`) (`Installer`, `installer.rb`). It symlinks `bin/switchboard` to `~/.local/bin` (plus a short
 `sb` alias beside it; a collided `sb` is skipped, the real command still
 installs), adds a
 marker-delimited line to the tmux.conf tmux actually loads (found via
@@ -123,6 +123,30 @@ Ruby **>= 3.0** is required (`Config` uses `YAML.safe_load_file`, added in Psych
 3.3 / Ruby 3.0). `bin/switchboard` re-execs itself under a modern ruby if launched
 on macOS system Ruby 2.6 — relevant because tmux panes run a non-interactive shell
 that skips rbenv.
+
+**Baked paths must survive `brew upgrade`** (issue #9). The install path gets
+written into long-lived wiring — the tmux.conf marker line, the tmux hooks/bindings,
+per-worktree Claude hooks, the global codex block. A clone's realpath is stable; a
+Homebrew keg's (`<prefix>/Cellar/switchboard/<ver>/…`) is deleted by upgrade+cleanup,
+and a changed path also re-hashes the codex commands, voiding their `/hooks` trust.
+So both sources of that path — `SWITCHBOARD_BIN` (`bin/switchboard`) and
+`Installer.repo_root` — run through `StablePath.resolve` (`stable_path.rb`), which
+rewrites a switchboard keg path to its `opt/switchboard` twin (fails safe to the
+realpath when no opt link exists). Under brew (`Installer.homebrew?`) install/uninstall
+skip the `~/.local/bin` symlinks and `doctor` checks the brew PATH entry instead.
+
+**Releases are automated after merge** (`.github/workflows/release.yml`; issue #9 —
+#8, assigning the version after merge, is still open). The PR still picks the version (`version.rb` + CHANGELOG entry, `vX.Y.Z` title);
+once `test` AND `formula` (macOS: formula installed from a local tap, `brew audit
+--strict` + `brew test`) are green on main, a `workflow_run` job tags it, creates the
+GitHub Release from the CHANGELOG entry, and pushes the formula to
+`wvmitchell/homebrew-switchboard`. Every run judges main's CURRENT tip (GitHub keeps one
+pending run per group, and gates finish out of order), never moves the tap backwards,
+trusts an existing tag only if its exact ref's commit passed the gates and carries the version, pins that commit so later steps fail if the tag moves, renders the formula from it, and fails loudly on any lookup error (a
+missing `actions: read` once made every run a silent no-op). All decisions live in the
+pure, table-tested `Release.plan` (`packaging/release.rb`); the YAML only gathers facts.
+The tap step skips while the repo is private or `HOMEBREW_TAP_TOKEN` is unset. Full
+detail: `docs/reference-release.md`, `docs/howto-release.md`.
 
 Useful env overrides when running locally without disturbing real state:
 `SWITCHBOARD_CONFIG` (config path), `SWITCHBOARD_STATE_DIR` (agent-state files),
@@ -1044,6 +1068,9 @@ pane), with the pure pieces (`sandbox_env`, `isolated_socket?`, `stale_sock_dirs
 
 ### Conventions
 
+- Issue/PR numbers in comments and docs from before v0.50.0 (e.g. `#57`, `#94`)
+  refer to the private `switchboard-archive` repo; the public tracker restarted at #1
+  (#8 = assign versions after merge, #9 = open-source readiness tracking).
 - Every file starts with `# frozen_string_literal: true`.
 - Stateless helpers are `module_function` modules (`ClaudeHook`, `CodexHook`,
   `MarkerBlock`, `Tmux`, `Installer`, …); only `Model`, `Config`, `Sidebar`, and

@@ -32,6 +32,11 @@ git clone https://github.com/wvmitchell/switchboard
 cd switchboard && bin/switchboard install
 ```
 
+(Prefer Homebrew? `brew install wvmitchell/switchboard/switchboard`, then
+`switchboard install`; brew provides the PATH entries, so you'll see `on PATH via
+Homebrew` instead of the symlinks. Details in
+[How to install, upgrade, or move to Homebrew](howto-install-and-upgrade.md).)
+
 You'll see it do three things: symlink `switchboard` (and the `sb` alias) onto
 your PATH, add one line to your tmux.conf, and write a starter config. If it
 warns that `~/.local/bin` isn't on your `$PATH`, add the line it prints to your

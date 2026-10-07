@@ -1,0 +1,55 @@
+name: formula
+
+# Installs the Homebrew formula exactly as a user would (from a tap) against a
+# tarball of this commit, then runs brew audit + brew test, so a broken layout,
+# shebang rewrite, or baked Cellar path fails here instead of in a user's
+# `brew install` after release.yml has pushed the tap. macOS minutes are costly,
+# so PRs only run it when something the formula installs or tests changes.
+on:
+  pull_request:
+    paths:
+      - packaging/**
+      - bin/switchboard
+      - switchboard.tmux
+      - lib/switchboard.rb
+      - lib/switchboard/stable_path.rb
+      - lib/switchboard/installer.rb
+      - lib/switchboard/cli.rb
+      - lib/switchboard/config.rb
+      - .github/workflows/formula.yml
+  # Every commit that can be released gets a brew test, whatever it touched.
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  formula:
+    runs-on: macos-latest
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      HOMEBREW_NO_INSTALL_CLEANUP: "1"
+      HOMEBREW_NO_ANALYTICS: "1"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: ruby/setup-ruby@14594264cd68ce8a2345dd349bc3d138a4ef85c8 # v1.327.0
+        with:
+          ruby-version: '3.3'
+
+      - name: Render the formula against a tarball of this commit
+        run: |
+          version="$(ruby packaging/release.rb version)"
+          tarball="$RUNNER_TEMP/switchboard-$version.tar.gz"
+          git archive --prefix="switchboard-$version/" -o "$tarball" HEAD
+          sha="$(shasum -a 256 "$tarball" | cut -d' ' -f1)"
+          brew tap-new --no-git local/switchboard
+          tap="$(brew --repository)/Library/Taps/local/homebrew-switchboard"
+          ruby packaging/release.rb formula "$version" "$sha" \
+            | sed "s#$(ruby packaging/release.rb tarball-url "$version")#file://$tarball#" \
+            > "$tap/Formula/switchboard.rb"
+          grep -q "file://$tarball" "$tap/Formula/switchboard.rb"
+
+      - run: brew audit --strict local/switchboard/switchboard
+      - run: brew install local/switchboard/switchboard
+      - run: brew test local/switchboard/switchboard

@@ -803,15 +803,34 @@ module Switchboard
       [procs - panes, 0].max
     end
 
-    # Report install wiring: PATH symlink, the tmux marker block, and a tmux new
-    # enough for the session-switch refresh. Read-only; logic lives in Installer.
+    # Report install wiring: the PATH entry (symlinks, or brew's bin under Homebrew),
+    # which install tmux.conf is wired to, and a tmux new enough for the
+    # session-switch refresh. Read-only; logic lives in Installer.
     def doctor_install
       doctor_symlinks
-      puts row(Installer.tmux_wired?, "tmux bindings wired (switchboard.tmux)")
+      doctor_tmux_wired
       doctor_binding_live
       doctor_hooks_live
       v = Installer.tmux_version
       puts row(!v.nil? && v >= 3.0, v ? "tmux #{v} (>= 3.0 for the session-switch refresh)" : "tmux not found")
+    end
+
+    # Wired to this install ✓; to another install that still exists, a note (a dev
+    # running a worktree's bin, or a clone left behind after moving to brew); to one
+    # that's gone, ✗ — the toggle and hooks would fail silently.
+    def doctor_tmux_wired
+      return puts(row(false, "tmux bindings wired (switchboard.tmux)")) unless Installer.tmux_wired?
+
+      wired = Installer.wired_fragment
+      if !wired
+        puts row(false, "tmux.conf has a switchboard block but no line it recognizes — re-run `switchboard install`")
+      elsif File.identical?(wired, Installer.fragment_path)
+        puts row(true, "tmux bindings wired (switchboard.tmux)")
+      elsif File.exist?(wired)
+        puts "  \e[33m–\e[0m tmux is wired to another install (#{wired}) — `switchboard install` re-wires it to this one"
+      else
+        puts row(false, "tmux is wired to a missing install (#{wired}) — re-run `switchboard install`")
+      end
     end
 
     # Is prefix-s actually bound to toggle-sidebar in the running server? The sibling
@@ -881,6 +900,8 @@ module Switchboard
     # imply switchboard is broken — matching install, which skips a collided
     # shorthand rather than failing.
     def doctor_symlinks
+      return doctor_homebrew_path if Installer.homebrew?
+
       Installer.symlink_targets.each do |link, optional|
         if Installer.linked?(link)
           puts row(true, "PATH symlink: #{link}")
@@ -890,6 +911,40 @@ module Switchboard
           puts row(false, "PATH symlink: #{link}")
         end
       end
+    end
+
+    # Homebrew owns PATH: `switchboard` must resolve to brew's copy, `sb` should. A clone's
+    # leftover link ahead of brew's is reported with an rm for just that link (the clone's
+    # `uninstall` would also strip the tmux/codex wiring brew now owns). Some other program
+    # named `sb` is left alone: the shorthand is optional, as in clone mode.
+    def doctor_homebrew_path
+      Installer::SYMLINK_NAMES.each do |name|
+        found = `command -v #{name} 2>/dev/null`.strip
+        required = name == Installer::COMMAND_NAME
+        if found.empty?
+          puts(required ? row(false, "Homebrew install, but `switchboard` isn't on PATH — run `brew link switchboard`")
+                        : "  \e[33m–\e[0m `#{name}` isn't on PATH (optional shorthand)")
+        elsif File.identical?(found, Installer.bin_path)
+          puts row(true, "on PATH via Homebrew: #{found}")
+        elsif switchboard_bin?(found) && File.symlink?(found)
+          puts row(false, "`#{name}` on PATH is #{found}, which shadows Homebrew's — delete that link (`rm #{Shellwords.escape(found)}`)")
+        elsif switchboard_bin?(found) # a clone's own launcher: deleting it would break the clone
+          puts row(false, "`#{name}` on PATH is #{found}, which shadows Homebrew's — take #{File.dirname(found)} off your PATH")
+        elsif required
+          puts row(false, "`switchboard` on PATH is #{found}, another program — put Homebrew's bin earlier on PATH")
+        else
+          puts "  \e[33m–\e[0m `#{name}` on PATH is #{found} (another program; optional shorthand)"
+        end
+      end
+    end
+
+    # A switchboard launcher (a clone's bin/switchboard, or a link to one): its checkout
+    # sits beside it with lib/switchboard.rb.
+    def switchboard_bin?(path)
+      real = File.realpath(path)
+      File.basename(real) == "switchboard" && File.file?(File.expand_path("../lib/switchboard.rb", File.dirname(real)))
+    rescue SystemCallError
+      false
     end
 
     # ✓/✗ status line shared by the doctor checks.

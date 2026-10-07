@@ -3,6 +3,17 @@
 Deferred work, captured so the reasoning isn't lost. Each item says what, why,
 and where to start.
 
+## Release automation (issues #8, #9) follow-ups
+
+- **Test that release.yml's trigger list and `GATES` agree.** *Why:* the
+  `workflow_run.workflows: [test, formula]` trigger and the job's `GATES: test
+  formula` must match, and only a comment ties them; adding a gate to one but not
+  the other either skips that gate's check before tagging or stops its completion
+  from triggering a release. *Start in:* `test/release_test.rb` — `YAML.safe_load_file`
+  the workflow (note Psych reads the `on:` key as `true`), assert the trigger list
+  equals `GATES.split`, and that each gate is the `name:` of a file under
+  `.github/workflows/`. **Priority:** P2.
+
 ## Session lifecycle (issue #7) follow-ups
 
 - **Validate/normalize project names at `add` time.** At registration, reject or

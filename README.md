@@ -50,8 +50,16 @@ keyboard-driven view over all of them, and discovers worktrees straight from
 
 ## Quickstart
 
-You'll need **tmux**, **git**, **gh**, and **Ruby ≥ 3.0** (no gems). On macOS:
-`brew install tmux git gh`.
+With Homebrew (installs tmux, git, gh, and Ruby for you):
+
+```sh
+brew install wvmitchell/switchboard/switchboard
+switchboard install                          # tmux wiring + starter config (idempotent)
+switchboard                                  # launch — drops you in the sidebar
+```
+
+Or from a clone (you'll need **tmux**, **git**, **gh**, and **Ruby ≥ 3.0**, no gems;
+on macOS: `brew install tmux git gh`):
 
 ```sh
 git clone https://github.com/wvmitchell/switchboard
@@ -64,6 +72,13 @@ your PATH, adds one line to your tmux config, and writes a starter config;
 `switchboard doctor` confirms everything's wired. From a plain shell,
 `switchboard` bootstraps and attaches the home session; inside tmux, `prefix-s`
 toggles the sidebar from any pane.
+
+### Upgrading
+
+`brew upgrade switchboard` (or `git pull` in your clone), then re-run
+`switchboard install` or reload tmux so any new key bindings and hooks go live.
+Moving a clone install to Homebrew, or uninstalling, is covered in
+[How to install, upgrade, or move to Homebrew](docs/howto-install-and-upgrade.md).
 
 ## The core loop
 
@@ -124,16 +139,20 @@ organized by the [Diataxis](https://diataxis.fr/) framework:
 
 - **New here?** [Tutorial: getting started](docs/tutorial-getting-started.md) —
   install to your first worktree switch, with a live agent dot, in ~10 minutes.
-- **How-to guides** — [manage projects](docs/howto-manage-projects.md) ·
+- **How-to guides** — [install & upgrade](docs/howto-install-and-upgrade.md) ·
+  [manage projects](docs/howto-manage-projects.md) ·
   [agent state & sounds](docs/howto-agent-state-and-sounds.md) ·
   [keybindings](docs/howto-keybindings.md) ·
-  [housekeeping](docs/howto-housekeeping.md).
+  [housekeeping](docs/howto-housekeeping.md) ·
+  [cutting a release](docs/howto-release.md).
 - **Reference** — [CLI](docs/reference-cli.md) ·
   [config.yml](docs/reference-config.md) ·
-  [keybindings](docs/reference-keybindings.md).
+  [keybindings](docs/reference-keybindings.md) ·
+  [release pipeline](docs/reference-release.md).
 - **Explanation** — [architecture](docs/explanation-architecture.md) ·
   [agent presence](docs/explanation-agent-presence.md) ·
-  [sidebar lifecycle](docs/explanation-sidebar-lifecycle.md).
+  [sidebar lifecycle](docs/explanation-sidebar-lifecycle.md) ·
+  [distribution](docs/explanation-distribution.md).
 
 ## Contributing
 

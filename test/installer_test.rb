@@ -245,6 +245,27 @@ module Switchboard
       assert_nil Installer.foreign_binding("", "b", "toggle-sidebar")
     end
 
+    # Value: protects=doctor reading back exactly the fragment install wired; fails_when=
+    # marker_line's format changes without wired_fragment (every healthy install reads ✗);
+    # why_new=the doctor test writes its own copy of the line; seam=none
+    def test_wired_fragment_round_trips_what_install_writes
+      conf = path("tmux.conf")
+      File.write(conf, Installer.with_block("set -g mouse on\n"))
+      assert_equal Installer.fragment_path, Installer.wired_fragment(conf)
+    end
+
+    # Value: protects=wired_fragment degrading to nil (never raising into doctor) on a missing
+    # conf, a hand-edited block, or an unbalanced quote; fails_when=the guards or rescue go;
+    # why_new=only the well-formed block is exercised; seam=none
+    def test_wired_fragment_is_nil_when_unreadable_or_unrecognized
+      conf = path("tmux.conf")
+      assert_nil Installer.wired_fragment(conf)
+      File.write(conf, "#{Installer::BEGIN_MARK}\n# edited by hand\n#{Installer::END_MARK}\n")
+      assert_nil Installer.wired_fragment(conf)
+      File.write(conf, "#{Installer::BEGIN_MARK}\nrun-shell '/a/\"b'\n#{Installer::END_MARK}\n")
+      assert_nil Installer.wired_fragment(conf)
+    end
+
     def test_strip_block_is_inverse_of_with_block
       base = "# my conf\nbind-key x display-message hi\n"
       wired = Installer.with_block(base)
@@ -421,6 +442,16 @@ module Switchboard
       assert_equal File.join(other, "thing"), File.readlink(Installer.symlink_path)
     end
 
+    # Homebrew already put `switchboard` on PATH; install must not also plant
+    # ~/.local/bin links (they'd point into a keg that upgrade deletes).
+    def test_homebrew_install_skips_the_path_symlinks
+      out = stub_method(Installer, :homebrew?, -> { true }) { silently { Installer.install(no_tmux: true) } }
+      refute File.exist?(Installer.symlink_path)
+      refute File.exist?(Installer.symlink_path("sb"))
+      assert_includes out, "on PATH via Homebrew"
+      refute_includes out, "isn't on your PATH"
+    end
+
     # --- install: config -----------------------------------------------------
 
     def test_install_scaffolds_an_empty_config
@@ -455,6 +486,15 @@ module Switchboard
       silently { Installer.uninstall(conf: conf) }
       assert_equal "# mine\nbind-key x display hi\n", File.read(conf)
       refute File.symlink?(Installer.symlink_path)
+    end
+
+    # PATH belongs to brew under Homebrew — uninstall leaves it to `brew uninstall`.
+    def test_homebrew_uninstall_leaves_path_to_brew
+      FileUtils.mkdir_p(File.dirname(Installer.symlink_path))
+      File.symlink(Installer.bin_path, Installer.symlink_path)
+      out = stub_method(Installer, :homebrew?, -> { true }) { silently { Installer.uninstall } }
+      assert_includes out, "brew uninstall switchboard"
+      assert File.symlink?(Installer.symlink_path), "brew mode never touches ~/.local/bin links"
     end
 
     def test_uninstall_leaves_foreign_symlink

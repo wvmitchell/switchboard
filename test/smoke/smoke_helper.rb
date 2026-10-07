@@ -86,7 +86,9 @@ module Switchboard
       # kill_server pid-kills too (recycle-guarded), so a kill-server that doesn't take
       # can't leave a socketless daemon behind — and it can only reach OUR throwaway
       # server, so the isolated_socket? gate is no longer load-bearing here.
+      shells = pane_pids if @sock_dir
       IsolatedServer.kill_server(@sock_dir) if @sock_dir
+      await_exit(shells)
       FileUtils.remove_entry(@sock_dir) if @sock_dir && File.directory?(@sock_dir)
     ensure
       super                                  # SandboxTest: restore ENV + remove the state dir
@@ -268,6 +270,30 @@ module Switchboard
 
     def tmux!(*args)
       system("tmux", *args, out: File::NULL, err: File::NULL)
+    end
+
+    # The pane shells outlive kill-server by a beat: SIGHUP'd zsh still writes
+    # .zsh_history into the sandbox HOME (macOS /etc/zshrc pins HISTFILE there) while
+    # SandboxTest#teardown deletes it — ENOENT/ENOTEMPTY mid-walk. So teardown waits
+    # (bounded) for them to exit before anything is removed.
+    def pane_pids
+      tmux("list-panes", "-a", "-F", fmt("pane_pid")).lines.map(&:to_i).select(&:positive?)
+    rescue StandardError
+      []
+    end
+
+    def await_exit(pids, timeout: 3)
+      deadline = monotonic + timeout
+      pids.to_a.each do |pid|
+        loop do
+          Process.kill(0, pid)
+          break if monotonic > deadline
+
+          sleep 0.02
+        rescue Errno::ESRCH, Errno::EPERM
+          break
+        end
+      end
     end
 
     # Build a literal tmux format token, e.g. fmt("pane_id") => the 9-char string

@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "switchboard/version"
+require_relative "switchboard/stable_path"
 require_relative "switchboard/config"
 require_relative "switchboard/editor"
 require_relative "switchboard/git"

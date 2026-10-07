@@ -20,14 +20,14 @@ if RUBY_VERSION < "3.0" && !ENV["SB_REEXEC"]
   abort "switchboard needs Ruby >= 3.0 (running #{RUBY_VERSION}); none found on PATH"
 end
 
-# Canonical path to this script, so tmux can spawn the sidebar pane by
-# re-invoking us (`switchboard sidebar`). Resolved from __FILE__ (not $0) so it
-# works when symlinked onto PATH or run as a bare command, where $0 carries no
-# directory.
-ENV["SWITCHBOARD_BIN"] = File.realpath(__FILE__)
-
 # Resolve lib/ relative to this script (works even when symlinked onto PATH).
 $LOAD_PATH.unshift File.expand_path("../lib", __dir__)
 require "switchboard"
+
+# Canonical path to this script, so tmux can spawn the sidebar pane by
+# re-invoking us (`switchboard sidebar`). Resolved from __FILE__ (not $0) so it
+# works when symlinked onto PATH or run as a bare command, where $0 carries no
+# directory. StablePath swaps a Homebrew keg path for its upgrade-proof opt/ twin.
+ENV["SWITCHBOARD_BIN"] = Switchboard::StablePath.resolve(File.realpath(__FILE__))
 
 Switchboard::CLI.run(ARGV)

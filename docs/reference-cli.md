@@ -26,10 +26,11 @@ in `$HOME`), carries its own sidebar, and is the stable launch + settings base.
 Landing here also prunes orphaned `sb/` sessions unless `prune_on_launch: false`.
 
 ### `switchboard install [--no-tmux] [--print-tmux] [--tmux-conf PATH] [--codex-hooks] [--no-codex-hooks]`
-Stand switchboard up from a fresh clone. Idempotent. Four steps:
+Stand switchboard up from a fresh clone or a Homebrew install. Idempotent. Four steps:
 
 1. Symlink `switchboard` (and the `sb` alias) into `~/.local/bin` (or
-   `$SWITCHBOARD_BIN_DIR`).
+   `$SWITCHBOARD_BIN_DIR`). Skipped under Homebrew, which already put both on
+   your PATH (reported as `on PATH via Homebrew`).
 2. Add one marker-delimited line to the tmux.conf tmux actually loads, sourcing
    the self-locating `switchboard.tmux` fragment (binds the keys + sets the hooks).
 3. Scaffold an annotated starter config if none exists.
@@ -51,8 +52,14 @@ Backs up the target tmux.conf (and `~/.codex/config.toml`) to `.bak` before its
 first edit. See [How-to: keybindings](howto-keybindings.md) for the wiring it
 installs.
 
+Under Homebrew, every path it writes uses the stable `<prefix>/opt/switchboard`
+link rather than the versioned `Cellar` folder, so the wiring survives
+`brew upgrade` + `brew cleanup` (see
+[Explanation: distribution](explanation-distribution.md)).
+
 ### `switchboard uninstall [--tmux-conf PATH]`
-Reverse `install`: remove both symlinks, the tmux marker block, the bound keys,
+Reverse `install`: remove both symlinks (under Homebrew it leaves PATH to
+`brew uninstall switchboard` and says so), the tmux marker block, the bound keys,
 the three hook slots, the `@switchboard-*` tmux options (also live-unbinds in
 a running server), and the global codex `[hooks]` block from `~/.codex/config.toml`
 if present. Your config and agent state are left untouched.
@@ -191,8 +198,10 @@ working). Works outside tmux. The sidebar's `q` does the same (with a confirm).
 ### `switchboard doctor`
 Check the install and report anything off: `tmux`/`git`/`gh` on PATH, config
 present + parseable, unrecognized top-level config keys (the misindented-nested-key
-trap), PATH symlinks, tmux wiring (bound keys + hooks, and whether they're *live* in
-the running server vs only in config), a bad or clashing `sidebar_keys` remap, `gh`
+trap), PATH symlinks (under Homebrew: that `switchboard` and `sb` on PATH are this install, not
+missing or shadowed by an old clone's link, a clone's `bin/` directory, or another program), which install tmux.conf is wired to (this
+one ✓, another that still exists –, or one that's gone ✗), tmux wiring (bound keys +
+hooks, and whether they're *live* in the running server vs only in config), a bad or clashing `sidebar_keys` remap, `gh`
 auth + per-project badge staleness, audio player +
 sound resolution, orphaned sessions, and orphaned sidebar processes. Read-only.
 The first place to look when something's off.

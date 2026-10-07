@@ -449,6 +449,119 @@ module Switchboard
       assert_includes out, "PATH symlink: #{Installer.symlink_path('sb')}"
     end
 
+    # --- doctor: which install tmux is wired to (clone → brew moves) ---
+
+    # Value: protects=doctor telling "wired to this install" from "wired to another" or "to one
+    # that's gone"; fails_when=the check regresses to marker-presence only (a deleted clone reads
+    # ✓ while the toggle/hooks fail silently); why_new=tmux_wired? only checks the marker; seam=none
+    def test_doctor_tmux_wired_names_which_install_tmux_runs
+      conf = File.expand_path("~/.tmux.conf")
+      wire = ->(fragment) { File.write(conf, "#{Installer::BEGIN_MARK}\nrun-shell '#{Shellwords.escape(fragment)}'\n#{Installer::END_MARK}\n") }
+
+      wire.call(Installer.fragment_path)
+      assert_match(/✓.*tmux bindings wired/, capture { CLI.send(:doctor_tmux_wired) })
+
+      other = path("old clone", "switchboard.tmux").tap { |f| FileUtils.mkdir_p(File.dirname(f)); File.write(f, "") }
+      wire.call(other)
+      out = capture { CLI.send(:doctor_tmux_wired) }
+      assert_includes out, "wired to another install (#{other})"
+      refute_includes out, "✗"
+
+      File.delete(other)
+      assert_match(/✗.*tmux is wired to a missing install \(#{Regexp.escape(other)}\)/, capture { CLI.send(:doctor_tmux_wired) })
+
+      File.write(conf, "#{Installer::BEGIN_MARK}\n# edited by hand\n#{Installer::END_MARK}\n")
+      assert_match(/✗.*switchboard block but no line it recognizes/, capture { CLI.send(:doctor_tmux_wired) })
+
+      File.delete(conf)
+      assert_match(/✗.*tmux bindings wired/, capture { CLI.send(:doctor_tmux_wired) })
+    end
+
+    # Under Homebrew there are no symlinks to check; doctor reports the brew PATH
+    # entry instead of two ✗ rows for links install deliberately didn't make.
+    def test_doctor_reports_homebrew_path_instead_of_symlinks
+      out = stub_method(Installer, :homebrew?, -> { true }) { capture { run_doctor } }
+      refute_includes out, "PATH symlink:"
+      assert_match(/Homebrew/, out)
+    end
+
+    # Value: protects=doctor's ✓/✗ verdict on the brew PATH entry; fails_when=the identity check
+    # is dropped/inverted or compares strings (brew's bin/ entry is a symlink, not bin_path itself);
+    # why_new=the test above only matches /Homebrew/, which both ✓ and ✗ rows contain; seam=none
+    def test_doctor_homebrew_path_passes_when_path_resolves_to_this_install
+      dir = path("brew-bin").tap { |d| FileUtils.mkdir_p(d) }
+      File.symlink(Installer.bin_path, File.join(dir, "switchboard"))
+      ENV["PATH"] = dir
+      out = stub_method(Installer, :homebrew?, -> { true }) { capture { CLI.send(:doctor_symlinks) } }
+      assert_includes out, "✓"
+      assert_includes out, "on PATH via Homebrew: #{File.join(dir, 'switchboard')}"
+    end
+
+    # Value: protects=doctor's ✗ and its fix advice under brew; fails_when=a missing command
+    # and a shadowing clone link get the same (wrong) `brew link` advice, or either reads ✓;
+    # why_new=the brew dispatch test only matches /Homebrew/, present in every row; seam=none
+    def test_doctor_homebrew_path_fails_when_switchboard_is_missing_or_shadowed
+      bin = path("my bin").tap { |d| FileUtils.mkdir_p(d) } # a space, so the rm hint must quote
+      ENV["PATH"] = bin
+      doctor = -> { stub_method(Installer, :homebrew?, -> { true }) { capture { CLI.send(:doctor_symlinks) } } }
+      out = doctor.call
+      assert_match(/✗.*isn't on PATH — run `brew link switchboard`/, out)
+      assert_equal 1, out.scan("brew link").size, "a missing sb stays a soft note, not a second ✗"
+      sb_line = out.lines.find { |l| l.include?("`sb`") }
+      assert_includes sb_line, "optional shorthand"
+      refute_includes sb_line, "✗"
+
+      # A clone's leftover links ahead of brew's: ✗ with an rm for each, quoted.
+      clone = path("old clone").tap { |d| FileUtils.mkdir_p(File.join(d, "bin")); FileUtils.mkdir_p(File.join(d, "lib")) }
+      File.write(File.join(clone, "lib", "switchboard.rb"), "")
+      File.write(File.join(clone, "bin", "switchboard"), "#!/bin/sh\n").then { File.chmod(0o755, File.join(clone, "bin", "switchboard")) }
+      %w[switchboard sb].each { |n| File.symlink(File.join(clone, "bin", "switchboard"), File.join(bin, n)) }
+      out = doctor.call
+      %w[switchboard sb].each do |n|
+        link = File.join(bin, n)
+        assert_match(/✗.*`#{n}` on PATH is #{Regexp.escape(link)}, which shadows Homebrew's/, out)
+        assert_includes out, "`rm #{Shellwords.escape(link)}`"
+      end
+      refute_includes out, "switchboard uninstall"
+
+      # Some other program named sb is never flagged or offered for deletion.
+      File.delete(File.join(bin, "sb"))
+      File.write(File.join(bin, "sb"), "#!/bin/sh\n").then { File.chmod(0o755, File.join(bin, "sb")) }
+      sb_line = doctor.call.lines.find { |l| l.include?("`sb`") }
+      assert_includes sb_line, "another program; optional shorthand"
+      refute_includes sb_line, "✗"
+      refute_includes sb_line, "rm "
+    end
+
+    # Value: protects=doctor's ✗ + PATH-order advice when `switchboard` on PATH is some other program;
+    # fails_when=the required branch is dropped (a foreign switchboard reads as a soft note) or it's
+    # offered for `rm` like a clone link (deleting a program that isn't ours); why_new=the shadow test
+    # covers only a clone link and a foreign `sb`, never a foreign `switchboard`; seam=none
+    def test_doctor_homebrew_path_flags_a_foreign_switchboard_without_offering_rm
+      bin = path("foreign-bin").tap { |d| FileUtils.mkdir_p(d) }
+      File.write(File.join(bin, "switchboard"), "#!/bin/sh\n").then { File.chmod(0o755, File.join(bin, "switchboard")) }
+      ENV["PATH"] = bin
+      out = stub_method(Installer, :homebrew?, -> { true }) { capture { CLI.send(:doctor_symlinks) } }
+      line = out.lines.find { |l| l.include?("`switchboard` on PATH") }
+      assert_match(/✗.*`switchboard` on PATH is #{Regexp.escape(File.join(bin, 'switchboard'))}, another program — put Homebrew's bin earlier on PATH/, line)
+      refute_includes line, "rm "
+    end
+
+    # Value: protects=a clone's tracked bin/switchboard from doctor's `rm` advice when the clone's
+    # bin/ itself is on PATH; fails_when=the symlink check is dropped (doctor tells the user to delete
+    # the clone's real launcher); why_new=the shadow test only puts symlinks to a clone on PATH; seam=none
+    def test_doctor_homebrew_path_never_offers_rm_for_a_clones_own_launcher
+      clone = path("clone").tap { |d| FileUtils.mkdir_p(File.join(d, "bin")); FileUtils.mkdir_p(File.join(d, "lib")) }
+      File.write(File.join(clone, "lib", "switchboard.rb"), "")
+      launcher = File.join(clone, "bin", "switchboard")
+      File.write(launcher, "#!/bin/sh\n").then { File.chmod(0o755, launcher) }
+      ENV["PATH"] = File.join(clone, "bin")
+      out = stub_method(Installer, :homebrew?, -> { true }) { capture { CLI.send(:doctor_symlinks) } }
+      line = out.lines.find { |l| l.include?("`switchboard` on PATH") }
+      assert_match(/✗.*shadows Homebrew's — take #{Regexp.escape(File.join(clone, 'bin'))} off your PATH/, line)
+      refute_includes out, "rm "
+    end
+
     # A missing `sb` is a soft note, never a hard ✗ — doctor must agree with
     # install that the optional shorthand isn't a failure.
     def test_doctor_marks_missing_sb_as_optional_not_a_failure

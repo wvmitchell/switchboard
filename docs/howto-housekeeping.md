@@ -79,7 +79,12 @@ off. It checks, with the fix inline for anything red:
 
 - `tmux` / `git` / `gh` on PATH, and tmux ≥ 3.0.
 - Config present and parseable (reports a parse error and the file to fix).
-- PATH symlinks (`switchboard` required; `sb` optional).
+- PATH symlinks (`switchboard` required; `sb` optional). Under Homebrew it checks
+  instead that `switchboard` (and `sb`) on PATH is this install: a shadowing clone
+  link gets an `rm`, a clone's `bin/` directory on PATH gets "take it off PATH",
+  and another program gets "put Homebrew's bin earlier".
+- Which install your tmux.conf is wired to: this one (✓), another that still
+  exists (a note; `switchboard install` re-wires it), or one that's gone (✗).
 - tmux wiring: the fragment is sourced, the keys are bound, and the hooks are
   **live in the running server** — not just present in config. These diverge
   after a `git pull` until tmux reloads; `doctor` tells you when a reload is
@@ -95,6 +100,8 @@ off. It checks, with the fix inline for anything red:
 
 ## Troubleshooting
 
+- **Moved from a clone to Homebrew and things half-work.** See
+  [How to install, upgrade, or move to Homebrew](howto-install-and-upgrade.md#move-from-a-git-clone-to-homebrew).
 - **`prefix-s` stopped working after a `git pull`.** The running tmux has the old
   bindings. `switchboard install` (idempotent) or `tmux source-file <your conf>`
   reloads them. `doctor` confirms with "NOT bound — running tmux is stale".

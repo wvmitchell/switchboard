@@ -44,8 +44,18 @@ module Switchboard
 
     # Repo root from this file (lib/switchboard/installer.rb → ../..). Works
     # through a PATH symlink: require resolves to the real file, so __dir__ is
-    # the real lib dir.
+    # the real lib dir — which StablePath lifts out of a versioned Homebrew keg.
     def repo_root
+      StablePath.resolve(real_root)
+    end
+
+    # Installed by Homebrew, which already put `switchboard` on PATH — so install
+    # skips the ~/.local/bin symlinks (and uninstall leaves PATH to `brew uninstall`).
+    def homebrew?
+      StablePath.homebrew?(real_root)
+    end
+
+    def real_root
       File.expand_path("../..", __dir__)
     end
 
@@ -91,6 +101,9 @@ module Switchboard
     def marker_line
       "run-shell '#{Shellwords.escape(fragment_path)}'"
     end
+
+    # The inverse of marker_line, kept beside it so writer and parser can't drift.
+    MARKER_LINE = /\Arun-shell '(.+)'\z/
 
     # A quote in the repo path can't be nested safely in the two quoting contexts
     # we emit: a single quote closes the marker line's tmux '...' early, a double
@@ -165,6 +178,8 @@ module Switchboard
     end
 
     def step_symlink
+      return ok("on PATH via Homebrew: #{bin_path}") if homebrew?
+
       FileUtils.mkdir_p(bin_dir)
       SYMLINK_NAMES.each { |name| link_one(symlink_path(name), primary: name == COMMAND_NAME) }
     end
@@ -259,6 +274,8 @@ module Switchboard
     end
 
     def unlink_symlink
+      return note("PATH: installed by Homebrew — `brew uninstall switchboard` removes the command") if homebrew?
+
       symlink_paths.each { |link| unlink_one(link) }
     end
 
@@ -481,6 +498,20 @@ module Switchboard
       false
     end
 
+    # The fragment path our marker block sources, or nil when not wired. Lets doctor
+    # tell "wired to THIS install" from "wired to another one" — e.g. a clone left
+    # behind after moving to brew, which keeps running until `install` re-wires.
+    def wired_fragment(conf = nil)
+      c = tmux_conf(conf)
+      return nil unless File.exist?(c)
+
+      block = File.read(c)[/#{Regexp.escape(BEGIN_MARK)}(.*?)#{Regexp.escape(END_MARK)}/m, 1]
+      escaped = block&.lines&.map(&:strip)&.filter_map { |l| l[MARKER_LINE, 1] }&.first
+      escaped && Shellwords.split(escaped).first
+    rescue StandardError
+      nil
+    end
+
     # Major.minor as a Float (e.g. "3.6a" → 3.6); nil if tmux is absent.
     def tmux_version
       parse_version(`tmux -V 2>/dev/null`)
@@ -561,6 +592,7 @@ module Switchboard
     end
 
     def warn_path
+      return if homebrew?
       return if ENV["PATH"].to_s.split(File::PATH_SEPARATOR).map { |p| File.expand_path(p) }.include?(bin_dir)
 
       note "#{bin_dir} isn't on your PATH — add this to your shell profile:"
