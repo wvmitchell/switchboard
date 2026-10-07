@@ -912,22 +912,36 @@ module Switchboard
       end
     end
 
-    # Homebrew owns PATH, so the check is just that `switchboard` resolves to it.
+    # Homebrew owns PATH: `switchboard` must resolve to brew's copy, `sb` should. A clone's
+    # leftover link ahead of brew's is reported with an rm for just that link (the clone's
+    # `uninstall` would also strip the tmux/codex wiring brew now owns). Some other program
+    # named `sb` is left alone: the shorthand is optional, as in clone mode.
     def doctor_homebrew_path
       Installer::SYMLINK_NAMES.each do |name|
         found = `command -v #{name} 2>/dev/null`.strip
-        if found.empty? && name != Installer::COMMAND_NAME
-          puts "  \e[33m–\e[0m `#{name}` isn't on PATH (optional shorthand)"
-        elsif found.empty?
-          puts row(false, "Homebrew install, but `switchboard` isn't on PATH — run `brew link switchboard`")
+        required = name == Installer::COMMAND_NAME
+        if found.empty?
+          puts(required ? row(false, "Homebrew install, but `switchboard` isn't on PATH — run `brew link switchboard`")
+                        : "  \e[33m–\e[0m `#{name}` isn't on PATH (optional shorthand)")
         elsif File.identical?(found, Installer.bin_path)
           puts row(true, "on PATH via Homebrew: #{found}")
-        else
-          # Most likely a clone's ~/.local/bin link left ahead of brew's bin on PATH. Just the
-          # link: the clone's `uninstall` would also strip the tmux/codex wiring brew now owns.
+        elsif switchboard_bin?(found)
           puts row(false, "`#{name}` on PATH is #{found}, which shadows Homebrew's — delete that link (`rm #{Shellwords.escape(found)}`)")
+        elsif required
+          puts row(false, "`switchboard` on PATH is #{found}, another program — put Homebrew's bin earlier on PATH")
+        else
+          puts "  \e[33m–\e[0m `#{name}` on PATH is #{found} (another program; optional shorthand)"
         end
       end
+    end
+
+    # A switchboard launcher (a clone's bin/switchboard, or a link to one): its checkout
+    # sits beside it with lib/switchboard.rb.
+    def switchboard_bin?(path)
+      real = File.realpath(path)
+      File.basename(real) == "switchboard" && File.file?(File.expand_path("../lib/switchboard.rb", File.dirname(real)))
+    rescue SystemCallError
+      false
     end
 
     # ✓/✗ status line shared by the doctor checks.

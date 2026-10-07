@@ -501,21 +501,36 @@ module Switchboard
     # and a shadowing clone link get the same (wrong) `brew link` advice, or either reads ✓;
     # why_new=the brew dispatch test only matches /Homebrew/, present in every row; seam=none
     def test_doctor_homebrew_path_fails_when_switchboard_is_missing_or_shadowed
-      ENV["PATH"] = path("empty-bin").tap { |d| FileUtils.mkdir_p(d) }
-      out = stub_method(Installer, :homebrew?, -> { true }) { capture { CLI.send(:doctor_symlinks) } }
+      bin = path("my bin").tap { |d| FileUtils.mkdir_p(d) } # a space, so the rm hint must quote
+      ENV["PATH"] = bin
+      doctor = -> { stub_method(Installer, :homebrew?, -> { true }) { capture { CLI.send(:doctor_symlinks) } } }
+      out = doctor.call
       assert_match(/✗.*isn't on PATH — run `brew link switchboard`/, out)
+      assert_equal 1, out.scan("brew link").size, "a missing sb stays a soft note, not a second ✗"
+      sb_line = out.lines.find { |l| l.include?("`sb`") }
+      assert_includes sb_line, "optional shorthand"
+      refute_includes sb_line, "✗"
 
-      shadow = File.join(ENV["PATH"], "switchboard").tap { |f| File.write(f, "#!/bin/sh\n"); File.chmod(0o755, f) }
-      out = stub_method(Installer, :homebrew?, -> { true }) { capture { CLI.send(:doctor_symlinks) } }
-      assert_match(/✗.*on PATH is #{Regexp.escape(shadow)}, which shadows Homebrew's/, out)
-      assert_includes out, "`rm #{shadow}`"
+      # A clone's leftover links ahead of brew's: ✗ with an rm for each, quoted.
+      clone = path("old clone").tap { |d| FileUtils.mkdir_p(File.join(d, "bin")); FileUtils.mkdir_p(File.join(d, "lib")) }
+      File.write(File.join(clone, "lib", "switchboard.rb"), "")
+      File.write(File.join(clone, "bin", "switchboard"), "#!/bin/sh\n").then { File.chmod(0o755, File.join(clone, "bin", "switchboard")) }
+      %w[switchboard sb].each { |n| File.symlink(File.join(clone, "bin", "switchboard"), File.join(bin, n)) }
+      out = doctor.call
+      %w[switchboard sb].each do |n|
+        link = File.join(bin, n)
+        assert_match(/✗.*`#{n}` on PATH is #{Regexp.escape(link)}, which shadows Homebrew's/, out)
+        assert_includes out, "`rm #{Shellwords.escape(link)}`"
+      end
       refute_includes out, "switchboard uninstall"
-      refute_includes out, "brew link"
 
-      # The `sb` shorthand is checked too: a clone's `sb` keeps running the clone.
-      sb = File.join(ENV["PATH"], "sb").tap { |f| File.write(f, "#!/bin/sh\n"); File.chmod(0o755, f) }
-      out = stub_method(Installer, :homebrew?, -> { true }) { capture { CLI.send(:doctor_symlinks) } }
-      assert_match(/✗.*`sb` on PATH is #{Regexp.escape(sb)}, which shadows Homebrew's/, out)
+      # Some other program named sb is never flagged or offered for deletion.
+      File.delete(File.join(bin, "sb"))
+      File.write(File.join(bin, "sb"), "#!/bin/sh\n").then { File.chmod(0o755, File.join(bin, "sb")) }
+      sb_line = doctor.call.lines.find { |l| l.include?("`sb`") }
+      assert_includes sb_line, "another program; optional shorthand"
+      refute_includes sb_line, "✗"
+      refute_includes sb_line, "rm "
     end
 
     # A missing `sb` is a soft note, never a hard ✗ — doctor must agree with

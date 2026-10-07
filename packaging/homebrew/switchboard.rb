@@ -33,10 +33,11 @@ class Switchboard < Formula
       checks the setup.
 
       Moving from a git clone? Run `switchboard uninstall` from the clone
-      first, then `switchboard install` here, then `switchboard enable-hooks`
-      in each existing worktree so its agent hooks point here too. Finally
-      press prefix-s twice in each session so its sidebars restart from this
-      install. Full steps: docs/howto-install-and-upgrade.md in the repo.
+      first, then `switchboard install` here (inside tmux, or reload tmux
+      after), then `switchboard enable-hooks` in each existing worktree. Finally
+      press your sidebar toggle key (prefix-s by default) twice in each session
+      so its sidebars restart from this install. Full steps:
+      docs/howto-install-and-upgrade.md in the repo.
     EOS
   end
 

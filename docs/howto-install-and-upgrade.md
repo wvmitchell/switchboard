@@ -72,7 +72,10 @@ the new version, so nothing goes stale when the old version is cleaned up. See
 
    Your config and agent state are left alone.
 
-2. Install with Homebrew and wire it up:
+2. Install with Homebrew and wire it up. Run `switchboard install` from inside
+   tmux (step 1 unbound the old keys in the running server, and install only
+   reloads tmux when it runs inside it), or reload tmux afterwards with
+   `tmux source-file ~/.tmux.conf`:
 
    ```sh
    brew install wvmitchell/switchboard/switchboard
@@ -103,8 +106,10 @@ the new version, so nothing goes stale when the old version is cleaned up. See
 4. Restart the sidebars so they run the Homebrew copy. A running sidebar keeps the
    path of the binary that started it, and would keep spawning the clone's
    sidebars (and wiring new worktrees to it). In each switchboard session, press
-   `prefix-s` twice: once to dismiss its sidebars, once to bring them back from the
-   new install. Then restart `claude` in each workspace (or run `/hooks`) so it
+   your sidebar toggle key (`prefix-s` unless you remapped it) twice: once to
+   dismiss its sidebars, once to bring them back from the new install. (If a
+   session's sidebar was hidden, the first press brings back a new one, so press
+   it once more if you want it hidden again.) Then restart `claude` in each workspace (or run `/hooks`) so it
    picks up the hooks from step 3.
 
    To restart everything at once instead, `switchboard quit` closes every
