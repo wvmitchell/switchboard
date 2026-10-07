@@ -47,7 +47,8 @@ bin/test-smoke             # run the real-tmux smoke layer (boots a server; need
 ```
 
 Setup is one command: `git clone && bin/switchboard install` (or `brew tap
-wvmitchell/switchboard && brew install switchboard && switchboard install`) (`Installer`, `installer.rb`). It symlinks `bin/switchboard` to `~/.local/bin` (plus a short
+wvmitchell/switchboard && brew trust wvmitchell/switchboard && brew install switchboard &&
+switchboard install`) (`Installer`, `installer.rb`). It symlinks `bin/switchboard` to `~/.local/bin` (plus a short
 `sb` alias beside it; a collided `sb` is skipped, the real command still
 installs), adds a
 marker-delimited line to the tmux.conf tmux actually loads (found via

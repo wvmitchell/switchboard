@@ -11,12 +11,16 @@ clone install over to Homebrew, or remove it cleanly.
 
 ## Install with Homebrew
 
-1. Add the tap once, then install by the short name:
+1. Add the tap once, trust it, then install by the short name:
 
    ```sh
    brew tap wvmitchell/switchboard
+   brew trust wvmitchell/switchboard
    brew install switchboard
    ```
+
+   Recent Homebrew refuses to load formulas from a third-party tap until you trust
+   it. If yours says `Unknown command: trust`, it's older and doesn't need the step.
 
    This puts `switchboard` and the short alias `sb` on your PATH. With the tap
    added, `brew upgrade switchboard` and `brew uninstall switchboard` work by the
@@ -82,6 +86,7 @@ the new version, so nothing goes stale when the old version is cleaned up. See
 
    ```sh
    brew tap wvmitchell/switchboard
+   brew trust wvmitchell/switchboard
    brew install switchboard
    switchboard install
    ```
@@ -158,6 +163,9 @@ switchboard doctor
 
 ## Troubleshooting
 
+- **`Refusing to load formula … from untrusted tap wvmitchell/switchboard`.**
+  Homebrew wants the tap trusted first: run `brew trust wvmitchell/switchboard`,
+  then `brew install switchboard` again.
 - **`– tmux is wired to another install (…)`.** Your tmux.conf still sources a
   different copy, usually the clone you moved from. Run `switchboard install`
   from the install you want to keep.
