@@ -32,8 +32,29 @@ module Switchboard
       assert_equal ["/a"], Sidebar::Edges.completion_edges({ "/a" => :thinking }, { "/a" => :done })
     end
 
+    # Claude's PermissionRequest writes waiting, and the delayed Notification(permission_prompt)
+    # writes it again ~6s later: staying waiting must not chime or bold a second time.
+    def test_staying_waiting_is_not_an_edge
+      assert_empty Sidebar::Edges.completion_edges({ "/a" => :waiting }, { "/a" => :waiting })
+    end
+
+    # Leaving waiting: the approved tool's PostToolUse (→ thinking) is silent; the turn that then
+    # finishes, or idle_prompt after an Esc rejection (→ done), rings and bolds once.
+    def test_leaving_waiting_rings_only_on_done
+      assert_empty Sidebar::Edges.completion_edges({ "/a" => :waiting }, { "/a" => :thinking })
+      assert_equal ["/a"], Sidebar::Edges.completion_edges({ "/a" => :waiting }, { "/a" => :done })
+    end
+
     def test_entering_waiting_is_an_edge
       assert_equal ["/a"], Sidebar::Edges.completion_edges({ "/a" => :thinking }, { "/a" => :waiting })
+      # PermissionRequest fires the instant a prompt opens, so a whole thinking phase can fall
+      # between two scans: done → waiting still rings.
+      assert_equal ["/a"], Sidebar::Edges.completion_edges({ "/a" => :done }, { "/a" => :waiting })
+    end
+
+    # A prompt already open when a workspace is first seen seeds the baseline silently, like done.
+    def test_first_appearance_at_waiting_is_not_an_edge
+      assert_empty Sidebar::Edges.completion_edges({}, { "/a" => :waiting })
     end
 
     def test_first_appearance_at_done_is_not_an_edge
@@ -42,6 +63,14 @@ module Switchboard
       # not ring the completion sound or spawn a PR refresh. (The post-seed
       # completion sequence is covered by the on_scan integration tests.)
       assert_empty Sidebar::Edges.completion_edges({}, { "/a" => :done })
+    end
+
+    # Non-resting targets and vanishing paths never ring, whatever came before.
+    def test_no_edge_without_a_resting_target
+      assert_empty Sidebar::Edges.completion_edges({}, { "/a" => :thinking }), "first seen thinking"
+      assert_empty Sidebar::Edges.completion_edges({ "/a" => :thinking }, { "/a" => :thinking }), "steady thinking"
+      assert_empty Sidebar::Edges.completion_edges({ "/a" => :waiting }, {}), "an open prompt aging out"
+      assert_empty Sidebar::Edges.completion_edges({}, {})
     end
 
     def test_steady_done_is_not_an_edge

@@ -617,6 +617,39 @@ module Switchboard
       assert reensured, "install re-ensures an already-installed block"
     end
 
+    # Value: protects=install failing (CLI exit 1) only when the codex write was attempted and
+    # refused, after every other step ran; fails_when=install's result ignores the codex step, or
+    # a declined prompt/absent codex reads as a failure; why_new=only the printed ✗ was pinned;
+    # seam=stub install_global; no_claim=the CLI's exit itself (CLI.run maps false → exit 1)
+    def test_install_returns_false_only_for_a_refused_codex_write
+      codex_home!
+      run = ->(**kw) { got = nil; silently { got = Installer.install(no_tmux: true, **kw) }; got }
+      with_codex do
+        refusals = { :unsafe => false, :conflict => false, :collision => false, nil => false, CodexHook.config_path => true }
+        refusals.each do |result, want|
+          assert_equal want, stub_method(CodexHook, :install_global, -> { result }) { run.(codex_hooks: true) }, result.inspect
+        end
+        assert_equal true, run.(codex_hooks: false), "declined: not a failure"
+        # The closing line agrees with the exit status: no plain "Done" after a refusal.
+        { :unsafe => true, CodexHook.config_path => false }.each do |result, flagged|
+          out = stub_method(CodexHook, :install_global, -> { result }) { silently { Installer.install(no_tmux: true, codex_hooks: true) } }
+          assert_equal flagged, out.include?("Done, except the codex hooks"), result.inspect
+        end
+
+        CodexHook.install_global # already opted in: a plain `install` takes the re-ensure branch
+        refusals.each do |result, want|
+          assert_equal want, stub_method(CodexHook, :install_global, -> { result }) { run.(codex_hooks: nil) }, "re-ensure #{result.inspect}"
+        end
+        # --no-codex-hooks is hands off even with a block installed: no rewrite, so no refusal.
+        stub_method(CodexHook, :install_global, -> { flunk "--no-codex-hooks must not rewrite the block" }) do
+          assert_equal true, run.(codex_hooks: false)
+        end
+      end
+      stub_method(Installer, :codex_present?, -> { false }) do
+        assert_equal true, run.(codex_hooks: true), "no codex: not a failure"
+      end
+    end
+
     def test_prompt_yes_defaults_false_without_a_tty
       # The test runner's stdin isn't a tty, which is exactly the scripted/CI case.
       refute Installer.prompt_yes?("write global config?")
@@ -636,6 +669,13 @@ module Switchboard
       assert_includes File.read(CodexHook.config_path), %(model = "gpt-5.5"), "foreign config kept"
     end
 
+    def test_step_codex_unhooks_is_a_noop_without_a_block
+      codex_home!
+      stub_method(CodexHook, :remove_global, -> { flunk "no block, nothing to remove" }) do
+        assert Installer.step_codex_unhooks, "nothing to do counts as done"
+      end
+    end
+
     # Value: protects=uninstall's report matching what happened to the codex config;
     # fails_when=step_codex_unhooks prints ✓ without checking remove_global (the false
     # "removed" a real uninstall printed); why_new=the test above only covers a removal
@@ -645,9 +685,94 @@ module Switchboard
       with_codex { CodexHook.install_global }
       conf = path("tmux.conf")
       File.write(conf, "# mine\n")
+      # A FAILED write (remove_global's rescue → false) would fail again on a re-run, so it
+      # must not wedge uninstall: report it, don't claim removal, and finish the rest.
       out = stub_method(CodexHook, :remove_global, -> { false }) { silently { Installer.uninstall(conf: conf) } }
-      assert_includes out, "couldn't remove the codex hooks block"
+      assert_includes out, "codex hooks block is still there"
+      # Never "delete it by hand": codex keeps its own tables inside the block (plan R8).
+      refute_match(/by hand|delete/i, out)
+      assert_includes out, "#{File.dirname(CodexHook.config_path)} (and the file) writable"
+      assert_includes out, "#{File.join(Installer.repo_root, 'bin', 'switchboard')} uninstall"
       refute_includes out, "removed global codex hooks"
+      refute_includes out, "Stopped before removing anything else"
+      assert_includes out, "Done."
+    end
+
+    # Value: protects=a refused or raced uninstall never reads as success and never advises
+    # deleting the block by hand (codex keeps its own tables inside it); fails_when=a
+    # truthy :unsafe/:conflict falls into the ✓ branch, or the old "delete it by hand"
+    # advice returns; why_new=refusals didn't exist; seam=stub_method on remove_global
+    def test_uninstall_reports_refusals_without_destructive_advice
+      codex_home!
+      with_codex { CodexHook.install_global }
+      conf = path("tmux.conf")
+      File.write(conf, "# mine\n")
+      # Value: protects=a refusal the user can fix stops uninstall with "re-run" advice, never
+      # the old "delete it by hand"; fails_when=the stop message is dropped or by-hand advice
+      # returns; why_new=only the order was pinned; seam=stub remove_global. (A write error,
+      # remove_global → false, continues instead — test_uninstall_reports_a_codex_block_…)
+      { unsafe: "left the codex hooks block", conflict: "changed while uninstalling" }.each do |result, text|
+        out = stub_method(CodexHook, :remove_global, -> { result }) { silently { Installer.uninstall(conf: conf) } }
+        assert_includes out, text
+        refute_includes out, "removed global codex hooks"
+        refute_includes out, "by hand"
+        assert_includes out, "Stopped before removing anything else", result.inspect
+      end
+    end
+
+    # Value: protects=a codex refusal's "re-run uninstall" advice still works: on a refusal
+    # uninstall stops before removing the PATH command (or anything else), with no false
+    # "Done."; on success codex goes first; fails_when=uninstall carries on after a refusal or
+    # unlinks first; why_new=no test pinned the order; seam=stub remove_global/unlink_symlink
+    def test_uninstall_stops_on_a_codex_refusal_and_handles_codex_first
+      codex_home!
+      with_codex { CodexHook.install_global }
+      conf = path("tmux.conf")
+      File.write(conf, "# mine\n")
+      { unsafe: %i[codex], true => %i[codex unlink] }.each do |result, want|
+        order = []
+        out = stub_method(CodexHook, :remove_global, -> { order << :codex; result }) do
+          stub_method(Installer, :unlink_symlink, -> { order << :unlink }) { silently { @uninstalled = Installer.uninstall(conf: conf) } }
+        end
+        assert_equal want, order, result.inspect
+        assert_equal result == true, out.include?("Done."), "no false Done. after a refusal (#{result.inspect})"
+        # The CLI exits 1 on false (scripts must see the stop), 0 on true.
+        assert_equal result == true, @uninstalled, "uninstall's result (#{result.inspect})"
+      end
+    end
+
+    # Value: protects=install refusals show as failures, not "installed ✓"; fails_when=the
+    # unknown-result `else` swallows :unsafe/:conflict again; why_new=report_codex_install
+    # formerly knew only :collision/:corrupt/nil; seam=none (pure reporter)
+    def test_install_reports_unsafe_and_conflict_as_failures
+      { unsafe: "can't be rewritten safely", conflict: "changed while switchboard was writing it",
+        collision: "already has its own [hooks]", nil => "couldn't write" }.each do |result, text|
+        out = silently { Installer.report_codex_install(result, reensure: true) }
+        assert_includes out, text
+        refute_match(/re-ensured|installed:/, out)
+        # Value: protects=every refusal renders as a failure (✗), never a success tick;
+        # fails_when=a refusal arm is switched to `ok`; why_new=the text was pinned, the glyph
+        # wasn't; seam=none; no_claim=exit status (report_codex_install only prints)
+        assert_includes out, "\e[31m✗\e[0m", result.inspect
+        refute_includes out, "\e[32m✓\e[0m", result.inspect
+      end
+      # enable-hooks shares this reporter: a refusal there tells you to re-run enable-hooks.
+      %i[unsafe conflict].each do |result|
+        out = silently { Installer.report_codex_install(result, reensure: true, verb: "enable-hooks") }
+        assert_includes out, "`switchboard enable-hooks`", result.to_s
+        refute_includes out, "`switchboard install`", result.to_s
+      end
+    end
+
+    # The installer runs in a fresh ruby for `switchboard install`'s helpers and for standalone
+    # requires; every constant it reaches must be required by the file itself, not only by
+    # lib/switchboard.rb (StablePath once wasn't — caught by QA in the uninstall error path).
+    def test_installer_loads_on_its_own
+      lib = File.expand_path("../lib", __dir__)
+      out = IO.popen([RbConfig.ruby, "-I#{lib}", "-e", 'require "switchboard/installer"; puts Switchboard::Installer.repo_root'],
+                     err: %i[child out], &:read)
+      assert $?.success?, out
+      assert_equal File.expand_path("..", __dir__), File.realpath(out.strip)
     end
 
     private

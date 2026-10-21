@@ -12,18 +12,20 @@ module Switchboard
     def test_clears_on_new_or_resumed_process_only
       assert MonitoringNudge.clears_on?("startup"), "fresh process -> clear any stale marker"
       assert MonitoringNudge.clears_on?("resume"),  "resumed process (old loop dead) -> clear"
+      assert MonitoringNudge.clears_on?("fork"),    "forked session = new process (Claude >= 2.1.214, Codex >= 0.155) -> clear"
       refute MonitoringNudge.clears_on?("compact"), "compact continues the session -> DON'T clear a live monitor"
-      refute MonitoringNudge.clears_on?("clear"),   "same process continues"
+      refute MonitoringNudge.clears_on?("clear"),   "SessionStart(clear) itself doesn't clear (the prior SessionEnd does)"
       refute MonitoringNudge.clears_on?(nil),       "unknown source -> don't clear"
     end
 
-    # The nudge re-teaches on compact too — compaction can drop the original instruction,
-    # so an agent that sets a monitor after a compaction still learns the convention.
-    def test_nudges_on_startup_resume_and_compact
+    # The nudge re-teaches on compact and /clear too — both drop the original instruction,
+    # so an agent that sets a monitor afterwards still learns the convention.
+    def test_nudges_on_startup_resume_fork_clear_and_compact
       assert MonitoringNudge.nudges_on?("startup"), "teach on a fresh start"
       assert MonitoringNudge.nudges_on?("resume"),  "re-teach on resume"
+      assert MonitoringNudge.nudges_on?("fork"),    "re-teach in a forked session"
       assert MonitoringNudge.nudges_on?("compact"), "re-teach after compaction (the key case)"
-      refute MonitoringNudge.nudges_on?("clear"),   "deliberately low-context -> no nudge (like rename)"
+      assert MonitoringNudge.nudges_on?("clear"),   "re-teach after /clear (context wiped, like compact)"
       refute MonitoringNudge.nudges_on?(nil),       "unknown source -> no nudge"
     end
 

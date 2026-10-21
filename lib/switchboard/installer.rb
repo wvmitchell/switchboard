@@ -4,6 +4,7 @@ require "fileutils"
 require "shellwords"
 require_relative "marker_block"
 require_relative "codex_hook"
+require_relative "stable_path"
 
 module Switchboard
   # Stands switchboard up from a fresh clone: a `switchboard` symlink on PATH
@@ -121,12 +122,14 @@ module Switchboard
       step_symlink
       wire_tmux(no_tmux: no_tmux, print_tmux: print_tmux, conf: conf)
       step_init
-      step_codex_hooks(codex_hooks)
+      codex_ok = step_codex_hooks(codex_hooks) != false # a declined prompt or no codex is fine
       warn_path
       warn_tmux_version
       key = Config.new.tmux_key("toggle")
-      puts "\nDone — run `switchboard` (or `sb`) from any shell to start; press prefix-#{key} to toggle the sidebar inside tmux."
+      done = codex_ok ? "Done" : "Done, except the codex hooks (✗ above)"
+      puts "\n#{done} — run `switchboard` (or `sb`) from any shell to start; press prefix-#{key} to toggle the sidebar inside tmux."
       puts "(If the key doesn't respond yet, reload tmux: `tmux source-file <your conf>`.)"
+      codex_ok # false ⇒ the CLI exits 1: the codex write was attempted and refused
     end
 
     # Codex can't discover project-local hooks in linked worktrees, so its agent-state
@@ -135,13 +138,13 @@ module Switchboard
     # `consent`: nil ⇒ prompt, true ⇒ yes (`--codex-hooks`), false ⇒ skip.
     def step_codex_hooks(consent)
       return unless codex_present?
+      return if consent == false # --no-codex-hooks: hands off, even a block that's already there
 
       # Already opted in → re-ensure the block (idempotent + byte-stable, so codex's
       # hash-keyed `/hooks` trust survives) so `install` doubles as a repair path: it
       # refreshes a block left stale by an upgrade or a moved reporter script. No re-prompt
       # — consent was given when it was first added.
       return report_codex_install(CodexHook.install_global, reensure: true) if CodexHook.installed?
-      return if consent == false
 
       ok_to_write = consent || prompt_yes?("Install codex hooks globally for agent status monitoring? Writes a managed block to #{CodexHook.config_path}.")
       unless ok_to_write
@@ -152,15 +155,19 @@ module Switchboard
       report_codex_install(CodexHook.install_global, reensure: false)
     end
 
-    def report_codex_install(result, reensure:)
+    def report_codex_install(result, reensure:, verb: "install")
       case result
       when :collision then bad "codex hooks: #{CodexHook.config_path} already has its own [hooks] — left untouched"
-      when :corrupt   then bad "codex hooks: post-write sanity failed — restored your config"
+      when :unsafe    then bad "codex hooks: left #{CodexHook.config_path} untouched, can't be rewritten safely — " \
+                               "#{CodexHook::UNSAFE_ADVICE} `switchboard #{verb}`"
+      when :conflict  then bad "codex hooks: #{CodexHook.config_path} changed while switchboard was writing it (codex wrote to it) — re-run `switchboard #{verb}`"
       when nil        then bad "codex hooks: couldn't write #{CodexHook.config_path}"
       else
         ok(reensure ? "codex hooks re-ensured (global): #{CodexHook.config_path}" : "codex hooks installed: #{CodexHook.config_path}")
         note "one-time: run `/hooks` in codex and trust the switchboard hooks (or start codex with --dangerously-bypass-hook-trust)" unless reensure
+        return true
       end
+      false
     end
 
     def codex_present?
@@ -257,23 +264,42 @@ module Switchboard
 
     def uninstall(conf: nil)
       puts "switchboard uninstall"
+      # Codex first, and stop on a refusal: its advice is "re-run uninstall", so nothing else
+      # (the PATH command included) may be removed before the user can follow it.
+      unless step_codex_unhooks
+        puts "\nStopped before removing anything else — fix the codex block above, then re-run `switchboard uninstall`."
+        return false # nothing was removed: the CLI exits 1
+      end
       unlink_symlink
       unwire_tmux(conf)
-      step_codex_unhooks
       teardown_live
       puts "\nDone. Your config (#{Config.path}) and agent state were left untouched."
+      true
     end
 
     # Remove the global codex [hooks] block (the one place codex delivery is global). The
-    # per-worktree disable-hooks deliberately leaves it; full teardown removes it.
+    # per-worktree disable-hooks deliberately leaves it; full teardown removes it. False only on
+    # a refusal the user can fix and re-run (:unsafe/:conflict) — the caller stops there.
     def step_codex_unhooks
-      return unless CodexHook.installed?
+      return true unless CodexHook.installed?
 
-      if CodexHook.remove_global
-        ok "removed global codex hooks from #{CodexHook.config_path}"
+      # Never advise deleting the block by hand: codex appends its own tables inside it,
+      # and removing the region would take them too.
+      case (result = CodexHook.remove_global)
+      when true then ok "removed global codex hooks from #{CodexHook.config_path}"
+      when :unsafe
+        bad "left the codex hooks block in #{CodexHook.config_path} in place, can't be removed safely — " \
+            "#{CodexHook::UNSAFE_ADVICE} uninstall"
+      when :conflict then bad "#{CodexHook.config_path} changed while uninstalling (codex wrote to it) — re-run uninstall"
       else
-        bad "couldn't remove the codex hooks block from #{CodexHook.config_path} — delete it by hand (between its # >>> / # <<< markers)"
+        # A write that FAILED (read-only/symlinked config) would fail again on a re-run, so
+        # stopping here would wedge uninstall forever: report it and let the rest proceed.
+        bad "couldn't read or write #{CodexHook.config_path}, so its codex hooks block is still there and " \
+            "codex will keep running its state reporter — make #{File.dirname(MarkerBlock.real_target(CodexHook.config_path))} " \
+            "(and the file) writable, then run " \
+            "`#{bin_path} uninstall` again"
       end
+      result != :unsafe && result != :conflict # only a refusal the user can fix and re-run stops uninstall
     end
 
     def unlink_symlink

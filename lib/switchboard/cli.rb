@@ -17,8 +17,8 @@ module Switchboard
       when nil                 then start
       when "toggle-sidebar"    then toggle_sidebar
       when "home"              then Tmux.go_home
-      when "install"           then install(argv.drop(1))
-      when "uninstall"         then uninstall(argv.drop(1))
+      when "install"           then exit(1) if install(argv.drop(1)) == false
+      when "uninstall"         then exit(1) unless uninstall(argv.drop(1))
       when "init"              then init
       when "config", "edit"    then edit_config
       when "add"               then add_project(argv[1], argv[2], argv[3])
@@ -27,7 +27,7 @@ module Switchboard
       when "create"            then create_project(argv[1])
       when "refresh"           then refresh(*refresh_args(argv))
       when "reap-worktree"     then reap_worktree(argv[1], argv[2], argv[3])
-      when "enable-hooks"      then enable_hooks(argv[1])
+      when "enable-hooks"      then exit(1) if enable_hooks(argv[1]) == false
       when "disable-hooks"     then disable_hooks(argv[1])
       when "rename"            then exit(1) unless rename(argv[1])
       when "rename-nudge"      then rename_nudge(argv.drop(1))
@@ -272,12 +272,12 @@ module Switchboard
 
     # SessionStart / SessionEnd hook entry (the Layer-2 background-presence handler, wired
     # by HookFile.command_entries). Makes "monitoring" a per-session declaration: clears
-    # this worktree's marker on a new/resumed session boundary — so a resumed agent (its
-    # old loop dead) must re-declare — and (re)plants the self-report nudge. The clear and
-    # the nudge have DIFFERENT source gates on purpose (see MonitoringNudge): a `compact`
-    # does NOT clear (the same process continues, a live monitor's marker must survive) but
-    # DOES re-nudge (compaction can drop the original instruction, so an agent that sets a
-    # monitor after compaction still learns the convention). Gated on `background_presence`.
+    # this worktree's marker on a new/resumed/forked session boundary — so a resumed agent
+    # (its old loop dead) must re-declare — and (re)plants the self-report nudge. The clear
+    # and the nudge have DIFFERENT source gates on purpose (MonitoringNudge::CLEARS_ON /
+    # NUDGES_ON): `compact` and `clear` do NOT clear here (compaction continues the same
+    # process; /clear's SessionEnd already dropped the marker) but DO re-nudge (both drop the
+    # original instruction from context). Gated on `background_presence`.
     # Always exits 0 with only the JSON (or nothing) on stdout — a stray byte poisons the
     # agent even at exit 0, so the body is rescued to silence.
     def monitoring_nudge(args = [])
@@ -295,8 +295,8 @@ module Switchboard
       end
 
       source = payload["source"]
-      Monitoring.clear(wt.path) if MonitoringNudge.clears_on?(source) # new/resumed process only
-      puts MonitoringNudge.context_json if MonitoringNudge.nudges_on?(source) # + compact: re-teach
+      Monitoring.clear(wt.path) if MonitoringNudge.clears_on?(source) # new/resumed/forked process only
+      puts MonitoringNudge.context_json if MonitoringNudge.nudges_on?(source) # + clear/compact: re-teach
     rescue StandardError
       nil # a hook must never error a session boundary; emit nothing on any fault
     end
@@ -404,8 +404,13 @@ module Switchboard
       # Codex is GLOBAL (one ~/.codex/config.toml block — codex can't see project hooks in
       # linked worktrees). Re-ensure it if already opted in (self-heal); else point at install.
       if CodexHook.installed?
-        CodexHook.install_global
-        puts "  codex:  #{CodexHook.config_path} (global) — run `/hooks` in codex to approve"
+        result = CodexHook.install_global
+        if result == CodexHook.config_path
+          puts "  codex:  #{CodexHook.config_path} (global) — run `/hooks` in codex to approve"
+        else
+          Installer.report_codex_install(result, reensure: true, verb: "enable-hooks") # a refusal must not read as success
+          return false # …nor exit 0 (claude's hooks above are still wired)
+        end
       else
         puts "  codex:  not enabled — `switchboard install --codex-hooks` adds the global block"
       end
@@ -952,6 +957,16 @@ module Switchboard
       format("  %s %s", ok ? "\e[32m✓\e[0m" : "\e[31m✗\e[0m", msg)
     end
 
+    # Some setups launch codex with the trust bypass in their session_command, never
+    # approving in /hooks — for them N/M < total is expected, not dead dots. Only when EVERY
+    # codex-launching command (global or a project's) bypasses: one bypassing project must
+    # not hide the warning for the others.
+    def codex_bypasses_trust?
+      cmds = ([config.session_command] + config.projects.map { |p| p["session_command"] }).map(&:to_s)
+      codex = cmds.select { |cmd| cmd.match?(/(?:\A|[\s\/;&|])codex(?:\s|\z)/) }
+      codex.any? && codex.all? { |cmd| cmd.include?("--dangerously-bypass-hook-trust") }
+    end
+
     # Report the materialized reporter, then claude (per-worktree) and codex (global)
     # status. A present hook file/block isn't proof the agent runs it — Codex needs a
     # one-time `/hooks` trust — so a bare "enabled" line would be false confidence.
@@ -962,14 +977,37 @@ module Switchboard
       return unless here
 
       AgentHooks::ADAPTERS.each do |adapter| # claude, per-worktree
+        # gstack-shortcut(dec-0dd4f937): presence only, so a worktree whose hooks predate a new
+        # entry (v0.50.2 PermissionRequest / SessionEnd timeout) still reads ✓; upgrade when users
+        # miss a new dot after upgrading or the next hook-entry change ships.
         on = adapter.enabled?(here)
         puts(on ? "  \e[32m✓\e[0m #{adapter.label} hooks here: #{adapter.settings_path(here)}"
                 : "  \e[33m–\e[0m #{adapter.label} hooks off here — `switchboard enable-hooks`")
       end
 
       if CodexHook.installed? # codex, global
-        puts "  \e[32m✓\e[0m codex hooks (global): #{CodexHook.config_path}"
-        puts "      \e[33mnote\e[0m codex runs them only once trusted — run `/hooks` in codex (or start with --dangerously-bypass-hook-trust) if dots don't show"
+        trusted, total = CodexHook.trust_status
+        state = CodexHook.block_state
+        if state == :collision
+          puts "  \e[33m!\e[0m codex hooks (global): #{CodexHook.config_path} already has its own [hooks] config " \
+               "outside switchboard's block — two [hooks] tables are invalid TOML; merge yours into one place"
+        elsif state == :unsafe
+          puts "  \e[33m!\e[0m codex hooks (global): #{CodexHook.config_path} — can't be rewritten safely: " \
+               "#{CodexHook::UNSAFE_ADVICE} `switchboard install`"
+        elsif state == :stale
+          puts "  \e[33m!\e[0m codex hooks (global): #{CodexHook.config_path} — the block doesn't match what this " \
+               "switchboard (#{CodexHook.bin}) writes — re-run `switchboard install` " \
+               "from the install you use, then trust the hooks in codex `/hooks`"
+        elsif trusted == total
+          puts "  \e[32m✓\e[0m codex hooks (global): #{CodexHook.config_path} — #{trusted}/#{total} trusted"
+        elsif codex_bypasses_trust?
+          puts "  \e[32m✓\e[0m codex hooks (global): #{CodexHook.config_path} — #{trusted}/#{total} trusted, " \
+               "but your session_command runs codex with --dangerously-bypass-hook-trust, so they run anyway"
+        else
+          puts "  \e[33m!\e[0m codex hooks (global): #{CodexHook.config_path} — #{trusted}/#{total} trusted"
+          puts "      codex never runs an untrusted hook, so its dots won't move — run `/hooks` in codex and trust " \
+               "the switchboard hooks (or start codex with --dangerously-bypass-hook-trust)"
+        end
       else
         puts "  \e[33m–\e[0m codex hooks (global) not installed — `switchboard install --codex-hooks`"
       end

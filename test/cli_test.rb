@@ -311,18 +311,38 @@ module Switchboard
       assert_equal "", out.strip, "SessionEnd emits nothing on stdout"
     end
 
+    # Value: protects=/clear's real sequence — SessionEnd(reason: clear) drops the ∞, then
+    # SessionStart(clear) re-teaches; fails_when=a reason-bearing SessionEnd stops clearing (the
+    # premise that keeps `clear` out of CLEARS_ON); why_new=--end was only driven without a
+    # reason; seam=current_worktree/config stubs (as above); no_claim=Claude's real event order
+    def test_monitoring_nudge_clear_sequence_drops_marker_then_reteaches
+      nudge_config("background_presence" => true)
+      wt = monitoring_wt
+      Monitoring.mark(wt.path)
+      run_monitoring_nudge(worktree: wt, stdin: %({"reason":"clear","cwd":"#{wt.path}"}), args: ["--end"])
+      assert_empty Monitoring.monitored([wt.path]), "SessionEnd(clear) drops the marker"
+      out = run_monitoring_nudge(worktree: wt, stdin: %({"source":"clear","cwd":"#{wt.path}"}))
+      assert_includes JSON.parse(out).dig("hookSpecificOutput", "additionalContext"), "monitoring on"
+    end
+
     # The thought experiment: work with an agent -> compaction -> agent sets a monitor.
     # Compaction must (1) NOT clear a live monitor's marker, and (2) STILL re-plant the
     # nudge (compaction can drop the original instruction, so a post-compaction monitor
     # still gets flagged).
+    # Value (clear row): protects=/clear keeps a live monitor's ∞ yet re-teaches the
+    # convention; fails_when=the CLI wires `clear` into the clear gate or out of the nudge
+    # gate; why_new=only the predicates were tested for `clear`; seam=current_worktree/config
+    # stubs (as the rows above); no_claim=Claude's actual source strings
     def test_monitoring_nudge_compact_keeps_marker_and_still_reteaches
       nudge_config("background_presence" => true)
       wt = monitoring_wt
-      Monitoring.mark(wt.path)
-      out = run_monitoring_nudge(worktree: wt, stdin: %({"source":"compact","cwd":"#{wt.path}"}))
-      assert Monitoring.monitored([wt.path]).any?, "compact continues the session -> a live monitor's marker survives"
-      assert_includes JSON.parse(out).dig("hookSpecificOutput", "additionalContext"), "monitoring on",
-                      "compact still re-teaches the convention (survives context summarization)"
+      %w[compact clear].each do |source|
+        Monitoring.mark(wt.path)
+        out = run_monitoring_nudge(worktree: wt, stdin: %({"source":"#{source}","cwd":"#{wt.path}"}))
+        assert Monitoring.monitored([wt.path]).any?, "SessionStart(#{source}) itself leaves the marker (for clear, the preceding SessionEnd is what drops it)"
+        assert_includes JSON.parse(out).dig("hookSpecificOutput", "additionalContext"), "monitoring on",
+                        "#{source} still re-teaches the convention (survives context loss)"
+      end
     end
 
     def test_monitoring_nudge_noop_when_background_presence_off
@@ -608,6 +628,87 @@ module Switchboard
       assert_includes out, "/hooks"
     end
 
+    # Value: protects=doctor telling the user codex hooks are unapproved (dead dots) and
+    # going quiet once they're all approved; fails_when=the row ignores trust_status or the
+    # warning shows at N == M; why_new=doctor printed the same caveat regardless; seam=stub
+    # trust_status (its counting is pinned in codex_hook_test)
+    def test_doctor_hooks_reports_the_codex_trust_count
+      ENV["CODEX_HOME"] = path("codexhome")
+      FileUtils.mkdir_p(ENV["CODEX_HOME"])
+      repo = temp_git_repo
+      CodexHook.install_global
+      { [0, 9] => true, [4, 9] => true, [9, 9] => false }.each do |status, warns|
+        out = stub_method(CLI, :codex_bypasses_trust?, -> { false }) do # independent of any memoized config
+          stub_method(CodexHook, :trust_status, -> { status }) { Dir.chdir(repo) { capture { CLI.doctor_hooks } } }
+        end
+        assert_includes out, "#{status[0]}/#{status[1]} trusted"
+        assert_equal warns, out.include?("/hooks"), "warning shown only when some hook is untrusted (#{status.inspect})"
+      end
+
+      # A session_command that bypasses trust never approves in /hooks: 0/9 is expected there.
+      out = stub_method(CLI, :codex_bypasses_trust?, -> { true }) do
+        stub_method(CodexHook, :trust_status, -> { [0, 9] }) { Dir.chdir(repo) { capture { CLI.doctor_hooks } } }
+      end
+      refute_includes out, "/hooks", "no dead-dots warning when codex runs with the bypass"
+      assert_includes out, "bypass-hook-trust"
+    end
+
+    # Value: protects=doctor naming the real fix when the on-disk block isn't what install
+    # writes — re-run install, not "approve in /hooks" (which would bless stale commands);
+    # fails_when=a stale/unrewritable block still gets the trust count + /hooks hint as the
+    # advice; why_new=red-team inv3 pass 2; seam=stub block_state (pinned in codex_hook_test)
+    def test_doctor_hooks_sends_a_stale_or_unrewritable_block_to_install
+      ENV["CODEX_HOME"] = path("codexhome")
+      FileUtils.mkdir_p(ENV["CODEX_HOME"])
+      repo = temp_git_repo
+      CodexHook.install_global
+      ENV["SWITCHBOARD_BIN"], was = "/elsewhere/bin/switchboard", ENV["SWITCHBOARD_BIN"]
+      { stale: "re-run `switchboard install`", unsafe: "can't be rewritten safely",
+        collision: "already has its own [hooks] config" }.each do |state, says|
+        out = stub_method(CLI, :codex_bypasses_trust?, -> { false }) do
+          stub_method(CodexHook, :block_state, -> { state }) { Dir.chdir(repo) { capture { CLI.doctor_hooks } } }
+        end
+        assert_includes out, says, state.to_s
+        refute_includes out, "trusted", "#{state}: no trust count for a block install would change"
+        # :stale names the switchboard this block expects, so the user re-runs the right install.
+        assert_includes out, "(/elsewhere/bin/switchboard)", "stale names the bin" if state == :stale
+      end
+    ensure
+      ENV["SWITCHBOARD_BIN"] = was if defined?(was)
+    end
+
+    # Value: protects=doctor's dead-dots warning stays on unless EVERY codex launch bypasses
+    # trust; fails_when=one bypassing project (any?) silences it for the rest; why_new=only
+    # all-or-nothing configs were tested; seam=none
+    def test_codex_bypasses_trust_reads_global_and_project_session_commands
+      cfg = path("config.yml")
+      ENV["SWITCHBOARD_CONFIG"] = cfg
+      project = ->(cmd) { "projects:\n  - name: p\n    path: /tmp/p\n    session_command: #{cmd}\n" }
+      {
+        "session_command: claude\n#{project.('codex --dangerously-bypass-hook-trust')}" => true, # the only codex launch bypasses
+        "session_command: codex --dangerously-bypass-hook-trust\n" => true,                       # global bypass
+        "session_command: codex\n" => false,
+        "session_command: codex\n#{project.('codex --dangerously-bypass-hook-trust')}" => false,  # mixed: global still dead
+        "session_command: claude\n" => false,                                                        # no codex launch at all
+        # Value (rows below): protects=a path- or chain-launched codex counts as a codex launch,
+        # and a codex-prefixed word doesn't; fails_when=the launch regex loses its `/`/`;`
+        # boundary or its word end; why_new=only bare `codex` was tried; seam=none
+        "session_command: /opt/homebrew/bin/codex --dangerously-bypass-hook-trust\n" => true,
+        "session_command: codex --dangerously-bypass-hook-trust\n#{project.('cd x;codex')}" => false, # chained launch, no bypass
+        "session_command: codex --dangerously-bypass-hook-trust\n#{project.('codex-wrapper')}" => true, # not a codex launch
+        # Value: protects=a tool whose name merely ENDS in codex isn't a codex launch;
+        # fails_when=the launch regex loses its leading boundary; why_new=only trailing-word
+        # and path/chain prefixes were tried; seam=none; no_claim=which tools exist by that name
+        "session_command: codex --dangerously-bypass-hook-trust\n#{project.('mycodex run')}" => true
+      }.each do |yaml, want|
+        File.write(cfg, yaml)
+        CLI.instance_variable_set(:@config, nil) # config memoizes; re-read this sandbox's file
+        assert_equal want, CLI.codex_bypasses_trust?, yaml
+      end
+    ensure
+      CLI.instance_variable_set(:@config, nil)
+    end
+
     # Nothing wired → claude off here + codex global not installed, no trust note.
     def test_doctor_hooks_reports_off_when_nothing_is_wired
       ENV["CODEX_HOME"] = path("codexhome")
@@ -632,6 +733,34 @@ module Switchboard
       CodexHook.install_global
       out2 = Dir.chdir(repo) { capture { CLI.enable_hooks } }
       assert_match(/codex:.*\(global\)/, out2)
+
+      # Value: protects=a refused re-ensure never prints the "(global) — run /hooks" success
+      # line; fails_when=enable_hooks ignores install_global's result again (QA probe 002);
+      # why_new=only the success path was covered; seam=stub install_global
+      { unsafe: "can't be rewritten safely", conflict: "changed while switchboard was writing it",
+        collision: "already has its own [hooks]", nil => "couldn't write" }.each do |result, text|
+        out3 = stub_method(CodexHook, :install_global, -> { result }) { Dir.chdir(repo) { capture { CLI.enable_hooks } } }
+        refute_match(/run `\/hooks` in codex to approve/, out3, "#{result.inspect} must not read as success")
+        assert_includes out3, text, "#{result.inspect} is reported as a failure"
+      end
+
+      # Value: protects=a refused codex re-ensure fails the command for scripts too (exit 1) while
+      # success exits 0; fails_when=enable_hooks stops returning false on a refusal; why_new=only the
+      # printed text was pinned; seam=stub install_global; no_claim=claude's wiring (asserted above)
+      stub_method(CodexHook, :install_global, -> { :unsafe }) do
+        e = assert_raises(SystemExit) { Dir.chdir(repo) { capture { CLI.run(["enable-hooks"]) } } }
+        assert_equal 1, e.status
+      end
+      Dir.chdir(repo) { capture { CLI.run(["enable-hooks"]) } } # the real block: no exit
+
+      # A stale block (another checkout's bin) is rewritten and reads as success, not a refusal.
+      ENV["SWITCHBOARD_BIN"], was = "/elsewhere/bin/switchboard", ENV["SWITCHBOARD_BIN"]
+      assert_equal :stale, CodexHook.block_state
+      out4 = Dir.chdir(repo) { capture { CLI.run(["enable-hooks"]) } }
+      assert_match(/codex:.*\(global\)/, out4)
+      assert_equal :current, CodexHook.block_state
+    ensure
+      ENV["SWITCHBOARD_BIN"] = was if defined?(was)
     end
 
     # disable-hooks clears claude per-worktree; the "codex is global — uninstall removes it"
@@ -992,6 +1121,20 @@ module Switchboard
       end
     end
 
+    # Value: protects=install/uninstall's result reaching the process exit status (a refused codex
+    # write or a stopped uninstall exits 1, success exits 0); fails_when=the dispatch drops or
+    # flips the `== false` / `unless` mapping; why_new=the Installer tests pin only the return
+    # value; seam=stub Installer.install/uninstall; no_claim=what makes them return false
+    def test_run_maps_install_and_uninstall_results_to_the_exit_status
+      %w[install uninstall].each do |verb|
+        stub_method(Installer, verb.to_sym, ->(**) { false }) do
+          e = assert_raises(SystemExit) { capture { CLI.run([verb]) } }
+          assert_equal 1, e.status, verb
+        end
+        stub_method(Installer, verb.to_sym, ->(**) { true }) { capture { CLI.run([verb]) } } # no exit
+      end
+    end
+
     def test_run_rename_exits_nonzero_on_failure
       capture_err do
         e = assert_raises(SystemExit) { CLI.run(["rename"]) }
@@ -1133,9 +1276,10 @@ module Switchboard
       assert_equal "", run_nudge(worktree: named, stdin: '{"source":"resume","cwd":"/x"}')
     end
 
-    def test_rename_nudge_silent_on_clear_source
+    # /clear wipes the earlier plant out of context, so it re-plants (like compact).
+    def test_rename_nudge_replants_on_clear_source
       nudge_config("auto_rename" => true)
-      assert_equal "", run_nudge(worktree: placeholder_wt, stdin: '{"source":"clear","cwd":"/x"}')
+      refute_empty run_nudge(worktree: placeholder_wt, stdin: '{"source":"clear","cwd":"/x"}')
     end
 
     def test_rename_nudge_silent_on_primary_checkout
