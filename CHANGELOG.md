@@ -10,6 +10,49 @@ tmux bindings/hooks go live — see the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
+## [0.50.2] — agent hooks for Claude Code 2.1.30x and Codex 0.163 (2026-10-21)
+
+### Upgrading
+- Run `switchboard install`, then `switchboard enable-hooks` in each **existing** worktree:
+  the new Claude permission-prompt hook and SessionEnd timeout reach a worktree only when
+  it's created or re-enabled, and `doctor` still shows ✓ for one on the old set.
+- If codex dots don't move after upgrading (or after switching between a brew and a clone
+  install), run `/hooks` in codex once and approve the switchboard hooks. `doctor` counts
+  approvals but can't tell whether codex still accepts an old one.
+- Run `install` / `uninstall` from this release, not an older one: older releases drop
+  the tables codex writes inside switchboard's block in `~/.codex/config.toml`.
+
+### Changed
+- **A Claude permission prompt turns the dot magenta (and rings `waiting`) the moment
+  Claude asks**, instead of ~6s later. Every prompt still open at the next scan chimes,
+  the workspace you're viewing included.
+- Elicitation (form and URL) dialogs and background agents asking for input also read as
+  waiting; the notification type is matched exactly, so a path or message that merely
+  mentions one can't turn the dot magenta.
+- The rename and background-monitoring nudges are re-planted after `/clear` and on a
+  forked session; a fork also clears the previous session's monitoring marker.
+- Claude's SessionEnd hook gets a 10s budget, so the ∞ dot clears reliably when a session
+  ends.
+- `switchboard doctor` shows how many codex hooks are approved (`N/M trusted`) and tells a
+  stale, unrewritable or colliding codex block apart, each with its fix.
+- A refused codex write now fails the command: `install` exits 1 after its other steps (its
+  closing line says so), `uninstall` stops before removing anything and exits 1, and
+  `enable-hooks` exits 1. `install --no-codex-hooks` leaves an existing block untouched.
+
+### Fixed
+- **`install` and `uninstall` no longer delete tables codex itself writes into
+  switchboard's block** (`[desktop]`, `[plugins."…"]`, …): they're moved, unchanged and in
+  order, to just above the block. Approvals for other hook files are kept too, and so is a
+  comment above the next table when one of switchboard's approvals is removed.
+- Layouts a line-based rewrite could break (a multi-line string, a `[[…]]` table, keys
+  right after the block, a missing end marker) are refused with the file untouched and
+  advice that says what to move or restore, instead of being silently mangled.
+- If codex writes `config.toml` while switchboard is writing it, switchboard stops and asks
+  you to re-run instead of restoring an old copy over codex's change.
+- Install and uninstall work under `LC_ALL=C` / an unset `LANG`, and with a byte-order mark
+  at the top of `config.toml`.
+- Upgrading the hook reporter can no longer break a hook that is running at that moment.
+
 ## [0.50.1] — uninstall removes old codex blocks; install keeps codex trust (2026-10-07)
 
 ### Fixed
