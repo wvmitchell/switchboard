@@ -414,10 +414,15 @@ the warm frame is drawn at the off-screen pane's size, which is correct for a
 single client at a stable size (the dominant case) but may be briefly mis-sized
 under multiple clients of different sizes until the switch-in poke re-renders
 (self-heals via the poke we already have, never worse than today). The hook
-reporter writes atomically (temp+rename, `hook_file.rb`) so the warm fingerprint
+reporter writes atomically (temp+rename, `hook_file.rb`; the reporter script itself too, since sh
+reads a running script as it goes) so the warm fingerprint
 can never catch — and stamp-as-clean — a torn state file.
 
 ### Agent-state dots (the subtle part)
+
+Hook contract last verified live against **Claude Code 2.1.301–2.1.303** and **codex-cli
+0.163.0** (v0.50.2): payload fields, linked-worktree delivery, the nesting-guard env, and a
+silent PermissionRequest hook leaving the prompt to the user.
 
 The dot beside each workspace shows whether an agent (Claude/Codex/Aider) is
 thinking / done / waiting. `AgentState.scan` (`agent_state.rb`) merges **two
@@ -448,11 +453,12 @@ opposite sides of it — the subtle, hard-won part:
   on top of your settings, adding the file to the worktree's git excludes so it never
   dirties `git status`; global `~/.claude` is untouched. This is the only entry in
   `AgentHooks::ADAPTERS`, so `enable`/`disable` and `Creator.create` fan out over it.
-- **Codex is global.** Codex 0.142.x does NOT discover project-local
-  `<worktree>/.codex/hooks.json` in a *linked* git worktree (its project-hook discovery
-  doesn't follow the `.git`-file → common-dir indirection), and switchboard is nothing
-  but linked worktrees — so the per-worktree file was **dead on arrival** (v0.39.0's
-  codex feature never fired in practice). A CONFIG-level hook isn't project-discovered,
+- **Codex is global.** Codex (verified 0.142 through 0.163) deliberately does NOT load a
+  *linked* git worktree's own `<worktree>/.codex/hooks.json`: it redirects a linked
+  worktree's project hooks to the MAIN checkout's `.codex/` (and only when the worktree
+  has a `.codex/` dir and is trusted — `config/src/loader/mod.rs`). Switchboard is nothing
+  but linked worktrees, so the per-worktree file was **dead on arrival** (v0.39.0's codex
+  feature never fired in practice). A CONFIG-level hook isn't project-discovered,
   so it fires everywhere. So `CodexHook` writes ONE marker-delimited `[hooks]` block into
   `~/.codex/config.toml` (`CODEX_HOME`-aware) via the shared `MarkerBlock`
   (`marker_block.rb`, extracted from the tmux.conf surgery — atomic temp+rename,
@@ -467,7 +473,8 @@ opposite sides of it — the subtle, hard-won part:
 Because the codex block lives in the user's personal global config, `Installer`
 writes it **only with consent** (`step_codex_hooks`): `install` prompts (default NO on a
 non-tty, so a scripted install never silently touches it), `--codex-hooks` /
-`--no-codex-hooks` decide up front. `uninstall` strips the block; the per-worktree
+`--no-codex-hooks` decide up front (`--no-codex-hooks` leaves even an installed block
+untouched; a plain `install` re-ensures one). `uninstall` strips the block; the per-worktree
 `disable-hooks` deliberately leaves it. `AgentHooks.enabled?` / `enabled_adapters` fold
 in `CodexHook.installed?` so the global block counts as "on" for every worktree, and
 `doctor` reports Claude per-worktree + the global codex block + the trust note.
@@ -477,22 +484,86 @@ Two consequences of codex being global:
   Codex records each approval in `config.toml` itself, as `[hooks.state."<file>:<event>:…"]`
   tables holding the command's `trusted_hash`, appended right after our `[hooks]` table —
   i.e. INSIDE our markers. So `install_global` carries those tables into the rewritten
-  block (`codex_trust`), and trust survives a re-install (run after every upgrade) AS LONG
-  AS the commands stay byte-stable (deterministic paths + fixed event order; why
-  `command_entries` is centralized); `remove_global` drops them with the block. A present
-  block isn't proof the dot moves; `doctor` flags the caveat. `MarkerBlock` accepts
-  trailing text on a marker line (older releases wrote `# >>> … >>> (managed by …)`), and
-  `remove_global` returns whether it changed anything, so uninstall never reports a removal
-  that didn't happen.
+  block, and trust survives a re-install (run after every upgrade) AS LONG AS the commands
+  stay byte-stable (deterministic paths + fixed event order; why `command_entries` is
+  centralized). A command that DID change (another checkout's bin path) keeps its old approval
+  (codex re-asks in `/hooks`; it's valid again once the command changes back, and an `enabled = false`
+  stays put), so doctor's count credits presence, not a matching hash (dec-455f3bf8); `remove_global` drops OUR approvals with the block (approvals for other hook
+  files stay — see below). A present block isn't proof the
+  dot moves: `doctor` counts approvals (`CodexHook.trust_status` → `N/M trusted`, keys
+  matched to our file by realpath, `enabled = false` not counted) and warns below M — unless
+  EVERY codex-launching `session_command` (global + per-project) passes
+  `--dangerously-bypass-hook-trust`, where 0/M is expected (one bypassing project can't hide it).
+  The count only means something for a block install would leave as-is, so doctor first checks
+  `CodexHook.block_state` (read-only, running install's own `planned_install`, so the two can't
+  disagree): a `:stale` block (an older release, or another checkout's
+  bin path) or an `:unsafe` one (install would refuse) gets "re-run `switchboard install`" instead
+  — approving it in `/hooks` would bless the wrong commands (counts are by position, not
+  command) — and a user's own `[hooks]` outside the block reads `:collision` and gets "merge
+  yours into one place" (an `:unsafe` block outranks it: install's own check order). The
+  real-Codex smoke can't see this (it passes `--dangerously-bypass-hook-trust`), so its
+  second case runs WITHOUT the bypass and asserts an untrusted block writes no state.
+  `MarkerBlock` accepts trailing text on a marker line (older releases wrote `# >>> … >>>
+  (managed by …)`), and `remove_global` returns whether it changed anything, so uninstall
+  never reports a removal that didn't happen.
+- **Codex writes its OWN tables into our block.** Codex edits `config.toml` with toml_edit,
+  which renders every NEW top-level table after the document's last table but BEFORE its
+  trailing comments — and our block sits at EOF with a comment for an end marker. So
+  `[desktop]`, `[marketplaces.*]`, `[plugins."…"]` land inside our markers (v0.50.1 and
+  earlier silently dropped them on install and deleted them on uninstall). `install_global`
+  / `remove_global` now split the region (`movable_parts`): ours (note + any `hooks` table,
+  regenerated), trust (carried), foreign (moved verbatim, in order, to just ABOVE the block,
+  which stays last where `MarkerBlock.build` appends it). With no foreign tables the output
+  is byte-identical to before (trust hashes stay valid). There's no TOML parser (zero gems),
+  so a line-based move refuses (`:unsafe`, file untouched) whenever it could change meaning
+  or drop data: a multi-line string, a `[[…]]` array-of-tables, key lines before the
+  region's first table / right after the end marker (a comment doesn't end a table, so they
+  belong to a neighboring table), anything in OUR `[hooks]` chunk besides one-line
+  `<Event> = [...]` arrays (a key codex or the user added there would be regenerated away),
+  a `[hooks.<x>]` table, or a second marker region. Only a whole TOML header line
+  (`HEADER`) at bracket depth 0 (`scan_lines`, strings/comments ignored) opens a table, so a
+  multi-line array's `[1, 2]` / `["hooks"]` elements never split a chunk or read as a hooks
+  table; the collision guard fails closed both ways (an unindented `[hooks…]` line collides
+  even inside an open bracket, and brackets left open at EOF count as a collision), and
+  `hooks` is matched bare, "double"- or 'single'-quoted (`HOOKS_KEY`). A line-conservation
+  check is the belt over the splitter (it discounts one copy per generated line, so a pasted
+  note line outside still counts as kept), and stray marker lines are counted and refused
+  outright. The file is always read as UTF-8 with a leading BOM dropped (`read_config`): under
+  `LC_ALL=C` a default read is US-ASCII and every check on it misfires, and a BOM defeats the
+  `\A\s*` anchors (a user's line-1 `[hooks]` would slip past the collision guard). For a block
+  missing its end line the `:unsafe` advice says to put the end marker back — never delete our
+  `# >>>` line, which would orphan our `[hooks]`. Codex files approvals for OTHER hook files (a project
+  `.codex/hooks.json`, plugins) under the same `[hooks.state]`, so uninstall keeps those
+  (moved out with the foreign tables) and drops only ours; a `[hooks.state…]` table outside
+  the block is codex's, not a competing hooks config (`[[hooks.state]]` still collides). Codex can
+  also write the file at any moment (the desktop app does), so both verbs re-read before
+  writing and return `:conflict` rather than ever restoring a snapshot over a newer write —
+  which replaced the old `:corrupt` torn-write rollback (temp+rename can't tear, so a
+  read-back mismatch means someone else wrote). Not a lock: a write in the last instant
+  before our rename can't be seen. `Installer` reports `:unsafe`/`:conflict` as failures and
+  never advises deleting the block by hand (that would take codex's tables with it) — the
+  block's own note says so too. Dropping one of our approvals keeps the comments trailing it
+  outside the block (they head the next table); comments INSIDE the managed block are regenerated
+  away (dec-3417a712). A refusal also fails the command (exit 1: `install` after
+  its other steps, `uninstall` before any, `enable-hooks`). `uninstall` runs the codex step FIRST and stops on a refusal,
+  so its "re-run uninstall" advice can't point at a command it already unlinked. A begin
+  marker without its end line is refused as `:unsafe` (checked before the collision guard,
+  which would otherwise misread our own `[hooks]` as foreign).
 - **Nesting (#130).** A global hook fires for EVERY codex, including a nested `codex exec`
   (a `/codex` under Claude). A `GUARD` (`[ -n "$CLAUDECODE" ] || [ -n
   "$CLAUDE_CODE_SESSION_ID" ] && exit 0`, equal-precedence left-assoc sh) prefixes every
   command and suppresses the reporter when a Claude-Code parent is detected; a top-level
   codex switchboard launches into a plain tmux shell carries neither marker, so it fires.
+  Since Codex 0.149 (#39314) a hook's env is a snapshot taken at session start (minus a
+  few credential vars), not the live env — the two Claude markers aren't stripped, so the
+  guard still sees them (verified live: both are set in Claude 2.1.301's hook env).
 
-Codex's `EVENTS` map also differs where the agents differ: no `Notification` event, so
-its `waiting` rides `PermissionRequest` (best-effort — suppressed by a session command
-that bypasses *all* approval gates). New worktrees get the Claude hook automatically
+Both agents report `waiting` on `PermissionRequest`, the moment the prompt opens (a silent
+hook leaves the answer to the user). Claude also keeps `Notification` (`notify`) for
+elicitation / `agent_needs_input` / idle; its accepted cost is a dot that stays magenta
+until an approved tool finishes (or, after an Esc rejection, until the next prompt). Codex
+has no `Notification` event, so `PermissionRequest` is its only `waiting` (best-effort —
+suppressed by a session command that bypasses *all* approval gates). New worktrees get the Claude hook automatically
 (`Creator.create` → `AgentHooks.enable`, gated on `agent_state_hooks?` **or**
 `auto_rename_for(project)` — so a project opting into `auto_rename` with the global off
 still gets the hook the runtime nudge needs); existing ones via `switchboard
@@ -516,7 +587,8 @@ move degrades cleanly instead of erroring "command not found":
   `CLI#rename_nudge` injects a `SessionStart` `additionalContext` instruction telling the
   agent to `switchboard rename` the workspace once it understands the work — which
   (post-#94) names the dir and its branch. `RenameNudge.decide` is the pure gate (fires on
-  `source ∈ {startup,resume,compact}` when on + placeholder).
+  `source ∈ {startup,resume,fork,clear,compact}` when on + placeholder — `clear` because /clear
+  wipes the earlier plant from context, like compaction).
 - the **`Stop` command** — the **backstop**, and (deliberately) the Stop **state reporter
   itself**. A SessionStart plant fires *before* the agent knows anything and then never
   again, so the moment of maximum understanding (work done, about to walk away) has no
@@ -560,7 +632,11 @@ trigger, blank the dots (the broad `refresh_agents` rescue), or corrupt the next
 edge diff; the returned edge list is what `refresh_agents` rides for the diff
 refresh. Hook-only states, like the PR trigger, so observation-only
 agents make no sound. Deduped per `[worktree, state]`: every distinct worktree's
-completion is heard, but one worktree can't double-fire in a scan.
+completion is heard, but one worktree can't double-fire in a scan. Since v0.50.2 a Claude
+permission prompt enters `waiting` the instant it opens (`PermissionRequest`, not the ~6s
+`permission_prompt` Notification), so `waiting` rings once per prompt still open at the next
+scan — the workspace you're viewing included, like every other sound. Deliberate: an open prompt is what the
+chime exists to surface; a viewed-workspace mute would be a separate sound rule.
 
 Each window's sidebar is its own process with its own `@prev_hook_states`, frozen
 while off-screen — so a naive scan on switch-in would re-ring every completion
@@ -704,12 +780,15 @@ strips them) tighten those windows to instant: **clear-on-SessionStart** makes
 monitoring a per-session declaration (a resumed agent, its old loop dead, re-declares) —
 and **SessionEnd auto-off** (the agent's gone, so it can't still be monitoring). The
 clear and the nudge have **different source gates** (the compaction split): the clear
-fires on `startup`/`resume` only, NEVER `compact` (same process continues, a live
-monitor's marker must survive); the **nudge** re-plants on `startup`/`resume`/`compact`
-(matching `RenameNudge`), because compaction summarizes the original instruction out of
-context and SessionStart re-fires on `compact` precisely so a hook can re-inject it — so
-an agent that sets a monitor *after* a compaction still knows the `monitoring on`
-convention (`MonitoringNudge.clears_on?` vs `nudges_on?`). Both rename-safe: `Rename.perform` carries the marker via the shared
+fires on `startup`/`resume`/`fork` only (a fork is a new process — Claude ≥ 2.1.214 and
+Codex ≥ 0.155 report it as `fork`, where they used to say resume/startup), NEVER
+`compact` (same process continues, a live monitor's marker must survive) or `clear` (its
+SessionEnd already dropped the marker; the re-planted nudge is what gets a still-running
+monitor re-declared); the
+**nudge** re-plants on `startup`/`resume`/`fork`/`clear`/`compact` (matching
+`RenameNudge`), because compaction and `/clear` both drop the original instruction out of
+context and SessionStart re-fires on them precisely so a hook can re-inject it — so an
+agent that sets a monitor *after* either still knows the `monitoring on` convention (`MonitoringNudge.clears_on?` vs `nudges_on?`). Both rename-safe: `Rename.perform` carries the marker via the shared
 `KeyedMarkerStore.carry` (capture the old realpath BEFORE `move_worktree` — the bridge
 symlink resolves it to the new dir after), which also fixes the pre-existing bug where a
 rename silently dropped `Attention`'s bold. The whole Layer-2 behavior (nudge + session

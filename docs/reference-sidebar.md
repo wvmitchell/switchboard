@@ -89,10 +89,11 @@ reaches `:done`, its dot twinkles `✦`/`✧` for three seconds, then becomes th
 steady green `●`. Only `:done` sparkles — `:waiting` already blinks for
 attention.
 
-Exact `thinking`/`waiting`/`done` needs the per-worktree hooks (automatic on
-switchboard-created worktrees, or `switchboard enable-hooks`). A hook-less agent
-(Codex, Aider, un-hooked Claude) still gets a coarser busy/idle dot, but never
-the magenta `waiting`. See
+Exact `thinking`/`waiting`/`done` needs hooks: Claude's are per worktree
+(automatic on switchboard-created worktrees, or `switchboard enable-hooks`), and
+Codex's are one global block (`switchboard install --codex-hooks`). A hook-less
+agent (Aider, un-hooked Claude, Codex without the block) still gets a coarser
+busy/idle dot, but never the magenta `waiting`. See
 [How-to: agent state & sounds](howto-agent-state-and-sounds.md) and
 [Explanation: agent presence](explanation-agent-presence.md).
 

@@ -379,8 +379,9 @@ Everything switchboard writes, and how to redirect it. State dirs follow XDG.
 
 The data-dir paths (reporter script, sound WAVs) are deliberately install-independent,
 so they survive a `git pull` upgrade or a `brew upgrade`. Both self-heal, by
-slightly different means: the reporter script is rewritten in place whenever it's
-missing or its contents have drifted from the embedded version, while the sound
+slightly different means: the reporter script is rewritten whenever it's missing or
+its contents have drifted from the embedded version (atomically, so a hook running it
+at that moment isn't broken), while the sound
 WAVs carry `ASSET_VERSION` in their filename — a version bump writes new files and
 the stale ones are simply never referenced again.
 
