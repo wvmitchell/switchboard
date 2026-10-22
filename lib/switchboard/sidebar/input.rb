@@ -119,10 +119,19 @@ module Switchboard
       # A stop-token (quit ⇒ dispatch returns false) ends the loop NOW: never dispatch
       # the rest of the buffer past it, so a key buffered after a confirmed `q` can't
       # fall through into another action.
+      #
+      # Keys read in the same batch AFTER one that opens a prompt (`n` then the start of
+      # its task, typed during a busy tick) are the prompt's, not the tree's: it takes
+      # them from @typeahead, so they neither vanish from the task nor fire as commands.
       def handle(buf)
         tokens, @pending = Input.tokenize(@pending + buf.to_s)
-        tokens.each { |t| return false unless dispatch(t) }
+        @typeahead = tokens
+        while (t = @typeahead.shift)
+          return false unless dispatch(t)
+        end
         true
+      ensure
+        @typeahead = nil
       end
 
       def dispatch(key)
@@ -205,8 +214,34 @@ module Switchboard
       def enter
         node = current
         return unless node
+        return toggle_collapse(node.project) if node.kind == "proj"
+        return enter_dispatch(node) if dispatch_pending?(node)
 
-        node.kind == "proj" ? toggle_collapse(node.project) : switch(node)
+        switch(node)
+      end
+
+      # A dispatch you can't switch into yet: a synthetic row (git hasn't listed the
+      # worktree), or a real one whose session the worker hasn't opened.
+      def dispatch_pending?(node)
+        # A synthetic row is never switchable, even if its record vanished from the index
+        # (another pane's GC dropped it): it has no dir, so a switch would open the agent
+        # wherever tmux falls back to.
+        return true if node.creation
+
+        rec = @creation_for[node.path] or return false
+        Creation::PRE_READY.include?(rec["state"]) &&
+          !Tmux.has_session?(Tmux.session_name(Worktree.new(project: node.project, path: node.path)))
+      end
+
+      # ↵ on such a row: a ✘ shows why (and counts as seen); a build in flight says so;
+      # a record that's gone since the last rebuild just reloads the row away.
+      def enter_dispatch(node)
+        rec = @creation_for[node.path] or return reload
+        return flash("still creating…") unless rec["state"] == "failed"
+
+        flash(Creation.long_reason(rec))
+        Creation.ack(rec["id"])
+        reload
       end
 
       # Resolve the configurable in-sidebar keys (issue #108) from @config into the
@@ -321,7 +356,10 @@ module Switchboard
         return unless node
 
         end_filter
-        node.kind == "proj" ? create(node) : switch(node)
+        return create(node) if node.kind == "proj"
+        return enter_dispatch(node) if dispatch_pending?(node)
+
+        switch(node)
       end
     end
     include Input

@@ -58,11 +58,18 @@ The sidebar's `a` offers the same clone path interactively.
 
 ## Create a new worktree
 
-From the sidebar: highlight the project header and press `n`. No name prompt — it
-creates immediately.
+From the sidebar: highlight the project (or any row in it) and press `n`. The
+bottom row asks for a **task** — `myapp task ›` — not a name: type what the agent
+should do and press `↵`, or press `↵` on an empty line for a bare workspace. `Esc`
+cancels. A long task scrolls as you type, and a pasted multi-line task lands as one
+line.
 
-Switchboard fetches the base ref, cuts a new branch from it, creates the worktree
-under `<worktree_root>/<project>/<name>`, and switches you in. The name is a
+You stay where you are. Switchboard builds the workspace in the background: it
+fetches the base ref, cuts a new branch, creates the worktree under
+`<worktree_root>/<project>/<name>` and a detached session for it. The new row shows
+`◌` (yellow) while it's being built and set up, with your task beside it. When it's
+ready you get a chime and the row goes bold — for a task given to a hooked `claude`,
+when its first turn is done. Switch in with `↵` whenever you like. The name is a
 throwaway placeholder (e.g. `wandering-finch`) you rename later with `r` (or let the
 agent name it — see [`switchboard rename`](reference-cli.md#switchboard-rename-name)); the
 branch is named `<name>`, or `<branch_prefix>/<name>` if you set `branch_prefix` in
@@ -71,13 +78,16 @@ config.
 On creation the new session runs the project's
 [`worktree_creation_command`](reference-config.md#worktree_creation_command) — the
 setup a fresh checkout needs (`.env`, `bundle install`), which a new worktree never
-inherits — and then its `session_command` (e.g. `claude`). Either can be unset. A
-failing setup stops the agent starting, so it never opens on a half-built checkout.
+inherits — and then its `session_command` (e.g. `claude`), handed your task. Either
+can be unset. A failing setup stops the agent starting, so it never opens on a
+half-built checkout: the row turns `✘` with the reason (`setup exit 1`) and a soft
+falling sound. `↵` on it shows the error (or, if the worktree was never made, why); `d`
+deletes it — or dismisses it, when there's nothing to delete.
 See [How-to: agent state & sounds](howto-agent-state-and-sounds.md) for the
 session_command and the auto-wired hooks.
 
-**Verify:** you're dropped into the new worktree's shell; `git worktree list` in
-the project shows the new path.
+**Verify:** the new row leaves `◌` and you hear the ready chime; `git worktree list`
+in the project shows the new path.
 
 ## Switch between worktrees
 
@@ -130,8 +140,13 @@ cleaned by `switchboard prune` — see [How-to: housekeeping](howto-housekeeping
   `switchboard config`) or re-`add` it.
 - **"name taken".** Project names must be unique. Pick another, or `remove` the
   old one first.
-- **`n` says "already exists".** A directory (or a stale rename bridge) is already
-  at that worktree path. Choose a different name, or remove the directory.
+- **A dispatched workspace shows `✘`.** Its reason says which step failed:
+  `setup exit N` (your `worktree_creation_command`), `agent exit N` (the agent
+  died right after launch — check `session_command`), `config error` (switchboard
+  couldn't read the project's config, or its `worktree_creation_command` isn't a
+  string or list of strings, so setup couldn't run), `worktree add`, `no session`,
+  `interrupted` or `didn't start`. `↵` shows the full message; fix the cause, then
+  `d` the row and press `n` again.
 - **PR badge missing for a worktree.** Badges come from `gh` and are cached. Press
   `R` to force a refresh; run `switchboard doctor` to check `gh` auth and cache
   age. A PR merged/closed *on GitHub* needs an explicit `R` (no local signal

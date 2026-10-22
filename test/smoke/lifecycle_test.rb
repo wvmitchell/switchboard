@@ -61,7 +61,7 @@ module Switchboard
     # full-width. From a workspace it falls home and exits, so the window (and its now-lone
     # session) closes and the client lands on home. Red against the pre-fix sidebar.
     def test_closing_a_workspace_work_pane_falls_home_instead_of_wedging
-      sess = create_workspace # client is now on sess
+      sess = create_workspace(enter: true) # client is now on sess
       tmux!("kill-pane", "-t", work_pane_id(sess))
       wait_until("the wedged window/session is gone and we're back home") do
         !session?(sess) && client_session == HOME
@@ -150,7 +150,7 @@ module Switchboard
     # bound. Sending `d` then `y` drives the real sidebar confirm (a clean placeholder
     # needs no force prompt); `j` first lands the cursor on the workspace row.
     def test_deleting_the_current_workspace_falls_home_and_the_daemon_removes_it
-      sess = create_workspace          # client is now on sess (a clean placeholder)
+      sess = create_workspace(enter: true) # client is now on sess (a clean placeholder)
       leaf = sess.split("/").last
       wt = worktree_path(leaf)
       pane = sidebar_pane_ids(sess).first or flunk "no sidebar in the workspace to drive"

@@ -60,6 +60,15 @@ module Switchboard
     end
 
     # The declared-notify `alert` built-in synthesizes + resolves like the others.
+    # The dispatch-failure `failed` built-in (✘): its own soft falling sound.
+    def test_resolve_failed_builtin_materializes_versioned_wav
+      assert_includes Sound::BUILTINS, "failed"
+      path = Sound.resolve("failed")
+      assert path.end_with?("failed.v#{Sound::ASSET_VERSION}.wav")
+      assert File.exist?(path)
+      refute_equal File.binread(Sound.resolve("alert")), File.binread(path), "distinct from the notify alert"
+    end
+
     def test_resolve_alert_builtin_materializes_versioned_wav
       assert_includes Sound::BUILTINS, "alert"
       path = Sound.resolve("alert")

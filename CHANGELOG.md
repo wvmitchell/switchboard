@@ -10,7 +10,7 @@ tmux bindings/hooks go live — see the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
-## [0.50.2] — agent hooks for Claude Code 2.1.30x and Codex 0.163 (2026-10-21)
+## [0.51.1] — agent hooks for Claude Code 2.1.30x and Codex 0.163 (2026-10-22)
 
 ### Upgrading
 - Run `switchboard install`, then `switchboard enable-hooks` in each **existing** worktree:
@@ -52,6 +52,48 @@ refer to the project's earlier, private repository; the public tracker starts at
 - Install and uninstall work under `LC_ALL=C` / an unset `LANG`, and with a byte-order mark
   at the top of `config.toml`.
 - Upgrading the hook reporter can no longer break a hook that is running at that moment.
+
+## [0.51.0] — `n` builds new workspaces in the background and pings you (2026-10-22)
+
+### Changed
+- **Creating a workspace no longer blocks you.** `n` now asks for a task — what the
+  agent should do — instead of creating and switching you in. Type it and press `↵`
+  (or `↵` on an empty line for a bare workspace; `Esc` cancels) and you stay where you
+  are. The fetch, `git worktree add`, your `worktree_creation_command` and the agent
+  launch all run in the background; the new row shows a yellow `◌` while it builds,
+  with your task beside it, and you get a chime and a bold row when it's ready — for a
+  task given to `claude`, when its first turn is done. Still no name prompt: it gets a
+  placeholder name the agent (or `r`) renames.
+- **A failed setup shows up as `✘` with a soft falling sound** (the new `failed`
+  built-in, configurable under `sounds:`) and its reason (`setup exit
+  1`, `agent exit 127`, …). Your agent never starts on a half-built checkout — and
+  that now holds for a compound `session_command` like `export X=1; claude` too.
+  Re-entering a workspace whose setup never finished (it failed, or you quit or canceled
+  mid-build) opens a plain shell with the reason, not the agent.
+- **`d` on a building (`◌`) workspace cancels it** and removes what it had made — unless
+  something was already written there, which it keeps for you to delete. Renaming
+  waits until the workspace's agent has started, and `quit` run inside tmux only
+  cancels builds on its own tmux server.
+- **The agent runs in your pane's own interactive shell**, so a `session_command` that's
+  an alias or function from your rc keeps working.
+- **A `worktree_creation_command` switchboard can't run now fails the build** (`✘ config
+  error`) instead of being skipped. The usual cause is a list step with an unquoted
+  `: `, which YAML reads as a map — quote that step.
+- **After upgrading, refresh your sidebars** (`prefix-s` twice in each session, or
+  `switchboard quit`): a sidebar started before the upgrade keeps running the old code.
+
+### Added
+- **Your task reaches the agent as its first prompt.** Appended automatically for a
+  plain `claude` or `codex` command; anywhere else put `{task}` where it goes
+  (`aider --message {task}`, `claude "fix: {task}"`) and it arrives as one argument,
+  byte-exact. Setup scripts see it as `$SWITCHBOARD_TASK`. The task prompt keeps
+  non-ASCII text, and a pasted multi-line task can never submit early or act as keys.
+- **The `?` overlay opens with a legend** of every row glyph (`⠋ ◆ ● ∞ ◌ ✘`).
+- The task prompt scrolls as you type a long task.
+
+### Fixed
+- A new workspace no longer picks a placeholder name held by a leftover tmux session
+  or a dangling rename bridge.
 
 ## [0.50.1] — uninstall removes old codex blocks; install keeps codex trust (2026-10-07)
 

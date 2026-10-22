@@ -134,7 +134,7 @@ module Switchboard
         [k[:filter], "filter by name"],
         ["", "the selected row"],
         [k[:add_project], "add a project"],
-        [k[:new_workspace], "new workspace (auto-named)"],
+        [k[:new_workspace], "new workspace (task → background)"],
         ["#{k[:open_pr]}  ^o", "open its PR"],
         [k[:open_repo], "open its repo"],
         [k[:rename], "rename workspace"],

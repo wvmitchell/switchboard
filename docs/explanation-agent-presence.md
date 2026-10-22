@@ -112,7 +112,7 @@ opposite sides of that:
   `<worktree>/.claude/settings.local.json`, on top of your own settings, and adds
   the file to the worktree's local git excludes (`info/exclude`) so it never
   dirties `git status`. Your global `~/.claude` is never touched. This is what
-  `AgentHooks::ADAPTERS` fans out over, so `enable-hooks` and `Creator.create`
+  `AgentHooks::ADAPTERS` fans out over, so `enable-hooks` and the dispatch worker (`Creator.work`)
   wire it per worktree.
 
 - **Codex is global.** Codex (checked through 0.163) deliberately does **not**
@@ -186,7 +186,8 @@ agent-neutral) and lives in the XDG **data** dir
 survives a `git pull` or `brew upgrade`, unlike the checkout. It's rewritten
 whenever it's missing or stale (versioned in the script header), so an upgrade
 self-heals. New worktrees switchboard creates get the Claude hook automatically
-(`Creator.create` → `AgentHooks.enable`, gated on `agent_state_hooks?`); existing
+(the dispatch worker, `Creator.work` → `AgentHooks.enable`, gated on `agent_state_hooks?`,
+`auto_rename`, or `background_presence`); existing
 ones via `switchboard enable-hooks`. Codex needs no per-worktree step — its global
 block already covers them.
 

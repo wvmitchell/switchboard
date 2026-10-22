@@ -290,8 +290,10 @@ module Switchboard
       t
     end
 
+    # Returns whether THIS call created the session (false when it already existed or
+    # new-session failed) — the dispatch worker fails its build on false.
     def ensure_session(name, dir, start = nil)
-      return if has_session?(name)
+      return false if has_session?(name)
 
       # Gate the start command on new-session actually succeeding. If a racing
       # process (a CLI switch and a sidebar in another pane are separate
@@ -305,6 +307,7 @@ module Switchboard
       # to create.
       set_sidebar_flag(name, "on") if created
       run_in_session(name, start) if start && created
+      created == true # system's nil (tmux couldn't exec) is a failure too
     end
 
     # Build the `new-session` argv, sized to the current window when we can read

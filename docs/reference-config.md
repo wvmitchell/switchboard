@@ -29,7 +29,7 @@ or `e` in the sidebar — both reload on save.
 | `auto_rename` | bool | `true` | Nudge the agent to `switchboard rename` a placeholder-named workspace once it knows the work (a `SessionStart` hook). `false` opts out. Per-project override wins. See [`auto_rename`](#auto_rename). |
 | `diff_counts` | bool | `true` | Show the `+adds −dels` diff count on each workspace/branch row. `false` hides it and skips the per-worktree `git diff` entirely. |
 | `prewarm` | bool | `true` | Keep off-screen sidebars warm so switching sessions doesn't flash a stale tree. `false` restores full dormancy (no off-screen work). See [`prewarm`](#prewarm). |
-| `session_command` | string | _(none)_ | Command typed into a worktree's window the first time its session is created. Per-project override wins. |
+| `session_command` | string | _(none)_ | The agent a new workspace runs, after its setup. The task typed after `n` is appended when the command is plain words starting with `claude`/`codex` (no quotes, `#`, `&`, `;`, `|` or redirects); anywhere else, write `{task}` where it goes — bare, in quotes, or inside a quoted string (`aider --message {task}`, `claude "fix: {task}"`) — and it arrives as one argument, byte-exact. Inside a command that hands its text to another shell (`bash -c '…'`, `ssh host …`), use `"$SWITCHBOARD_TASK"` directly instead: that inner shell would read a substituted task as code. Otherwise the pane says "task not sent". `false` turns it off. Per-project override wins. |
 | `worktree_creation_command` | string or list | _(none)_ | Setup script run **once in a new worktree**, before `session_command` — the `.env` / `bundle install` a fresh checkout needs. Per-project override wins; a per-project `false` turns it off. See [`worktree_creation_command`](#worktree_creation_command). |
 | `sounds` | map or `false` | _(on, built-ins)_ | Completion sounds. See [`sounds`](#sounds). |
 | `tmux_keys` | map | _(toggle `s`)_ | Which prefix keys switchboard binds. See [`tmux_keys`](#tmux_keys). |
@@ -145,6 +145,7 @@ sounds:
   done: train          # played when an agent finishes a turn
   waiting: chime       # played when an agent asks for input
   alert: alert         # played on a declared `monitoring notify`
+  failed: failed       # played when a workspace dispatched with `n` fails (✘)
 ```
 
 | Sub-key | Type | Default | Effect |
@@ -153,11 +154,13 @@ sounds:
 | `done` | sound spec | `train` | Sound when a hooked agent reaches `:done`. |
 | `waiting` | sound spec | `chime` | Sound when a hooked agent reaches `:waiting`. |
 | `alert` | sound spec | `alert` | Sound for a declared `switchboard monitoring notify` — a monitored agent surfacing something. Distinct from `done` so a "come look" reads differently than a finish. |
+| `failed` | sound spec | `failed` | Sound when a workspace dispatched with `n` fails to build, set up, or launch its agent (`✘`) — a soft falling two-note, the opposite shape of the rising chimes. A dispatch becoming ready plays `done`. |
 
 **Sound spec** resolves in this order:
 
 1. A built-in name — synthesized in pure Ruby, cached on first use. One of:
-   `train`, `train_1`, `train_2`, `train_3`, `chime`, `chime_1`, `chime_2`, `chime_3`.
+   `train`, `train_1`, `train_2`, `train_3`, `chime`, `chime_1`, `chime_2`, `chime_3`,
+   `alert`, `failed`.
 2. A path (contains `/` or starts with `~`) — a literal audio file, e.g. `~/horn.wav`.
 3. A bare name — a macOS system sound at `/System/Library/Sounds/<name>.aiff`, e.g. `Glass`.
 
@@ -165,15 +168,16 @@ sounds:
 absent per-state key *inherits* the next level up — it never mutes. So you can't
 accidentally silence `done` by leaving it empty.
 
-**Resolution per state** (`done`/`waiting`), highest priority first:
+**Resolution per state** (`done`/`waiting`/`alert`/`failed`), highest priority first:
 
 1. The project's `sounds.<state>`, if present and non-empty.
 2. The global `sounds.<state>`, if present and non-empty.
-3. The built-in default (`train` for `done`, `chime` for `waiting`).
+3. The built-in default (`train` for `done`, `chime` for `waiting`, `alert` for
+   `alert`, `failed` for `failed`).
 
 Sounds need a player on PATH (`afplay` on macOS; `paplay`/`aplay`/`ffplay` on
 Linux). With none, sounds stay silent. `switchboard doctor` reports the player
-and whether each spec resolves; `switchboard sound [done|waiting]` plays one.
+and whether each spec resolves; `switchboard sound [done|waiting|alert|failed]` plays one.
 
 ---
 
@@ -286,10 +290,13 @@ The script is handed to `sh -ec`, which means:
 - **A multi-line script stays a script.** `if` blocks, loops, heredocs, and
   comments all work; nothing is reformatted or spliced.
 - **It stops at the first failing step** (`set -e`), and a failed setup **stops the
-  agent from starting** — you land at a shell with the error still on screen,
-  rather than an agent working in a broken checkout. A step that's *allowed* to
+  agent from starting** — the workspace turns `✘` with the soft `failed` sound, and switching in
+  shows the error still on screen, rather than an agent working in a broken checkout. A step that's *allowed* to
   fail should say so: `cp "$SWITCHBOARD_PROJECT_PATH/.env" . || true`.
 - **It runs in the new worktree**, so relative paths are relative to it.
+- **A value it can't run fails the build** (`✘ config error`) instead of skipping
+  setup. The usual cause is a list step with an unquoted `: ` — YAML reads
+  `- echo Setup: done` as a map, not a string — so quote such a step.
 
 ### The two paths it gets
 
@@ -303,6 +310,7 @@ serve every project:
 |---|---|
 | `$SWITCHBOARD_PROJECT_PATH` | the project's canonical checkout (its registered `path`) |
 | `$SWITCHBOARD_WORKTREE_PATH` | the new worktree (also just `.`, the cwd) |
+| `$SWITCHBOARD_TASK` | the task typed after `n` (empty for a bare create) — the agent gets it too |
 
 ```yaml
 worktree_creation_command: cp "$SWITCHBOARD_PROJECT_PATH/.env" .
@@ -320,13 +328,11 @@ turns setup off for that project without falling back to the global.
 
 Two limits worth knowing:
 
-- It fires **at most once**, when the worktree's session is first created — not on
-  a re-switch. There's no retry: if that first session is never created (say a
-  stale `sb/…` session of the same name is still around), setup doesn't run.
-- The "a failed setup blocks the agent" guarantee assumes a **simple**
-  `session_command` (`claude`, `codex`, `claude --flag`). A compound one using `;`
-  — `session_command: export X=1; claude` — runs regardless, because `a && b; c`
-  always runs `c`. Chain it with `&&` instead.
+- It fires **at most once**, when the worktree is first built — not on a re-switch.
+  There's no retry: fix the cause, then `d` the `✘` workspace and press `n` again.
+- The agent runs in the pane's own interactive shell, so a `session_command` that's
+  an alias or shell function from your rc works as it would typed by hand. A failed
+  setup blocks it whatever its shape — a compound `export X=1; claude` included.
 
 ---
 
@@ -372,6 +378,7 @@ Everything switchboard writes, and how to redirect it. State dirs follow XDG.
 | Agent-state files | `$XDG_STATE_HOME/switchboard/agents` → `~/.local/state/switchboard/agents` | `$SWITCHBOARD_STATE_DIR` |
 | Attention markers (bold-until-viewed) | `$XDG_STATE_HOME/switchboard/attention` → `~/.local/state/switchboard/attention` | `$SWITCHBOARD_ATTENTION_DIR` |
 | Project-collapse folds | `$XDG_STATE_HOME/switchboard/collapse` → `~/.local/state/switchboard/collapse` | `$SWITCHBOARD_COLLAPSE_DIR` |
+| Background-create records (`n` dispatches) | `$XDG_STATE_HOME/switchboard/creation` → `~/.local/state/switchboard/creation` | `$SWITCHBOARD_CREATION_DIR` |
 | PR-badge cache | `$XDG_CACHE_HOME/switchboard/prs` → `~/.cache/switchboard/prs` | `$SWITCHBOARD_CACHE_DIR` |
 | Agent-state reporter script | `$XDG_DATA_HOME/switchboard/sb-agent-hook` → `~/.local/share/switchboard/sb-agent-hook` | `$XDG_DATA_HOME` |
 | Synthesized sound WAVs | `$XDG_DATA_HOME/switchboard/sounds` → `~/.local/share/switchboard/sounds` | `$XDG_DATA_HOME` |

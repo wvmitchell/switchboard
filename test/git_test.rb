@@ -27,6 +27,23 @@ module Switchboard
       assert_equal "main", Git.current_branch(temp_git_repo)
     end
 
+    def test_fetch_base_with_a_timeout_succeeds_on_a_fast_remote
+      assert Git.fetch_base(temp_git_repo("proj", origin: true), "origin/main", timeout: 10)
+    end
+
+    # A stalled remote (a hung ssh, a dead network) must not pin a background build: past
+    # the timeout the fetch is killed and the caller builds off the last fetch.
+    def test_fetch_base_gives_up_on_a_stalled_remote_at_its_timeout
+      repo = temp_git_repo("proj")
+      git(repo, "remote", "add", "slow", "ssh://example.invalid/x.git")
+      ENV["GIT_SSH_COMMAND"] = "sleep 3" # stands in for an ssh that never answers
+      started = Time.now
+      refute Git.fetch_base(repo, "slow/main", timeout: 0.5)
+      assert_operator Time.now - started, :<, 2.5, "killed at the timeout, not after the stall"
+    ensure
+      ENV.delete("GIT_SSH_COMMAND")
+    end
+
     def test_move_worktree_moves_the_directory
       repo = temp_git_repo("app")
       git(repo, "worktree", "add", "-q", path("old"), "-b", "feature")

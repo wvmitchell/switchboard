@@ -26,7 +26,9 @@ module Switchboard
       when "clone"             then clone_project(argv[1], argv[2])
       when "create"            then create_project(argv[1])
       when "refresh"           then refresh(*refresh_args(argv))
-      when "reap-worktree"     then reap_worktree(argv[1], argv[2], argv[3])
+      when "reap-worktree"     then reap_worktree(argv[1], argv[2], argv[3], force_branch: argv[4] == "--force-branch")
+      when "create-workspace"  then create_workspace(argv[1])
+      when "launch"            then exit(launch(argv[1]))
       when "enable-hooks"      then exit(1) if enable_hooks(argv[1]) == false
       when "disable-hooks"     then disable_hooks(argv[1])
       when "rename"            then exit(1) unless rename(argv[1])
@@ -127,24 +129,47 @@ module Switchboard
     # controlling terminal, the only thing that survives the pane-teardown SIGHUP when
     # the caller kills its own session (deleting the workspace you're in). Then the
     # removal core clears the marker and repaints every pane from git truth.
-    def reap_worktree(repo, path, branch)
+    def reap_worktree(repo, path, branch, force_branch: false)
       return unless repo && path
 
       Process.daemon(true, true) # new session, no ctty; keep the already-/dev/null'd stdio
-      reap_worktree!(repo, path, branch)
+      reap_worktree!(repo, path, branch, force_branch: force_branch)
+    end
+
+    # Background dispatch worker (Sidebar#create spawns it). Daemonized like the reaper:
+    # setsid'd away from the sidebar's session, so closing that pane mid-build can't
+    # SIGHUP it. TMUX stays in the env, which the worker needs to size the session.
+    def create_workspace(id)
+      return unless id
+
+      Process.daemon(true, true)
+      Creator.work(config, id)
+    rescue StandardError
+      nil
+    end
+
+    # The one line the worker types into a dispatched workspace's pane.
+    def launch(dest)
+      return 0 unless dest
+
+      Creator.launch(config, dest)
     end
 
     # The removal itself, split out so tests exercise it WITHOUT daemonizing (which
     # would detach the test process). `remove_worktree --force` owns all the
-    # correctness git already enforces (dirty/locked/submodule, freeing the branch);
+    # correctness git already enforces (dirty/submodule, a lock you set, freeing the
+    # branch) — it forces past a lock only on our own un-set-up build (`unfinished_at?`);
     # `delete_branch` is the safe `-d` (git refuses a still-checked-out or unmerged
     # branch, so it's a no-op when the remove failed). The marker is cleared
     # UNCONDITIONALLY: on success the row is gone from git anyway; on failure the row
     # must REAPPEAR so a delete that didn't take isn't masked. broadcast_warm makes
     # every sidebar rebuild from git truth now instead of lagging to its next tick.
-    def reap_worktree!(repo, path, branch)
-      Git.remove_worktree(repo, path, force: true)
-      Git.delete_branch(repo, branch) if branch && !branch.empty?
+    # `force_branch:` is for a dispatched tree already proven untouched (nothing past its
+    # base): a placeholder branch never reads as merged into your local base, so the
+    # safe -d would leak one per canceled build.
+    def reap_worktree!(repo, path, branch, force_branch: false)
+      Git.remove_worktree(repo, path, force: true, locked: Creation.unfinished_at?(path))
+      Git.delete_branch(repo, branch, force: force_branch) if branch && !branch.empty?
       PendingDelete.clear(path)
       Tmux.broadcast_warm
     rescue StandardError
@@ -214,6 +239,7 @@ module Switchboard
     # Tear down switchboard: kill every sb/ session, the one you're in last (so
     # it never orphans the others). Like prune, works outside tmux.
     def quit
+      Creation.cancel_all # BEFORE the kill: an in-flight build must not open a session after it
       AgentState.clear_all  # killing every agent makes their last hook state stale — drop it now
       Monitoring.clear_all  # ...and every monitoring declaration is now stale too
       Notify.clear_all      # ...and any pending "come look" alert is moot once the agents are gone
@@ -475,6 +501,9 @@ module Switchboard
       when :branch_exists
         warn "a branch named #{File.basename(result.dest)} already exists — choose another name"
         false
+      when :building
+        warn "this workspace is still being created; rename it once it's ready"
+        false
       else # :failed
         warn "rename failed (git worktree move)"
         false
@@ -537,7 +566,22 @@ module Switchboard
     def rename_nudge_stop(payload, cwd)
       leaf = stop_block_leaf(payload, cwd)
       report_stop_state(leaf ? "thinking" : "done")
-      puts RenameNudge.stop_json(leaf) if leaf
+      return puts(RenameNudge.stop_json(leaf)) if leaf
+
+      stamp_first_turn(cwd)
+    end
+
+    # A dispatched task's first turn just ended (a real Stop, not the rename block —
+    # that one reports "thinking"), so its Creation record can ping. Matched by
+    # realpath: the agent's cwd keeps the pre-rename path. Hook-less records never
+    # reach here, and one whose agent hasn't started, or that's already stamped or
+    # bare, no-ops (Creation.stamp_first_turn).
+    def stamp_first_turn(cwd)
+      top = worktree_at(cwd) or return
+      rec = Creation.for_path(top)
+      Creation.stamp_first_turn(rec["id"]) if rec
+    rescue StandardError
+      nil
     end
 
     # The placeholder leaf this Stop should block on, or nil if it should NOT block (the
@@ -623,7 +667,7 @@ module Switchboard
     # silent run is never mistaken for success.
     def play_sound(state = nil)
       state = state || "done"
-      return warn("usage: switchboard sound [done|waiting|alert]") unless %w[done waiting alert].include?(state)
+      return warn("usage: switchboard sound [done|waiting|alert|failed]") unless %w[done waiting alert failed].include?(state)
 
       spec = config.sound_for(nil, state.to_sym)
       return warn("sounds are muted for #{state} (set `sounds: { enabled: true }`)") if spec.nil?
@@ -978,7 +1022,7 @@ module Switchboard
 
       AgentHooks::ADAPTERS.each do |adapter| # claude, per-worktree
         # gstack-shortcut(dec-0dd4f937): presence only, so a worktree whose hooks predate a new
-        # entry (v0.50.2 PermissionRequest / SessionEnd timeout) still reads ✓; upgrade when users
+        # entry (v0.51.1 PermissionRequest / SessionEnd timeout) still reads ✓; upgrade when users
         # miss a new dot after upgrading or the next hook-entry change ships.
         on = adapter.enabled?(here)
         puts(on ? "  \e[32m✓\e[0m #{adapter.label} hooks here: #{adapter.settings_path(here)}"

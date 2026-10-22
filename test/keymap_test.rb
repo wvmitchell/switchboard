@@ -72,7 +72,7 @@ module Switchboard
 
     def test_help_rows_reflect_a_remap
       rows = Keymap.help_rows(Keymap.bindings(cfg("sidebar_keys" => { "new_workspace" => "c" })))
-      new_ws = rows.find { |_key, desc| desc == "new workspace (auto-named)" }
+      new_ws = rows.find { |_key, desc| desc == "new workspace (task → background)" }
       assert_equal "c", new_ws.first, "the overlay shows the configured key, not the default"
     end
 

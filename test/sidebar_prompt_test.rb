@@ -87,6 +87,36 @@ module Switchboard
       assert sb.send(:blank_input?, ""), "...and an empty result cancels"
     end
 
+    # Value: protects=the task prompt fences pastes (bracketed paste on, then off even on cancel) and drops input in flight after its ↵; fails_when=the drain or the ensure-off is dropped, so trailing paste bytes (`d`…`y`) reach the tree as keys or the pane stays in paste mode; why_new=paste tests call edit_buffer directly, never prompt_line's wrapper; seam=none; no_claim=terminal-side paste handling
+    def test_the_task_prompt_fences_pastes_and_drains_what_followed_its_enter
+      sb = sidebar
+      r, w = IO.pipe
+      w.write("dy") # the tail of an unbracketed paste, already in flight behind the ↵
+      result = nil
+      out = capture_stdout do
+        stub_method(sb, :draw_prompt, ->(*, **) {}) do
+          stub_method(sb, :read_prompt_key, -> { "fix it\r" }) do
+            with_stdin(r) { result = sb.send(:prompt_line, "app task", task: true) }
+          end
+        end
+      end
+      assert_equal "fix it", result
+      assert_raises(IO::WaitReadable, "nothing left for the tree to read as keys") { r.read_nonblock(16) }
+      assert_includes out, "\e[?2004h", "pastes arrive fenced"
+      assert_includes out, "\e[?2004l", "paste mode is switched back off"
+      assert_operator out.index("\e[?2004h"), :<, out.index("\e[?2004l"), "...after it was switched on"
+
+      cancel = capture_stdout do
+        stub_method(sb, :draw_prompt, ->(*, **) {}) do
+          stub_method(sb, :read_prompt_key, -> { "\e" }) { sb.send(:prompt_line, "app task", task: true) }
+        end
+      end
+      assert_includes cancel, "\e[?2004l", "Esc leaves paste mode too"
+    ensure
+      r&.close
+      w&.close
+    end
+
     def test_read_prompt_key_returns_nil_on_a_dead_pane
       sb = Sidebar.new
       r, w = IO.pipe
@@ -119,36 +149,46 @@ module Switchboard
       assert_includes visible, "esc cancel", "...while still advertising the escape hatch"
     end
 
-    # `n` (and filter-mode ↵-on-a-project) auto-names instantly — no prompt. It hands
-    # Creator a BLANK name (⇒ a placeholder) and must never call prompt_line (#114).
-    def test_create_auto_names_without_prompting
+    # `n` asks for a TASK, never a name: #94/#114 deferred naming still holds (the
+    # workspace gets a reserved placeholder), the prompt is what the agent should do.
+    def test_create_prompts_for_a_task_and_reserves_a_placeholder
+      File.write(Config.path, YAML.dump("projects" => [{ "name" => "app", "path" => "/x" }]))
       sb = sidebar(nodes: [proj("app")], cursor: 0)
-      seen = :unset
-      stub_method(sb, :prompt_line, ->(*) { flunk "create must not prompt for a name (#114)" }) do
-        stub_method(Creator, :create, lambda { |_cfg, project, name|
-          seen = [project, name]
-          nil # nil dest ⇒ no Tmux.go; reload closes out
+      sb.instance_variable_set(:@config, Config.new)
+      reserved = nil
+      stub_method(sb, :prompt_line, ->(label, **) { label == "app task" ? "fix it" : flunk(label) }) do
+        stub_method(Creator, :reserve, lambda { |_cfg, project|
+          reserved = project
+          nil # no free name ⇒ a flash, nothing recorded
         }) do
-          stub_method(sb, :reload, -> {}) do
-            capture_stdout { sb.send(:create) } # swallow the "creating…" status line
-          end
+          stub_method(sb, :read_char, -> {}) { capture_stdout { sb.send(:create) } }
         end
       end
-      assert_equal ["app", ""], seen, "create hands Creator the project + a blank name (⇒ placeholder)"
+      assert_equal "app", reserved
+      assert_empty Creation.all
     end
 
-    # On a successful create, it drops you straight into the new worktree's session.
-    def test_create_drops_into_the_new_workspace
+    # The feature: creating NEVER drops you into the new workspace — it builds in the
+    # background and pings you when it's ready.
+    def test_create_never_switches_into_the_new_workspace
+      File.write(Config.path, YAML.dump("worktree_root" => path("wts"), "projects" => [{ "name" => "app", "path" => "/x" }]))
       sb = sidebar(nodes: [proj("app")], cursor: 0)
-      went_to = nil
-      stub_method(Creator, :create, ->(*) { "/wt/wandering-finch" }) do
-        stub_method(Tmux, :go, ->(wt, **) { went_to = wt.path }) do
-          stub_method(sb, :reload, -> {}) do
-            capture_stdout { sb.send(:create) } # swallow the "creating…" status line
+      sb.instance_variable_set(:@config, Config.new)
+      went = false
+      dest = path("wts", "app", "wandering-finch")
+      stub_method(sb, :prompt_line, ->(*_a, **_k) { "" }) do
+        stub_method(Creator, :reserve, ->(*) { ["wandering-finch", dest] }) do
+          stub_method(sb, :spawn_worker, ->(_id) {}) do
+            stub_method(Tmux, :go, ->(*_a, **_k) { went = true }) do
+              stub_method(Tmux, :broadcast_warm, ->(**_k) {}) do
+                stub_method(sb, :reload, -> {}) { sb.send(:create) }
+              end
+            end
           end
         end
       end
-      assert_equal "/wt/wandering-finch", went_to, "a created workspace is switched into"
+      refute went, "dispatch must not switch you in"
+      assert_equal "wandering-finch", Creation.all.first["name"]
     end
 
     def test_rename_aborts_when_the_prompt_is_cancelled
