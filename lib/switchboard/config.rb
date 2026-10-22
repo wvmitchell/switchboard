@@ -16,7 +16,7 @@ module Switchboard
 
     # Built-in sound name per resting state; the Sound module synthesizes + caches
     # these. Overridable globally or per project via a `sounds:` map.
-    DEFAULT_SOUNDS = { "done" => "train", "waiting" => "chime", "alert" => "alert" }.freeze
+    DEFAULT_SOUNDS = { "done" => "train", "waiting" => "chime", "alert" => "alert", "failed" => "failed" }.freeze
 
     # Default tmux key per configurable role (`tmux_keys:` map). The toggle defaults
     # to `s` (switchboard's historical binding); home is unbound by default (nil) —
@@ -71,8 +71,8 @@ module Switchboard
       # projects_root: "#{DEFAULT_PROJECTS_ROOT}"        # where `a` / clone drop fetched repos
       # base: origin/main                          # default ref new worktrees branch from
       # branch_prefix: ""                          # new branches become <prefix>/<name>
-      # session_command: ""                        # run on a worktree's first session (e.g. claude --dangerously-skip-permissions)
-      # worktree_creation_command: ""              # run ONCE in a NEW worktree, before session_command (e.g. bundle install). A list runs its steps in order; `false` on a project turns it off
+      # session_command: ""                        # the agent a new workspace runs (e.g. claude --dangerously-skip-permissions); the `n` task is appended for claude/codex, or put {task} where it goes
+      # worktree_creation_command: ""              # run ONCE in a NEW worktree, before session_command (e.g. bundle install); sees $SWITCHBOARD_TASK. A list runs its steps in order; `false` on a project turns it off
       # agent_state_hooks: true                    # auto-wire the agent-state dots on worktree create
       # prune_on_launch: true                      # prune orphaned sb/ sessions when landing on home
       # auto_rename: true                          # nudge the agent to rename a placeholder-named workspace once it knows the work
@@ -80,14 +80,16 @@ module Switchboard
       # diff_counts: true                          # show +adds −dels of each branch vs base on the workspace row
       # prewarm: true                              # keep off-screen sidebars warm so switching sessions doesn't flash a stale tree
 
-      # Completion sounds (on by default): a built-in (train / chime / alert, or
-      # train_1..3 / chime_1..3), a file path, or a macOS system-sound name. enabled:
-      # false mutes all. `alert` is the declared `monitoring notify` cue.
+      # Completion sounds (on by default): a built-in (train / chime / alert / failed,
+      # or train_1..3 / chime_1..3), a file path, or a macOS system-sound name. enabled:
+      # false mutes all. `alert` is the declared `monitoring notify` cue; `failed` plays
+      # when a workspace dispatched with `n` fails to build (✘).
       sounds:
         # enabled: true
         # done: train
         # waiting: chime
         # alert: alert
+        # failed: failed
 
       # Prefix keys switchboard binds. toggle defaults to s; home is unbound unless set.
       # A key is a char, a named key (Space, F1, BSpace), or a C-/M- combo.
@@ -106,7 +108,7 @@ module Switchboard
         # bottom: G               # jump to bottom
         # filter: "/"             # type-to-filter by name
         # add_project: a          # add a project
-        # new_workspace: n        # new workspace (auto-named)
+        # new_workspace: n        # new workspace (task → background build)
         # open_pr: o              # open the row's PR
         # open_repo: O            # open the row's repo
         # rename: r               # rename workspace
@@ -344,6 +346,15 @@ module Switchboard
       worktree_creation_command
     end
 
+    # A setup the user configured but we can't run — a list step YAML read as a map
+    # (an unquoted `: `), a number, `true`. Off (absent, `false`, empty) is valid.
+    def setup_invalid?(name)
+      key = "worktree_creation_command"
+      node = project_node(name)
+      raw = node&.key?(key) ? node[key] : @data[key]
+      !(raw.nil? || raw == false || raw.is_a?(String) || (raw.is_a?(Array) && raw.all?(String)))
+    end
+
     # Resolved tmux key for a role ("toggle"/"home"): the configured value when it's
     # a usable key token, else the role default (toggle ⇒ "s", home ⇒ nil/unbound).
     # A `home` that resolves equal to the toggle is dropped — one key can't carry two
@@ -458,8 +469,9 @@ module Switchboard
     # "if [ -f x ]; then\n cp x .\nfi" becomes "if [ -f x ]; then && cp x . && fi",
     # and a trailing "# comment" would swallow whatever we appended after it.
     # A list with a non-String entry is rejected WHOLESALE (nil, no setup): a
-    # partial setup is worse than none. So is any other type — `false` is the
-    # config's disable idiom (`sounds: false`), and must not become the shell
+    # partial setup is worse than none — and the launcher fails that build
+    # (`setup_invalid?`) rather than start the agent with no setup at all. `false` is
+    # the config's disable idiom (`sounds: false`), and must not become the shell
     # builtin `false`, which exits 1 and would block the agent forever.
     def setup_script(value)
       steps = Array(value)

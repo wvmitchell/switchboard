@@ -15,8 +15,10 @@ module Switchboard
     # by Tree.nodes (stays nil): the sidebar sets it on a folded-workspace clone when
     # the global `z` branch-fold is on (issue #107), to the count of branch rows tucked
     # away — render reads it for the dim `▸N` cue.
+    # `creation` is set only on a SYNTHETIC ws row: a dispatched workspace whose worktree
+    # git doesn't list yet (or never will — a pre-worktree ✘), drawn from its Creation record.
     Node = Struct.new(:kind, :project, :path, :branch, :name, :pr, :dirty, :base, :active, :last,
-                      :expanded, :folded, keyword_init: true)
+                      :expanded, :folded, :creation, keyword_init: true)
 
     # Flat, ordered list of Nodes: project header, its workspaces, and a
     # workspace's branches (when it has more than one).

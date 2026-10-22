@@ -12,7 +12,7 @@ module Switchboard
   # the offline unit suite; this is the real-tmux render-to-hidden-buffer proof.)
   class PrewarmTest < SmokeCase
     def test_offscreen_sidebar_warms_in_an_agent_dot_without_a_switch
-      sess = create_workspace            # client switches INTO the workspace; HOME goes off-screen
+      sess = create_workspace(enter: true) # client switches INTO the workspace; HOME goes off-screen
       home_pane = sidebar_pane_ids(HOME).first
       refute_nil home_pane, "home keeps its sidebar process after the switch"
       assert_equal sess, client_session, "precondition: client is in the workspace, HOME is off-screen"

@@ -3,200 +3,170 @@
 require_relative "test_helper"
 
 module Switchboard
-  # Creator.create end-to-end against a real repo: it must make the worktree +
-  # branch under worktree_root, guard the obvious failure modes, and — the bug
-  # this suite added — never let a name escape the worktree root.
+  # What a created worktree IS, end-to-end against a real repo: its branch, where it
+  # lands, the agent hooks it gets, and how placeholder names avoid collisions. Every
+  # create is a background dispatch now, so these drive the real path — reserve a name,
+  # then the worker (tmux stubbed; creator_dispatch_test covers the lifecycle itself).
   class CreatorTest < SandboxTest
-    # Config registering `proj` -> a real repo with an origin/main to branch from.
-    def config_for(repo, name: "proj")
-      File.write(Config.path, YAML.dump("worktree_root" => path("wts"),
-                                        "projects" => [{ "name" => name, "path" => repo }]))
+    def config_for(repo, name: "proj", **extra)
+      File.write(Config.path, YAML.dump({ "worktree_root" => path("wts"),
+                                          "projects" => [{ "name" => name, "path" => repo }] }.merge(extra)))
       Config.new
     end
 
-    def test_create_makes_a_worktree_and_branch
+    # Reserve + run the worker with tmux stubbed out; returns the built worktree path
+    # (nil when the build failed).
+    def build(config, project = "proj")
+      name, dest = Creator.reserve(config, project)
+      return nil unless dest
+
+      rec = Creation.create(project: project, name: name, path: dest, task: "")
+      stub_method(Tmux, :ensure_session, ->(*) { true }) do
+        stub_method(Tmux, :ensure_sidebar, ->(_n) {}) do
+          stub_method(Tmux, :broadcast_warm, ->(**_k) {}) do
+            stub_method(Creator, :await_claim, ->(*_a, **_k) { true }) { Creator.work(config, rec["id"]) }
+          end
+        end
+      end
+      found = Creation.find(rec["id"])
+      found["worktree_added"] ? found["path"] : nil
+    end
+
+    def test_build_makes_a_placeholder_worktree_and_matching_branch
       config = config_for(temp_git_repo("proj", origin: true))
-      dest = Creator.create(config, "proj", "my feature")
-      refute_nil dest
-      assert_equal File.join(config.worktree_root, "proj", "my-feature"), dest
-      assert File.directory?(dest)
-      assert_equal "my-feature", Git.current_branch(dest)
-    end
-
-    def test_create_honors_branch_prefix
-      File.write(Config.path, YAML.dump("worktree_root" => path("wts"), "branch_prefix" => "wv",
-                                        "projects" => [{ "name" => "proj", "path" => temp_git_repo("proj", origin: true) }]))
-      dest = Creator.create(Config.new, "proj", "thing")
-      assert_equal "wv/thing", Git.current_branch(dest)
-    end
-
-    # A trailing slash on the prefix used to build "wv//thing" — an invalid git ref
-    # that failed `worktree add` silently, so create returned nil ("couldn't find a
-    # free placeholder name" on the auto-name path). The prefix is now normalized.
-    def test_create_tolerates_a_trailing_slash_on_branch_prefix
-      File.write(Config.path, YAML.dump("worktree_root" => path("wts"), "branch_prefix" => "wv/",
-                                        "projects" => [{ "name" => "proj", "path" => temp_git_repo("proj", origin: true) }]))
-      dest = Creator.create(Config.new, "proj", "thing")
-      refute_nil dest, "a trailing-slash prefix must not break create"
-      assert_equal "wv/thing", Git.current_branch(dest), "the branch has a single separator, not wv//thing"
-    end
-
-    # The headline bug: a traversal name must be neutralized, not honored.
-    def test_create_neutralizes_path_traversal
-      config = config_for(temp_git_repo("proj", origin: true))
-      dest = Creator.create(config, "proj", "../../escape")
-      refute_nil dest
-      assert_equal File.join(config.worktree_root, "proj", "escape"), dest
-      assert dest.start_with?("#{File.join(config.worktree_root, 'proj')}/"),
-             "the worktree must stay inside the project's worktree dir"
-    end
-
-    # The other traversal axis (Codex): an explicit project name can carry
-    # traversal too; the worktree must still land under worktree_root.
-    def test_create_neutralizes_a_traversal_project_name
-      repo = temp_git_repo("proj", origin: true)
-      File.write(Config.path, YAML.dump("worktree_root" => path("wts"),
-                                        "projects" => [{ "name" => "../escape", "path" => repo }]))
-      dest = Creator.create(Config.new, "../escape", "ws")
-      refute_nil dest
-      assert dest.start_with?("#{path('wts')}/"),
-             "a traversal project name must not escape worktree_root"
-    end
-
-    def test_create_rejects_a_name_that_sanitizes_to_empty
-      config = config_for(temp_git_repo("proj", origin: true))
-      capture_io { assert_nil Creator.create(config, "proj", "..") }
-    end
-
-    def test_create_refuses_to_clobber_an_existing_worktree
-      config = config_for(temp_git_repo("proj", origin: true))
-      Creator.create(config, "proj", "dup")
-      capture_io { assert_nil Creator.create(config, "proj", "dup") }
-    end
-
-    # A stale rename bridge (a symlink) squatting the target name must be reclaimed,
-    # not read as "already exists" — create clears it, then makes the worktree.
-    def test_create_reclaims_a_stale_bridge_squatting_the_name
-      config = config_for(temp_git_repo("proj", origin: true))
-      dest = File.join(config.worktree_root, "proj", "reused")
-      FileUtils.mkdir_p(File.dirname(dest))
-      File.symlink(path("target-long-gone"), dest) # dangling bridge at the target name
-      out = Creator.create(config, "proj", "reused")
-      assert_equal dest, out
-      refute File.symlink?(dest), "the stale bridge is cleared"
-      assert File.directory?(dest)
-      assert_equal "reused", Git.current_branch(dest)
-    end
-
-    def test_create_unknown_project_is_nil
-      config = config_for(temp_git_repo("proj", origin: true))
-      capture_io { assert_nil Creator.create(config, "nope", "x") }
-    end
-
-    # No name given -> a faker placeholder workspace + a real branch matching it (#94).
-    def test_create_with_blank_name_generates_a_placeholder
-      config = config_for(temp_git_repo("proj", origin: true))
-      dest = Creator.create(config, "proj", "")
+      dest = build(config)
       refute_nil dest
       leaf = File.basename(dest)
       assert_match(/\A[a-z]+-[a-z]+\z/, leaf, "an adjective-noun placeholder leaf")
-      assert File.directory?(dest)
+      assert_equal File.join(config.worktree_root, "proj", leaf), dest
       assert_equal leaf, Git.current_branch(dest), "branch matches the leaf (no prefix here)"
     end
 
-    # A generated name already taken by a DIR is skipped; generation retries (#94).
-    def test_create_placeholder_retries_past_a_taken_dir
+    def test_build_honors_branch_prefix
+      config = config_for(temp_git_repo("proj", origin: true), "branch_prefix" => "wv")
+      dest = build(config)
+      assert_equal "wv/#{File.basename(dest)}", Git.current_branch(dest)
+    end
+
+    # A trailing slash on the prefix once built "wv//name" — an invalid ref that failed
+    # `worktree add`. The prefix is normalized.
+    def test_build_tolerates_a_trailing_slash_on_branch_prefix
+      config = config_for(temp_git_repo("proj", origin: true), "branch_prefix" => "wv/")
+      dest = build(config)
+      refute_nil dest
+      assert_equal "wv/#{File.basename(dest)}", Git.current_branch(dest)
+    end
+
+    # An explicit project name can carry traversal (`switchboard add ../x …`); the
+    # worktree must still land under worktree_root.
+    def test_build_neutralizes_a_traversal_project_name
+      config = config_for(temp_git_repo("proj", origin: true), name: "../escape")
+      dest = build(config, "../escape")
+      refute_nil dest
+      assert dest.start_with?("#{path('wts')}/"), "a traversal project name must not escape worktree_root"
+    end
+
+    def test_reserve_unknown_project_is_nil
       config = config_for(temp_git_repo("proj", origin: true))
-      Creator.create(config, "proj", "taken") # occupies dir + branch "taken"
+      assert_nil Creator.reserve(config, "nope")
+    end
+
+    # A generated name already taken by a DIR is skipped (#94).
+    def test_reserve_retries_past_a_taken_dir
+      config = config_for(temp_git_repo("proj", origin: true))
+      FileUtils.mkdir_p(File.join(config.worktree_root, "proj", "taken"))
       names = %w[taken free]
       stub_method(Placeholder, :generate, -> { names.shift }) do
-        dest = Creator.create(config, "proj", "")
-        assert_equal File.join(config.worktree_root, "proj", "free"), dest
+        assert_equal "free", Creator.reserve(config, "proj").first
       end
     end
 
-    # A generated name whose BRANCH exists (even with no dir) fails `worktree add`;
-    # generation retries to a free name rather than giving up (#94).
-    def test_create_placeholder_retries_past_a_branch_only_collision
-      repo = temp_git_repo("proj", origin: true)
-      config = config_for(repo)
-      git(repo, "branch", "branchonly") # a branch with no worktree dir
-      names = %w[branchonly free2]
-      stub_method(Placeholder, :generate, -> { names.shift }) do
-        dest = Creator.create(config, "proj", "")
-        assert_equal File.join(config.worktree_root, "proj", "free2"), dest
-      end
-    end
-
-    # Hooks (incl. the #92 nudge) are wired when auto_rename is on, even if the
-    # agent-state dots are off — so the nudge works without dots.
-    def test_create_wires_hooks_when_auto_rename_on_even_with_dots_off
-      File.write(Config.path, YAML.dump("worktree_root" => path("wts"),
-                                        "agent_state_hooks" => false, "auto_rename" => true,
-                                        "projects" => [{ "name" => "proj", "path" => temp_git_repo("proj", origin: true) }]))
-      dest = Creator.create(Config.new, "proj", "thing")
-      assert ClaudeHook.enabled?(dest), "claude hook wired because auto_rename is on"
-      # Codex is GLOBAL now (Installer-managed) — create never writes a per-worktree file.
-      refute File.exist?(File.join(dest, ".codex", "hooks.json")), "no per-worktree codex file on create"
-    end
-
-    # A PER-PROJECT auto_rename:true (global off, dots off) must still wire the hook —
-    # else the runtime nudge (which resolves auto_rename_for(project)) never has a hook
-    # to fire from, and the project override silently does nothing.
-    def test_create_wires_hooks_for_a_per_project_auto_rename_opt_in
-      File.write(Config.path, YAML.dump("worktree_root" => path("wts"),
-                                        "agent_state_hooks" => false, "auto_rename" => false,
-                                        "projects" => [{ "name" => "proj", "auto_rename" => true,
-                                                         "path" => temp_git_repo("proj", origin: true) }]))
-      dest = Creator.create(Config.new, "proj", "thing")
-      assert ClaudeHook.enabled?(dest), "per-project auto_rename:true wires the claude hook even with global off"
-      refute File.exist?(File.join(dest, ".codex", "hooks.json")), "no per-worktree codex file on create"
-    end
-
-    # The inverse override: global auto_rename:true but this project opts OUT — no hook
-    # (with dots + background_presence also off), matching what the *_for resolvers
-    # resolve at runtime.
-    def test_create_skips_hooks_for_a_per_project_auto_rename_opt_out
-      File.write(Config.path, YAML.dump("worktree_root" => path("wts"),
-                                        "agent_state_hooks" => false, "auto_rename" => true,
-                                        "background_presence" => false,
-                                        "projects" => [{ "name" => "proj", "auto_rename" => false,
-                                                         "path" => temp_git_repo("proj", origin: true) }]))
-      dest = Creator.create(Config.new, "proj", "thing")
-      refute ClaudeHook.enabled?(dest), "per-project auto_rename:false skips the claude hook despite global on"
-      refute File.exist?(File.join(dest, ".codex", "hooks.json")), "no per-worktree codex file"
-    end
-
-    def test_create_skips_hooks_when_dots_rename_and_presence_all_off
-      File.write(Config.path, YAML.dump("worktree_root" => path("wts"),
-                                        "agent_state_hooks" => false, "auto_rename" => false,
-                                        "background_presence" => false,
-                                        "projects" => [{ "name" => "proj", "path" => temp_git_repo("proj", origin: true) }]))
-      dest = Creator.create(Config.new, "proj", "thing")
-      refute ClaudeHook.enabled?(dest), "no claude hook when dots, auto_rename, and background_presence are all off"
-      refute File.exist?(File.join(dest, ".codex", "hooks.json")), "no per-worktree codex file"
-    end
-
-    # background_presence alone (dots + auto_rename off) still wires the hook — the
-    # monitoring nudge + session-boundary clears need it.
-    def test_create_wires_the_hook_for_background_presence_alone
-      File.write(Config.path, YAML.dump("worktree_root" => path("wts"),
-                                        "agent_state_hooks" => false, "auto_rename" => false,
-                                        "background_presence" => true,
-                                        "projects" => [{ "name" => "proj", "path" => temp_git_repo("proj", origin: true) }]))
-      dest = Creator.create(Config.new, "proj", "thing")
-      assert ClaudeHook.enabled?(dest), "background_presence on wires the claude hook even with dots + rename off"
-    end
-
-    # The branch created off origin/main must NOT inherit it as an upstream
-    # (--no-track), so rename's pushed? gate (whose @{upstream} arm would otherwise
-    # see origin/main) doesn't misread a fresh worktree as pushed (#94).
-    def test_create_branch_has_no_upstream_and_reads_unpushed
+    # A rename leaves a bridge symlink at the old placeholder path; once its target is
+    # deleted it dangles — !File.exist? — yet still blocks `worktree add`. Skip it.
+    def test_reserve_skips_a_dangling_rename_bridge
       config = config_for(temp_git_repo("proj", origin: true))
-      Creator.create(config, "proj", "fresh")
+      FileUtils.mkdir_p(File.join(config.worktree_root, "proj"))
+      File.symlink(path("long-gone"), File.join(config.worktree_root, "proj", "bridged"))
+      names = %w[bridged clear]
+      stub_method(Placeholder, :generate, -> { names.shift }) do
+        assert_equal "clear", Creator.reserve(config, "proj").first
+      end
+    end
+
+    # A leftover sb/ session of the same name would make ensure_session early-return and
+    # swallow the launch line, so a name with a live session is skipped too.
+    def test_reserve_skips_a_name_with_a_leftover_session
+      config = config_for(temp_git_repo("proj", origin: true))
+      names = %w[stale-one fresh-one]
+      stub_method(Placeholder, :generate, -> { names.shift }) do
+        stub_method(Tmux, :has_session?, ->(name) { name == "sb/proj/stale-one" }) do
+          assert_equal "fresh-one", Creator.reserve(config, "proj").first
+        end
+      end
+    end
+
+    # --- the agent hooks a new worktree gets ---------------------------------------
+    # Wired for ANY agent (typed by hand or not) whenever dots, auto_rename or
+    # background_presence is on — each resolved per project.
+
+    def test_build_wires_hooks_when_auto_rename_on_even_with_dots_off
+      config = config_for(temp_git_repo("proj", origin: true), "agent_state_hooks" => false, "auto_rename" => true)
+      dest = build(config)
+      assert ClaudeHook.enabled?(dest), "claude hook wired because auto_rename is on"
+      refute File.exist?(File.join(dest, ".codex", "hooks.json")), "codex is global; no per-worktree file"
+    end
+
+    def test_build_wires_hooks_with_no_session_command_at_all
+      config = config_for(temp_git_repo("proj", origin: true))
+      dest = build(config)
+      assert ClaudeHook.enabled?(dest), "an agent started by hand still gets its dot and nudges"
+    end
+
+    def test_build_wires_hooks_for_a_per_project_auto_rename_opt_in
+      repo = temp_git_repo("proj", origin: true)
+      File.write(Config.path, YAML.dump("worktree_root" => path("wts"), "agent_state_hooks" => false,
+                                        "auto_rename" => false,
+                                        "projects" => [{ "name" => "proj", "auto_rename" => true, "path" => repo }]))
+      assert ClaudeHook.enabled?(build(Config.new)), "per-project auto_rename:true wires the hook with the global off"
+    end
+
+    def test_build_skips_hooks_for_a_per_project_auto_rename_opt_out
+      repo = temp_git_repo("proj", origin: true)
+      File.write(Config.path, YAML.dump("worktree_root" => path("wts"), "agent_state_hooks" => false,
+                                        "auto_rename" => true, "background_presence" => false,
+                                        "projects" => [{ "name" => "proj", "auto_rename" => false, "path" => repo }]))
+      refute ClaudeHook.enabled?(build(Config.new)), "per-project auto_rename:false skips the hook despite global on"
+    end
+
+    def test_build_skips_hooks_when_dots_rename_and_presence_all_off
+      config = config_for(temp_git_repo("proj", origin: true), "agent_state_hooks" => false,
+                                                                 "auto_rename" => false, "background_presence" => false)
+      refute ClaudeHook.enabled?(build(config))
+    end
+
+    def test_build_wires_the_hook_for_background_presence_alone
+      config = config_for(temp_git_repo("proj", origin: true), "agent_state_hooks" => false,
+                                                                 "auto_rename" => false, "background_presence" => true)
+      assert ClaudeHook.enabled?(build(config)), "the monitoring nudge + session-boundary clears need it"
+    end
+
+    # The branch cut from origin/main must NOT inherit it as an upstream (--no-track), so
+    # rename's pushed? gate doesn't misread a fresh worktree as pushed (#94).
+    def test_build_branch_has_no_upstream_and_reads_unpushed
+      config = config_for(temp_git_repo("proj", origin: true))
+      branch = File.basename(build(config))
       repo = config.project("proj")["path"]
-      refute Git.tracking_upstream?(repo, "fresh"), "--no-track ⇒ origin/main not inherited as upstream"
-      refute Git.pushed?(repo, "fresh"), "a freshly-created branch reads as not-pushed"
+      refute Git.tracking_upstream?(repo, branch), "--no-track ⇒ origin/main not inherited as upstream"
+      refute Git.pushed?(repo, branch), "a freshly-created branch reads as not-pushed"
+    end
+
+    # --- sanitize (shared with rename) ----------------------------------------------
+
+    def test_sanitize_neutralizes_traversal
+      assert_equal "etc", Creator.sanitize("../../etc")
+      assert_equal "tmp/x", Creator.sanitize("/tmp/x")
+      assert_equal "", Creator.sanitize("..")
+      assert_equal "my-feature", Creator.sanitize("my feature")
     end
   end
 end

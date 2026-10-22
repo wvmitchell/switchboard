@@ -73,6 +73,7 @@ module Switchboard
 
       quiet_shell_startup
       write_project_and_config
+      mute_sounds
       seed_pr_cache                          # fresh cache -> visible reloads don't fork `switchboard refresh`
       boot_server
       source_tmux_fragment                   # real hooks: after-new-window / client-session-changed / window-changed
@@ -105,6 +106,13 @@ module Switchboard
     # boot_server, so every pane the server spawns inherits a quiet shell.
     def quiet_shell_startup
       File.write(File.join(ENV.fetch("HOME"), ".zshrc"), "# smoke: silence zsh-newuser-install\n")
+    end
+
+    # A smoke run drives real sidebars that ring real completion pings (a dispatched
+    # workspace going ready, a ✘) — through the developer's speakers. Every case's config,
+    # whatever it writes, gets sounds off appended here. Ringing itself is unit-tested.
+    def mute_sounds
+      File.open(ENV["SWITCHBOARD_CONFIG"], "a") { |f| f.puts "sounds:\n  enabled: false" }
     end
 
     def write_project_and_config
@@ -218,18 +226,27 @@ module Switchboard
 
     # --- driving the binary --------------------------------------------------
 
-    # Create a placeholder workspace by driving the REAL sidebar UI: press `n`, which
-    # auto-creates a placeholder (Creator.create with a blank name) and switches into it —
-    # no name prompt anymore (#114/#119). Returns the new session name once it exists, has a
-    # sidebar, AND the client has switched into it.
-    def create_workspace
+    # Create a placeholder workspace by driving the REAL sidebar UI. Returns the new
+    # session name once it exists and has a sidebar.
+    # `n` dispatches in the background: the sidebar asks for a task, the detached worker
+    # builds the worktree and opens a DETACHED session, and the client stays where it was.
+    # Wait for the prompt before sending ↵ — if `n` and ↵ landed in one read, the main
+    # loop could take the ↵ as a tree "open" before the prompt ever read it. `enter: true`
+    # then switches in, for tests that need to stand in the new workspace.
+    def create_workspace(task: "", enter: false)
       pane = sidebar_pane_ids(HOME).first or flunk "no home sidebar to create from"
       before = sb_sessions
       tmux!("send-keys", "-t", pane, "n")
-      wait_until("a new workspace session + sidebar + client switch") do
-        sess = (sb_sessions - before).find { |s| s.start_with?("sb/proj/") }
-        sess && !sidebar_pane_ids(sess).empty? && client_session == sess && sess
+      wait_until("the task prompt is open") { capture(pane).include?("task ›") }
+      tmux!("send-keys", "-t", pane, "-l", task) unless task.empty?
+      tmux!("send-keys", "-t", pane, "Enter")
+      sess = wait_until("a new workspace session + sidebar, built in the background") do
+        found = (sb_sessions - before).find { |s| s.start_with?("sb/proj/") }
+        found && !sidebar_pane_ids(found).empty? && found
       end
+      assert_equal HOME, client_session, "dispatch never switches the client into the new workspace"
+      switch_client(sess) if enter
+      sess
     end
 
     # Switch the attached client to a session (fires the real client-session-changed hook).
@@ -369,9 +386,12 @@ module Switchboard
       tmux("display-message", "-p", "-t", name, fmt("session_attached")).strip == "1"
     end
 
-    # The session the (single) attached client is currently in.
+    # The session the (single) attached client is currently in. Asked of the CLIENT
+    # (list-clients), not `display-message -p #{session_name}`: run from outside tmux,
+    # that resolves tmux's "current session" — the most recently CREATED one — so a
+    # session the dispatch worker opens detached would read as if the client moved there.
     def client_session
-      tmux("display-message", "-p", fmt("session_name")).strip
+      tmux("list-clients", "-F", fmt("client_session")).lines.first.to_s.strip
     end
 
     def sidebar_flag(session)

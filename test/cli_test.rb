@@ -26,6 +26,39 @@ module Switchboard
       assert_equal 1, bcast, "every pane is told to repaint from git truth"
     end
 
+    # A canceled dispatch's placeholder branch is never "merged" into your local base, so
+    # only an explicit force (the tree was proven untouched first) removes it.
+    def test_reap_worktree_force_deletes_an_unmerged_branch_only_when_asked
+      repo = temp_git_repo("app")
+      %w[kept gone].each do |b|
+        git(repo, "worktree", "add", "-q", path(b), "-b", b)
+        git(path(b), "commit", "-q", "--allow-empty", "-m", "ahead")
+      end
+      stub_method(Tmux, :broadcast_warm, ->(**) {}) do
+        CLI.send(:reap_worktree!, repo, path("kept"), "kept")
+        CLI.send(:reap_worktree!, repo, path("gone"), "gone", force_branch: true)
+      end
+      branches = git(repo, "branch", "--format=%(refname:short)").split
+      assert_includes branches, "kept", "the safe -d keeps an unmerged branch"
+      refute_includes branches, "gone"
+    end
+
+    # Value: protects=d removes our own un-set-up build's tree even when an interrupted add left it locked (in any locale), but never a workspace the user locked; fails_when=reap drops the second --force (that ✘ can never be deleted), keys on git's localized lock text, or forces past any lock; why_new=no test locked a tree; seam=none; no_claim=how git words the lock (the reason here is deliberately not English)
+    def test_reap_worktree_forces_past_a_lock_only_on_an_unfinished_build
+      repo = temp_git_repo("app")
+      %w[half mine].each do |b|
+        git(repo, "worktree", "add", "-q", path(b), "-b", b)
+        git(repo, "worktree", "lock", "--reason", "initialisiere", path(b))
+      end
+      rec = Creation.create(project: "app", name: "half", path: path("half"), task: "t")
+      Creation.update(rec["id"], state: "failed", reason: "interrupted", worktree_added: true)
+      stub_method(Tmux, :broadcast_warm, ->(**) {}) do
+        %w[half mine].each { |b| CLI.send(:reap_worktree!, repo, path(b), b) }
+      end
+      refute File.exist?(path("half")), "an interrupted add's lock doesn't strand its ✘"
+      assert File.exist?(path("mine")), "a lock on a workspace you made stays yours"
+    end
+
     # If the removal fails, the marker is still cleared so the (undeleted) row
     # REAPPEARS rather than staying hidden — a delete that didn't take mustn't be masked.
     def test_reap_worktree_clears_the_marker_even_when_removal_fails
@@ -1239,7 +1272,8 @@ module Switchboard
       repo = temp_git_repo("proj", origin: true)
       File.write(Config.path, YAML.dump("worktree_root" => path("wts"),
                                         "projects" => [{ "name" => "proj", "path" => repo }]))
-      dest = Creator.create(Config.new, "proj", "alpha")
+      dest = path("wts", "proj", "alpha")
+      git(repo, "worktree", "add", "-q", "-b", "alpha", dest)
       sub = File.join(dest, "deep")
       FileUtils.mkdir_p(sub)
       wt = nil

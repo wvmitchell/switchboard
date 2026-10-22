@@ -22,7 +22,7 @@ module Switchboard
     # selectable per state or project (e.g. `done: train_2`). Bump ASSET_VERSION
     # when any synthesis changes so an upgrade regenerates the cached WAVs — the
     # version rides in the filename, so a stale file is simply never referenced.
-    BUILTINS = %w[train train_1 train_2 train_3 chime chime_1 chime_2 chime_3 alert].freeze
+    BUILTINS = %w[train train_1 train_2 train_3 chime chime_1 chime_2 chime_3 alert failed].freeze
     ASSET_VERSION = 1
     RATE = 22_050 # Hz, mono — ample for these blips, keeps the cached files tiny
     PEAK = 0.5    # baked-in amplitude: clearly audible, gentle enough for on-by-default
@@ -153,6 +153,7 @@ module Switchboard
         when "chime_2" then chime_2
         when "chime_3" then chime_3
         when "alert"   then alert
+        when "failed"  then failed
         end
       buf && wav(buf)
     end
@@ -210,6 +211,13 @@ module Switchboard
     # be mistaken for the single-direction chimes (waiting) or the horn trains (done).
     def alert
       peal([880.0, 0.12], [880.0, 0.12], [1174.66, 0.45])
+    end
+
+    # failed — a dispatched workspace that didn't build (✘). A soft FALLING fifth
+    # (G5 -> D5): the opposite shape of the rising chimes, so bad news reads by ear,
+    # without the urgency of an alarm.
+    def failed
+      peal([783.99, 0.18], [587.33, 0.55])
     end
 
     # Join horn blasts (each [freqs, dur]) with a short gap, then normalize the
