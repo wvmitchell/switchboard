@@ -14,6 +14,125 @@ and where to start.
   equals `GATES.split`, and that each gate is the `name:` of a file under
   `.github/workflows/`. **Priority:** P2.
 
+## Background dispatch (v0.51.0) follow-ups
+
+- **Scope typeahead to the task prompt, and never let it submit.** *Why:* `Sidebar#handle`
+  hands the rest of a read batch to whichever `prompt_line` opens mid-batch. That fixed `n`
+  + fast typing losing the task, but it's too broad: a line pasted into the TREE pane
+  (bracketed paste is only on inside the task prompt) that contains `n` dispatches an agent
+  with the rest of the line, prompt never shown; `r name↵` in one read renames unseen; a
+  key after `↵` in the batch folds the `↵` (prompt stays open); keys after a cancel are
+  dropped; a paste-end marker split into `@pending` isn't handed over (paste-mode wedge);
+  `read_char` (the `a` menu, `confirm`) ignores typeahead so keys apply out of order.
+  *Start in:* `prompt.rb` `prompt_line` (`typed = task ? … : ""`, feed tokens up to the
+  first `\r`/`\n` and keep the prompt open), `input.rb` `handle`; consider bracketed paste
+  in tree mode with the pasted span dropped. Tests: a pasted line with `n` must not
+  dispatch; assert `@typeahead` is cleared. **Priority:** P1.
+- **Rollback must prove a failed add's tree and branch are its own.** *Why:* `undo_add`
+  force-removes the tree and `-D`s the branch after checking only that the branch exists
+  and is checked out at the path — a same-name branch created between the clash check and
+  `worktree add -b` (or a transient `branch_exists?` false negative) gets force-deleted
+  with its commits, and work done inside a still-building tree goes with it. Codex's
+  structured gate flagged it P1 on the final pass; deferred by choice (D12/D14).
+  *Start in:* `Creator.undo_add` — `-D` only when the branch tip equals the base commit
+  (or git's failure wasn't "already exists"), and run `untouched?` before removing the
+  tree (keep a dirty or committed tree as a guarded ✘, like `discard`). **Priority:** P1.
+- **Renaming an un-set-up build can drop its guard.** *Why:* in the few ms between
+  `git worktree move` and `leave_bridge`, another sidebar's GC sees the old path missing
+  (rule 3) and deletes the unfinished record; `certified?(nil)` then lets a later
+  re-entry start the agent on the un-set-up tree. Relatedly a stale failed record can
+  attach to an unrelated tree later renamed (or clash-relabeled) onto its path, and then
+  `unfinished_at?` lets a confirmed `d` force past that tree's lock. *Start in:*
+  `Creation.renamable?` (refuse an `unfinished?` record) and `Rename.perform` (refuse a
+  destination a record claims). **Priority:** P2.
+- **Respawn sidebars when switchboard is upgraded.** *Why:* every window's sidebar is a
+  long-lived process; after `brew upgrade` / `git pull` an old one keeps running the old
+  `switch`, which starts the agent without checking the dispatch record (so it can start
+  on a failed build's un-set-up tree). The 0.51.0 CHANGELOG tells users to refresh by
+  hand. *Start in:* compare `VERSION` (or the bin's mtime) with the value at startup in
+  `tick`, then exit and let `reconcile_sidebars` respawn. **Priority:** P2.
+- **Input edges in the task prompt and modals.** *Why:* an unpaired paste-start marker
+  wedges the task prompt in paste mode (Esc/^C/↵ all become text; `prefix-s` escapes); a
+  literal paste-end inside pasted text ends the paste early; a 1 KB read split on a
+  terminal without bracketed paste can submit early and spill keys; the worker's C-w warm
+  poke and the C-l refresh poke are read as the answer by `confirm`, `flash` and the `a`
+  menu (see learning modal-dismiss-must-ignore-synthetic-tmux-bytes). *Start in:*
+  `prompt.rb` `edit_buffer`/`read_char` — bound paste mode, and loop `read_char` past
+  `HELP_IGNORED_BYTES`. **Priority:** P2.
+- **Say what's actually wrong when the config fails a build.** *Why:* the `config`
+  reason's pane/row text says the config couldn't be read, but `setup_invalid?` now fires
+  it for a file that parsed fine; `doctor` never checks `setup_invalid?`; the config
+  branch of `launch` ignores whether `mark_failed` landed (wrong text after a racing
+  cancel); a worker starting on an unparseable config fails as `worktree_add` "unknown
+  project"; a failed ✘ never shows the typed task again. *Start in:* `Creation::REASONS`
+  (a `setup_config` reason or text keyed on `load_error`), `CLI#doctor`,
+  `Creator.launch`/`work`. **Priority:** P2.
+- **Make the record store fail closed.** *Why:* one record file that parses as JSON but
+  isn't an object makes `all` return `[]` for every pane, and any read error reads as "no
+  record" — both turn `certified?(nil)` into "start the agent". Writes aren't fsynced;
+  records and their dir are world-readable (tasks may hold secrets); record ids aren't
+  validated as path segments. *Start in:* `Creation.all`/`read` (keep only Hashes;
+  distinguish "unreadable" from "absent"), `write` (`perm: 0o600`, fsync), `state_dir`
+  (`0o700`), id shape check. **Priority:** P2.
+- **One ping per task for hook-less dispatches (codex, wrapped claude).** *Why:* a
+  `hooked: false` record pings on `ready` (we can't see its first turn), but codex's
+  global hook block — and a claude behind a wrapper, whose per-worktree hook is still
+  written — DOES report that turn, so its first `:done` edge rings and bolds a second
+  time. `owns_first_turn?` only covers hooked records. *Start in:*
+  `Creation.owns_first_turn?` / `Edges#suppress_completion?` — e.g. suppress exactly one
+  `:done` edge for an unacked tasked record that already rang on ready, then let go.
+  Codex trust (D18) is why it's `hooked: false` at all. **Priority:** P2.
+- **A dispatch stuck before its first turn is silent.** *Why:* a brand-new worktree path
+  makes Claude show its folder-trust prompt; no hooks run until you answer, so a hooked
+  record sits `ready` with no ping and no dot — and `n` no longer drops you in the pane
+  where you'd have seen it. *Start in:* `Creation.ringing?` / the sidebar scan — ping (or
+  a distinct glyph) when a hooked `ready` record gets no hook state file within N
+  seconds of launch. **Priority:** P1.
+- **Re-certify a hand-fixed failed dispatch.** *Why:* a build whose setup failed (or was
+  canceled) keeps its ✘ at rest and re-enters as a plain shell for as long as its tree
+  exists; finishing setup by hand can't clear that guard — today only deleting the tree
+  (and the work in it) does. The notices say so honestly now. *Start in:* a re-run path
+  (e.g. retyping the launch line on an unfinished record: failed → launching under the
+  lock, take ownership, rerun setup, then `authorize_launch`), or a confirmed "mark set
+  up" on `d`. Overlaps #22 (retry on ✘). **Priority:** P2.
+- **Smaller dispatch edges noted in review, all below the fix bar.** A ring for the
+  workspace you're viewing if its `wait: false` ack was skipped that scan; GC racing a
+  rename's `worktree move` can drop a hooked record's first-turn ping; `quit` from
+  outside tmux cancels every server's builds; renaming onto a path a record still holds;
+  the launcher claiming by path rather than record id (`launch <id> <dest>` would make
+  every by-path lookup moot). From the 0.51.0 /ship run: a finished record whose path git
+  stops listing shows an undismissable "still creating…" row; `reap_dead_owner` waits on
+  the record lock and can return a just-deleted record (one-scan ghost); an empty
+  `owner_start` leaves ◌ up to `PID_ONLY_CEILING`; a project hand-removed from config.yml
+  mid-build leaves an orphan session; `add_reserved` giving up after a clash leaves a
+  failed record on someone else's tree and keeps retrying after a cancel;
+  `terminate_group` returns once the leader exits (a TERM-ignoring helper survives);
+  wall-clock deadlines trip across laptop sleep; `^Z` in the agent hangs the launcher's
+  `wait2`, and `SB_REEXEC`/rbenv vars leak into the agent; `{task}` in single quotes of
+  `bash -lc '…'` re-parses as code (documented), inside `$(…)` it word-splits, after a
+  `#` it's silently dropped; a task starting with `-` reads as an agent option (no `--`);
+  a huge task hits E2BIG; the prompt draws C1/bidi characters raw; `project_node` takes
+  the first same-name entry, `projects` the first with a path; `Sidebar#create`'s rescue
+  misses ArgumentError/TypeError (a bad `worktree_root`); `send-keys -t name` lacks the
+  exact-match `=`; a pre-upgrade sandbox/smoke `server.pid` (local-TZ start time) never
+  matches the UTC read, so that throwaway server leaks. **Priority:** P3.
+- **Test and cleanup gaps from the 0.51.0 review.** *Tests:* `git_test`'s stalled-fetch
+  timeout test can't fail (`GIT_SSH_COMMAND="sleep 3"` exits on git's appended args — use
+  `"sleep 3;:"`); `spawn_worker`'s `SystemCallError` rescue; `undo_add` on a locked tree;
+  `unfinished_at?` with a newer set-up record / a `setup_ok` failure / a canceled record;
+  `setup_invalid?` for a valueless per-project key over a junk global; the typeahead test
+  can't see a missing `@typeahead.clear`, and rename/add typeahead is untested; 10
+  untested state cells (queued/turn_done/canceled×d, building/ready/turn_done×enter,
+  queued/launching/turn_done/canceled×remove_project); three wall-clock-bounded tests lack
+  `gstack-timing-ok`. *Cleanup:* `doctor_sounds` skips `failed` (loop over
+  `DEFAULT_SOUNDS.keys`); comments cite D*/DR* ids that live only in gitignored
+  `thoughts/`; stale `start` docstrings (`tmux.rb` `go`, `Config#session_command_for`)
+  and `columns`; declare `@typeahead` in `Sidebar#initialize`; `NOTE_WIDE` as `\u{…}`
+  ranges; drop `terminal?` (always true at its caller), the dead `PRE_READY` clause on
+  the project rule, `drop?`'s unused defaults, `owner_fields`' `pid` param,
+  `notify_pane`'s trailing `true`; share the column-walk in `tail_view`/`fit_columns`;
+  `@warming` → a `rebuild` kwarg. **Priority:** P3.
+
 ## Session lifecycle (issue #7) follow-ups
 
 - **Validate/normalize project names at `add` time.** At registration, reject or
@@ -93,8 +212,8 @@ and where to start.
   (`git.rb:98`), trusting the comment's invariant ("only ever a symlink, never a
   real worktree"). A user-created symlink at exactly
   `<worktree_root>/<project>/<name>` would be silently removed. *Why not now:*
-  `clear_bridge` is shared by `Creator.create`'s reclaim, so hardening it is
-  broader than #42 and needs its own tests; the path is implausible in practice.
+  it needs its own tests and the path is implausible in practice (`move_worktree`
+  is now its only caller — dispatch's `Creator.reserve` skips a symlink instead).
   *Start in:* `Git.clear_bridge` — only delete when the symlink target is dangling
   or resolves under the worktree root (a known bridge shape), else leave it and let
   the `git worktree move` fail loudly. Low priority, low likelihood.
@@ -319,44 +438,3 @@ and where to start.
   paint paths are already the leaf of the call graph. If none of the triggers
   ever fire, this entry is correctly ignored forever.
 
-## Creator / Tmux
-
-- **`Creator` should retry past a colliding tmux SESSION, not just a dir/branch.**
-  `Creator.create` retries a generated placeholder past a directory or branch
-  collision (`creator.rb:29-33`) but never checks for a colliding tmux session.
-  `Tmux.ensure_session` (`tmux.rb:294`) early-returns `if has_session?(name)` —
-  *before* the `created` gate that fires the start command (`tmux.rb:307`). So a
-  stale `sb/<project>/<leaf>` session that outlived its worktree (exactly what
-  `switchboard prune` reaps) can collide with a fresh placeholder: you get
-  switched into the OLD session, whose cwd is the deleted directory, and NEITHER
-  `session_command` NOR `worktree_creation_command` runs. Silently.
-  *Why it matters more now:* pre-#83 the symptom was "claude didn't start, weird"
-  — you notice at once. With a setup command, the symptom becomes "the workspace
-  came up but `.env` is missing and bundle never ran" — a silent, half-built
-  worktree that LOOKS fine, which is the exact failure class the setup knob
-  exists to eliminate. It is also why `worktree_creation_command` is documented
-  as "at most once on session creation", not "exactly once per worktree".
-  *Odds:* low — needs a stale session AND a random adjective-noun placeholder
-  drawing that same name; `prune` reaps them.
-  *Fix:* add a `Tmux.has_session?` check to the placeholder retry loop
-  (`creator.rb` ~:30) and to the named-create path (~:42). Deliberately kept out
-  of the #83 PR (a `Creator`/`Tmux` collision fix does not belong in a
-  config-knob feature). Depends on nothing.
-
-- **`worktree_creation_command`: a multi-line script is typed as a multi-line
-  literal.** `Shellwords.escape` renders each newline inside the `sh -ec` argument as a
-  real (quoted) LF, so `send-keys -l` types a payload whose lines the pane's interactive
-  shell only reassembles via its open-quote PS2 continuation. It works (pinned by
-  `test/smoke/worktree_creation_command_smoke_test.rb` on zsh, and on bash in CI), but it
-  makes the payload's correctness depend on the interactive shell and on nothing in the
-  user's shell startup consuming queued stdin. The smoke harness's own
-  `quiet_shell_startup` exists because zsh's `zsh-newuser-install` wizard did exactly
-  that — ate the first keystrokes — and a real user's rc can too (direnv's allow prompt,
-  `p10k configure`, an ssh-add, any `read`). Under the old single-line `session_command` a
-  partial eat merely failed to launch the agent; now it could leave *fragments* of a setup
-  script running at the prompt with no `set -e`.
-  *Fix:* make the typed payload a single physical line — write the script to a temp file
-  in `Sidebar#create` and type `sh -e <path> && <session_command>` — at the cost of the
-  pane no longer showing the command it ran (which is part of the feature's UX). Deferred
-  deliberately: the current shape is smoke-proven on both shells CI and the author use,
-  and the failure needs an rc that reads stdin. Revisit if anyone reports a mangled setup.
