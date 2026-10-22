@@ -83,11 +83,24 @@ they follow your light/dark background).
 | `◆` / `◇` | magenta | **waiting** — blocked on a permission prompt or question | blinks filled/hollow |
 | `●` | green | **done** — finished its turn (your move) | steady |
 | `✦` / `✧` | bright green | **just completed** — the completion sparkle | shimmers for ~3s, then settles to the steady `●` |
+| `◌` | yellow | **building** — a dispatched workspace being created and set up | steady |
+| `✘` | bold red | **failed** — its build, setup or agent launch failed (reason on the right) | steady |
 
 The sparkle is the visual twin of the completion sound: the instant an agent
 reaches `:done`, its dot twinkles `✦`/`✧` for three seconds, then becomes the
 steady green `●`. Only `:done` sparkles — `:waiting` already blinks for
 attention.
+
+A workspace dispatched with `n` shows `◌` from the moment you press `↵` — even
+before git lists its worktree — sitting last in its project, with your task dimmed
+on the right. The task stays there until the workspace gets a real name. A failure
+shows `✘` with a short reason (`setup exit 1`). When setup itself failed, the `✘` stays
+until you delete the workspace and re-entering it opens a plain shell, not the agent; an
+`agent exit` `✘` (setup was fine) clears once you have seen it. A build you
+cancel — `d` on its `◌` row, or quitting while it's setting up — never starts its agent
+either: `d` stops it and removes what it had made if nothing was written there yet (else it keeps the tree and says so — `d` on its row deletes it, asking first), and a quit leaves the worktree to re-enter as a
+plain shell (with a note) until you delete it. The `?`
+overlay opens with a one-line legend of every glyph.
 
 Exact `thinking`/`waiting`/`done` needs the per-worktree hooks (automatic on
 switchboard-created worktrees, or `switchboard enable-hooks`). A hook-less agent

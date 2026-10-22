@@ -89,7 +89,7 @@ Everything happens from inside the sidebar:
 | Key | Does |
 | --- | ---- |
 | `a` | add a project — register a local repo or clone a URL |
-| `n` | create a new worktree + branch in the highlighted project |
+| `n` | dispatch a new workspace in the highlighted project — type what the agent should do (or just `↵`); it builds in the background and pings you when it's ready |
 | `↵` | switch to a workspace (or expand/collapse a project) |
 | `/` | filter — type a few letters to jump straight to a workspace |
 | `?` | the full key map — every shortcut, any key closes it |
@@ -112,8 +112,14 @@ session_command: claude --dangerously-skip-permissions
 ```
 
 Set it globally or override it per project (a different agent, different flags).
-It fires only on session *creation*, never on a re-switch, so a running agent is
-never disturbed — and leave it unset and `n` just drops you in a plain shell.
+It fires only when a workspace is first created, never on a re-switch, so a
+running agent is never disturbed — and leave it unset and a new workspace is just a
+plain shell.
+
+The task you type after `n` becomes the agent's first prompt. For a plain `claude …`
+or `codex …` command it's appended for you; for anything else, put `{task}` where it
+goes (`aider --message {task}`). The workspace builds in the background — `◌` in the
+sidebar — and you get a chime when the agent's first turn is done.
 
 ## Making a new worktree usable
 
@@ -129,8 +135,9 @@ worktree_creation_command:
 
 A string works too (one line or a whole script), and a project can override it —
 or set it to `false` to opt out. It's run with `sh -ec`, so it stops at the first
-failing step, and a failed setup means your agent never starts: you land at a shell
-with the error on screen instead of an agent working a broken checkout.
+failing step, and a failed setup means your agent never starts: the workspace turns
+`✘` with a soft falling sound, and switching in shows the error instead of an agent
+working a broken checkout.
 
 Every config knob is in the [config reference](docs/reference-config.md).
 

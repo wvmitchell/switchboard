@@ -85,14 +85,16 @@ header — the canonical trunk is never shown as a switch target.)
 
 ## Step 4: Create a new worktree
 
-Highlight your project header with the arrow keys, then press **`n`**. That's the
-whole gesture — no name prompt. Switchboard creates the worktree immediately and
-drops you in.
+Highlight your project header with the arrow keys, then press **`n`**. The bottom
+row asks for a task (`myapp task ›`). Type what you want the agent to do — or just
+press **`↵`** for an empty workspace.
 
-It cuts a new branch from your base ref (`origin/main` by default, fetching it
-first so it's current), creates a git worktree under
-`~/switchboard/worktrees/<project>/<name>`, and **switches you into a fresh tmux
-session** for it. You're now sitting in the new worktree's shell.
+You stay right where you are. In the background, switchboard cuts a new branch from
+your base ref (`origin/main` by default, fetching it first so it's current), creates
+a git worktree under `~/switchboard/worktrees/<project>/<name>`, and opens a tmux
+session for it. Its row shows a yellow `◌` while it's being built; when it's ready
+you hear a chime and the row goes bold. Press **`↵`** on it to switch in — you're
+now in the new worktree's shell.
 
 The name is a throwaway **placeholder** — a random `adjective-noun` like
 `wandering-finch` — so you can start working before you've decided what the work

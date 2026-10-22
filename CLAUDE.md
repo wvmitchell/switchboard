@@ -230,70 +230,173 @@ user-facing commands plus the tmux-internal `toggle-sidebar` / `poke-sidebar`.
 `sb/<project>/<leaf>`. Switching creates the session on demand and attaches a
 fixed-width sidebar pane. The sidebar reloads on session-change via a tmux hook
 that "pokes" it with `C-l` (`poke-sidebar`). On the *creation* of a session
-(only — never a re-switch), `Tmux.go(worktree, start:)` types the project's
+(only — never a re-switch), `Tmux.ensure_session` types its `start` line into the
+window. For a re-switch into a workspace whose session died, that's the project's
 resolved `session_command` (`Config#session_command_for`, global default +
-per-project override) into the window — this is the "how the agent starts" knob,
-e.g. `claude --dangerously-skip-permissions`. Empty ⇒ a plain shell, as before.
+per-project override) — the "how the agent starts" knob, e.g. `claude
+--dangerously-skip-permissions`; for a NEW workspace it's the dispatch launcher (see
+Background dispatch below). Empty ⇒ a plain shell. `ensure_session` returns whether
+THIS call created the session (false if it existed or new-session failed).
 
 **A NEW worktree also gets a setup script** (`worktree_creation_command`, #83) —
-the `.env` / `bundle install` a fresh checkout never inherits. It rides the same
-`start:` seam, composed in `Sidebar#start_command` (`sidebar/actions.rb`) on the
-**create path only**: `switch` passes the bare `session_command`, so setup runs once
-per *worktree*, never again on re-entry. It could NOT live in `Creator.create` —
-that runs on the sidebar's input loop (`Sidebar#create` is its only caller), so a
-`bundle install` there would freeze the whole TUI under `creating…` with no visible
-output; typed into the window it's non-blocking, and its output lands in the pane
-you're about to look at. Two non-obvious pieces: (1) the script is handed to
-**`sh -ec` as ONE `Shellwords`-escaped argument** rather than spliced into the chain
-— splicing corrupts real shell (a line-split `if …; then` becomes `if …; then && cp
-x . && fi`, and a trailing `# comment` swallows the `&& claude` appended after it) —
-so a multi-line script survives verbatim, `-e` stops it at the first failing step,
-and only the wrapper joins the `&&`, meaning a failed setup short-circuits and the
-agent never opens on a half-built tree; (2) an empty compose must collapse back to
-**nil**, because `""` is truthy and `run_in_session` is gated on `if start &&
-created` — a bare `""` would type an empty Enter into every new shell on the default
-config; and (3) only **Strings** compose — `compact` alone would let a
-`session_command: false` (the config's disable idiom; YAML hands us the boolean)
-join into the literal word `false` and get *typed into the shell*, a regression on a
-key that has nothing to do with #83 (tmux's `if start && created` used to swallow the
-raw false for us; inside a joined String it's just another truthy token).
+the `.env` / `bundle install` a fresh checkout never inherits. It runs once per
+*worktree*, in the dispatch launcher (`Creator.run_setup`), never again on re-entry:
+`switch` starts the bare `session_command`. The script goes to **`sh -ec` as ONE
+argument** (`system(env, "sh", "-ec", script)`, no shell string at all), so a
+multi-line script, a trailing `# comment` and an apostrophe all survive verbatim and
+`-e` stops at the first failing step. Only **Strings** count as an agent command —
+`session_command: false` (the config's disable idiom; YAML hands us the boolean,
+`Config#session_command` passes it through) means no agent, never the word `false`.
 `Config#worktree_creation_command_for` is **three-state** (absent ⇒ inherit,
 value ⇒ override, `false`/empty/valueless ⇒ OFF), which is why it reads the raw project
 node like `auto_rename_for` instead of riding the `projects` map OR the `project_key`
 helper: both collapse "no key" into "key set to nil", so an opted-out project would
 silently inherit the global. `setup_script` rejects a mixed list wholesale (a partial
-setup is worse than none).
+setup is worse than none), and the launcher then FAILS that build (`config`,
+`Config#setup_invalid?`) instead of starting the agent with no setup — a list step YAML
+read as a map (an unquoted `: `) is the usual way to get one.
 
 **The script gets `$SWITCHBOARD_PROJECT_PATH` + `$SWITCHBOARD_WORKTREE_PATH`**
-(`setup_invocation`, via `env` — not a bare `VAR=v` prefix, which fish rejects). Not a
-convenience: a worktree lives at `<worktree_root>/<project>/<leaf>` while the project's
+(and `$SWITCHBOARD_TASK`, the dispatched task — the launcher sets it in its own ENV,
+so setup and agent both inherit it). The paths are not a convenience: a worktree lives at `<worktree_root>/<project>/<leaf>` while the project's
 checkout lives at its registered `path`, so there is **no relative path** between them
 — without the export, the feature's whole headline use case (`cp` the untracked `.env`
 your new worktree didn't inherit) is *inexpressible*, and a plausible-looking
-`cp ../../main/.env .` fails, which under the fail-closed `&&` blocks the agent on every
-create. A setup script must NOT copy `.claude/settings.local.json` wholesale — `Creator`
-writes switchboard's hooks there *before* setup runs, so a broad `cp -R .claude .`
+`cp ../../main/.env .` fails, which (setup is fail-closed) blocks the agent on every
+create. A setup script must NOT copy `.claude/settings.local.json` wholesale — the
+worker writes switchboard's hooks there *before* setup runs, so a broad `cp -R .claude .`
 silently kills that worktree's agent dot.
 
 The runtime contract — setup really runs in the new worktree, before the agent, a
 failure really blocks it, and the exported path really reaches the script — is pinned by
-`test/smoke/worktree_creation_command_smoke_test.rb` (stubs prove only the string). Its
-fixtures are **mutation-checked**: the failure case fails on a real command (not
-`exit 1`, which aborts with or without `-e`, pinning nothing), and the happy case carries
-a *quoted* trailing `#` comment (unquoted, YAML eats it) so a regression to the rejected
-`&&`-splice actually fails the suite. Honest limits: it's **at most once, on session
-creation** (a stale same-named session makes `ensure_session` early-return before the
-`created` gate, so setup is skipped — see TODOS), and the fail-closed gate assumes a
-*simple* `session_command` (a compound `export X=1; claude` sequences regardless).
+`test/smoke/worktree_creation_command_smoke_test.rb` and `dispatch_smoke_test.rb`
+(stubs prove only the call). The fixtures are **mutation-checked**: the failure case
+fails on a real command (not `exit 1`, which aborts with or without `-e`, pinning
+nothing), and the happy case carries a *quoted* trailing `#` comment (unquoted, YAML eats
+it). Because setup runs in Ruby and the agent only starts on success, fail-closed now
+holds for ANY `session_command`, compound `export X=1; claude` included (the old typed
+`&&` chain leaked there).
+
+### Background dispatch (`n` → task → ↵)
+
+Creating a workspace never blocks and never moves you. `n` asks for a TASK (never a
+name — deferred naming below still holds), and `Sidebar#create` only reserves a
+placeholder and writes the **`Creation`** record (`creation.rb`) that claims it as ONE
+step (`Creator.dispatch`, under `Creation.with_project_lock` — a per-project flock the
+worker's collision retry takes too, so two panes can never hand out one name and have
+the launcher claim the other's task; `Creator.reserve` skips dirs, branches, dangling
+rename bridges AND in-flight records), then spawns `switchboard create-workspace <id>` —
+nothing on the input loop builds anything or touches the network (reserve's local
+branch/session lookups are its only shell-outs). The
+**worker** (`Creator.work`, daemonized via `CLI#create_workspace` like the reaper) does
+the best-effort fetch, `git worktree add --no-track` (retrying a collision with a fresh
+placeholder, relabeling the record), `enable_hooks`, then a DETACHED session whose one
+typed line is `<abs bin> launch <dest>`. The **launcher** (`Creator.launch`) claims the
+record, runs setup, then runs the agent as its CHILD via the pane's own shell `-i -c`
+(the launcher's parent process, so rc aliases resolve as when the command was typed) and
+writes `ready` only after a 5s grace — an agent that dies sooner is a ✘, not a false
+"ready" (a clean exit 0 inside the grace is a hand-off, so `ready`). The task travels in
+`$SWITCHBOARD_TASK`, never interpolated: auto-appended only when the command is PLAIN
+WORDS (`appendable?` is an allowlist — a trailing newline from a YAML block scalar, a
+`# comment`, `&` or quoting would otherwise run the task as its own command or swallow
+it) starting with `claude`/`codex` (aider's positional args are FILES); else `{task}`
+opts in, substituted quote-aware (`substitute_task`: bare, in `"…"`, in `'…'` — always
+one argument to the pane shell's command; a command that hands it to ANOTHER shell —
+`bash -lc '…'`, `ssh` — must use `"$SWITCHBOARD_TASK"` itself, or that shell parses the
+task as code); else the pane says "task not sent" (or, with no agent at all, that no
+session_command is set). Re-entry resolves a `{task}` template to the bare command,
+dropping a now-empty `'…'`. The task PROMPT keeps non-ASCII (raw bytes, decoded UTF-8) and
+turns on bracketed paste, so a paste spread over many reads stays text — it can't
+submit on its first newline or reach `dispatch` as keys; a marker split across two reads
+is held back for the next one (else paste mode never ends and swallows ↵/Esc), and input
+left in flight after the submit is drained. Every lookup by path (`for_path`, `repath`)
+takes the NEWEST record: a finished one can outlive its tree on a reused path.
+
+`Creation` is the one multi-process thing here that's MUTATED by several writers
+(sidebar, worker, launcher, Stop hook, GC), so every write is `Creation.mutate`: an
+exclusive flock on a SEPARATE `<id>.lock` (locking the data file would lock the inode the
+atomic rename replaces), read, change, temp+rename; reads stay lock-free. `transition` is
+from-gated (a racing writer that already advanced wins; a no-op tells the worker to
+stop). `acked` is a sticky flag, not a state — viewing the workspace (`locate`) means no
+ping ever fires for it. The record's OWNER (pid + start time, `ProcessIdentity`, shared
+with `IsolatedServer`) passes worker → launcher at the claim, so GC can tell a 15s setup
+from a dead build without a TTL; the worker waits ≤60s for the claim (slow shell rc). The
+worker creates the session UNDER the record lock, and `quit` / remove-project
+`cancel_all` before killing sessions, so a teardown can't leave an agent starting after it.
+
+Pings are durable, not edge-driven: a fresh workspace's first `:done` is a first
+appearance `completion_edges` deliberately ignores, and sampling can miss a fast turn.
+A ringing transition (ready for a bare or hook-less create, which plays your `done` sound; `turn_done` for a hooked
+claude task — stamped by `CLI#rename_nudge_stop` on its NON-blocking path only — and any
+failure, which plays its own soft falling `failed` built-in, NOT the notify `alert`) bumps `ring_gen` and bolds via Attention right there. Only an announcing,
+ON-SCREEN scan rings (`Sidebar#ring_creations`), and only if it wins `claim_ring`'s
+compare-and-set on `rung_gen` — so exactly one pane rings, a silent reload (C-w warm
+poke, switch-in) can't consume the ping, and a respawn can't replay it. While a record
+owns its first turn, `Edges#suppress_completion?` drops the normal `:done` edge for that
+row so you hear one chime. Render: synthetic rows (no worktree yet) are spliced into
+`@nodes` LAST in their project; `◌` (yellow, steady — no pulse) for queued/building/
+launching, `✘` (bold red) for failed, which outranks the agent dot; the dim task label
+sits in the right region while the leaf is still a placeholder and there are no diff/PR
+cells, a failure shows its ≤14-col reason (`Creation::REASONS`).
+
+**Cancel and failure never leave an agent on an un-set-up tree — or destroy work.**
+The agent starts ONLY through `Creation.authorize_launch`: one locked step, gated on the
+record still being `launching`, that stamps `setup_ok` + `agent_started` — so a cancel
+during setup, a record GC dropped meanwhile, or a failure all mean no agent (never "no
+record, nothing said stop"). A config the launcher can't read fails the build (`config`)
+rather than certify a setup it couldn't run. A failed OR canceled record WITHOUT
+`setup_ok` that has a worktree (`Creation.unfinished?`) is kept until the worktree is
+deleted — checked before the unconfigured-project drop — and a canceled record also
+stays while its owner lives (a worker still inside `worktree add` must find it to record
+a tree it keeps). `switch` (D12) starts the agent only on a `Creation.certified?`
+record — no record, or `setup_ok` — so a failed, canceled, OR still-in-flight build
+whose session died opens a plain shell with the reason instead. The worker never opens
+a session on a dead server (the record's `server` socket gone: a `kill-server` mid-build
+would otherwise start a headless server and run the agent there), and it discards a tree
+canceled before the launcher claimed it. A failed `worktree add` is a collision only if
+the dir or branch existed BEFORE it (git cuts the branch before checkout, and a failing
+post-checkout hook leaves a full tree); anything else is undone (`undo_add`) and fails
+once with git's message. Cancels come from `quit`/remove-project
+(`cancel_all`, scoped to THIS tmux server via the record's `server` = `$TMUX` socket),
+`d` on a `◌` row (`dismiss_dispatch`: re-reads the record, tears down only if its cancel
+actually landed), and `d` on a real row mid-build (`delete` cancels before the kill).
+Teardown force-removes a tree only once `Creator.untouched?` proves it clean with no
+commits past its base; anything else is kept (flashed "kept …", re-entry stays a plain
+shell) for `d` on its row, which asks before forcing. The worker re-checks after its
+fetch; fetch and `git worktree add` run prompt-free in their own process group, bounded
+(`FETCH_DEADLINE`/`ADD_DEADLINE`, then `ProcessIdentity.terminate_group`). A Stop stamps
+`turn_done` only once the agent has started (`stamp_first_turn`: a setup step running
+claude can't stamp the build done and hide its own failure), and `Rename.perform` refuses
+(`:building`) until then (`Creation.renamable?`). `hooked` is settled at
+`authorize_launch` from the command that will actually run (the worker's value is a
+first guess), and an undelivered task is never hooked, so it pings at ready. A hooked
+task whose agent exits before its first Stop pings on that exit (✘ non-zero, done on 0);
+a bare create never stamps a second ring. First-turn ownership lapses after
+`FIRST_TURN_CEILING` if the stamp never comes. Once a ✘ is acked, the agent's
+thinking/waiting show over it (at rest the ✘ stays). The task label is measured in
+display columns (wide chars count two) and loses invisible characters before it's drawn. GC re-decides each drop under the record
+lock, never waits on a lock (the sidebar's background writers use `wait: false`), sweeps
+orphan lock/temp files, drops records of unconfigured projects once they're out of
+flight (non-empty list only), keeps an unfinished record while its tree is ON DISK
+(`tree_on_disk?`: a `.git` there, not just `worktree_added` — a killed add or a refused
+rollback leaves a tree the flag never saw; GC then records it so its deletion clears the
+row), force-deletes a canceled build's branch only once the tree is proven untouched,
+reads records as UTF-8 whatever the locale (a C-locale tmux would otherwise fail to parse
+a task with a smart quote and lose the build), and `add_worktree` trusts git's exit
+status, reading its text (any bytes) only on failure,
+reads an empty start time as unknown (but past `PID_ONLY_CEILING` a pid-only owner is
+dead), and skips its `ps` owner checks on an off-screen warm reload. Failure details are
+stripped of control bytes before they're flashed or printed. `↵`/`d` on a pre-worktree ✘
+shows / dismisses it. Design + review record: `thoughts/background-workspace-create.md`
+(hardening: `thoughts/background-workspace-create-hardening.md`).
 
 **Workspace naming is deferred** (issues #94, #114). `n` in the sidebar (and
-filter-mode ↵ on a project header) creates a worktree with **no name prompt** —
-one keystroke, you drop straight in. It gets a **placeholder** — a throwaway
+filter-mode ↵ on a project header) never asks for a **name** (it asks for a task —
+see Background dispatch). It gets a **placeholder** — a throwaway
 adjective-noun leaf from `Placeholder.generate` (`placeholder.rb`, a tiny in-repo
 word list, no gem) — and a matching branch, so you start work before naming it
-(`Sidebar#create` always passes a blank name to `Creator.create`; naming moved
-*after* creation — `r`, `switchboard rename`, or the agent nudge). `Creator.create`
-cuts the branch with `--no-track` so a branch off `origin/main` doesn't inherit it
+(naming happens *after* creation — `r`, `switchboard rename`, or the agent nudge).
+The worker cuts the branch with `--no-track` so a branch off `origin/main` doesn't inherit it
 as an upstream (else the rename gate below would misread every fresh worktree as
 "pushed"); generated names retry past a dir/branch collision. `Rename.perform` then
 renames **both** the dir (bare `<name>`) and the branch (`<branch_prefix>/<name>`) —
@@ -447,7 +550,7 @@ opposite sides of it — the subtle, hard-won part:
   `<worktree>/.claude/settings.local.json` (declaring its `SETTINGS_REL` + `EVENTS`),
   on top of your settings, adding the file to the worktree's git excludes so it never
   dirties `git status`; global `~/.claude` is untouched. This is the only entry in
-  `AgentHooks::ADAPTERS`, so `enable`/`disable` and `Creator.create` fan out over it.
+  `AgentHooks::ADAPTERS`, so `enable`/`disable` and the dispatch worker fan out over it.
 - **Codex is global.** Codex 0.142.x does NOT discover project-local
   `<worktree>/.codex/hooks.json` in a *linked* git worktree (its project-hook discovery
   doesn't follow the `.git`-file → common-dir indirection), and switchboard is nothing
@@ -493,7 +596,7 @@ Two consequences of codex being global:
 Codex's `EVENTS` map also differs where the agents differ: no `Notification` event, so
 its `waiting` rides `PermissionRequest` (best-effort — suppressed by a session command
 that bypasses *all* approval gates). New worktrees get the Claude hook automatically
-(`Creator.create` → `AgentHooks.enable`, gated on `agent_state_hooks?` **or**
+(`Creator.work` → `enable_hooks` → `AgentHooks.enable`, gated on `agent_state_hooks?` **or**
 `auto_rename_for(project)` — so a project opting into `auto_rename` with the global off
 still gets the hook the runtime nudge needs); existing ones via `switchboard
 enable-hooks`. Codex needs no per-worktree step. The runtime contract — the global block
@@ -714,7 +817,7 @@ convention (`MonitoringNudge.clears_on?` vs `nudges_on?`). Both rename-safe: `Re
 symlink resolves it to the new dir after), which also fixes the pre-existing bug where a
 rename silently dropped `Attention`'s bold. The whole Layer-2 behavior (nudge + session
 clears) is gated on the `background_presence` config knob (global + per-project, default
-**on**, like `auto_rename`); the `Creator.create` hook-enable gate now includes it, so a
+**on**, like `auto_rename`); the worker's hook-enable gate now includes it, so a
 project using only monitoring still gets the hook wired. Cloud routines remain invisible
 (they never reach the local reporter) — a hard limit stated, not worked around.
 
