@@ -68,6 +68,11 @@ into your config points at `$(brew --prefix)/opt/switchboard`, which brew moves 
 the new version, so nothing goes stale when the old version is cleaned up. See
 [Explanation: distribution](explanation-distribution.md).
 
+A release that adds a Claude hook (the CHANGELOG's **Upgrading** notes say so)
+reaches an existing worktree only when you re-run `switchboard enable-hooks` in it;
+new worktrees get it automatically. `doctor` still shows ✓ for a worktree on the
+older hook set.
+
 ## Move from a git clone to Homebrew
 
 1. From the clone, remove its wiring (PATH symlinks, the tmux.conf line, live key
@@ -190,7 +195,19 @@ switchboard doctor
   the old install (or nothing, if the clone is gone). The status dots keep working
   either way. Run `switchboard enable-hooks` there.
 - **Codex dots stopped after the move.** The codex hook commands changed path, so
-  codex wants them approved again. Run `/hooks` in codex once.
+  codex wants them approved again. Run `/hooks` in codex once. (`doctor`'s
+  `N/M trusted` can't help here: the old approvals are still on file, so it counts
+  them even though codex no longer accepts them.)
+- **`install` ends with `Done, except the codex hooks (✗ above)` and exits 1.**
+  Everything else was installed; the codex block in `~/.codex/config.toml` was left
+  as it was. Do what the ✗ line says (merge your own `[hooks]` into one place, move
+  or restore the lines it names, or just re-run if codex wrote the file mid-install),
+  then run `switchboard install` again.
+- **`uninstall` says `Stopped before removing anything else` and exits 1.** It
+  removes the codex block first and stopped there, so nothing (not even the PATH
+  command) was removed. Fix what the ✗ line names, then re-run
+  `switchboard uninstall`. Don't delete the block by hand: codex may have written
+  some of its own settings inside it.
 - **`prefix-s` does nothing after an upgrade.** tmux still has the old bindings.
   Run `switchboard install` or `tmux source-file ~/.tmux.conf`; `doctor` confirms
   with `prefix-s bound (toggle-sidebar)`.

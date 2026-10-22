@@ -438,3 +438,139 @@ and where to start.
   paint paths are already the leaf of the call graph. If none of the triggers
   ever fire, this entry is correctly ignored forever.
 
+
+## Agent CLI hooks (Claude 2.1.301 / Codex 0.163 compat review) follow-ups
+
+- **Check whether Claude fires `Stop` when a turn ends on an API error.** *Why:*
+  Claude documents a separate `StopFailure` event for a turn that dies on an API
+  error. If `Stop` doesn't also fire there, the dot stays blue ("thinking") until
+  `PRESENCE_TTL`. Wiring `StopFailure → done` is a one-line `ClaudeHook::EVENTS`
+  entry, but only safe once we know `Stop` doesn't also fire. If both fire and the
+  rename backstop blocks (writing `thinking`), a parallel `done` would race it,
+  which is the race the single-command Stop design exists to avoid. *Start in:* a
+  live `claude -p` run with a payload-capture hook on `Stop` + `StopFailure` and a
+  forced API failure (bad model id or offline), then `claude_hook.rb` EVENTS. Note
+  that it would chime and bold like a normal completion. **Priority:** P3.
+
+- **Move a Codex-written `[[…]]` array-of-tables out of our block instead of refusing.**
+  *Why:* Codex appends new tables inside our EOF marker block (toml_edit puts them before
+  the trailing end-marker comment). `CodexHook.movable_parts` refuses any `[[…]]` chunk as
+  `:unsafe`, so if Codex ever wrote one there, install, doctor and uninstall would all
+  refuse, and uninstall (which runs the codex step first) would stop until the file was
+  edited by hand. None in a real 0.163 config yet, but the 0.163 binary has a
+  `skills/config` writer for `[[skills.config]]` entries; `UNSAFE_ADVICE` now tells the user
+  codex may have written them and how to move them (decision dec-aae03c57; `gstack-shortcut`
+  marker in `CodexHook.chunk_kind`). *Start in:* `movable_parts` / `chunk_kind`: move a
+  contiguous run of one `[[name]]` array plus its `[name.…]` sub-tables as a single foreign
+  piece when every `[[name]]` outside the block comes before it, keeping `:unsafe` for an
+  array split across the marker boundary or interleaved. **Priority:** P3.
+
+- **Codex: keep comments inside the block that head a codex table.** *Why:* comments are kept
+  outside the block when an approval next to them is dropped, but inside the managed block a
+  comment trailing our `[hooks]` chunk or a dropped approval goes with it, even one above a codex
+  table that then moves out (decision dec-3417a712; `gstack-shortcut` marker in
+  `CodexHook.movable_parts`). *Start in:* carry a dropped or regenerated chunk's trailing
+  comment run onto the next kept chunk in `movable_parts`, and list it in what `conserved?`
+  checks. **Priority:** P3.
+
+- **Sandbox: wall off CODEX_HOME so a pane can't rewrite the real codex block.** *Why:*
+  `Sandbox.sandbox_env` keeps the real HOME and leaves CODEX_HOME alone, so `enable-hooks` /
+  `install` / `uninstall` typed in a sandbox pane rewrite the real `~/.codex/config.toml` block to
+  call the sandbox's throwaway bin and reporter (dead after teardown); codex then re-asks in
+  `/hooks` for the changed commands while doctor still counts the carried approvals. A first fix (seed a private auth.json
+  copy, write a refreshed one back on teardown) was pulled from v0.51.1 (decision
+  dec-540ed953). *Start in:* `sandbox_env` + a seed step, with: capture the real CODEX_HOME
+  before the redirect (one tested helper); copy only auth.json, 0700 dir / 0600 file created
+  with that mode (not chmod after); write back only after the tmux server is killed, only a
+  copy that parses as JSON, changed and newer than the real file, via a 0600 temp + rename
+  removed on failure; never create a real auth.json that wasn't there. Or the smaller
+  alternative: refuse CodexHook writes under SWITCHBOARD_SANDBOX. **Priority:** P2.
+
+- **Doctor: flag a worktree whose Claude hooks predate the current entries.** *Why:*
+  new Claude hook entries (v0.51.1's `PermissionRequest → waiting` and the SessionEnd
+  `timeout`) reach a worktree only on create or `switchboard enable-hooks`, but
+  `HookFile.enabled?` is presence-only, so doctor shows ✓ for a worktree still on the old
+  set (decision dec-0dd4f937; `gstack-shortcut` marker in `CLI#doctor_hooks`). *Start in:*
+  compare the worktree's switchboard entries with `HookFile.command_entries` + `HookFile::SESSION_END_TIMEOUT` (added per event in `HookFile.enable`)
+  (the Claude twin of `CodexHook.block_state`'s `:stale`) and suggest `enable-hooks`; or
+  re-ensure tracked worktrees from `install`. **Priority:** P3.
+
+- **Doctor: tell a codex approval from a stale carried-over one.** *Why:* v0.50.1's install
+  carries every `[hooks.state]` approval across a command change (a brew ↔ clone bin switch) —
+  v0.51.1 keeps that on purpose (dropping them lost approvals across a checkout round trip and
+  erased `enabled = false`; decision dec-d24d649e) — so such a block reads as N/M trusted while
+  codex skips those hooks (decision dec-455f3bf8; `gstack-shortcut` marker in
+  `CodexHook.trust_status`). The v0.51.1 CHANGELOG asks upgraders to review `/hooks` once.
+  *Start in:* record a fingerprint of each group's command beside the block on install (or
+  reproduce codex's `trusted_hash`) and count only approvals that match. **Priority:** P3.
+
+- **Claude: check whether auto-compaction fires SessionStart mid-turn.** *Why:* the SessionStart
+  `done` reporter has no matcher, so a SessionStart(compact) while the agent keeps working would
+  ring a false completion chime + bold until the next tool call (pre-existing since v0.50.1;
+  decision dec-549dc4af; `gstack-shortcut` marker in `ClaudeHook::EVENTS`). *Start in:* force a
+  `/compact` mid-turn in a live session and watch the dot; if it flips, give the reporter a
+  matcher skipping `compact` (every worktree then needs `enable-hooks`). **Priority:** P3.
+
+- **Doctor: show the codex rows outside a git worktree.** *Why:* `CLI#doctor_hooks` returns
+  before the global codex section when doctor isn't run inside a worktree, so `switchboard
+  doctor` from a home shell never shows `N/M trusted` or the stale/unsafe/collision advice,
+  though the codex block is global (red team, v0.51.1 ship). *Start in:* print the codex
+  section before `return unless here`; keep only the per-worktree Claude row gated.
+  **Priority:** P2.
+
+- **Uninstall: exit 1 after a codex write error.** *Why:* when the codex block can't be
+  written (read-only config), uninstall prints ✗, carries on, then prints a plain "Done." and
+  exits 0, while `install` now exits 1 for the same failure. *Start in:*
+  `Installer.step_codex_unhooks`' `else` branch: keep going, but have `uninstall` return false
+  and say "Done, except the codex hooks" like install. **Priority:** P3.
+
+- **Install: say `/hooks` when a re-ensure changes the commands.** *Why:* after a brew ↔ clone
+  switch, re-running `install` rewrites the block's commands and carries their old approvals,
+  and the one-time `/hooks` note is skipped on a re-ensure, so nothing tells the user codex now
+  re-asks. *Start in:* check `CodexHook.block_state` before `install_global` in
+  `step_codex_hooks`; print the note when it was `:stale`. **Priority:** P3.
+
+- **Doctor: tighten the trust-bypass and disabled-hook reporting.** *Why:*
+  `codex_bypasses_trust?` matches the bypass flag anywhere in a command, so
+  `codex --dangerously-bypass-hook-trust; codex` (or the flag in a comment) reads as bypassed,
+  and the bypass row shows green even for a hook set `enabled = false`, which bypass doesn't
+  re-enable. *Start in:* `CLI#codex_bypasses_trust?` (match per launch) and count disabled
+  handlers separately in `CodexHook.trust_status`. **Priority:** P3.
+
+- **Codex: refuse (or decode) an escaped spelling of `hooks`.** *Why:* `["\u0068ooks"]` is a
+  valid spelling of `[hooks]` that `chunk_kind`/`HOOKS_KEY` read as foreign, so a block whose
+  own header were spelled that way would be moved out and a second `[hooks]` written (contrived:
+  switchboard never writes it). *Start in:* decode basic-string escapes in `TOML_KEY` matches,
+  or refuse any quoted key holding a backslash. **Priority:** P3.
+
+- **Monitoring: don't let a fork clear a still-running session's ∞.** *Why:* the marker is
+  per worktree, so `SessionStart(fork)` (now in `CLEARS_ON`) clears a marker the original,
+  still-live session declared; the ∞ drops until its next `monitoring on`. *Start in:* store the
+  declaring session id in the marker and clear only on a matching id. **Priority:** P3.
+
+- **MarkerBlock: create the temp file with the target's mode.** *Why:* `atomic_write` writes
+  `<dest>.<pid>.sb-tmp` with umask permissions and copies the mode after, so a 0600
+  `config.toml` (MCP tokens) is briefly readable through the temp file and a failed write leaves
+  it behind. *Start in:* open the temp with `File::EXCL` and the destination mode (default
+  0600 for a new file), and remove it in an `ensure` when the rename didn't happen.
+  **Priority:** P3.
+
+- **Smoke: tell "the model didn't run the tool" from a trust failure.** *Why:* the untrusted
+  codex smoke flunks if the model answers in text instead of running `cp`, and a future codex
+  that refuses unreviewed hooks would read as auth/network trouble and skip. *Start in:* skip
+  when `sb-seen.txt` is missing, and add a pattern for codex's untrusted-hook text that asserts
+  instead of skipping. **Priority:** P3.
+
+- **Small hook-path hardening.** *Why:* each is low-impact today. (1) The notify reporter's
+  `sed` takes the last `"notification_type"` on a line (a nested copy would win; Claude's
+  payload is flat): anchor the first match. (2) `HookFile.ensure_script` reads the script in the
+  process locale, so under `LC_ALL=C` it rewrites it on every call: read it as UTF-8.
+  (3) `enable-hooks` outside a worktree exits 0 with only a warning. (4) The `conserved?`
+  comment claims more than the uninstall-side check does. **Priority:** P4.
+
+- **Tests: pin the rescue-only and untested-but-correct paths.** *Why:* the
+  `block_state` / `trust_status` rescues and the `same_file?` expand_path fallback survive
+  mutation, and the v0.51.1 state-machine review listed ~19 cells the code handles correctly but
+  no test exercises (bare `[hooks.state]` on reinstall, `--no-codex-hooks` over each block state,
+  enable-hooks over codex tables or a missing end marker, …). *Start in:* the cell list in the
+  ship review; `test/codex_hook_test.rb`, `test/installer_test.rb`. **Priority:** P4.

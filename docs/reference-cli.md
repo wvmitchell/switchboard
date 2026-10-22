@@ -39,6 +39,9 @@ Stand switchboard up from a fresh clone or a Homebrew install. Idempotent. Four 
    hooks in linked worktrees, so its hooks are global, not per-worktree). Prompts
    for consent; default no on a non-tty. After installing, run `/hooks` in codex
    once to trust them (or start codex with `--dangerously-bypass-hook-trust`).
+   If the block is already there, it's re-ensured without a prompt. Tables codex
+   itself wrote inside the block (`[desktop]`, `[plugins."…"]`, …) are moved,
+   unchanged and in order, to just above it, and your `/hooks` approvals are kept.
 
 | Flag | Effect |
 |------|--------|
@@ -46,7 +49,13 @@ Stand switchboard up from a fresh clone or a Homebrew install. Idempotent. Four 
 | `--print-tmux` | Print the tmux line instead of writing it. |
 | `--tmux-conf PATH` | Target a specific tmux.conf instead of the auto-detected one. |
 | `--codex-hooks` | Install the global codex hooks block without prompting. |
-| `--no-codex-hooks` | Skip the codex hooks block (no prompt). |
+| `--no-codex-hooks` | Skip the codex step entirely (no prompt). An existing block is left untouched, not re-ensured. |
+
+If a codex write is attempted and refused or fails (your own `[hooks]` outside the
+block, a block switchboard can't rewrite safely, codex writing the file mid-install,
+or a file it can't write),
+the other steps still run, the closing line reads `Done, except the codex hooks
+(✗ above)`, and `install` exits 1. The ✗ line says what to fix.
 
 Backs up the target tmux.conf (and `~/.codex/config.toml`) to `.bak` before its
 first edit. See [How-to: keybindings](howto-keybindings.md) for the wiring it
@@ -63,6 +72,12 @@ Reverse `install`: remove both symlinks (under Homebrew it leaves PATH to
 the three hook slots, the `@switchboard-*` tmux options (also live-unbinds in
 a running server), and the global codex `[hooks]` block from `~/.codex/config.toml`
 if present. Your config and agent state are left untouched.
+
+The codex block goes **first**. Only switchboard's part of it is removed: tables
+codex wrote inside it, and `/hooks` approvals for other hook files, stay (moved to
+just above where the block was). If the block can't be removed safely, or codex
+rewrites the file mid-run, `uninstall` stops before removing anything else and
+exits 1; fix what the ✗ line names, then re-run it.
 
 ### `switchboard init`
 Create an empty (annotated) config if none exists. No-op with a message if one
@@ -111,7 +126,8 @@ worktrees get this automatically.
 Codex is **not** wired here: it can't discover project-local hooks in a linked
 worktree, so its hooks ship as one global block in `~/.codex/config.toml`,
 installed once via `switchboard install --codex-hooks` (or the install prompt).
-`enable-hooks` re-ensures that global block if it's already present.
+`enable-hooks` re-ensures that global block if it's already present, and exits 1
+if that codex write is refused (the Claude hooks are still wired).
 
 ### `switchboard disable-hooks [path]`
 Remove switchboard's Claude hooks from a worktree, leaving any other settings
@@ -202,7 +218,10 @@ present + parseable, unrecognized top-level config keys (the misindented-nested-
 trap), PATH symlinks (under Homebrew: that `switchboard` and `sb` on PATH are this install, not
 missing or shadowed by an old clone's link, a clone's `bin/` directory, or another program), which install tmux.conf is wired to (this
 one ✓, another that still exists –, or one that's gone ✗), tmux wiring (bound keys +
-hooks, and whether they're *live* in the running server vs only in config), a bad or clashing `sidebar_keys` remap, `gh`
+hooks, and whether they're *live* in the running server vs only in config), a bad or clashing `sidebar_keys` remap,
+the Claude hooks in the worktree you're standing in, the global codex block (how many
+of its hooks codex has approved, `N/M trusted`, or a fix when the block is stale, can't
+be rewritten safely, or collides with your own `[hooks]`), `gh`
 auth + per-project badge staleness, audio player +
 sound resolution, orphaned sessions, and orphaned sidebar processes. Read-only.
 The first place to look when something's off.

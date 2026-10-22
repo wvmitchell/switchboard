@@ -90,6 +90,11 @@ off. It checks, with the fix inline for anything red:
   **live in the running server** — not just present in config. These diverge
   after a `git pull` until tmux reloads; `doctor` tells you when a reload is
   needed.
+- Agent hooks: whether the worktree you're standing in has switchboard's Claude
+  hooks, and the global codex block: how many of its hooks codex has approved
+  (`N/M trusted`), or the fix when the block is stale, can't be rewritten safely,
+  or collides with your own `[hooks]`. See
+  [How-to: agent state & sounds](howto-agent-state-and-sounds.md).
 - `gh` authenticated, and how stale each project's cached PR badges are (so
   "why are my badges old?" has an answer).
 - An audio player on PATH, and whether each sound spec resolves.

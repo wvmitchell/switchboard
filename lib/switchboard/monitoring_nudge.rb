@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "json"
+require_relative "rename_nudge"
 
 module Switchboard
   # The agent background-presence nudge (the Layer-2 twin of RenameNudge). When a
@@ -13,9 +14,10 @@ module Switchboard
   # a per-session declaration: a resumed agent (a fresh process; its old loop is dead)
   # must re-declare, and a session that ends can't still be monitoring. The clear is
   # deliberately scoped to the boundaries where the agent PROCESS is new or gone —
-  # startup / resume / any session end — NOT `compact` or `clear`, where the same
-  # session continues and a live monitor's marker must survive (a false clear there
-  # would just flicker off until the next re-affirm, but there's no reason to cause it).
+  # startup / resume / fork / any session end — NOT `compact`, where the same session
+  # continues and a live monitor's marker must survive (a false clear there would just
+  # flicker off until the next re-affirm, but there's no reason to cause it). `/clear`
+  # needs no SessionStart clear: it ends the old session first (see CLEARS_ON).
   #
   # CLI#monitoring_nudge wires the config / cwd / event payload around these pure bits
   # and prints the SessionStart context payload.
@@ -27,15 +29,19 @@ module Switchboard
     # CLEARS_ON — clear the marker only when the agent PROCESS is genuinely new or resumed
     # (its old loop is dead, so a stale marker must not be inherited). NOT `compact`: that
     # summarizes context IN the same running process, so a live monitor's marker must
-    # survive. NOT `clear` (deliberately low-context).
-    CLEARS_ON = %w[startup resume].freeze
+    # survive. NOT `clear` here either — though in practice Claude ends the old session first
+    # (SessionEnd, reason `clear`), whose `--end` clear already dropped the marker; the
+    # re-planted nudge (below) is what gets a still-running monitor re-declared.
+    # `fork` is a new process resuming a copied conversation (Claude ≥ 2.1.214, Codex ≥
+    # 0.155; both used to report a fork as resume/startup), so it clears.
+    CLEARS_ON = %w[startup resume fork].freeze
 
-    # NUDGES_ON — (re)plant the self-report instruction. INCLUDES `compact`: compaction can
-    # summarize the original startup nudge out of context, and SessionStart re-fires on
-    # `compact` precisely so hooks can re-inject what was dropped — so an agent that sets a
-    # monitor AFTER a compaction still knows the `monitoring on` convention. Matches
-    # RenameNudge's sources. `clear` stays out (like rename), an unknown source too.
-    NUDGES_ON = %w[startup resume compact].freeze
+    # NUDGES_ON — (re)plant the self-report instruction. INCLUDES `compact` and `clear`: both
+    # drop the original startup nudge out of context, and SessionStart re-fires on them
+    # precisely so hooks can re-inject what was dropped — so an agent that sets a monitor
+    # AFTER a compaction or a /clear still knows the `monitoring on` convention. The same list
+    # as RenameNudge's (one source of truth); an unknown source stays out.
+    NUDGES_ON = RenameNudge::SOURCES
 
     def clears_on?(source)
       CLEARS_ON.include?(source)

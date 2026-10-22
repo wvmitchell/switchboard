@@ -3,6 +3,7 @@
 require "json"
 require "fileutils"
 require "shellwords"
+require_relative "marker_block"
 
 module Switchboard
   # The shared engine behind the hook adapters. What BOTH agents share lives here ONCE:
@@ -30,6 +31,12 @@ module Switchboard
     NUDGE_MARK = "rename-nudge" # identifies the #92 SessionStart self-naming nudge entry
     MONITOR_MARK = "monitoring-nudge" # identifies the background-presence SessionStart/SessionEnd entries
 
+    # Claude caps SessionEnd hooks at 1.5s unless a hook sets its own `timeout` (seconds);
+    # a cold Ruby start for `monitoring-nudge --end` can approach that on a busy machine and
+    # be cut off, stranding the ∞ dot until its TTL. Claude-only: a key added to the codex
+    # block would re-hash its commands and void their `/hooks` trust.
+    SESSION_END_TIMEOUT = 10
+
     # Raised rather than clobbering a settings file we couldn't parse.
     Corrupt = Class.new(StandardError)
 
@@ -44,25 +51,28 @@ module Switchboard
     # directly), so both adapters share it unchanged.
     SCRIPT = <<~'SH'
       #!/bin/sh
-      # sb-agent-hook v4 — switchboard agent-state reporter (managed file; edits
+      # sb-agent-hook v5 — switchboard agent-state reporter (managed file; edits
       # are overwritten). Usage: sb-agent-hook <thinking|done|waiting|notify>
       #
       # `notify` (Claude's Notification hook) reads the event JSON on stdin and
-      # reports "waiting" (magenta — blocked on you) only when notification_type
-      # marks a prompt that needs an answer: a permission request or an
-      # elicitation dialog. Everything else, the idle timer (idle_prompt) included,
-      # is just "done" (green) — not blocked. Keying on the structured
-      # notification_type (not message text) holds up across releases, and
-      # defaulting to the calm state means an unrecognized notification never
-      # false-alarms magenta. Any other <state> is written verbatim (Codex feeds
-      # `waiting` straight in via its PermissionRequest event).
+      # reports "waiting" (magenta — blocked on you) only when its notification_type
+      # marks a prompt that needs an answer: a permission request, an elicitation
+      # dialog (form or URL), or a background agent asking for input. Everything
+      # else, the idle timer (idle_prompt) included, is just "done" (green) — not
+      # blocked. Only the extracted notification_type VALUE is compared, exactly —
+      # never the whole payload, so a cwd or message that merely contains a type
+      # name can't false-alarm. An unrecognized or missing type defaults to the
+      # calm state. Any other <state> is written verbatim (Codex feeds `waiting`
+      # straight in via its PermissionRequest event).
       state="$1"
       [ -n "$state" ] || exit 0
 
       if [ "$state" = "notify" ]; then
-        case "$(cat)" in
-          *permission_prompt*|*elicitation_dialog*) state="waiting" ;;
-          *)                                        state="done" ;;
+        type=$(sed -n 's/.*"notification_type"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+        case "$type" in
+          permission_prompt|elicitation_dialog|elicitation_url_dialog|agent_needs_input)
+            state="waiting" ;;
+          *) state="done" ;;
         esac
       fi
 
@@ -93,12 +103,15 @@ module Switchboard
     end
 
     # Write the script out if missing or stale, mark it executable. Idempotent;
-    # cheap enough to call on every enable / worktree create.
+    # cheap enough to call on every enable / worktree create. Atomic (temp + rename): sh reads a
+    # script as it runs, so rewriting it in place under a running hook (one blocked on stdin)
+    # would resume at a stale offset in the new text — a syntax error, exit 2 (a deny, to a
+    # PermissionRequest).
     def ensure_script
       path = script_path
       if !File.exist?(path) || File.read(path) != SCRIPT
         FileUtils.mkdir_p(File.dirname(path))
-        File.write(path, SCRIPT)
+        MarkerBlock.atomic_write(path, SCRIPT)
       end
       File.chmod(0o755, path)
       path
@@ -144,7 +157,7 @@ module Switchboard
       # Background-presence (the Layer-2 monitoring nudge + per-session marker clears).
       # SessionStart: clear this worktree's monitoring marker (a resumed agent re-declares)
       # and plant the self-report nudge — both gated at runtime on `background_presence` and
-      # the source (startup/resume, never compact). SessionEnd: the agent is gone, so it
+      # the source (MonitoringNudge.clears_on? / nudges_on?). SessionEnd: the agent is gone, so it
       # can't still be monitoring — clear the marker (the instant twin of the liveness TTL).
       # Matcher-less like the SessionStart nudge, so SessionEnd fires on every end reason,
       # not just /clear. Same `command -v` bin guard so a stale path no-ops cleanly.
@@ -170,7 +183,9 @@ module Switchboard
       hooks.each_key { |event| hooks[event] = strip_ours(hooks[event]) }
 
       command_entries(events, script, ENV["SWITCHBOARD_BIN"] || "switchboard").each do |e|
-        group = { "hooks" => [{ "type" => "command", "command" => e[:command] }] }
+        hook = { "type" => "command", "command" => e[:command] }
+        hook["timeout"] = SESSION_END_TIMEOUT if e[:event] == "SessionEnd"
+        group = { "hooks" => [hook] }
         group["matcher"] = e[:matcher] if e[:matcher]
         (hooks[e[:event]] ||= []) << group
       end

@@ -43,17 +43,26 @@ Claude's mapping (`ClaudeHook::EVENTS`) is the interesting part (Codex's, which 
 - `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PostToolUseFailure` → **thinking**.
   `PreToolUse` fires *before* a tool runs, and the permission prompt comes *after*
   it — so it can't be what clears the "waiting" state. `PostToolUse` and
-  `PostToolUseFailure` fire *after* the granted tool runs (whichever way it went),
-  the earliest hook past the prompt — so the dot flips back to blue once work
-  actually resumes.
-- `Notification` → the special **notify** mode. The reporter reads the whole
-  payload off stdin and glob-matches it for the `permission_prompt` /
-  `elicitation_dialog` type tokens (`case "$(cat)" in *permission_prompt*…` — a
-  substring match, not a JSON-field parse), reporting **waiting** only when one is
-  present; the idle timer and everything else fall through to **done**. Matching
-  those structured type tokens rather than the human-readable message wording
-  holds up across Claude releases, and defaulting to the calm state means an
-  unrecognized notification never false-alarms magenta.
+  `PostToolUseFailure` fire *after* the granted tool finishes (whichever way it
+  went), the earliest hook past the prompt — so the dot flips back to blue only
+  once that tool is done.
+- `PermissionRequest` → **waiting**. It fires the moment Claude asks for
+  permission, so the dot turns magenta without waiting for Notification's
+  delayed `permission_prompt` (about 6 seconds). The reporter prints nothing, and
+  a hook with no output leaves the decision to you, so it only observes the
+  prompt. The trade-off: no hook fires between your approval and the tool
+  finishing, so after approving a long command (a build, a test run) the dot
+  stays magenta until it ends. Auto mode doesn't fire it for calls it approves
+  on its own.
+- `Notification` → the special **notify** mode. The reporter pulls the
+  `notification_type` value out of the payload (one `sed` over stdin) and
+  compares it exactly, reporting **waiting** only for a prompt that needs an
+  answer: `permission_prompt`, `elicitation_dialog`, `elicitation_url_dialog` or
+  `agent_needs_input`. The idle timer and everything else fall through to
+  **done**. Comparing the structured type rather than the human-readable message
+  holds up across Claude releases, and only the type field counts: a workspace
+  path or message that merely contains a type name can't trip it. An unrecognized
+  notification defaults to the calm state, so it never false-alarms magenta.
 - `Stop`, `SessionStart` → **done**.
 
 A fresh hook file *is* presence — no process check needed. The hook only fires
@@ -106,9 +115,9 @@ opposite sides of that:
   `AgentHooks::ADAPTERS` fans out over, so `enable-hooks` and the dispatch worker (`Creator.work`)
   wire it per worktree.
 
-- **Codex is global.** Codex 0.142.x does **not** discover a project-local
-  `<worktree>/.codex/hooks.json` in a *linked* git worktree — its project-hook
-  discovery doesn't follow the `.git`-file → common-dir indirection — and
+- **Codex is global.** Codex (checked through 0.163) deliberately does **not**
+  load a *linked* git worktree's own `<worktree>/.codex/hooks.json`: it redirects
+  a linked worktree's project hooks to the main checkout's `.codex/` folder. And
   switchboard is nothing but linked worktrees, so the per-worktree file is dead on
   arrival. A **config-level** hook isn't project-discovered, so it fires
   everywhere, including linked worktrees. So `CodexHook` delivers **one**
@@ -128,22 +137,48 @@ Two more things follow from codex being global:
 
 - **Trust.** Codex won't run any hook until it's been approved — run `/hooks` in
   codex once and trust the switchboard hooks (or start codex with
-  `--dangerously-bypass-hook-trust`). The approval is keyed by the command *hash*
-  and stored in codex's own state, **not** in the block, so re-running `install`
-  preserves it as long as the commands stay byte-stable (they do — deterministic
-  paths, fixed event order). A present block isn't proof the dot moves;
-  `switchboard doctor` flags the trust caveat.
+  `--dangerously-bypass-hook-trust`). Codex records each approval, keyed by the
+  command's *hash*, as a `[hooks.state."…"]` table right after switchboard's
+  `[hooks]`, which puts it inside the block. Re-running `install` carries those
+  tables over, so approval survives as long as the commands stay byte-stable
+  (they do: deterministic paths, fixed event order). A hook whose command did
+  change (say, a different install's path) keeps its old approval, which codex
+  re-asks for in `/hooks`; the count below checks that an approval exists, not that
+  it still matches. A present block isn't proof
+  the dot moves, so `switchboard doctor` counts the approvals (`N/M trusted`) and
+  warns when any hook is still unapproved. It first checks that the block on disk is
+  what `install` would write: an outdated block (an older release, or one written by
+  another checkout) or one `install` can't safely rewrite gets "re-run `switchboard
+  install`" instead, since approving it in `/hooks` would approve the wrong commands.
+- **Codex keeps its own settings in the block too.** Codex appends each new
+  table it writes (`[desktop]`, `[plugins."…"]`, …) after the file's last table
+  and before its trailing comments. Switchboard's block sits at the end of the
+  file and ends in a comment, so those tables land inside its markers. `install`
+  moves them, unchanged and in order, to just above the block, and `uninstall`
+  keeps them the same way (moved to just above where the block was). With no parser available, switchboard refuses (and leaves
+  the file untouched) whenever moving lines could change what a setting means: a
+  multi-line string, a `[[…]]` table, or keys at the very start of the block
+  (before its first table) or right after its end marker. If Codex writes the file mid-install, install stops and asks you to
+  re-run it rather than overwrite that change.
 - **Nesting (#130).** A global hook fires for *every* codex, including a nested
   `codex exec` launched by a `/codex` running under Claude Code. A guard prefixes
   every command (`[ -n "$CLAUDECODE" ] || [ -n "$CLAUDE_CODE_SESSION_ID" ] && exit
   0`) and suppresses the reporter when a Claude-Code parent is detected, so a
   subagent's codex doesn't report presence up to switchboard. A top-level codex
   switchboard launches into a plain tmux shell carries neither marker, so it fires.
+  Since Codex 0.149, a hook sees the environment as it was when the session
+  started, not the live one. Codex strips a few credential variables from it, but
+  not the two Claude markers, so the guard still works.
 
-Codex's event map also differs from Claude's where the agents differ: Codex has no
-`Notification` event, so its `waiting` rides `PermissionRequest` — the magenta dot
-shows whenever Codex blocks on you for approval, which is best-effort (a session
-command that bypasses *all* approvals suppresses it).
+This hook contract was last checked live against Claude Code 2.1.301–2.1.303 and
+codex-cli 0.163.0: the payload fields, delivery in linked worktrees, the
+nesting-guard environment, and a silent `PermissionRequest` hook leaving the
+prompt to you.
+
+Codex's event map differs from Claude's in one place: Codex has no `Notification`
+event, so `PermissionRequest` (which Claude also uses, above) is its only `waiting`
+signal — the magenta dot shows whenever Codex blocks on you for approval, which is
+best-effort (a session command that bypasses *all* approvals suppresses it).
 
 The reporter script itself is shared by both adapters (the state-file format is
 agent-neutral) and lives in the XDG **data** dir

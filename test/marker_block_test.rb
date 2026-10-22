@@ -26,14 +26,6 @@ module Switchboard
       assert_equal "no-newline\n#{B}\nx\n#{E}\n", out
     end
 
-    def test_replace_is_idempotent
-      once = MarkerBlock.replace("base\n", B, E, "v1")
-      twice = MarkerBlock.replace(once, B, E, "v2")
-      assert_equal 1, twice.scan(B).size, "exactly one region after re-replace"
-      assert_includes twice, "v2"
-      refute_includes twice, "v1", "the old region is stripped, not stacked"
-    end
-
     def test_strip_removes_the_region_and_is_a_noop_when_absent
       body = MarkerBlock.build("keep\n", B, E, "drop")
       assert_equal "keep\n", MarkerBlock.strip(body, B, E)
@@ -50,12 +42,12 @@ module Switchboard
     # the bare mark + newline, so present? says "there" while strip removes nothing — the
     # false "removed" uninstall reported on a real machine; why_new=every other test
     # builds its region with the current bare marks; seam=none
-    def test_strip_and_inner_accept_trailing_text_on_marker_lines
+    def test_strip_and_region_accept_trailing_text_on_marker_lines
       body = "keep\n#{B} (managed by an older release)\nold\n#{E}\ntail\n"
       assert MarkerBlock.present?(body, B)
-      assert_equal "old\n", MarkerBlock.inner(body, B, E)
+      assert_equal "old\n", body[MarkerBlock.region(B, E), 1]
       assert_equal "keep\ntail\n", MarkerBlock.strip(body, B, E)
-      assert_nil MarkerBlock.inner("no region\n", B, E)
+      assert_nil "no region\n"[MarkerBlock.region(B, E), 1]
     end
 
     # --- backup --------------------------------------------------------------

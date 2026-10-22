@@ -77,6 +77,9 @@ module Switchboard
       # HookFile.ensure_script writes a reporter into XDG_DATA_HOME, Creator shells
       # git, etc. Without this, "no real state touched" would be a lie.
       ENV["HOME"]              = @dir
+      # An exported CODEX_HOME would outrank HOME and point install/uninstall at the developer's
+      # real codex config; pin it to where HOME alone would put it.
+      ENV["CODEX_HOME"]        = File.join(@dir, ".codex")
       ENV["XDG_DATA_HOME"]     = path("xdg-data")
       ENV["XDG_STATE_HOME"]    = path("xdg-state")
       ENV["XDG_CONFIG_HOME"]   = path("xdg-config")

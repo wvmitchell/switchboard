@@ -161,6 +161,92 @@ module Switchboard
       end
     end
 
+    # PermissionRequest fires the instant Claude asks, ahead of Notification's delayed
+    # permission_prompt. The command must be a plain reporter: printing anything could
+    # answer the prompt for the user.
+    def test_enable_wires_permission_request_to_a_silent_waiting_reporter
+      ClaudeHook.enable(worktree)
+      group = settings.dig("hooks", "PermissionRequest").first
+      assert_equal "*", group["matcher"]
+      assert_equal ["#{Shellwords.escape(HookFile.script_path)} waiting"], group["hooks"].map { |h| h["command"] }
+    end
+
+    # Output from a PermissionRequest hook can answer the prompt, so the reporter it runs must
+    # print nothing — only record the state.
+    def test_the_waiting_reporter_prints_nothing
+      out = IO.popen([HookFile.ensure_script, "waiting"], "r+", chdir: worktree) { |io| io.close_write; io.read }
+      assert_equal "", out
+      assert_equal 0, $?.exitstatus, "a non-zero exit (2 above all) would answer the permission prompt"
+      assert_equal ["waiting"], Dir.glob(File.join(AgentState.state_dir, "*")).map { |f| File.read(f).split("\t").first }
+
+      # A state dir it can't create still leaves the prompt to the user: silent, exit 0.
+      File.write(path("blocker"), "")
+      ENV["SWITCHBOARD_STATE_DIR"] = File.join(path("blocker"), "agents")
+      out = IO.popen([HookFile.ensure_script, "waiting"], "r+", chdir: worktree, err: File::NULL) { |io| io.close_write; io.read }
+      assert_equal "", out
+      assert_equal 0, $?.exitstatus
+    end
+
+    # Every enable / worktree create calls ensure_script; an up-to-date reporter must not be
+    # rewritten (each rewrite is a window a running hook could straddle).
+    def test_ensure_script_leaves_a_current_reporter_alone
+      script = HookFile.ensure_script
+      ino = File.stat(script).ino
+      HookFile.ensure_script
+      assert_equal ino, File.stat(script).ino
+    end
+
+    # Claude's SessionEnd default budget is 1.5s, tight for a cold Ruby start, so the clear
+    # carries its own timeout. Only SessionEnd: every other event keeps Claude's default.
+    def test_only_sessionend_carries_an_explicit_timeout
+      ClaudeHook.enable(worktree)
+      timeouts = settings["hooks"].transform_values { |gs| gs.flat_map { |g| g["hooks"].filter_map { |h| h["timeout"] } } }
+      assert_equal({ "SessionEnd" => [HookFile::SESSION_END_TIMEOUT] }, timeouts.reject { |_e, t| t.empty? })
+    end
+
+    # Value: protects=the magenta dot means "blocked on you" for every such type and only
+    # those; fails_when=a type is dropped, or matching drifts back to the whole payload;
+    # why_new=no test ran the notify mode at all; seam=none
+    def test_notify_mode_classifies_by_the_notification_type_value
+      script = HookFile.ensure_script
+      cases = {
+        %({"notification_type":"permission_prompt"}) => "waiting",
+        %({"notification_type": "elicitation_dialog"}) => "waiting",
+        %({"notification_type":"elicitation_url_dialog"}) => "waiting",
+        %({"notification_type":"agent_needs_input"}) => "waiting",
+        %({"notification_type":"idle_prompt"}) => "done",
+        %({"notification_type":"agent_completed"}) => "done",
+        %({"notification_type":"auth_success"}) => "done",
+        %({"notification_type":"something_new"}) => "done",
+        %({"message":"no type field"}) => "done",
+        # Decoys: a type name elsewhere in the payload must not trip waiting.
+        %({"cwd":"/w/permission_prompt","message":"agent_needs_input \\"notification_type\\":\\"permission_prompt\\"","notification_type":"idle_prompt"}) => "done"
+      }
+      cases.each do |payload, want|
+        FileUtils.rm_rf(Dir.glob(File.join(AgentState.state_dir, "*")))
+        IO.popen([script, "notify"], "w", chdir: worktree) { |io| io.write(payload) }
+        got = Dir.glob(File.join(AgentState.state_dir, "*")).map { |f| File.read(f).split("\t").first }
+        assert_equal [want], got, payload
+      end
+    end
+
+    # Value: protects=the state each Claude event records (the dot); fails_when=an EVENTS row
+    # is edited or dropped and its reporter records the wrong state; why_new=only single
+    # events were spot-checked; seam=none
+    def test_every_event_records_its_mapped_state
+      ClaudeHook.enable(worktree)
+      ClaudeHook::EVENTS.each do |event, state, matcher|
+        group = settings.dig("hooks", event).find { |g| g["hooks"].any? { |h| h["command"].include?(HookFile::MARK) && !h["command"].include?("nudge") } }
+        assert group, "#{event} has a reporter"
+        assert group["hooks"].first["command"].end_with?(" #{state}"), "#{event} -> #{state}"
+        if matcher
+          assert_equal matcher, group["matcher"], "#{event} matcher"
+        else
+          refute group.key?("matcher"), "#{event} is matcher-less"
+        end
+      end
+    end
+
     def test_enable_preserves_foreign_settings
       seed(JSON.pretty_generate(
         "permissions" => { "allow" => ["Bash"] },
@@ -239,6 +325,22 @@ module Switchboard
       assert script.start_with?(ENV["XDG_DATA_HOME"]), "reporter lives under sandboxed XDG_DATA_HOME"
       assert File.executable?(script)
       assert_equal HookFile::SCRIPT, File.read(script)
+    end
+
+    # Value: protects=a hook already running the old reporter (sh reads it as it goes) when an
+    # upgrade rewrites it; fails_when=ensure_script writes the same inode in place again, so a
+    # running sh resumes mid-way into the new text (syntax error, exit 2); why_new=only a fresh
+    # write was pinned; seam=none; no_claim=sh's read buffering (the inode is the contract)
+    def test_ensure_script_replaces_a_stale_reporter_without_touching_the_old_inode
+      script = HookFile.ensure_script
+      File.write(script, "#!/bin/sh\n# old reporter\n")
+      running = File.open(script) # what a hook mid-run holds
+      HookFile.ensure_script
+      assert_equal "#!/bin/sh\n# old reporter\n", running.read, "the running copy is untouched"
+      assert_equal HookFile::SCRIPT, File.read(script)
+      assert File.executable?(script)
+    ensure
+      running&.close
     end
 
     def test_enable_adds_settings_to_git_local_excludes

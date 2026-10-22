@@ -99,8 +99,10 @@ test can reach: it installs the global `[hooks]` block into a sandbox `CODEX_HOM
 worktree, runs `codex exec` headlessly there, and asserts the resting state lands where
 `AgentState` reads it — the standing regression guard that codex's config-level hooks
 still fire in a linked worktree (the bug per-worktree `.codex/hooks.json` couldn't
-clear). The #130 nested-agent guard is covered offline by `codex_hook_test`'s runtime
-guard test. Needs `codex` on PATH + auth + network, and spends tokens.
+clear). That run passes `--dangerously-bypass-hook-trust`, so a second case runs
+without it and asserts an untrusted block writes no state (the case behind `doctor`'s
+`N/M trusted` warning). The #130 nested-agent guard is covered offline by
+`codex_hook_test`'s runtime guard test. Needs `codex` on PATH + auth + network, and spends tokens.
 
 ## Code conventions
 

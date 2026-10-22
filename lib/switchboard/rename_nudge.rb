@@ -26,12 +26,13 @@ module Switchboard
   module RenameNudge
     module_function
 
-    # SessionStart sources worth nudging on. `clear` (deliberately low-context) and any
-    # unknown/missing source are excluded — which also rejects a malformed/empty stdin
-    # payload (source ⇒ nil). `startup` is in: the instruction self-gates ("once you
-    # understand…"), so planting it early is harmless and covers a session that never
-    # resumes.
-    SOURCES = %w[startup resume compact].freeze
+    # SessionStart sources worth nudging on. An unknown/missing source is excluded —
+    # which also rejects a malformed/empty stdin payload (source ⇒ nil). `startup` is in:
+    # the instruction self-gates ("once you understand…"), so planting it early is
+    # harmless and covers a session that never resumes. `fork` (Claude ≥ 2.1.214, Codex ≥
+    # 0.155; both used to report a fork as resume/startup) is a resume under a new session
+    # id. `clear` and `compact` both drop the earlier plant out of context, so both re-plant.
+    SOURCES = %w[startup resume fork clear compact].freeze
 
     # Pure gate: nudge only when auto_rename is on, the workspace is still a
     # placeholder, and the session boundary is one we act on.

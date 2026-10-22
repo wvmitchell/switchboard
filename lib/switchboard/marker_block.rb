@@ -23,30 +23,19 @@ module Switchboard
       body.gsub(region(begin_mark, end_mark), "")
     end
 
-    # The text between the markers, or nil when there's no region.
-    def inner(body, begin_mark, end_mark)
-      body[region(begin_mark, end_mark), 1]
-    end
-
     # A marker line may carry trailing text: older releases wrote
-    # `# >>> … >>> (managed by …)`, so `strip` and `present?` must both accept it.
+    # `# >>> … >>> (managed by …)`, so `strip` and `present?` must both accept it. Its one
+    # capture is the text between the markers.
     def region(begin_mark, end_mark)
       /^#{Regexp.escape(begin_mark)}[^\n]*\n(.*?)^#{Regexp.escape(end_mark)}[^\n]*\n?/m
     end
 
     # `body` with the marked region holding `inner` appended at the end. Assumes
-    # `body` is already stripped of a prior region (see `replace` for the idempotent
-    # form). `inner` is normalized to exactly one trailing newline before the end mark.
+    # `body` is already stripped of a prior region (`build(strip(body, …), …)` is the
+    # idempotent ensure). `inner` is normalized to exactly one trailing newline before the end mark.
     def build(body, begin_mark, end_mark, inner)
       body += "\n" unless body.empty? || body.end_with?("\n")
       "#{body}#{begin_mark}\n#{inner.chomp}\n#{end_mark}\n"
-    end
-
-    # Idempotent ensure: strip any existing region, then append a fresh one. This is
-    # what re-running install / re-ensuring a hook block wants — exactly one region,
-    # never a duplicate.
-    def replace(body, begin_mark, end_mark, inner)
-      build(strip(body, begin_mark, end_mark), begin_mark, end_mark, inner)
     end
 
     def present?(body, begin_mark)

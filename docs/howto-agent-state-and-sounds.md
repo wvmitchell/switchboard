@@ -25,7 +25,9 @@ You get *something* for free and *something better* by opting in:
   by agent: **Claude** is scoped per worktree (`.claude/settings.local.json`,
   never your global `~/.claude`); **Codex** is one global block in
   `~/.codex/config.toml`, because codex can't discover project-local hooks in a
-  linked worktree (and switchboard worktrees are all linked). For Codex the magenta
+  linked worktree (and switchboard worktrees are all linked). For Claude the dot
+  turns magenta the moment it asks for permission, and stays magenta until the tool
+  you approved finishes. For Codex the magenta
   "waiting" dot rides its permission gates, so it shows whenever the agent blocks on
   you for approval; a session command that bypasses *all* approvals won't surface it.
 
@@ -56,8 +58,9 @@ After that the dots flow for every worktree. `switchboard uninstall` removes the
 block (the per-worktree `disable-hooks` leaves it — it's global).
 
 **Verify:** `switchboard doctor` shows the Claude hook status for the worktree
-you're standing in *and* the global codex block status (plus the `/hooks` trust
-note), and prints the reporter script path. Start an agent and watch the dot
+you're standing in *and* the global codex block status: how many of its hooks codex
+has approved (`N/M trusted`), or the fix when the block is stale, can't be rewritten
+safely, or collides with your own `[hooks]`. It also prints the reporter script path. Start an agent and watch the dot
 become precise.
 
 ### Turn off auto-wiring on new worktrees
@@ -151,6 +154,15 @@ one-time global install above. Observation-only agents show a dot but stay silen
   install the global block (`switchboard install --codex-hooks`) and `/hooks`-trust
   it. (Codex's waiting also needs a permission gate to fire — a bypass-all session
   command suppresses it.)
+- **Claude's dot turns magenta only seconds after a permission prompt opens.** That
+  worktree's hooks predate the instant permission-prompt hook. Run `switchboard
+  enable-hooks` there and restart `claude`. (`doctor` still shows ✓ for a worktree on
+  the older hook set.)
+- **Codex dots don't move.** Check `doctor`. If it says the block is stale, re-run
+  `switchboard install` from the install you use first. Then run `/hooks` in codex
+  and approve the switchboard hooks. Do that even when `doctor` shows every hook
+  trusted: it counts the approvals on file but can't tell whether codex still
+  accepts an old one (say, after switching between a brew and a clone install).
 - **Sounds fire twice.** Usually an orphaned sidebar process — `switchboard
   doctor` flags it. See [Explanation: sidebar lifecycle](explanation-sidebar-lifecycle.md).
 - **A stale dot after `quit`.** `quit` clears agent state, so this shouldn't
