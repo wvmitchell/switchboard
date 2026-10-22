@@ -61,6 +61,7 @@ module Switchboard
       def quit
         return true unless confirm("quit all switchboard sessions?")
 
+        Creation.cancel_all   # BEFORE the kill: an in-flight build must not open a session after it
         AgentState.clear_all  # killing every agent makes their last hook state stale — drop it now
         Monitoring.clear_all  # ...and every monitoring declaration is now stale too
         Notify.clear_all      # ...and any pending "come look" alert is moot once the agents are gone
@@ -116,7 +117,25 @@ module Switchboard
       def switch(node)
         Tmux.go(Worktree.new(project: node.project, path: node.path, branch: node.branch,
                              dirty: false, pr: node.pr, base: nil, primary: false),
-                start: @config.session_command_for(node.project))
+                start: entry_command(node))
+      end
+
+      # What a FRESH session for this workspace runs. Normally the agent; but a dispatched
+      # build whose setup hasn't succeeded — failed, canceled (D12), or still in flight
+      # with its session gone — gets a plain shell with the reason instead, so
+      # re-entering it can't start an agent on a half-built tree.
+      def entry_command(node)
+        rec = @creation_for[node.path]
+        # A `{task}` template never reaches the shell raw: re-entry has no task, so it
+        # resolves to the bare command.
+        return Creator.agent_command(@config.session_command_for(node.project), "").first if Creation.certified?(rec)
+
+        note = case rec["state"]
+               when "canceled" then Creation.notice(:reentry_canceled)
+               when "failed" then Creation.notice(:reentry, Creation.row_reason(rec))
+               else Creation.notice(:reentry_building)
+               end
+        "echo #{Shellwords.escape(note)}"
       end
 
       # Fire-and-forget a `gh` command that may hit the network, off the paint loop.
@@ -154,71 +173,54 @@ module Switchboard
         spawn_gh(*args, chdir: node.path)
       end
 
-      # Create the worktree (quiet) and drop into it — no name prompt. `n` (and
-      # filter-mode ↵-on-a-project, which passes that header in) always auto-names:
-      # `Creator.create` with a blank name cuts a placeholder adjective-noun dir +
-      # branch you start working in immediately, then rename once you know the work via
-      # `r` / `switchboard rename` / the agent nudge (#114 — doubling down on the
-      # deferred-naming #94 and agent self-naming #92). Defaults to the highlighted row.
+      # n: dispatch a workspace in the background. Ask for a TASK (never a name — #94/#114
+      # deferred naming stands: it still gets a placeholder the agent or `r` renames),
+      # reserve a free placeholder, write the Creation record and hand everything slow to
+      # a detached `create-workspace` worker. Nothing here builds or touches the network
+      # (reserving a name is only local branch/session lookups), so the loop never
+      # freezes, and we never switch you in: the row appears as ◌ and pings when it's
+      # ready (or ✘ if it isn't). A blank ↵ is a bare create (no task); Esc
+      # cancels. The cursor stays on the row it was on (DR1). Filter-mode ↵ on a project
+      # header lands here too, with that header.
       def create(node = current)
         return unless node
 
-        rows, = winsize
-        print "\e[#{rows};1H\e[K\e[?25lcreating…"
-        $stdout.flush
-        dest = Creator.create(@config, node.project, "")
+        task = prompt_line("#{node.project} task", hint: " (↵ = no task · esc)", task: true)
+        return if task.nil?
 
-        if dest
-          Tmux.go(Worktree.new(project: node.project, path: dest, branch: nil,
-                               dirty: false, pr: nil, base: nil, primary: false),
-                  start: start_command(node.project, dest))
+        rec = begin
+          Creator.dispatch(@config, node.project, task)
+        rescue SystemCallError, IOError
+          nil # an unwritable state dir (permissions, disk full): say so, keep the sidebar
         end
-        reload
+        return flash("no free workspace name — try again") if rec == :no_name
+        return flash("couldn't record the dispatch") unless rec.is_a?(Hash)
+
+        spawn_worker(rec["id"])
+        Tmux.broadcast_warm(except: ENV["TMUX_PANE"]) # every other pane shows the ◌ row now
+        keep_cursor { reload }
       end
 
-      # What gets typed into a NEW worktree's window: its setup script (#83), then the
-      # agent. Composed here, on the create path only — `switch` passes the bare
-      # session_command, so setup runs once per worktree, never again on re-entry.
-      #
-      # The script goes to `sh -ec` as ONE argument rather than being spliced into the
-      # chain: that keeps a multi-line script (if/loop/heredoc/comment) valid shell, and
-      # `-e` stops it at the first failing step. Only the wrapper joins the `&&`, so a
-      # failed setup means the agent never starts — you land at a shell with the error
-      # still on screen, rather than an agent working a half-built tree. (A setup step
-      # allowed to fail says so itself: `cp x . || true`. Known limit: a COMPOUND
-      # session_command using `;` — `export X=1; claude` — runs regardless, since
-      # `a && b; c` always runs `c`; chain it with `&&` instead.)
-      #
-      # Only STRINGS compose. `compact` alone would let a `session_command: false` (this
-      # config's disable idiom — YAML hands us the boolean) through: it isn't nil, so it
-      # would join into the literal word `false` and get typed into the shell. Tmux's
-      # `if start && created` gate used to swallow that raw false for us; once it's part
-      # of a joined String it's just another truthy token.
-      #
-      # Empty must then collapse back to nil for the same reason: "" is truthy, so a bare
-      # "" would type an empty Enter into every new shell on the default config.
-      def start_command(project, dest)
-        cmd = setup_invocation(project, dest)
-        start = [cmd, @config.session_command_for(project)].grep(String).map(&:strip).reject(&:empty?)
-        start.empty? ? nil : start.join(" && ")
+      # Detach the worker. It daemonizes itself (setsid) so this pane closing mid-build
+      # can't take it down. No wrapper or a failed spawn means it will never run, so the
+      # row turns ✘ at once instead of waiting out GC's grace.
+      def spawn_worker(id)
+        bin = ENV["SWITCHBOARD_BIN"]
+        return Creation.mark_failed(id, "didnt_start", from: "queued") unless bin
+
+        Process.detach(Process.spawn(bin, "create-workspace", id,
+                                     in: File::NULL, out: File::NULL, err: File::NULL))
+      rescue SystemCallError
+        Creation.mark_failed(id, "didnt_start", from: "queued")
       end
 
-      # The setup script, wrapped for the shell. A worktree lives at
-      # `<worktree_root>/<project>/<leaf>` while the project's canonical checkout lives
-      # wherever it's registered — two unrelated trees, so a setup script has NO relative
-      # way to name the checkout it wants to copy `.env`/config out of (the whole point of
-      # #83). Switchboard knows both paths right here, so it hands them over: `env` (not a
-      # bare `VAR=v` prefix, which fish doesn't support) exports them for the `sh -ec`
-      # child, letting one GLOBAL setup script serve every project —
-      # `cp "$SWITCHBOARD_PROJECT_PATH/.env" .`.
-      def setup_invocation(project, dest)
-        script = @config.worktree_creation_command_for(project)
-        return nil unless script
-
-        exports = { "SWITCHBOARD_PROJECT_PATH" => @config.project(project)&.fetch("path", nil),
-                    "SWITCHBOARD_WORKTREE_PATH" => dest }.compact
-                                                         .map { |k, v| "#{k}=#{Shellwords.escape(v)}" }
-        ["env", *exports, "sh", "-ec", Shellwords.escape(script)].join(" ")
+      # Run a reload without moving the selection off the row it's on, even when a new
+      # row lands above it.
+      def keep_cursor
+        here = current && [current.kind, current.path, current.project]
+        yield
+        i = here && @rows.index { |n| [n.kind, n.path, n.project] == here }
+        @cursor = i if i
       end
 
       # a: register a new project. n only makes worktrees *inside* a project, so
@@ -372,8 +374,50 @@ module Switchboard
       def remove
         node = current
         return unless node
+        return remove_project(node) if node.kind == "proj"
+        return dismiss_dispatch(node) if node.creation
 
-        node.kind == "proj" ? remove_project(node) : delete
+        delete
+      end
+
+      # d on a synthetic row: a ✘ is dismissed (acked, then GC'd — a row is synthetic only
+      # when git lists no tree there, so no un-set-up checkout is left to guard); a build
+      # still in flight is canceled — the worker stops at its next step. The row can lag the build by a
+      # tree-tick, so re-read the record: one that has since grown a worktree is torn
+      # down like a real delete (its session, setup or agent may already be running), and
+      # one that has since finished just needs the reload that shows its real row.
+      def dismiss_dispatch(node)
+        rec = (snap = @creation_for[node.path]) && Creation.find(snap["id"]) or return reload
+        if rec["state"] == "failed"
+          Creation.ack(rec["id"])
+        elsif Creation::PRE_READY.include?(rec["state"])
+          return unless confirm("cancel #{node.name}?")
+
+          # Only tear down if the cancel landed: the build may have reached ready while
+          # the confirm was up, and then it's a live workspace — d on its real row (with
+          # the dirty check) is how that goes.
+          canceled = Creation.transition(rec["id"], from: Creation::PRE_READY, to: :canceled)
+          discard_built(canceled) if canceled&.dig("worktree_added")
+        end
+        Tmux.broadcast_warm(except: ENV["TMUX_PANE"])
+        reload
+      end
+
+      def discard_built(rec)
+        project = @config.project(rec["project"]) or return
+        Tmux.kill(Worktree.new(project: rec["project"], path: rec["path"]))
+        # Setup or the agent may already have written there: remove only a tree that's
+        # still untouched, else keep it (re-entry stays a plain shell) for d on its row,
+        # which asks before forcing.
+        unless Creator.untouched?(rec["path"], project["base_ref"])
+          return flash("kept #{File.basename(rec['path'])}: it has changes — d on its row deletes it")
+        end
+
+        # The branch actually checked out there — a dir-only rename (the branch was
+        # pushed) leaves it on the placeholder, so the record's name would be wrong.
+        branch = Git.current_branch(rec["path"])
+        branch = nil if branch.empty? || branch == "HEAD"
+        start_removal(project["path"], rec["path"], branch, force_branch: true)
       end
 
       # Remove a project from the registry and close its sessions (the keyboard
@@ -400,6 +444,8 @@ module Switchboard
         _, err = Registrar.unregister(@config, name)
         return flash(err) if err
 
+        Creation.cancel_all(projects: [name]) # its in-flight builds stop before the kill
+
         # Every other window's sidebar caches its own @config; poke them all to
         # re-read so the removed project disappears there too (their rebuild's
         # refresh_config drops it). Fired before the kill/eject so our own imminent
@@ -419,7 +465,8 @@ module Switchboard
       # Delete a workspace: hide its row instantly and hand the slow `git worktree
       # remove` (an inline rm -rf of node_modules et al.) to a detached daemon, so the
       # input loop never freezes — the whole point of this path (the delete-hang fix).
-      # git owns the removal's correctness (dirty/locked/submodule, freeing the branch);
+      # git owns the removal's correctness (dirty/submodule, a lock you set, freeing the
+      # branch) — only our own un-set-up build's lock is forced past (`unfinished_at?`);
       # we only decide whether to force-confirm and where the row goes.
       def delete
         node = current
@@ -437,6 +484,13 @@ module Switchboard
         # skipping the guard. Porcelain skips ignored dirs, so this stays fast.
         return if !Git.clean?(node.path) && !confirm("#{label} has uncommitted changes — force?")
 
+        # A build still in flight here stops first, so its launcher can't start an agent
+        # in (or GC ring ✘ for) a workspace you just deleted on purpose.
+        rec = @creation_for[node.path]
+        if rec
+          Creation.transition(rec["id"], from: Creation::PRE_READY, to: :canceled)
+          Creation.ack(rec["id"]) # seen and deleted: its ✘ must not come back once the tree is gone
+        end
         start_removal(repo, node.path, node.branch) # marks + hides the row, spawns the reaper
 
         worktree = Worktree.new(project: node.project, path: node.path, branch: node.branch,
@@ -462,23 +516,26 @@ module Switchboard
       # (a shared PendingDelete marker, so every window's sidebar hides it). Falls back
       # to a SYNCHRONOUS removal (the old inline hang, but correct) when we can't
       # self-invoke — no SWITCHBOARD_BIN, or the spawn raises — so delete always works.
-      def start_removal(repo, path, branch)
+      def start_removal(repo, path, branch, force_branch: false)
         bin = ENV["SWITCHBOARD_BIN"]
-        return sync_remove(repo, path, branch) unless bin
+        return sync_remove(repo, path, branch, force_branch: force_branch) unless bin
 
         PendingDelete.mark(path)      # shared: hides the row in every pane
         @pending_delete.add(path)     # ...and this pane same-frame, before the reaper runs
-        Process.detach(Process.spawn(bin, "reap-worktree", repo, path, branch.to_s,
-                                     in: File::NULL, out: File::NULL, err: File::NULL))
+        args = [bin, "reap-worktree", repo, path, branch.to_s]
+        args << "--force-branch" if force_branch
+        Process.detach(Process.spawn(*args, in: File::NULL, out: File::NULL, err: File::NULL))
       rescue SystemCallError
         PendingDelete.clear(path)     # spawn failed: un-hide and remove synchronously instead
         @pending_delete.delete(path)
-        sync_remove(repo, path, branch)
+        sync_remove(repo, path, branch, force_branch: force_branch)
       end
 
-      def sync_remove(repo, path, branch)
-        Git.remove_worktree(repo, path, force: true)
-        Git.delete_branch(repo, branch) # safe -d; unmerged branches are kept
+      # The branch delete is the safe -d (unmerged branches are kept) unless the caller
+      # proved there's nothing on it to lose (a canceled dispatch, untouched?).
+      def sync_remove(repo, path, branch, force_branch: false)
+        Git.remove_worktree(repo, path, force: true, locked: Creation.unfinished_at?(path))
+        Git.delete_branch(repo, branch, force: force_branch)
       end
 
       # Rename a workspace: move its worktree directory (the display name) + rename
@@ -511,6 +568,7 @@ module Switchboard
         when :invalid then "invalid name — letters/digits/. - _, no /, and a valid git branch"
         when :partial then "renamed the dir, but the tmux session rename failed — run prune"
         when :failed  then "rename failed (git worktree move)"
+        when :building then "still creating… rename once it's ready"
         end
       end
     end

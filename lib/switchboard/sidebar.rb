@@ -10,7 +10,7 @@ module Switchboard
   # into the filter). ↵ opens a workspace's session (or collapses a project);
   # / filters the tree by name for a direct jump (in-sidebar, not the old fzf
   # popup — see "/ filter mode" below); a adds a project (register a local repo,
-  # or clone one); n creates a worktree inline then drops you in; d removes the
+  # or clone one); n dispatches a workspace in the background (task → ◌ → ping); d removes the
   # highlighted row — a workspace's worktree, or a whole project from the
   # registry. The legend tracks the row.
   #
@@ -92,6 +92,8 @@ module Switchboard
       @pending_delete = Set.new # worktree paths being deleted right now — hidden from the
                            # tree while a detached daemon runs `git worktree remove` off the
                            # input loop (shared PendingDelete marker, hydrated every rebuild)
+      @creation_for = {}   # ws row path => its background-dispatch record (◌/✘ glyph, task
+                           # label, rings); hydrated each rebuild and re-read each scan
       @agent_state = AgentState.new
       @collapsed = Set.new # collapsed project names; hydrated from the shared
                            # on-disk store (Collapse) on every rebuild, so all
@@ -425,18 +427,43 @@ module Switchboard
       @agents = @agent_state.scan(ws_paths, hooks_only: hooks_only)
       @monitoring = Monitoring.monitored(ws_paths)     # BEFORE on_scan: gates the :done suppression
       notify_pending = Notify.pending(ws_paths)        # declared "come look" alerts (mtime per path)
+      index_creations(Creation.all)                    # BEFORE on_scan: a dispatch owns its first turn (D16)
       # T1: the edge fanout (marks, sounds, sparkles, PR spawns) lives in Edges;
       # it returns the edge list so the diff-count refresh can ride the same edge.
       edges = @edges.on_scan(@agent_state.last_hook_states,
                              monitoring: @monitoring, nodes: @nodes, config: @config,
                              current_path: @current_path, notify_pending: notify_pending,
+                             first_turn: first_turn_paths,
                              announce_sounds: announce_sounds, refresh_prs: refresh_prs)
+      ring_creations if announce_sounds
       refresh_diffs if edges.any? # a finished turn likely just committed — repaint its count
       @attention = Attention.marked(ws_paths)          # load for render, after the marks land
       true
     rescue StandardError
       @agents = {}
       false
+    end
+
+    # Rows whose dispatched task still owns its first-turn ping, so the normal :done
+    # edge stands aside and you hear one chime (D16).
+    def first_turn_paths
+      @creation_for.select { |_path, rec| Creation.owns_first_turn?(rec) }.keys.to_set
+    end
+
+    # Ring the dispatches whose latest transition deserves a ping — exactly once across
+    # every window: only an announcing, ON-SCREEN scan rings, and only if it wins the
+    # record's compare-and-set (D15). A silent reload neither rings nor consumes one,
+    # so the ping waits for the next real scan instead of being lost.
+    def ring_creations
+      return unless @visible
+
+      @creation_for.each do |path, rec|
+        next unless Creation.ring_due?(rec) && (won = Creation.claim_ring(rec["id"]))
+
+        @edges.announce(path, won["project"], won["state"] == "failed" ? :failed : :done, @config)
+      end
+    rescue StandardError
+      nil
     end
 
     # announce_sounds: false on a catch-up scan (a sidebar waking from off-screen,
@@ -488,6 +515,7 @@ module Switchboard
        dir_fingerprint(Attention.state_dir),   # bold markers
        dir_fingerprint(Monitoring.state_dir),  # background-monitor ∞ markers
        dir_fingerprint(PendingDelete.state_dir), # being-deleted row-hides (so off-screen panes hide too)
+       dir_fingerprint(Creation.state_dir),    # background dispatches (◌ rows, ✘, ready)
        dir_fingerprint(Pr.cache_dir),          # PR badges
        dir_fingerprint(Collapse.state_dir),    # shared project folds (the originally-missed case)
        file_fingerprint(FullHeader.marker),    # full-header toggle
@@ -542,7 +570,14 @@ module Switchboard
     # cleanly (caller repaints + baseline advances); false when the scan rescued, so
     # the next off-screen tick retries rather than sticking a stale buffer.
     def warm_reload(fp)
-      rebuild
+      # Off screen: skip GC's per-build `ps` owner checks — every pane warming on each
+      # dispatch change would multiply them; the on-screen pane's scans cover them.
+      @warming = true
+      begin
+        rebuild
+      ensure
+        @warming = false
+      end
       locate # so the warm frame carries the » marker and matches the switch-in frame
       ok = refresh_agents(announce_sounds: false, refresh_prs: false, hooks_only: true)
       refresh_diffs
@@ -613,6 +648,7 @@ module Switchboard
       # from the in-memory set too, so the un-bold shows this frame, not next scan.
       Attention.clear(@current_path)
       @attention.delete(@current_path)
+      Creation.ack_path(@current_path) # you're looking at it: no ping for this dispatch, however it ends
     end
 
     # Land the selection bar on the workspace this session is in, so summoning or

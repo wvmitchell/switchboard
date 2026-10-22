@@ -26,6 +26,11 @@ module Switchboard
       WANTS_OFF = "\e[1;35m◇\e[0m"  # ...and hollow, the blink's off-beat
       DONE      = "\e[1;32m●\e[0m"  # green: replied, ready for you (not blocked)
       MONITORING = "\e[1;32m∞\e[0m" # a background monitor/loop runs continuously here. Shares DONE's green ON PURPOSE — the ∞ glyph (not a new color) distinguishes it from ●, so the palette stays tight. Steady, so it stays off the pulse cadence — dormancy preserved.
+      BUILDING = "\e[33m◌\e[0m"   # a dispatched workspace being built / set up: a hollow "not yet" slot. Steady (dormancy), yellow at normal weight so it reads on light themes too (DR4/DR10)
+      FAILED   = "\e[1;31m✘\e[0m" # a dispatch whose build/setup/launch failed: the heavy ✘ keeps its shape in reverse video (DR5)
+      NOTE_FG  = "\e[2m"          # the dim task label / failure reason in the right region (DR3/DR8)
+      NOTE_INVISIBLE = /[\p{Cc}\p{Cf}\p{Mn}\p{Me}]/ # dropped from a task label: controls, bidi/zero-width, combining
+      NOTE_WIDE = /[\p{Emoji_Presentation}ᄀ-ᅟ⺀-꓏가-힣豈-﫿︰-﹏＀-｠￠-￦\u{1F300}-\u{1FAFF}\u{20000}-\u{3FFFD}]/ # two columns wide
       BLINK_PERIOD = 4             # @pulse ticks per blink half-cycle (~0.5s at PULSE)
 
       # Completion twinkle — the visual twin of the sound: a brief ✦/✧ shimmer when a
@@ -75,6 +80,11 @@ module Switchboard
       # top. The tmux-layer keys that operate the sidebar (prefix-toggle/home) are
       # appended from config (tmux_help_rows), resolved, not static.
       HELP_KEY_COLS = 6 # key column width; longer combos (move/prefix rows) overflow it
+
+      # What the row glyphs mean (DR9) — nothing else teaches them. Seated right under
+      # the help wordmark so help_body's height cap never drops it.
+      LEGEND = [[SPIN_COLORED.first, "⠋", "working"], [WANTS_ON, "◆", "input"], [DONE, "●", "done"],
+                [MONITORING, "∞", "watching"], [BUILDING, "◌", "building"], [FAILED, "✘", "failed"]].freeze
 
       private
 
@@ -258,7 +268,7 @@ module Switchboard
       # each key row as `key.ljust(HELP_KEY_COLS)  desc`. trunc runs on the PLAIN string
       # BEFORE the ANSI is wrapped on, so truncation can never cut an escape (line()).
       def help_lines(cols)
-        out = ["#{BRAND}#{trunc(WORDMARK, cols)}\e[0m"]
+        out = ["#{BRAND}#{trunc(WORDMARK, cols)}\e[0m", *legend_lines(cols)]
         (Keymap.help_rows(@bindings) + tmux_help_rows).each do |key, desc|
           if key.empty?
             out << "" << "#{BRAND}#{trunc(desc, cols)}\e[0m" # blank separator, then the heading
@@ -267,6 +277,22 @@ module Switchboard
           end
         end
         out
+      end
+
+      # Help's glyph legend: the row glyphs, wrapped to the pane, each in its row color.
+      def legend_lines(cols)
+        lines = [[]]
+        width = 0
+        LEGEND.each do |colored, glyph, label|
+          item_w = "#{glyph} #{label}".length
+          if width.positive? && width + 2 + item_w > cols
+            lines << []
+            width = 0
+          end
+          width += (width.positive? ? 2 : 0) + item_w
+          lines.last << "#{colored} \e[2m#{label}\e[0m"
+        end
+        lines.map { |items| items.join("  ") }
       end
 
       # The tmux-layer keys that operate the sidebar itself, resolved at render time
@@ -330,6 +356,8 @@ module Switchboard
         id = node.kind == "proj" ? "" : View.pr_identifier(node.pr)
         counts = diff_visible?(node) ? diff_for(node) : nil
         adds, dels = View.diff_parts(counts) # plain "+22" / "−333", nil where zero
+        note = row_note(node)
+        return note_line(node, active, cols, note) if note && id.empty? && adds.nil? && dels.nil?
 
         # Column widths are threaded from render; single-row callers (and tests)
         # fall back to this row's own widths — a one-row column equals the row, so
@@ -370,6 +398,67 @@ module Switchboard
         right_colored = right_region(counts, node.pr, adds_w, dels_w, pr_w, with_color: true)
         pad = [cols - text.length - region_w, 1].max
         "#{body}#{' ' * pad}#{right_colored}"
+      end
+
+      # The dispatch label for a row with no diff/PR cells: the failure reason on a ✘,
+      # else the task while the row is still building or still wears its placeholder
+      # name (DR3) — the only meaningful label until the agent names the workspace.
+      def row_note(node)
+        rec = node.kind == "ws" && @creation_for[node.path] or return nil
+        return Creation.row_reason(rec) if rec["state"] == "failed"
+
+        task = rec["task"].to_s.gsub(/\s+/, " ").gsub(NOTE_INVISIBLE, "").strip
+        return nil if task.empty?
+
+        task if node.creation || Creation::PRE_READY.include?(rec["state"]) || Placeholder.generated?(node.name.to_s)
+      end
+
+      # A row whose right region is the note. The name keeps its full width; the note
+      # takes what's left and drops entirely below a few columns (#79's order: the
+      # extra label goes before the name does).
+      def note_line(node, active, cols, note)
+        text = trunc(plain(node), cols)
+        room = cols - text.length - 1
+        return line_without_note(node, active, cols, text) if room < 4
+
+        shown = fit_columns(note, room)
+        shown = (" " * (room - columns(shown))) + shown
+        if active && @focused
+          body = "#{text} #{shown}"
+          return "\e[7m#{body}#{' ' * [cols - columns(body), 0].max}\e[0m" # padded in COLUMNS, like the note
+        end
+
+        body = colored(node, text, current: node.kind == "ws" && node.path == @current_path)
+        "#{body} #{NOTE_FG}#{shown}\e[0m"
+      end
+
+      # The task note is free text (pasted from anywhere), so it's measured in terminal
+      # COLUMNS, not characters: a CJK char or an emoji takes two, and counting it as one
+      # would push the row past the pane edge. Invisible characters (controls, bidi and
+      # zero-width marks, combining marks) are dropped before it's drawn.
+      def columns(str)
+        str.each_char.sum { |c| c.match?(NOTE_WIDE) ? 2 : 1 }
+      end
+
+      def fit_columns(str, width)
+        return str if columns(str) <= width
+
+        out = +""
+        used = 0
+        str.each_char do |c|
+          w = columns(c)
+          break if used + w > width - 1
+
+          out << c
+          used += w
+        end
+        "#{out}…"
+      end
+
+      def line_without_note(node, active, cols, text)
+        return "\e[7m#{text.ljust(cols)}\e[0m" if active && @focused
+
+        colored(node, text, current: node.kind == "ws" && node.path == @current_path)
       end
 
       # The fixed-width right region: [+adds][ ][−dels]  [#pr], each (sub)cell
@@ -459,12 +548,19 @@ module Switchboard
           if current
             ptr  = "#{BRAND}#{CURRENT_MARK}\e[0m"  # "you are here" pointer — bold-cyan, switchboard's signature accent
             name = "\e[36m#{name}\e[0m"            # ...and the name cyan, matching the prompt's directory color
-          elsif @attention.include?(node.path)
+          elsif @attention.include?(node.path) || unseen_failure?(node.path)
             name = "\e[1;33m#{name}\e[0m"          # unviewed completion — bold yellow until you look (the current row is never marked)
           end
           "#{ptr} #{dot} #{name}#{cue.empty? ? '' : "\e[2m#{cue}\e[0m"}" # dim ▸N cue last, its width already reserved
         else "#{BRANCH_FG}#{text}\e[0m"
         end
+      end
+
+      # A ✘ you haven't viewed yet. Attention bolds real rows; this covers the pre-worktree
+      # failure, whose dir never existed for Attention to mark.
+      def unseen_failure?(path)
+        rec = @creation_for[path]
+        rec && rec["state"] == "failed" && !rec["acked"]
       end
 
       # Bare state glyph for a workspace row, twinkling briefly right after the
@@ -485,6 +581,8 @@ module Switchboard
         when :waiting    then (@pulse / BLINK_PERIOD).even? ? "◆" : "◇"
         when :monitoring then "∞"
         when :done       then "●"
+        when :building   then "◌"
+        when :failed     then "✘"
         else " "
         end
       end
@@ -498,6 +596,8 @@ module Switchboard
         when :waiting    then (@pulse / BLINK_PERIOD).even? ? WANTS_ON : WANTS_OFF
         when :monitoring then MONITORING
         when :done       then DONE
+        when :building   then BUILDING
+        when :failed     then FAILED
         else " "
         end
       end
@@ -508,8 +608,19 @@ module Switchboard
       # still see live work (thinking) and input requests (waiting). Sparkle is handled by
       # the callers, ahead of this. The single source both paint paths (glyph_for/dot_for)
       # resolve through, so precedence can't drift between plain and colored.
+      #
+      # A background dispatch outranks the agent: ✘ until you've seen it (or, when setup
+      # never succeeded, until the workspace is deleted — Creation.unfinished?), ◌
+      # while it's queued / building / running setup (DR6: one pending state). Once
+      # you've seen a ✘, live work and input requests show over it — a tree you fixed by
+      # hand keeps its ✘ at rest but never hides a ◆.
       def render_state(path)
         state = @agents[path]
+        if (rec = @creation_for[path])
+          return state if rec["acked"] && %i[thinking waiting].include?(state)
+          return :failed if rec["state"] == "failed"
+          return :building if Creation::PRE_READY.include?(rec["state"])
+        end
         return state if %i[thinking waiting].include?(state)
 
         @monitoring.include?(path) ? :monitoring : state

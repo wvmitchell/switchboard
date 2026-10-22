@@ -81,6 +81,53 @@ module Switchboard
       assert_includes Attention.marked([new]), new, "the bold followed the rename"
     end
 
+    # A dispatched agent that renames its workspace on turn one must still get its
+    # first-turn ping: the Creation record follows the dir, so the Stop hook (whose cwd
+    # resolves to the new dir) and the sidebar's ack still find it.
+    def test_perform_carries_the_dispatch_record_to_the_new_path
+      repo = temp_git_repo("proj")
+      old = add_worktree(repo, "old")
+      rec = Creation.create(project: "proj", name: "old", path: old, task: "do it")
+      Creation.transition(rec["id"], from: :queued, to: :ready) # the agent is running
+
+      assert_equal :ok, Rename.perform(config_for(repo), "proj", old, "new").status
+
+      found = Creation.find(rec["id"])
+      assert_equal "new", found["name"]
+      assert_equal rec["id"], Creation.for_path(path("wts", "proj", "new"))["id"]
+    end
+
+    # Once the agent has started (still inside the launch grace) it may run its own
+    # first-turn rename: allowed, and the record follows the dir so the Stop through the
+    # old (bridged) path still stamps its ping. Before that — setup running — refused.
+    def test_perform_renames_once_the_agent_started_and_the_stop_still_lands
+      repo = temp_git_repo("proj")
+      old = add_worktree(repo, "old")
+      rec = Creation.create(project: "proj", name: "old", path: old, task: "do it")
+      Creation.transition(rec["id"], from: :queued, to: :launching, hooked: true)
+      assert_equal :building, Rename.perform(config_for(repo), "proj", old, "new").status, "setup still running"
+      Creation.update(rec["id"], agent_started: true)
+      assert_equal :ok, Rename.perform(config_for(repo), "proj", old, "new").status
+      found = Creation.for_path(old) # the old path is now a bridge to the new dir
+      assert_equal rec["id"], found["id"]
+      Creation.stamp_first_turn(found["id"])
+      assert_equal "turn_done", Creation.find(rec["id"])["state"]
+    end
+
+    # While the worker still holds the old path (its session + launch line aren't made
+    # yet), a rename would orphan that session and start a second agent later.
+    def test_perform_refuses_while_the_workspace_is_still_building
+      repo = temp_git_repo("proj")
+      old = add_worktree(repo, "old")
+      %i[queued building].each do |state|
+        rec = Creation.create(project: "proj", name: "old", path: old, task: "")
+        Creation.transition(rec["id"], from: :queued, to: state) unless state == :queued
+        assert_equal :building, Rename.perform(config_for(repo), "proj", old, "new").status, "rename from #{state}"
+        assert File.directory?(old), "nothing moved"
+        Creation.delete(rec["id"])
+      end
+    end
+
     def test_perform_unknown_project_is_failed
       config = config_for(temp_git_repo("proj"))
       assert_equal :failed, Rename.perform(config, "nope", path("x"), "new").status

@@ -51,14 +51,14 @@ drifts from a remap.
 | `/` | `filter` | Filter the tree — type to jump straight to a workspace by name. See [Filter mode](#filter-mode) below. |
 | `↵` (Enter) | _(fixed)_ | On a workspace/branch row: switch to its tmux session (creating it if needed). On a project header: collapse/expand it. |
 | `a` | `add_project` | Add a project — register a local repo or clone a URL (a small prompt). |
-| `n` | `new_workspace` | Create a new worktree + branch in the highlighted project, and drop you in. No name prompt — it gets a throwaway placeholder name you rename later with `r` (or let the agent name it). |
+| `n` | `new_workspace` | Dispatch a new worktree + branch in the highlighted project, in the background: type a task for the agent (or `↵` for none, `Esc` to cancel). You stay put; the row shows `◌` while it builds and pings you when it's ready (`✘` if it fails). No name prompt — it gets a throwaway placeholder name you rename later with `r` (or let the agent name it). |
 | `o` / `Ctrl-O` | `open_pr` | Open the highlighted PR in the browser (`gh pr view --web`). Only the `o` letter is remappable; `Ctrl-O` is a fixed alias. |
 | `O` | `open_repo` | Open the highlighted row's repo in the browser (`gh browse`). Works on every row kind, including the project header. Opens the repo at the row's branch when it has an open PR, otherwise the repo home (default branch). |
 | `R` | `refresh_prs` | Refresh PR badges now (catch a PR merged/closed *on GitHub*). |
 | `z` | `toggle_branch_fold` | Fold / unfold **every** workspace's branch-history rows at once — tree-wide, regardless of where the cursor is. A folded multi-branch workspace collapses to a single row that shows its own diff/PR badge plus a dim `▸N` cue (N branches tucked away). A shared on-disk view preference, so all sessions follow and it survives restarts. |
 | `H` | `toggle_full_header` | Toggle the full header (wordmark + greeting + console + rule) on **every** session, not just home. A shared on-disk view preference, so all sessions follow and it survives restarts. |
 | `r` | `rename` | Rename the highlighted workspace (moves the worktree dir, keeps branch + PR). |
-| `d` | `delete` | Remove the highlighted row — delete a workspace, or unregister a project (and close its sessions). Confirms first. |
+| `d` | `delete` | Remove the highlighted row — delete a workspace, or unregister a project (and close its sessions). Confirms first. On a `◌` row it cancels the build (after a confirm); on a `✘` row with no worktree yet it just dismisses it. |
 | `e` | `edit_config` | Edit `config.yml` in `$EDITOR` (opens beside the home tree, returns you on quit). |
 | `?` | `help` | Show the full key map overlay (nav + actions + filter/prompt modes + the tmux keys that operate the sidebar). Any key closes it. |
 | `q` | `quit` | Quit switchboard — tear down every `sb/` session. Confirms first. |
@@ -112,7 +112,7 @@ you have enough workspaces that scrolling to one is slow.
 | _(any printable key)_ | Append to the query. The rows narrow to fuzzy matches. |
 | `Backspace` | Delete the last query character — and backspacing past an empty query exits filter mode (same as `Esc`). |
 | `↑` / `↓` / `Ctrl-N` / `Ctrl-P` | Move the highlight (over matching workspaces *and* their project headers). |
-| `↵` (Enter) | On a **workspace**: switch to it. On a **project header**: create a new workspace there (auto-named, no prompt). Either way, leave filter mode. |
+| `↵` (Enter) | On a **workspace**: switch to it. On a **project header**: ask for a task and build a new workspace there in the background (a `◌` row, then a ping). Either way, leave filter mode. |
 | `Esc` | Cancel — restore the full tree, no switch. |
 
 What it matches:

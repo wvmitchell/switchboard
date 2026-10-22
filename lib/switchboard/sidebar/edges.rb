@@ -98,7 +98,7 @@ module Switchboard
       # raises past us (the fault-path test pins exactly this) — and the ensure
       # still advances the baseline either way.
       def on_scan(now, monitoring:, nodes:, config:, current_path:,
-                  notify_pending: {}, announce_sounds: true, refresh_prs: true)
+                  notify_pending: {}, first_turn: Set.new, announce_sounds: true, refresh_prs: true)
         edges = []
         if @prev_hook_states
           edges = self.class.completion_edges(@prev_hook_states, now)
@@ -106,7 +106,7 @@ module Switchboard
           # drop it from the human-facing signals (bold, sound, sparkle) so a background
           # loop doesn't chime and bold every tick. :waiting still surfaces (it wants
           # input), and the PR/diff refresh rides EVERY edge (a tick may have committed).
-          completions = edges.reject { |path| suppress_completion?(path, now[path], monitoring) }
+          completions = edges.reject { |path| suppress_completion?(path, now[path], monitoring, first_turn) }
           # Bold rides the un-suppressed COMPLETIONS only. A declared alert's bold is written
           # directly into Attention by the CLI (so it persists even when no sidebar is on
           # screen), so it's NOT re-marked here — one source of truth, and no viewing?-skip drift.
@@ -146,6 +146,16 @@ module Switchboard
         # re-baselines a while-away alert silently instead of re-ringing it. Absent from
         # notify_pending => no marker => no entry, so it stays bounded by notified worktrees.
         @prev_notify.merge!(notify_pending)
+      end
+
+      # One background-dispatch ping: the sound (your :done sound, or the soft falling
+      # :failed for a ✘) and, for a success, the twinkle. The ring decision itself is the record's
+      # compare-and-set (Sidebar#ring_creations); this only voices it.
+      def announce(path, project, state, config)
+        Sound.play(config.sound_for(project, state))
+        sparkle_for([path], { path => state }) unless state == :failed
+      rescue StandardError
+        nil
       end
 
       # Is `path` mid-twinkle? Deadlines are wall-clock (monotonic), NOT pulse units —
@@ -220,8 +230,13 @@ module Switchboard
       # worktree's :done is a routine loop tick, not a completion, so it's suppressed
       # from every human-facing signal. Only :done — :waiting is an actionable request
       # for input and always surfaces, even mid-monitor.
-      def suppress_completion?(path, state, monitoring)
-        state == :done && monitoring.include?(path)
+      #
+      # A dispatched task's first turn is suppressed the same way: its Creation record
+      # owns that ping (it can't be lost between scans, and a fresh workspace's first
+      # appearance would swallow the edge anyway), so the edge stands aside until that
+      # ping has rung or you've viewed the workspace (D16).
+      def suppress_completion?(path, state, monitoring, first_turn = Set.new)
+        state == :done && (monitoring.include?(path) || first_turn.include?(path))
       end
 
       # Is the sidebar currently sitting in this worktree? Canonicalizes both sides —

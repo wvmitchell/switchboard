@@ -159,6 +159,51 @@ module Switchboard
       ENV.delete("SWITCHBOARD_BIN")
     end
 
+    # d on a real row whose build is still in flight cancels the build BEFORE the session
+    # is killed, so its launcher can't start an agent in (or GC ring ✘ for) a workspace
+    # you just deleted on purpose.
+    def test_delete_cancels_an_in_flight_build_before_the_kill
+      sb = deletable_sidebar
+      rec = Creation.create(project: "app", name: "a", path: "/wt/a", task: "")
+      Creation.transition(rec["id"], from: :queued, to: :launching)
+      sb.send(:index_creations, Creation.all)
+      state_at_kill = nil
+      sb.define_singleton_method(:reload) { |**_kw| }
+      stub_method(Git, :clean?, ->(*) { true }) do
+        stub_method(Tmux, :session_of, ->(*) { "sb/home" }) do
+          stub_method(Tmux, :kill, ->(*) { state_at_kill = Creation.find(rec["id"])["state"] }) do
+            stub_method(sb, :start_removal, ->(*) {}) do
+              stub_method(sb, :confirm, ->(*) { true }) { sb.send(:delete) }
+            end
+          end
+        end
+      end
+      assert_equal "canceled", state_at_kill
+    end
+
+    # Deleting a workspace whose build already failed (no cancel can land): its record is
+    # acked, so the ✘ doesn't come back as a synthetic row once the tree is gone.
+    def test_delete_acks_a_failed_build_so_its_row_does_not_return
+      sb = deletable_sidebar
+      rec = Creation.create(project: "app", name: "a", path: "/wt/a", task: "")
+      Creation.transition(rec["id"], from: :queued, to: :building)
+      Creation.mark_failed(rec["id"], "interrupted", from: "building")
+      sb.send(:index_creations, Creation.all)
+      sb.define_singleton_method(:reload) { |**_kw| }
+      stub_method(Git, :clean?, ->(*) { true }) do
+        stub_method(Tmux, :session_of, ->(*) { "sb/home" }) do
+          stub_method(Tmux, :kill, ->(*) {}) do
+            stub_method(sb, :start_removal, ->(*) {}) do
+              stub_method(sb, :confirm, ->(*) { true }) { sb.send(:delete) }
+            end
+          end
+        end
+      end
+      assert Creation.find(rec["id"])["acked"]
+      Creation.gc
+      assert_nil Creation.find(rec["id"]), "no tree on disk: nothing left to guard"
+    end
+
     def test_delete_dirty_prompts_to_force_and_aborts_when_declined
       sb = deletable_sidebar
       ENV["SWITCHBOARD_BIN"] = "/bin/switchboard"
@@ -239,6 +284,20 @@ module Switchboard
       assert_equal ["/repos/app", "/wt/a"], removed, "no binary ⇒ remove synchronously"
       assert_equal "feature", branch_deleted
       assert_empty PendingDelete.pending(["/wt/a"]), "the sync fallback leaves no hide marker"
+    end
+
+    # Value: protects=the sidebar's own removal forces past a lock only on our un-set-up build, like the reaper; fails_when=sync_remove drops or hardcodes `locked:`, so an interrupted add's ✘ can't be deleted without the binary, or a lock you set is overridden; why_new=the delete tests stub remove_worktree ignoring kwargs; seam=none; no_claim=git honoring the second --force (cli_test covers that against a real lock)
+    def test_sync_remove_forces_past_a_lock_only_on_an_unfinished_build
+      sb = deletable_sidebar
+      rec = Creation.create(project: "app", name: "half", path: "/wt/half", task: "t")
+      Creation.update(rec["id"], state: "failed", reason: "interrupted")
+      locks = {}
+      stub_method(Git, :remove_worktree, ->(_repo, p, **kw) { locks[p] = kw[:locked]; true }) do
+        stub_method(Git, :delete_branch, ->(*, **) { true }) do
+          %w[/wt/half /wt/a].each { |p| sb.send(:sync_remove, "/repos/app", p, "b") }
+        end
+      end
+      assert_equal({ "/wt/half" => true, "/wt/a" => false }, locks)
     end
 
     # bin present but the reaper spawn raises (e.g. a stale/broken SWITCHBOARD_BIN):
@@ -556,11 +615,7 @@ module Switchboard
       assert_match(/reload-config\s*('')?\z/, captured.to_s, "empty origin still produces a reload trailer")
     end
 
-    # --- start_command: the setup script + the agent (#83) -------------------
-    #
-    # What `n` types into a NEW worktree's window. The setup script is handed to
-    # `sh -ec` as ONE argument (so a multi-line script stays valid shell) and only
-    # the wrapper joins the `&&` — so a failed setup means the agent never starts.
+    # --- n (background dispatch) and switch -----------------------------------
 
     # A sidebar whose @config is the given YAML data.
     def sidebar_with_config(data, nodes: [proj("app")])
@@ -568,92 +623,6 @@ module Switchboard
       sb = sidebar(nodes: nodes)
       sb.instance_variable_set(:@config, Config.new)
       sb
-    end
-
-    def test_start_command_wraps_setup_and_chains_the_agent
-      sb = sidebar_with_config({ "session_command" => "claude",
-                                "projects" => [{ "name" => "app", "path" => "/p",
-                                                 "worktree_creation_command" => "bundle install" }] })
-      assert_equal "env SWITCHBOARD_PROJECT_PATH=/p sh -ec bundle\\ install && claude",
-                   sb.send(:start_command, "app", nil)
-    end
-
-    # The escaping has to survive a real multi-line script — that's the whole reason
-    # for the sh -ec wrapper instead of splicing the script into the && chain.
-    def test_start_command_survives_a_multiline_script
-      script = "if [ -f ../.env ]; then\n  cp ../.env .\nfi"
-      sb = sidebar_with_config({ "session_command" => "claude",
-                                "projects" => [{ "name" => "app", "path" => "/p",
-                                                 "worktree_creation_command" => script }] })
-      start = sb.send(:start_command, "app", "/wt/new")
-      assert_equal ["env", "SWITCHBOARD_PROJECT_PATH=/p", "SWITCHBOARD_WORKTREE_PATH=/wt/new",
-                    "sh", "-ec", script, "&&", "claude"], Shellwords.split(start),
-                   "the script reaches sh -ec as ONE argument, verbatim"
-    end
-
-    # The composed line is typed into an interactive shell, so an apostrophe in the script
-    # (`echo "it's done"`, a path like /Users/o'brien) is the classic escaping trap — the
-    # same one CLAUDE.md calls out for the codex TOML block. Shellwords must neutralize it.
-    def test_start_command_survives_an_apostrophe_in_the_script
-      script = "echo it's done"
-      sb = sidebar_with_config({ "session_command" => "claude",
-                                 "projects" => [{ "name" => "app", "path" => "/p",
-                                                  "worktree_creation_command" => script }] })
-      assert_equal ["env", "SWITCHBOARD_PROJECT_PATH=/p", "sh", "-ec", script, "&&", "claude"],
-                   Shellwords.split(sb.send(:start_command, "app", nil)),
-                   "an apostrophe survives the round-trip as ONE argument"
-    end
-
-    def test_start_command_setup_alone_when_no_session_command
-      sb = sidebar_with_config({ "projects" => [{ "name" => "app", "path" => "/p",
-                                                 "worktree_creation_command" => "bundle install" }] })
-      assert_equal "env SWITCHBOARD_PROJECT_PATH=/p sh -ec bundle\\ install", sb.send(:start_command, "app", nil)
-    end
-
-    def test_start_command_is_just_the_session_command_when_no_setup
-      sb = sidebar_with_config({ "session_command" => "claude",
-                                "projects" => [{ "name" => "app", "path" => "/p" }] })
-      assert_equal "claude", sb.send(:start_command, "app", nil)
-    end
-
-    # REGRESSION: "" is truthy in Ruby, and Tmux gates the send-keys on `if start &&
-    # created` — so an empty compose would type a bare Enter into every new worktree
-    # shell on the DEFAULT config (no setup, no session_command). It must be nil.
-    def test_start_command_is_nil_not_empty_string_when_nothing_is_configured
-      sb = sidebar_with_config({ "projects" => [{ "name" => "app", "path" => "/p" }] })
-      assert_nil sb.send(:start_command, "app", nil), "an empty compose must be nil, or tmux types a bare Enter"
-    end
-
-    # REGRESSION: `session_command: false` (the config's disable idiom — YAML hands us the
-    # boolean, and `Config#session_command` passes it through) must stay OFF. `compact`
-    # alone would keep it, join it into the literal word `false`, and type that into every
-    # new worktree's shell — a regression on a config that has nothing to do with #83.
-    # Tmux's `if start && created` gate used to swallow the raw false; once it's part of a
-    # joined String it's just another truthy token.
-    def test_start_command_ignores_a_false_session_command
-      sb = sidebar_with_config({ "session_command" => false,
-                                 "projects" => [{ "name" => "app", "path" => "/p" }] })
-      assert_nil sb.send(:start_command, "app", nil), "a false session_command is OFF, not the word `false`"
-
-      with_setup = sidebar_with_config({ "session_command" => false,
-                                         "projects" => [{ "name" => "app", "path" => "/p",
-                                                          "worktree_creation_command" => "bundle install" }] })
-      refute_includes with_setup.send(:start_command, "app", nil).to_s, "false",
-                      "and it must not tack `&& false` onto the setup script"
-    end
-
-    # The worktree lives under worktree_root; the project's checkout lives wherever it's
-    # registered — two unrelated trees, so a setup script has NO relative way to reach the
-    # checkout it wants to copy .env out of. Switchboard hands both paths over.
-    def test_start_command_exports_the_project_and_worktree_paths_to_the_script
-      sb = sidebar_with_config({ "projects" => [{ "name" => "app", "path" => "/repos/app",
-                                                  "worktree_creation_command" =>
-                                                    'cp "$SWITCHBOARD_PROJECT_PATH/.env" .' }] })
-      parts = Shellwords.split(sb.send(:start_command, "app", "/wt/new"))
-      assert_equal %w[env SWITCHBOARD_PROJECT_PATH=/repos/app SWITCHBOARD_WORKTREE_PATH=/wt/new sh -ec],
-                   parts.first(5), "env (not a bare VAR=v prefix, which fish rejects) exports both paths"
-      assert_equal 'cp "$SWITCHBOARD_PROJECT_PATH/.env" .', parts.last,
-                   "the script is still ONE argument, and its $VAR is left for the sh child to expand"
     end
 
     # REGRESSION: setup runs once per WORKTREE, not once per session. Re-entering an
@@ -670,20 +639,138 @@ module Switchboard
       assert_equal "claude", captured, "switching into an existing workspace must not re-run setup"
     end
 
-    # The create path (`n`, and filter-mode ↵ on a project header) is the ONE place
-    # the setup script is composed in.
-    def test_create_passes_the_composed_start_command_to_tmux
-      sb = sidebar_with_config({ "session_command" => "claude",
-                                "projects" => [{ "name" => "app", "path" => "/p",
-                                                 "worktree_creation_command" => "bundle install" }] })
+    # Value: protects=re-entering a workspace whose session died starts a `{task}` session_command as the bare command; fails_when=entry_command passes session_command_for raw, typing a literal `{task}` that the agent reads as its prompt; why_new=switch tests use a plain `claude`; {task} substitution is tested only in the launcher; seam=none; no_claim=quote-context substitution
+    def test_switch_resolves_a_task_template_to_the_bare_command
+      sb = sidebar_with_config({ "session_command" => "claude --model opus {task}",
+                                 "projects" => [{ "name" => "app", "path" => "/p" }] },
+                               nodes: [proj("app"), ws("a", path: "/wt/a")])
       captured = :unset
-      stub_method(Creator, :create, ->(*) { "/wt/new" }) do
-        stub_method(Tmux, :go, ->(_wt, start:) { captured = start }) do
-          capture_io { sb.send(:create, proj("app")) }
+      stub_method(Tmux, :go, ->(_wt, start:) { captured = start }) do
+        sb.send(:switch, ws("a", path: "/wt/a"))
+      end
+      assert_equal "claude --model opus", captured.strip, "no literal {task} reaches the shell"
+    end
+
+    # n is a dispatch: it records the build, spawns the detached worker and returns —
+    # no git, no tmux switch on the input loop. The setup + agent contract it used to
+    # compose now lives in the launcher (creator_dispatch_test ports every assertion).
+    def test_create_spawns_the_worker_and_never_switches
+      sb = sidebar_with_config({ "worktree_root" => path("wts"), "session_command" => "claude",
+                                 "projects" => [{ "name" => "app", "path" => temp_git_repo("app", origin: true) }] })
+      spawned = nil
+      switched = false
+      ENV["SWITCHBOARD_BIN"] = "/bin/switchboard"
+      stub_method(sb, :prompt_line, ->(*_a, **_k) { "fix the flaky test" }) do
+        stub_method(Process, :spawn, ->(*args, **_o) { spawned = args; 4242 }) do
+          stub_method(Process, :detach, ->(_pid) {}) do
+            stub_method(Tmux, :go, ->(*_a, **_k) { switched = true }) do
+              stub_method(Tmux, :broadcast_warm, ->(**_k) {}) do
+                stub_method(sb, :reload, -> {}) { sb.send(:create, proj("app")) }
+              end
+            end
+          end
         end
       end
-      assert_equal "env SWITCHBOARD_PROJECT_PATH=/p SWITCHBOARD_WORKTREE_PATH=/wt/new sh -ec bundle\\ install && claude",
-                   captured
+      rec = Creation.all.first
+      assert_equal "fix the flaky test", rec["task"]
+      assert_equal "queued", rec["state"]
+      assert_equal ["/bin/switchboard", "create-workspace", rec["id"]], spawned
+      refute switched, "dispatch never switches you into the new workspace"
+    end
+
+    def test_create_esc_dispatches_nothing
+      sb = sidebar_with_config({ "worktree_root" => path("wts"),
+                                 "projects" => [{ "name" => "app", "path" => "/p" }] })
+      stub_method(sb, :prompt_line, ->(*_a, **_k) {}) { sb.send(:create, proj("app")) }
+      assert_empty Creation.all
+    end
+
+    def test_create_asks_for_a_task_naming_the_project
+      sb = sidebar_with_config({ "projects" => [{ "name" => "app", "path" => "/p" }] })
+      seen = nil
+      stub_method(sb, :prompt_line, lambda { |label, hint:, task:|
+        seen = [label, hint, task]
+        nil
+      }) { sb.send(:create, proj("app")) }
+      assert_equal ["app task", " (↵ = no task · esc)", true], seen
+    end
+
+    def test_create_without_the_wrapper_fails_the_record_at_once
+      sb = sidebar_with_config({ "worktree_root" => path("wts"),
+                                 "projects" => [{ "name" => "app", "path" => temp_git_repo("app", origin: true) }] })
+      ENV.delete("SWITCHBOARD_BIN")
+      stub_method(sb, :prompt_line, ->(*_a, **_k) { "" }) do
+        stub_method(Tmux, :broadcast_warm, ->(**_k) {}) do
+          stub_method(sb, :reload, -> {}) { sb.send(:create, proj("app")) }
+        end
+      end
+      rec = Creation.all.first
+      assert_equal "failed", rec["state"]
+      assert_equal "didnt_start", rec["reason"]
+    end
+
+    # D12: re-entering a dispatched workspace whose setup failed (its session gone after
+    # a quit) opens a plain shell with the reason, never the agent.
+    def test_switch_into_a_failed_dispatch_opens_a_plain_shell
+      sb = sidebar_with_config({ "session_command" => "claude",
+                                 "projects" => [{ "name" => "app", "path" => "/p" }] },
+                               nodes: [proj("app"), ws("a", path: "/wt/a")])
+      rec = Creation.create(project: "app", name: "a", path: "/wt/a", task: "")
+      Creation.transition(rec["id"], from: :queued, to: :launching)
+      Creation.mark_failed(rec["id"], "setup", 1, from: "launching")
+      sb.send(:index_creations, Creation.all)
+      captured = :unset
+      stub_method(Tmux, :go, ->(_wt, start:) { captured = start }) { sb.send(:switch, ws("a", path: "/wt/a")) }
+      refute_includes captured, "claude"
+      assert_equal ["echo", "switchboard: setup did not succeed (setup exit 1), so switchboard won't start the agent here; finish setup and start it by hand, or press d on the row"],
+                   Shellwords.split(captured)
+    end
+
+    # Setup DID succeed (the agent exited fast, or a quit landed in the grace): the tree
+    # is set up, so re-entering it starts the agent like any other workspace.
+    def test_switch_into_a_set_up_but_canceled_dispatch_starts_the_agent
+      sb = sidebar_with_config({ "session_command" => "claude",
+                                 "projects" => [{ "name" => "app", "path" => "/p" }] },
+                               nodes: [proj("app"), ws("a", path: "/wt/a")])
+      rec = Creation.create(project: "app", name: "a", path: "/wt/a", task: "")
+      Creation.transition(rec["id"], from: :queued, to: :launching, worktree_added: true, setup_ok: true)
+      Creation.cancel_all
+      sb.send(:index_creations, Creation.all)
+      captured = :unset
+      stub_method(Tmux, :go, ->(_wt, start:) { captured = start }) { sb.send(:switch, ws("a", path: "/wt/a")) }
+      assert_equal "claude", captured
+    end
+
+    # The same guard after a quit mid-setup: the build was canceled, not failed, but its
+    # setup never finished either.
+    def test_switch_into_a_canceled_dispatch_opens_a_plain_shell
+      sb = sidebar_with_config({ "session_command" => "claude",
+                                 "projects" => [{ "name" => "app", "path" => "/p" }] },
+                               nodes: [proj("app"), ws("a", path: "/wt/a")])
+      rec = Creation.create(project: "app", name: "a", path: "/wt/a", task: "")
+      Creation.transition(rec["id"], from: :queued, to: :launching, worktree_added: true)
+      Creation.cancel_all
+      sb.send(:index_creations, Creation.all)
+      captured = :unset
+      stub_method(Tmux, :go, ->(_wt, start:) { captured = start }) { sb.send(:switch, ws("a", path: "/wt/a")) }
+      refute_includes captured, "claude"
+      assert_equal ["echo", Creation.notice(:reentry_canceled)], Shellwords.split(captured)
+    end
+
+    # Value: protects=re-entering a build still in flight (its session died mid-setup) never starts the agent; fails_when=entry_command guards only failed/canceled records; why_new=the switch guards were tested only for terminal states; seam=none; no_claim=GC later marking the build interrupted
+    def test_switch_into_a_build_still_in_flight_opens_a_plain_shell
+      %w[building launching].each do |state|
+        Creation.all.each { |r| Creation.delete(r["id"]) }
+        sb = sidebar_with_config({ "session_command" => "claude",
+                                   "projects" => [{ "name" => "app", "path" => "/p" }] },
+                                 nodes: [proj("app"), ws("a", path: "/wt/a")])
+        rec = Creation.create(project: "app", name: "a", path: "/wt/a", task: "")
+        Creation.transition(rec["id"], from: :queued, to: state, worktree_added: true)
+        sb.send(:index_creations, Creation.all)
+        captured = :unset
+        stub_method(Tmux, :go, ->(_wt, start:) { captured = start }) { sb.send(:switch, ws("a", path: "/wt/a")) }
+        assert_equal ["echo", Creation.notice(:reentry_building)], Shellwords.split(captured), state
+      end
     end
   end
 end

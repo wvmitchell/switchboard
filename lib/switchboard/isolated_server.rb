@@ -2,6 +2,7 @@
 
 require "securerandom"
 require "fileutils"
+require_relative "process_identity"
 
 module Switchboard
   # Shared scaffolding for a THROWAWAY tmux server on its own socket — the single
@@ -73,12 +74,7 @@ module Switchboard
     # Is `pid` a live process? ESRCH ⇒ dead (sweep it); EPERM ⇒ alive but not ours
     # (keep — never sweep a server we can't prove is dead).
     def pid_alive?(pid)
-      Process.kill(0, pid)
-      true
-    rescue Errno::ESRCH
-      false
-    rescue Errno::EPERM
-      true
+      ProcessIdentity.alive?(pid)
     end
 
     # Kill the throwaway server rooted at `sock_dir` and DO NOT RETURN until it's really
@@ -136,10 +132,7 @@ module Switchboard
       return nil unless pid_s&.match?(/\A\d+\z/)
 
       pid = pid_s.to_i
-      started = started.to_s.strip
-      return nil if started.empty? || process_start(pid) != started
-
-      pid
+      ProcessIdentity.same?(pid, started) ? pid : nil
     rescue StandardError
       nil
     end
@@ -200,9 +193,7 @@ module Switchboard
     # identity). Empty for a dead/unknown pid, so a stale recorded pid whose process is
     # gone or recycled never matches its recorded token.
     def process_start(pid)
-      return "" unless pid
-
-      `ps -p #{pid.to_i} -o lstart= 2>/dev/null`.strip
+      ProcessIdentity.start_of(pid)
     end
 
     # Is `socket_path` under the throwaway `sock_dir`? The blast-radius backstop:

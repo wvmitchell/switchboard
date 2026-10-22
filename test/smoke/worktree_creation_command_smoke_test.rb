@@ -4,30 +4,27 @@ require_relative "smoke_helper"
 
 module Switchboard
   # `worktree_creation_command` (#83) against a REAL tmux server: the runtime contract
-  # the offline suite structurally cannot reach. Stubbing `Tmux.go` proves only that we
-  # composed the right STRING — it never proves that string, typed into a real shell,
-  # actually runs the setup in the new worktree, before the agent, and fail-closed. And
-  # the `sh -ec` wrapper is new machinery: `session_command`'s track record doesn't
-  # cover it, because nothing in switchboard typed a wrapped command before this.
+  # the offline suite structurally cannot reach. The launcher (`switchboard launch`, the
+  # one line the dispatch worker types into the new pane) runs setup through `sh -ec`
+  # and only then starts the agent as its child; a stub proves only the call, never
+  # that a real shell runs the setup in the new worktree, before the agent, and
+  # fail-closed.
   #
-  # Both fixtures are chosen to DISCRIMINATE — each one fails if the implementation
-  # regresses to the two designs the review rejected:
+  # Both fixtures are chosen to DISCRIMINATE — each one fails if setup handling
+  # regresses to a design the review rejected:
   #
-  #   the `&&`-splice  ─▶ caught by the trailing `#` comment in the happy-path script:
-  #                       spliced, `… # comment && touch .setup-ran && echo agent` puts
-  #                       EVERYTHING after the `#` inside the comment, so neither the
-  #                       second step nor the agent ever runs. (A bare multi-line script
-  #                       would NOT catch it — "a\nb\nc" splices to "a && b && c", which
-  #                       is perfectly valid shell.)
+  #   splicing the script into a command line ─▶ caught by the trailing `#` comment in
+  #                       the happy-path script: spliced, everything after the `#`
+  #                       becomes comment, so neither the second step nor the agent
+  #                       ever runs. (A bare multi-line script would NOT catch it.)
   #   dropping `-e`    ─▶ caught by failing on a real COMMAND (`cp` of a missing file)
   #                       rather than an explicit `exit 1` — an `exit` aborts the script
   #                       whether or not `-e` is set, so it would pin nothing. Without
   #                       `-e`, the `cp` failure is ignored, the last step still runs, and
   #                       sh exits 0 — so the agent starts and BOTH refutes below fire.
   #
-  #   worktree_creation_command ──▶ sh -ec '<script>' ──┐
-  #                                                     ├── && ──▶ session_command
-  #   (a step fails here)  ─── set -e, non-zero ────────┘         (must NOT run)
+  #   switchboard launch ──▶ sh -ec '<script>' ──▶ exit 0 ──▶ agent (child)
+  #   (a step fails here)  ─── set -e, non-zero ──▶ record ✘ (agent must NOT run)
   class WorktreeCreationCommandCase < SmokeCase
     # The setup script this case seeds (YAML, verbatim under the key).
     def setup_yaml = raise(NotImplementedError)
@@ -112,7 +109,7 @@ module Switchboard
 
   # Fail-closed, seeded as a multi-line BLOCK that fails on a real COMMAND. Proves three
   # things at once: the script reaches the shell intact, `set -e` stops it at the failing
-  # step, and the non-zero exit short-circuits the `&&` so the agent never starts.
+  # step, and the launcher, seeing the non-zero exit, never starts the agent.
   class WorktreeCreationCommandFailureSmokeTest < WorktreeCreationCommandCase
     def setup_yaml
       <<~YAML.chomp

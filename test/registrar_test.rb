@@ -132,8 +132,17 @@ module Switchboard
     # bug (a bare `git init` would make Creator's `worktree add ... <base>` fail).
     def test_created_repo_is_immediately_worktree_able
       Registrar.create(Config.new, "usable")
-      dest = Creator.create(Config.new, "usable", "wip")
-      assert dest, "Creator.create returns a worktree path"
+      config = Config.new
+      name, dest = Creator.reserve(config, "usable")
+      rec = Creation.create(project: "usable", name: name, path: dest, task: "")
+      stub_method(Tmux, :ensure_session, ->(*) { true }) do
+        stub_method(Tmux, :ensure_sidebar, ->(_n) {}) do
+          stub_method(Tmux, :broadcast_warm, ->(**_k) {}) do
+            stub_method(Creator, :await_claim, ->(*_a, **_k) { true }) { Creator.work(config, rec["id"]) }
+          end
+        end
+      end
+      assert Creation.find(rec["id"])["worktree_added"], "the dispatch worker built a worktree off the new repo"
       assert Dir.exist?(dest), "the worktree exists on disk"
     end
   end

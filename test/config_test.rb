@@ -353,6 +353,20 @@ module Switchboard
                  "an all-blank list is nothing to run"
     end
 
+    # Value: protects=which setup values the launcher refuses (fails the build) vs treats as off; fails_when=setup_invalid? flags an off value (every create fails) or misses junk (agent starts unset-up); why_new=setup_script maps both to nil, so nothing told them apart; seam=none; no_claim=the launch path itself (creator_dispatch_test)
+    def test_setup_invalid_flags_junk_but_not_off
+      { nil => false, false => false, "" => false, "make" => false, %w[a b] => false, [] => false,
+        true => true, 42 => true, ["a", { "b" => "c" }] => true, { "a" => 1 } => true }.each do |value, invalid|
+        data = value.nil? ? {} : { "worktree_creation_command" => value }
+        assert_equal invalid, cfg(data.merge("projects" => [{ "name" => "app", "path" => "/p" }])).setup_invalid?("app"),
+                     "global #{value.inspect}"
+      end
+      off = cfg("worktree_creation_command" => 42, "projects" => [{ "name" => "app", "path" => "/p", "worktree_creation_command" => false }])
+      refute off.setup_invalid?("app"), "a project's own `false` overrides a junk global"
+      junk = cfg("worktree_creation_command" => "make", "projects" => [{ "name" => "app", "path" => "/p", "worktree_creation_command" => ["x", 1] }])
+      assert junk.setup_invalid?("app"), "a project's junk is judged on its own"
+    end
+
     # Junk at the PROJECT level must resolve to OFF, not fall back to the global — the
     # same fail-safe as `false`, on the three-state path.
     def test_worktree_creation_command_for_junk_override_is_off_not_inherited
@@ -438,6 +452,7 @@ module Switchboard
       assert_equal "train", c.sound_for(nil, :done)
       assert_equal "chime", c.sound_for(nil, :waiting)
       assert_equal "alert", c.sound_for(nil, :alert), "the declared-notify state has its own distinct default"
+      assert_equal "failed", c.sound_for(nil, :failed), "a ✘ dispatch has its own soft default, not the alert"
     end
 
     def test_sounds_global_mute_via_enabled_false

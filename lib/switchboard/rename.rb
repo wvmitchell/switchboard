@@ -28,6 +28,9 @@ module Switchboard
     def perform(config, project_name, old_path, newname)
       project = config.project(project_name)
       return Result.new(:failed) unless project
+      # The worker still holds the old path for its session and launch line; renaming
+      # under it would orphan that session and later start a second agent.
+      return Result.new(:building) unless Creation.renamable?(Creation.for_path(old_path))
 
       name = Creator.sanitize(newname)
       # Reject a "/" the sanitizer preserves: a slashed name would nest the dir
@@ -91,6 +94,7 @@ module Switchboard
       Attention.carry(old_real, new_real)
       Monitoring.carry(old_real, new_real)
       Notify.clear(old_real)
+      Creation.repath(old_path, old_real, dest) # a dispatch the agent renamed on turn one still pings
 
       Result.new(rename_session(project_name, old_path, dest), dest)
     end

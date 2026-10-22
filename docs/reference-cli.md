@@ -140,8 +140,8 @@ fresh workspace late and you get a clean, convention-correct branch; rename one
 that's already on a PR and the branch identity is preserved.
 
 It refuses to rename the primary/trunk checkout, a name that collapses to empty, a
-name containing `/` (the leaf must be flat), or a name git won't accept as a
-branch. If a branch by the target name **already exists** (a leftover from a
+name containing `/` (the leaf must be flat), a name git won't accept as a
+branch, or a workspace still being created in the background (retry once it's ready). If a branch by the target name **already exists** (a leftover from a
 deleted workspace) it stops with that message and moves nothing — pick another
 name. It exits non-zero on any failure so `switchboard rename x && cd …` is safe to
 chain.
@@ -177,7 +177,7 @@ surfaced something": the workspace bolds and plays a distinct **`alert`** sound,
 exception to the otherwise-silent routine ticks. It no-ops with a hint if the workspace
 isn't monitoring. See [agent presence](explanation-agent-presence.md#the-declared-alert--monitoring-notify).
 
-### `switchboard sound [done|waiting|alert]`
+### `switchboard sound [done|waiting|alert|failed]`
 Play a state's configured sound, for trying audio out or auditioning sounds.
 Defaults to `done`. Uses the global sound config, blocks until it finishes, and
 reports *why* nothing played (muted / no player / unresolvable spec) so a silent
@@ -193,7 +193,8 @@ alone. See [How-to: housekeeping](howto-housekeeping.md).
 ### `switchboard quit`
 Close *all* `sb/` sessions — full teardown, the one you're in killed last. Also
 clears every agent-state file (so a torn-down agent doesn't read as still
-working). Works outside tmux. The sidebar's `q` does the same (with a confirm).
+working), and first cancels any workspace still being built in the background, so
+no agent starts after it. Works outside tmux. The sidebar's `q` does the same (with a confirm).
 
 ### `switchboard doctor`
 Check the install and report anything off: `tmux`/`git`/`gh` on PATH, config
@@ -231,8 +232,8 @@ movement aliases).
 
 ## Internal subcommands
 
-These are invoked by tmux (via the `switchboard.tmux` fragment and its hooks), not
-typed by hand. Documented for completeness — running them manually is usually a
+These are invoked by tmux (via the `switchboard.tmux` fragment and its hooks) or by
+switchboard itself, not typed by hand. Documented for completeness — running them manually is usually a
 no-op outside the right tmux context.
 
 | Subcommand | Invoked by | Purpose |
@@ -244,6 +245,8 @@ no-op outside the right tmux context.
 | `sidebar-sync <window>` | `after-new-window` hook | Give a new window its own sidebar iff the session opts in. |
 | `reload-config [origin]` | the post-edit Ctrl-R poke | Re-read config and redraw after editing it from the sidebar. |
 | `tmux-bind` | the `switchboard.tmux` fragment | (Re)bind the configured `tmux_keys`, cleaning up the previously-bound key. |
+| `create-workspace <id>` | the sidebar's `n` (spawned detached) | Background worker for a dispatched workspace: fetch, `git worktree add`, wire hooks, open the session. |
+| `launch <dest>` | the line the worker types into the new pane | Run the setup script, then start the agent with the task. |
 
 See [Explanation: sidebar lifecycle](explanation-sidebar-lifecycle.md) for how
 these hooks keep each window's sidebar fresh without it scanning while off screen.

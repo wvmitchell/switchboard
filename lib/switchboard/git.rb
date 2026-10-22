@@ -2,6 +2,7 @@
 
 require "shellwords"
 require "fileutils"
+require_relative "process_identity"
 
 module Switchboard
   # Git is the source of truth for what worktrees exist and what they contain.
@@ -47,11 +48,22 @@ module Switchboard
     # Best-effort refresh so a base ref like origin/main is current before we
     # branch a new worktree from it. Fetches the remote the base lives on
     # (origin for origin/main) when that's a real remote; else the default.
-    def fetch_base(repo, base)
+    # No credential prompt (GIT_TERMINAL_PROMPT=0; the worker has no tty for ssh's own
+    # prompt either) and killed past `timeout:` — the caller builds off the last fetch
+    # either way. Your ssh config (core.sshCommand, agent) still applies.
+    def fetch_base(repo, base, timeout:)
       remote = base.to_s.split("/").first
       args = ["git", "-C", repo, "fetch", "--quiet"]
       args << remote if remote && remotes(repo).include?(remote)
-      system(*args, out: File::NULL, err: File::NULL)
+      pid = Process.spawn({ "GIT_TERMINAL_PROMPT" => "0" }, *args,
+                          in: File::NULL, out: File::NULL, err: File::NULL, pgroup: true)
+      status = ProcessIdentity.wait_within(pid, timeout)
+      return status.success? if status
+
+      ProcessIdentity.terminate_group(pid) # git and its ssh/credential helpers
+      false
+    rescue SystemCallError
+      false
     end
 
     def remotes(repo)
@@ -135,9 +147,12 @@ module Switchboard
 
     # Remove a worktree. Without force, git refuses if it's dirty (returns false
     # so the caller can ask before forcing).
-    def remove_worktree(repo, path, force: false)
+    # `locked:` adds the second --force git needs for a locked tree (an add killed
+    # mid-checkout leaves its "initializing" lock behind).
+    def remove_worktree(repo, path, force: false, locked: false)
       args = ["git", "-C", repo, "worktree", "remove"]
       args << "--force" if force
+      args << "--force" if force && locked
       args << path
       system(*args, out: File::NULL, err: File::NULL)
     end
@@ -320,6 +335,15 @@ module Switchboard
       out = capture(worktree, "rev-list", "--left-right", "--count", "#{base}...HEAD").strip
       behind, ahead = out.split(/\s+/).map(&:to_i)
       [ahead || 0, behind || 0]
+    end
+
+    # Commits on HEAD that `base` doesn't have, or nil when git can't say (no base, a
+    # bad ref) — callers deciding whether anything would be lost must treat nil as "yes".
+    def commits_since(worktree, base)
+      return nil if blank?(base)
+
+      out = capture(worktree, "rev-list", "--count", "#{base}..HEAD").strip
+      $?&.success? && out.match?(/\A\d+\z/) ? out.to_i : nil
     end
 
     def range(base, ref = "HEAD")

@@ -28,6 +28,10 @@ module Switchboard
         # aged out by TTL if the daemon dies). Git still lists the worktree until the
         # removal lands, so it's in @nodes — the filter below drops it from the rows.
         @pending_delete = PendingDelete.pending(@nodes.select { |n| n.kind == "ws" }.map(&:path))
+        # Background dispatches (n → task): GC the lifecycle records, then show each one
+        # git doesn't list yet as a synthetic row LAST in its project (DR2), and map the
+        # rest onto their real rows for the ◌/✘ glyph and the task label.
+        inject_creations(Creation.gc(projects: @config.projects.map { |p| p["name"] }, owners: !@warming))
         @full_header = FullHeader.enabled? # shared toggle: full header on every session
         @fold_branches = BranchFold.folded? # shared toggle: fold every workspace's branches (#107)
         # Shared pane width: a ←/→ resize in any window lands here. Skip the hydrate
@@ -44,6 +48,34 @@ module Switchboard
           @width = new_width
         end
         recompute_rows
+      end
+
+      # Splice a synthetic ws row into @nodes for every live record whose worktree git
+      # doesn't list, after its project's last row — so collapse, filter and the cursor
+      # treat it like any other workspace — then index records by row path.
+      def inject_creations(records)
+        real = @nodes.select { |n| n.kind == "ws" }.to_h { |n| [Creation.real_path(n.path), n.path] }
+        pending = records.reject { |r| r["state"] == "canceled" || real.key?(Creation.real_path(r["path"].to_s)) }
+        pending.group_by { |r| r["project"] }.each do |project, recs|
+          last = @nodes.rindex { |n| n.project == project }
+          next unless last # project no longer configured
+
+          rows = recs.map { |r| Tree::Node.new(kind: "ws", project: project, path: r["path"], name: r["name"], creation: r) }
+          @nodes.insert(last + 1, *rows)
+        end
+        index_creations(records)
+      end
+
+      # Record by row path: real rows match by realpath, synthetic rows carry their own.
+      # Refreshed every scan (records change state far more often than the tree does).
+      def index_creations(records)
+        by_real = records.to_h { |r| [Creation.real_path(r["path"].to_s), r] }
+        @creation_for = @nodes.each_with_object({}) do |n, h|
+          next unless n.kind == "ws"
+
+          rec = by_real[Creation.real_path(n.path.to_s)]
+          h[n.path] = rec if rec
+        end
       end
 
       # Visible rows. Normally: all nodes, minus the children of collapsed projects.
