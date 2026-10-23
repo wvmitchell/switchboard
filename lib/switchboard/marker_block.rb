@@ -63,13 +63,21 @@ module Switchboard
     # yet — else the write ENOENTs and the feature silently no-ops), and carries the
     # existing file's mode onto the replacement so a private `0600` config isn't widened
     # to the umask default by the rewrite.
-    def atomic_write(path, content)
+    # `mode` is set on the temp file before the rename, so the file never appears without it
+    # (an executable script); otherwise an existing file's mode carries over.
+    def atomic_write(path, content, mode: nil)
       dest = real_target(path)
       FileUtils.mkdir_p(File.dirname(dest))
       tmp = "#{dest}.#{Process.pid}.sb-tmp"
-      File.write(tmp, content)
-      File.chmod(File.stat(dest).mode & 0o7777, tmp) if File.exist?(dest)
+      final = mode || (File.exist?(dest) ? File.stat(dest).mode & 0o7777 : 0o666 & ~File.umask)
+      FileUtils.rm_f(tmp) # a leftover from a crashed run with this pid
+      # Created private, so a 0600 file's contents are never briefly world-readable.
+      File.open(tmp, File::WRONLY | File::CREAT | File::EXCL, 0o600) { |f| f.write(content) }
+      File.chmod(final, tmp)
       File.rename(tmp, dest)
+    rescue StandardError
+      FileUtils.rm_f(tmp) if tmp # never leave the half-step beside the target
+      raise
     end
 
     # Follow a symlink chain to the real file it ultimately points at, so writes go

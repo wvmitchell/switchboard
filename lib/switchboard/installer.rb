@@ -123,13 +123,126 @@ module Switchboard
       wire_tmux(no_tmux: no_tmux, print_tmux: print_tmux, conf: conf)
       step_init
       codex_ok = step_codex_hooks(codex_hooks) != false # a declined prompt or no codex is fine
+      hooks_ok = refresh_wiring
       warn_path
       warn_tmux_version
       key = Config.new.tmux_key("toggle")
-      done = codex_ok ? "Done" : "Done, except the codex hooks (✗ above)"
+      failed = [("the codex hooks" unless codex_ok), ("the agent-state hooks" unless hooks_ok)].compact
+      done = failed.empty? ? "Done" : "Done, except #{failed.join(' and ')} (✗ above)"
       puts "\n#{done} — run `switchboard` (or `sb`) from any shell to start; press prefix-#{key} to toggle the sidebar inside tmux."
       puts "(If the key doesn't respond yet, reload tmux: `tmux source-file <your conf>`.)"
-      codex_ok # false ⇒ the CLI exits 1: the codex write was attempted and refused
+      codex_ok && hooks_ok # false ⇒ the CLI exits 1
+    end
+
+    # --- refresh (install and upgrade) ----------------------------------------
+
+    # What a new version needs from an existing install, beyond the tmux and codex steps
+    # (which each caller runs its own way): the current reporter script, and every
+    # worktree that already carries switchboard's Claude hooks brought up to this version's
+    # set — they're only written at worktree creation / enable-hooks, so they'd otherwise
+    # stay on whatever release created them. False when a worktree couldn't be updated, or
+    # the reporter couldn't be written while something runs it.
+    def refresh_wiring
+      reporter_ok = true
+      if installed_bin? # every hooked worktree runs this one shared script
+        HookFile.ensure_script
+        unless HookFile.script_current?
+          msg = reporter_unwritable
+          # Only something that runs it makes that a failure; with nothing hooked it's a warning.
+          (reporter_ok = !reporter_needed?) ? note("#{msg} (nothing is hooked yet)") : bad(msg)
+        end
+      end
+      step_rewire_hooks && reporter_ok
+    end
+
+    def reporter_unwritable = "agent-state reporter: couldn't write #{HookFile.script_path} — check that directory's permissions"
+
+    # The shared reporter matters once anything runs it: a hooked worktree, or the global
+    # codex block (its commands call the same script). Upgrade, refresh and doctor all ask this.
+    def reporter_needed? = !hooked_worktrees.empty? || CodexHook.installed?
+
+    # Hooks call back into the binary that wrote them, so only the installed `switchboard`
+    # may rewrite them: run from a dogfood checkout, this would point every worktree at a
+    # path that disappears with it.
+    def step_rewire_hooks
+      hooked = hooked_worktrees
+      return true if hooked.empty?
+      unless installed_bin?
+        note "worktree hooks: not refreshed — #{Switchboard.env('SWITCHBOARD_BIN')} isn't the `switchboard` on your PATH"
+        return true
+      end
+
+      results = hooked.to_h { |wt| [wt, rewire(wt)] }
+      report_rewire(results)
+    end
+
+    # One worktree's refresh, isolated: an unwritable file must not stop the others.
+    def rewire(worktree)
+      ClaudeHook.refresh(worktree)
+    rescue StandardError
+      :failed
+    end
+
+    def report_rewire(results)
+      rewired = results.count { |_wt, r| r == :rewired }
+      failed = results.count { |_wt, r| !%i[current rewired].include?(r) }
+      line = "worktree hooks: #{rewired.zero? && failed.zero? ? 'all current' : "updated #{rewired}"} (#{results.size} hooked)"
+      line += " — a running Claude picks the change up on its own" if rewired.positive?
+      failed.zero? ? ok(line) : bad("#{line}, #{failed} not updated:")
+      results.each do |wt, r|
+        case r
+        when :conflict then bad "worktree hooks: #{wt} changed while switchboard was updating it — re-run to retry"
+        when :corrupt  then bad "worktree hooks: #{ClaudeHook.corrupt_reason(wt) || "#{ClaudeHook.settings_path(wt)} can't be parsed"} — left untouched"
+        when :failed   then bad "worktree hooks: couldn't update #{wt}"
+        end
+      end
+      results.values.all? { |r| %i[current rewired].include?(r) }
+    end
+
+    # Every worktree of every configured project (primaries too) whose Claude settings
+    # already hold switchboard's hooks. A missing or non-git project path lists nothing.
+    def hooked_worktrees
+      configured_worktrees.select { |wt| ClaudeHook.enabled?(wt) || ClaudeHook.corrupt?(wt) }
+    end
+
+    # Every worktree of every configured project — all an upgrade or install refreshes.
+    def configured_worktrees
+      Config.new.projects.flat_map { |p| Git.worktrees(p["path"]) }
+            .reject { |w| w[:bare] }.map { |w| w[:path] }.uniq
+    end
+
+    # Hooked worktrees an upgrade should rewrite. A corrupt one is left out: refresh reports
+    # it but can't fix it, so counting it would make every up-to-date upgrade "finish" again.
+    def stale_worktrees
+      hooked_worktrees.reject { |wt| ClaudeHook.corrupt?(wt) || ClaudeHook.current?(wt) }
+    end
+
+    # Is the running binary the `switchboard` a shell would run?
+    def installed_bin?
+      found = `command -v #{COMMAND_NAME} 2>/dev/null`.strip
+      !found.empty? && ENV["SWITCHBOARD_BIN"].to_s != "" && File.identical?(found, ENV["SWITCHBOARD_BIN"])
+    end
+
+    # Re-run the switchboard tmux fragment in the running server, from any shell — the
+    # server keeps the bindings and hooks it loaded, so new ones are inert until then. Only
+    # switchboard's file, not the whole tmux.conf. Separate from `reload` (the in-tmux,
+    # whole-conf re-source install does). Only when tmux.conf sources THIS install's
+    # fragment: never wire tmux for someone who installed with --no-tmux, nor bind the keys
+    # to a dogfood checkout. :unwired / :no_server when skipped, else whether it ran.
+    def reload_fragment
+      return :unwired unless fragment_wired_here?
+      return :no_server unless tmux_server?
+
+      run_tmux("run-shell", Shellwords.escape(fragment_path))
+    end
+
+    # tmux.conf sources THIS install's fragment (and its path can be quoted safely).
+    def fragment_wired_here?
+      tmux_safe_path? && wired_fragment == fragment_path
+    end
+
+    def tmux_server?
+      run_tmux("list-sessions")
     end
 
     # Codex can't discover project-local hooks in linked worktrees, so its agent-state
@@ -499,15 +612,31 @@ module Switchboard
       HOOK_SLOTS.to_h { |slot| [slot, raw.to_s.include?(slot)] }
     end
 
-    # Is prefix-s actually bound to toggle-sidebar in the RUNNING server? Pairs with
-    # live_hooks: an upgrade that hasn't re-sourced the fragment can leave prefix-s
-    # unbound — or carrying an ancient binding (e.g. the retired fzf-popup on
-    # prefix-S) — while tmux_wired? still reads true off the config. That's the
-    # "prefix-s stopped working after a git pull" case, invisible until you press it.
-    # nil = no server to ask (a server op via list-keys; no client needed).
-    def toggle_key_live?
-      raw = `tmux list-keys -T prefix 2>/dev/null`
-      $?.success? ? toggle_key_live_from?(raw, Config.new.tmux_key("toggle")) : nil
+    # Is the toggle key actually bound to toggle-sidebar in the RUNNING server? Pairs with
+    # live_hooks: an upgrade that hasn't re-sourced the fragment can leave the key unbound
+    # — or carrying an ancient binding (e.g. the retired fzf-popup on prefix-S) — while
+    # tmux_wired? still reads true off the config. That's the "toggle key stopped
+    # working after a git pull" case, invisible until you press it.
+    # nil = no server to ask: list-keys alone would start one and list tmux's defaults.
+    def toggle_key_live?(key = bound_toggle_key)
+      return nil unless tmux_server?
+
+      # Naming the key lets tmux parse it with bind-key's own parser, so any spelling it
+      # accepts (`^B`, `M-#`, `f5`) resolves; an unbound key exits non-zero.
+      # A trailing `;` ends a tmux command (leaving `list-keys -T prefix`, the whole table), so
+      # it's escaped the way bind-key needs it.
+      one = `tmux list-keys -T prefix -- #{Shellwords.escape(key.to_s.sub(/;\z/) { "\\;" })} 2>/dev/null`
+      return one.scrub.include?("toggle-sidebar") if $?.success?
+
+      # Unbound, or a tmux too old to take a key here: read the whole table.
+      all = `tmux list-keys -T prefix 2>/dev/null`
+      $?.success? ? toggle_key_live_from?(all, key) : nil # a failed read says nothing either way
+    end
+
+    # The toggle key switchboard last bound — its fallback when tmux rejected the configured
+    # one (apply_keybindings records it), else the configured key.
+    def bound_toggle_key
+      tmux_option("@switchboard-toggle-key") || Config.new.tmux_key("toggle")
     end
 
     # Pure: does `tmux list-keys -T prefix` show `key` bound to toggle-sidebar?
@@ -515,7 +644,8 @@ module Switchboard
     # command must mention toggle-sidebar so a foreign binding doesn't read as ours.
     # Defaults to `s` (the historical key) so legacy-detection callers read clean.
     def toggle_key_live_from?(raw, key = "s")
-      raw.to_s.lines.any? { |l| l.match?(/-T prefix\s+#{Regexp.escape(key)}\s/) && l.include?("toggle-sidebar") }
+      # tmux lists punctuation keys escaped (`\$`, `\#`), so allow the backslash.
+      raw.to_s.scrub.lines.any? { |l| l.match?(/-T prefix\s+\\?#{Regexp.escape(key)}\s/) && l.include?("toggle-sidebar") }
     end
 
     # --- doctor support (read-only predicates; cli renders the rows) ----------
@@ -588,24 +718,35 @@ module Switchboard
       system("tmux", "source-file", conf, out: File::NULL, err: File::NULL) if ENV["TMUX"]
     end
 
-    # The tmux.conf to edit: an explicit override, else the first $HOME-rooted
-    # file tmux actually loaded (asked of the running server — skips system
-    # files like /opt/homebrew/etc/tmux.conf), else the conventional fallback.
+    # The tmux.conf to edit: an explicit override, else the conf the running server loaded
+    # (a standard location first, else the first file under $HOME — skipping system files
+    # like /opt/homebrew/etc/tmux.conf), else the first standard location that exists, else
+    # ~/.tmux.conf.
     def tmux_conf(override = nil)
       return File.expand_path(override) if override && !override.to_s.empty?
 
-      loaded_user_conf ||
-        [File.expand_path("~/.tmux.conf"), File.expand_path("~/.config/tmux/tmux.conf")].find { |p| File.exist?(p) } ||
-        File.expand_path("~/.tmux.conf")
+      loaded_user_conf || default_confs.find { |p| File.exist?(p) } || File.expand_path("~/.tmux.conf")
     end
 
-    def loaded_user_conf
-      return nil unless ENV["TMUX"]
+    # Where tmux itself looks, in its order (3.2+ also reads $XDG_CONFIG_HOME/tmux).
+    def default_confs
+      xdg = Switchboard.env("XDG_CONFIG_HOME").to_s
+      [File.expand_path("~/.tmux.conf"), (File.join(xdg, "tmux", "tmux.conf") unless xdg.empty?),
+       File.expand_path("~/.config/tmux/tmux.conf")].compact.uniq
+    end
 
+    # The conf the running server loaded. Asked from outside tmux too (display-message works
+    # against a server with no attached client), so a plain-shell upgrade finds a conf tmux
+    # loaded from anywhere; nil with no server running.
+    # The server lists every file it loaded, sourced ones included (a theme, a plugin), so a
+    # standard location wins; else the first under $HOME (a --tmux-conf file).
+    def loaded_user_conf
       home = File.expand_path("~")
-      `tmux display-message -p '#\{config_files}' 2>/dev/null`.strip
-        .split(",").map(&:strip)
-        .find { |f| f.start_with?(home) && File.exist?(f) }
+      return nil if home == "/" # every path would read as "under $HOME"
+
+      files = `tmux display-message -p '#\{config_files}' 2>/dev/null`.strip
+              .split(",").map(&:strip).select { |f| File.exist?(f) }
+      files.find { |f| default_confs.include?(f) } || files.find { |f| f.start_with?(File.join(home, "")) }
     end
 
     # What prefix-<key> is currently bound to (for the "we're taking it" note), or

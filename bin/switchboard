@@ -20,6 +20,11 @@ if RUBY_VERSION < "3.0" && !ENV["SB_REEXEC"]
   abort "switchboard needs Ruby >= 3.0 (running #{RUBY_VERSION}); none found on PATH"
 end
 
+# A C/POSIX locale (a tmux pane started without LANG) would make Ruby tag every file read
+# and command output US-ASCII, so comparing, parsing or regex-matching a UTF-8 path or file
+# fails or raises. switchboard's files and paths are UTF-8 whatever the locale.
+Encoding.default_external = Encoding::UTF_8
+
 # Resolve lib/ relative to this script (works even when symlinked onto PATH).
 $LOAD_PATH.unshift File.expand_path("../lib", __dir__)
 require "switchboard"

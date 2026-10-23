@@ -30,11 +30,12 @@ class Switchboard < Formula
         switchboard install
 
       Then run `switchboard` (or `sb`) from any shell. `switchboard doctor`
-      checks the setup.
+      checks the setup. To update later: `switchboard upgrade`.
 
       Moving from a git clone? Run `switchboard uninstall` from the clone
       first, then `switchboard install` here (inside tmux, or reload tmux
-      after), then `switchboard enable-hooks` in each existing worktree. Finally
+      after); it repoints your configured projects' worktree hooks at this install
+      (run `switchboard enable-hooks` in any other hooked repo). Finally
       press your sidebar toggle key (prefix-s by default) twice in each session
       so its sidebars restart from this install. Full steps:
       docs/howto-install-and-upgrade.md in the repo.

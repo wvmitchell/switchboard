@@ -51,11 +51,11 @@ module Switchboard
     # No credential prompt (GIT_TERMINAL_PROMPT=0; the worker has no tty for ssh's own
     # prompt either) and killed past `timeout:` — the caller builds off the last fetch
     # either way. Your ssh config (core.sshCommand, agent) still applies.
-    def fetch_base(repo, base, timeout:)
+    def fetch_base(repo, base, timeout:, env: {})
       remote = base.to_s.split("/").first
       args = ["git", "-C", repo, "fetch", "--quiet"]
       args << remote if remote && remotes(repo).include?(remote)
-      pid = Process.spawn({ "GIT_TERMINAL_PROMPT" => "0" }, *args,
+      pid = Process.spawn({ "GIT_TERMINAL_PROMPT" => "0" }.merge(env), *args,
                           in: File::NULL, out: File::NULL, err: File::NULL, pgroup: true)
       status = ProcessIdentity.wait_within(pid, timeout)
       return status.success? if status

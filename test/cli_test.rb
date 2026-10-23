@@ -646,6 +646,99 @@ module Switchboard
 
     # --- doctor: per-adapter hook status (#110) ---
 
+    # Value: protects=doctor admitting hooks an older release wrote (missing v0.51.1's
+    # SessionEnd timeout) instead of a ✓; fails_when=the row goes back to presence-only;
+    # why_new=dec-0dd4f937 shortcut retired; seam=none
+    def test_doctor_hooks_flags_hooks_an_older_release_wrote
+      repo = temp_git_repo
+      File.write(Config.path, YAML.dump("projects" => [{ "name" => "app", "path" => repo }]))
+      ENV["SWITCHBOARD_BIN"] = "/old/bin/switchboard"
+      AgentHooks.enable(repo)
+      ENV["SWITCHBOARD_BIN"] = "/new/bin/switchboard"
+      out = stub_method(Installer, :installed_bin?, -> { true }) { Dir.chdir(repo) { capture { CLI.doctor_hooks } } }
+      assert_includes out, "claude hooks here are out of date — `switchboard upgrade`"
+      refute_includes out, "claude hooks here: "
+    end
+
+    # Value: protects=doctor giving a usable fix for a broken settings file instead of the
+    # dead-end "enable-hooks" (which refuses it); fails_when=doctor reads it as hooks off;
+    # why_new=cycle-2 state-machines; seam=none
+    def test_doctor_hooks_reports_a_corrupt_settings_file_of_ours
+      repo = temp_git_repo
+      FileUtils.mkdir_p(File.join(repo, ".claude"))
+      File.write(ClaudeHook.settings_path(repo), "{ #{HookFile::MARK}")
+      out = Dir.chdir(repo) { capture { CLI.doctor_hooks } }
+      assert_includes out, "isn't valid JSON"
+      refute_includes out, "hooks off here"
+    end
+
+    def test_doctor_hooks_reports_an_unreadable_settings_path_instead_of_crashing
+      repo = temp_git_repo
+      FileUtils.mkdir_p(ClaudeHook.settings_path(repo)) # a directory: EISDIR on read
+      out = Dir.chdir(repo) { capture { CLI.doctor_hooks } }
+      assert_includes out, "can't read"
+    end
+
+    # Value: protects=doctor from a dogfood checkout not calling the installed binary's
+    # hooks "out of date" (upgrade, judging by the installed one, would say up to date);
+    # fails_when=doctor judges staleness by whatever binary runs it; why_new=run-2 Red Team;
+    # seam=installed_bin? (PATH lookup)
+    def test_doctor_judges_hook_staleness_only_from_the_installed_binary
+      repo = temp_git_repo
+      ENV["SWITCHBOARD_BIN"] = "/opt/homebrew/opt/switchboard/libexec/bin/switchboard"
+      AgentHooks.enable(repo)
+      ENV["SWITCHBOARD_BIN"] = "/dogfood/bin/switchboard"
+      out = stub_method(Installer, :installed_bin?, -> { false }) { Dir.chdir(repo) { capture { CLI.doctor_hooks } } }
+      refute_includes out, "out of date"
+      assert_includes out, "claude hooks here"
+    end
+
+    def test_doctor_hooks_shows_current_hooks_as_ok_from_the_installed_binary
+      repo = temp_git_repo
+      ENV["SWITCHBOARD_BIN"] = "/new/bin/switchboard"
+      AgentHooks.enable(repo)
+      out = stub_method(Installer, :installed_bin?, -> { true }) { Dir.chdir(repo) { capture { CLI.doctor_hooks } } }
+      assert_includes out, "\e[32m✓\e[0m claude hooks here: #{ClaudeHook.settings_path(File.realpath(repo))}" # doctor prints git's realpath
+      refute_includes out, "out of date"
+      refute_includes out, "run the installed"
+    end
+
+    def test_doctor_version_reports_latest_available_or_unknown
+      { VERSION => "#{VERSION} (latest)", "0.0.1" => "#{VERSION} (latest)", "999.0.0" => "999.0.0 is available (you have #{VERSION}) — `switchboard upgrade`",
+        nil => "couldn't check for a newer release" }.each do |latest, line|
+        out = stub_method(Upgrade, :install_method, -> { :brew }) do
+          stub_method(LatestRelease, :latest, ->(**) { latest }) { capture { CLI.doctor_version } }
+        end
+        assert_includes out, line
+      end
+    end
+
+    # Value: protects=doctor not sending a clone or --HEAD user to an upgrade that follows
+    # a branch, not tags (it would answer "already newest" forever); fails_when=doctor
+    # compares release tags for every install; why_new=Red Team cycle 1; seam=none
+    def test_doctor_version_compares_tags_only_for_a_homebrew_install
+      { clone: "follows your clone's branch", brew_head: "follows main (--HEAD)" }.each do |method, line|
+        looked = false
+        out = stub_method(Upgrade, :install_method, -> { method }) do
+          stub_method(LatestRelease, :latest, ->(**) { looked = true; "999.0.0" }) { capture { CLI.doctor_version } }
+        end
+        assert_includes out, line
+        refute_includes out, "is available"
+        refute looked, "#{method}: no release lookup"
+      end
+    end
+
+    # Value: protects=`switchboard doctor` showing which version is running and whether a newer
+    # release exists; fails_when=doctor stops calling doctor_version (the row vanishes);
+    # why_new=only doctor_version itself was tested, never its wiring into doctor; seam=none;
+    # no_claim=the other doctor rows
+    def test_doctor_reports_the_version_row
+      out = stub_method(Upgrade, :install_method, -> { :brew }) do
+        stub_method(LatestRelease, :latest, ->(**) { VERSION }) { capture { run_doctor } }
+      end
+      assert_includes out, "switchboard #{VERSION} (latest)"
+    end
+
     # doctor splits status into claude (per-worktree) and codex (global), and flags the
     # codex trust caveat (a present block isn't proof codex runs it until /hooks-trusted).
     def test_doctor_hooks_reports_claude_per_worktree_and_codex_global
@@ -987,6 +1080,44 @@ module Switchboard
       assert_includes out, "replaced a prior binding: send-keys hi"
     end
 
+    # Generated by /ship coverage audit.
+    # Value: protects=doctor probing and naming the toggle key switchboard actually bound (its
+    # fallback after tmux rejected the configured one); fails_when=doctor reads config's key
+    # again; why_new=with_key_stubs ignores the probed key; seam=none; no_claim=tmux's rejection
+    def test_doctor_checks_the_toggle_key_switchboard_actually_bound
+      File.write(Config.path, YAML.dump("tmux_keys" => { "toggle" => "F13" }))
+      asked = []
+      out = stub_method(Installer, :toggle_key_live?, ->(key = nil) { asked << key; key == "s" }) do
+        stub_method(Installer, :tmux_option, ->(name) { name == "@switchboard-toggle-key" ? "s" : nil }) do
+          capture { CLI.send(:doctor_binding_live) }
+        end
+      end
+      assert_equal ["s"], asked
+      assert_includes out, "prefix-s bound (toggle-sidebar)"
+      refute_includes out, "NOT bound"
+    end
+
+    # Value: protects=doctor pointing a stale running tmux at `switchboard upgrade`; fails_when=
+    # the NOT-bound row drops the upgrade advice or reads as bound; why_new=coverage gap;
+    # seam=none; no_claim=the live probe itself
+    def test_doctor_flags_an_unbound_toggle_key_with_upgrade_advice
+      out = stub_method(Installer, :bound_toggle_key, -> { "s" }) do
+        with_key_stubs(live: false) { capture { CLI.send(:doctor_binding_live) } }
+      end
+      assert_includes out, "prefix-s NOT bound"
+      assert_includes out, "run `switchboard upgrade`"
+    end
+
+    # Value: protects=doctor naming a missing live hook slot and the upgrade fix; fails_when=
+    # a missing slot reads live or loses the upgrade advice; why_new=coverage gap; seam=none;
+    # no_claim=the show-hooks parse (live_hooks_from)
+    def test_doctor_flags_a_hook_slot_missing_from_the_server
+      live = Installer::HOOK_SLOTS.to_h { |s| [s, true] }.merge(Installer::HOOK_SLOTS.first => false)
+      out = stub_method(Installer, :live_hooks, -> { live }) { capture { CLI.send(:doctor_hooks_live) } }
+      assert_includes out, "tmux hooks not live: #{Installer::HOOK_SLOTS.first}"
+      assert_includes out, "run `switchboard upgrade`"
+    end
+
     # --- doctor: unknown top-level keys (the misindent backstop) --------------
 
     def test_doctor_is_silent_about_unknown_keys_by_default
@@ -1168,6 +1299,20 @@ module Switchboard
       end
     end
 
+    # Value: protects=a failed `switchboard upgrade` exiting 1 (scripts and `&&` chains rely
+    # on it) with its arguments passed through; fails_when=the dispatch drops the `unless`
+    # mapping or argv.drop(1); why_new=upgrade_test pins only Upgrade.run's return value;
+    # seam=stub Upgrade.run; no_claim=what makes an upgrade fail
+    def test_run_maps_the_upgrade_result_to_the_exit_status
+      got = nil
+      stub_method(Upgrade, :run, ->(argv) { got = argv; false }) do
+        e = assert_raises(SystemExit) { capture { CLI.run(%w[upgrade --finish 0.1.0]) } }
+        assert_equal 1, e.status
+      end
+      assert_equal %w[--finish 0.1.0], got
+      stub_method(Upgrade, :run, ->(_argv) { true }) { capture { CLI.run(["upgrade"]) } } # no exit
+    end
+
     def test_run_rename_exits_nonzero_on_failure
       capture_err do
         e = assert_raises(SystemExit) { CLI.run(["rename"]) }
@@ -1233,7 +1378,29 @@ module Switchboard
       super
     end
 
-    private
+    # Value: protects=doctor's fix for stale hooks in a repo outside the config (upgrade
+    # only refreshes configured projects, so "run upgrade" would never fix it); fails_when=
+    # doctor points every out-of-date worktree at upgrade; why_new=state-machines cycle 1;
+    # seam=none
+    # Value: protects=doctor from a dogfood checkout saying it can't judge hooks it didn't
+    # write, instead of a false "out of date" or "current"; fails_when=the not-installed row is
+    # dropped or reordered after current?; why_new=run-6 state-machines; seam=installed_bin? stub
+    def test_doctor_hooks_from_a_non_installed_binary_says_ask_the_installed_one
+      repo = temp_git_repo
+      AgentHooks.enable(repo)
+      out = stub_method(Installer, :installed_bin?, -> { false }) { Dir.chdir(repo) { capture { CLI.doctor_hooks } } }
+      assert_includes out, "run the installed `switchboard doctor` to check they're current"
+      refute_includes out, "out of date"
+    end
+
+    def test_doctor_points_an_unconfigured_repo_at_enable_hooks
+      repo = temp_git_repo
+      ENV["SWITCHBOARD_BIN"] = "/old/bin/switchboard"
+      AgentHooks.enable(repo)
+      ENV["SWITCHBOARD_BIN"] = "/new/bin/switchboard"
+      out = stub_method(Installer, :installed_bin?, -> { true }) { Dir.chdir(repo) { capture { CLI.doctor_hooks } } }
+      assert_includes out, "out of date — `switchboard enable-hooks` (not a configured project"
+    end
 
     # doctor probes `gh auth status` (a real, networked token check); stub that one
     # seam so the doctor rows can be exercised offline like the rest of the suite.
@@ -1244,7 +1411,7 @@ module Switchboard
     # Stub the two tmux shell-outs doctor_binding_live makes: the live-binding probe
     # and the @option reads (clobber markers). Keeps the doctor rows offline.
     def with_key_stubs(live:, options: {}, &blk)
-      stub_method(Installer, :toggle_key_live?, -> { live }) do
+      stub_method(Installer, :toggle_key_live?, ->(*) { live }) do
         stub_method(Installer, :tmux_option, ->(name) { options[name] }, &blk)
       end
     end
@@ -1426,6 +1593,152 @@ module Switchboard
       assert_equal "alpha", File.basename(wt.path)
       refute wt.primary
     end
+
+    # Value: protects=doctor's reporter row agreeing with what upgrade will do: current ✓,
+    # another release's –, missing while worktrees are hooked ✗, not yet materialized –;
+    # fails_when=the row goes back to File.exist?; why_new=state-machines cycle 2; seam=none
+    def test_doctor_reports_the_reporter_the_way_upgrade_reads_it
+      row = -> { stub_method(Installer, :installed_bin?, -> { true }) { capture { CLI.doctor_reporter } } }
+      assert_includes row.call, "not materialized yet"
+      HookFile.ensure_script
+      assert_includes row.call, "\e[32m✓\e[0m agent-state reporter"
+      File.write(HookFile.script_path, "#!/bin/sh\n# an older release\n")
+      assert_includes row.call, "from another release — `switchboard upgrade`"
+      neutral = stub_method(Installer, :installed_bin?, -> { false }) { capture { CLI.doctor_reporter } }
+      refute_includes neutral, "another release", "another binary can't judge the installed one's reporter"
+      repo = temp_git_repo
+      File.write(Config.path, YAML.dump("projects" => [{ "name" => "app", "path" => repo }]))
+      ClaudeHook.enable(repo)
+      File.delete(HookFile.script_path)
+      assert_includes row.call, "\e[31m✗\e[0m agent-state reporter missing"
+    end
+
+    # Value: protects=doctor naming the real problem with a settings file that IS valid JSON
+    # (a malformed hooks section), not sending the user hunting for a syntax error;
+    # fails_when=doctor's row goes back to a fixed "isn't valid JSON"; why_new=run-5 review
+    # (maintainability + state-machines); seam=none
+    def test_doctor_names_a_malformed_hooks_section
+      repo = temp_git_repo
+      FileUtils.mkdir_p(File.join(repo, ".claude"))
+      File.write(ClaudeHook.settings_path(repo), %({"hooks": []}))
+      out = Dir.chdir(repo) { capture { CLI.doctor_hooks } }
+      assert_includes out, "has a malformed hooks section — fix it, then `switchboard enable-hooks`"
+      refute_includes out, "valid JSON"
+    end
+
+    # Value: protects=a user's own broken settings file getting a usable fix from doctor and
+    # an honest refusal from enable-hooks (it used to say "enabled"); fails_when=doctor reads
+    # it as hooks off, or enable-hooks reports success on a file it left alone;
+    # why_new=state-machines cycle 2; seam=none
+    def test_a_users_broken_settings_file_gets_a_fix_not_a_dead_end
+      repo = temp_git_repo
+      FileUtils.mkdir_p(File.join(repo, ".claude"))
+      File.write(ClaudeHook.settings_path(repo), "{ // mine")
+      out = Dir.chdir(repo) { capture { CLI.doctor_hooks } }
+      assert_includes out, "isn't valid JSON"
+      refute_includes out, "hooks off here"
+      got = nil
+      out, err = capture_io { got = CLI.enable_hooks(repo) }
+      assert_equal false, got
+      refute_includes out, "enabled agent-state hooks"
+      assert_includes out + err, "claude hooks not enabled"
+      assert_equal "{ // mine", File.read(ClaudeHook.settings_path(repo)), "left untouched"
+    end
+
+    # Value: protects=enable-hooks bringing an older release's hooks up to date, and never
+    # reporting success when that rewrite failed (old hooks still read as "enabled");
+    # fails_when=enable_hooks gates on enabled? again; why_new=state-machines cycle 3 (a
+    # regression from cycle 2's gate); seam=none; no_claim=permission models beyond chmod
+    def test_enable_hooks_reports_success_only_when_this_versions_hooks_landed
+      repo = temp_git_repo
+      ENV["SWITCHBOARD_BIN"] = "/old/bin/switchboard"
+      ClaudeHook.enable(repo)
+      ENV["SWITCHBOARD_BIN"] = "/new/bin/switchboard"
+      dir = File.join(repo, ".claude")
+      File.chmod(0o555, dir) # the rewrite can't land; the old hooks stay
+      got = nil
+      out, err = capture_io { got = CLI.enable_hooks(repo) }
+      assert_equal false, got
+      refute_includes out, "enabled agent-state hooks"
+      assert_includes out + err, "claude hooks not enabled"
+
+      File.chmod(0o755, dir)
+      out, = capture_io { got = CLI.enable_hooks(repo) }
+      refute_equal false, got
+      assert ClaudeHook.current?(repo), "stale hooks rewritten to this version's"
+      assert_includes out, "enabled agent-state hooks"
+    ensure
+      File.chmod(0o755, dir) if dir && File.exist?(dir)
+    end
+
+    # Value: protects=enable-hooks not claiming success while the shared reporter its hooks
+    # run couldn't be written (doctor would say the reporter is missing); fails_when=
+    # enable_hooks stops checking the reporter; why_new=Red Team cycle 3; seam=none
+    def test_enable_hooks_fails_when_the_reporter_couldnt_be_written
+      repo = temp_git_repo
+      dir = File.dirname(HookFile.script_path)
+      FileUtils.mkdir_p(dir)
+      File.chmod(0o500, dir)
+      got = nil
+      out, err = capture_io { got = CLI.enable_hooks(repo) }
+      assert_equal false, got
+      assert_includes out + err, "agent-state reporter: couldn't write"
+    ensure
+      File.chmod(0o700, dir) if dir
+    end
+
+    # Value: protects=enable-hooks on an unreadable settings path (a directory) failing with its
+    # "fix <path>" advice; fails_when=the current? check raises EISDIR (its SystemCallError rescue
+    # dropped) and the command dies with a backtrace; why_new=mutation of current?'s rescue
+    # survived the suite; seam=none; no_claim=the AgentHooks warn wording
+    def test_enable_hooks_refuses_an_unreadable_settings_path_without_crashing
+      repo = temp_git_repo
+      FileUtils.mkdir_p(ClaudeHook.settings_path(repo)) # EISDIR on read
+      got = nil
+      out, err = capture_io { got = CLI.enable_hooks(repo) }
+      assert_equal false, got
+      assert_includes out + err, "claude hooks not enabled"
+      refute_includes out, "enabled agent-state hooks"
+    end
+
+
+    # Value: protects=doctor flagging a missing reporter the global codex block still runs;
+    # fails_when=doctor's reporter row ignores the codex block; why_new=state-machines run 4
+    # (D2); seam=none
+    def test_doctor_flags_a_missing_reporter_the_codex_block_runs
+      ENV["SWITCHBOARD_BIN"] = "/bin/switchboard"
+      CodexHook.install_global
+      File.delete(HookFile.script_path) if File.exist?(HookFile.script_path)
+      out = stub_method(Installer, :installed_bin?, -> { true }) { capture { CLI.doctor_reporter } }
+      assert_includes out, "agent-state reporter missing"
+    end
+
+
+    # Value: protects=doctor's claude row reading "can't read" (promptly) for a FIFO or a
+    # mode-000 settings file, ahead of the parse/enabled rows; fails_when=the unreadable? row
+    # moves after a check that blocks or misreads the file; why_new=run-5 cycle-2
+    # state-machines (only a directory was tried); seam=none
+    def test_doctor_hooks_reads_a_fifo_or_unpermitted_settings_file_as_unreadable
+      require "timeout"
+      repo = temp_git_repo
+      path = ClaudeHook.settings_path(repo)
+      FileUtils.mkdir_p(File.dirname(path))
+      File.mkfifo(path)
+      out = Timeout.timeout(5) { Dir.chdir(repo) { capture { CLI.doctor_hooks } } }
+      assert_match(%r{can't read \S*/\.claude/settings\.local\.json}, out)
+      next_case = !Process.uid.zero? # root reads a mode-000 file
+      if next_case
+        File.delete(path)
+        File.write(path, "{}")
+        File.chmod(0o000, path)
+        out = Dir.chdir(repo) { capture { CLI.doctor_hooks } }
+        assert_match(%r{can't read \S*/\.claude/settings\.local\.json}, out)
+      end
+    ensure
+      File.chmod(0o600, path) if path && File.file?(path)
+    end
+
+    private
 
     def capture
       out = StringIO.new

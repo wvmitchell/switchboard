@@ -62,5 +62,11 @@ module Switchboard
     def enable(worktree) = HookFile.enable(worktree, SETTINGS_REL, EVENTS)
     def disable(worktree) = HookFile.disable(worktree, SETTINGS_REL)
     def enabled?(worktree) = HookFile.enabled?(worktree, SETTINGS_REL)
+    def current?(worktree) = HookFile.current?(worktree, SETTINGS_REL, EVENTS)
+    def refresh(worktree) = HookFile.refresh(worktree, SETTINGS_REL, EVENTS)
+    def corrupt?(worktree) = HookFile.corrupt?(worktree, SETTINGS_REL)
+    def unparseable?(worktree) = HookFile.unparseable?(worktree, SETTINGS_REL)
+    def corrupt_reason(worktree) = HookFile.corrupt_reason(worktree, SETTINGS_REL)
+    def unreadable?(worktree) = HookFile.unreadable?(worktree, SETTINGS_REL)
   end
 end
