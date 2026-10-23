@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "test_helper"
+require "json"
 
 module Switchboard
   # The CLI dispatch logic that isn't just a pass-through to Installer: flag
@@ -491,6 +492,162 @@ module Switchboard
       assert_includes out, "sound done: train"
       assert_includes out, "sound waiting: chime"
       assert_includes out, "sound alert: alert", "doctor reports the declared-notify sound too"
+    end
+
+    # --- doctor: the ⇅ remote-link canary (Claude's undocumented session files) ---
+
+    def write_claude_session(name, data)
+      FileUtils.mkdir_p(RemoteLink.sessions_dir)
+      File.write(File.join(RemoteLink.sessions_dir, "#{name}.json"), data.is_a?(String) ? data : JSON.generate(data))
+    end
+
+    # This test process (plus any `also` pids) stands in for a live Claude; health only
+    # counts Claude processes.
+    def doctor_as_claude(also: [])
+      claude = [Process.pid, *also]
+      stub_method(RemoteLink, :claude_pids, ->(pids) { pids.map(&:to_i).select { |p| claude.include?(p) }.to_set }) do
+        capture { CLI.send(:doctor_remote_links) }
+      end
+    end
+
+    def live_session(**over)
+      { "pid" => Process.pid, "cwd" => @dir, "sessionId" => "s",
+        "procStart" => ProcessIdentity.start_of(Process.pid), "bridgeSessionId" => "session_x" }.merge(over)
+    end
+
+    def test_doctor_remote_links_counts_live_links_and_names_the_dir
+      write_claude_session("1", live_session)
+      out = doctor_as_claude
+      assert_includes out, "remote links (⇅): 1 linked (1 Claude sessions in #{RemoteLink.sessions_dir})"
+    end
+
+    def test_doctor_remote_links_flags_a_changed_format
+      write_claude_session("1", { "process" => 1, "dir" => "/x" })
+      out = capture { CLI.send(:doctor_remote_links) }
+      assert_includes out, "none in the shape switchboard reads"
+    end
+
+    def test_doctor_remote_links_flags_start_time_drift
+      write_claude_session("1", live_session("procStart" => "2026-10-22T19:12:32Z"))
+      out = doctor_as_claude
+      assert_includes out, "fail the start-time check"
+    end
+
+    # Value: protects=doctor's end-to-end row for the QA-probe-002 case (a crash leftover whose
+    # pid the OS recycled, beside a healthy session) reads healthy, not as a format change;
+    # fails_when=doctor alarms on that mixed dir; why_new=QA probe 002 reproduced the false
+    # alarm; seam=claude_pids stubbed (doctor_as_claude); no_claim=the real Claude filter
+    # (remote_link_test's test_health_ignores_a_live_pid_that_is_not_claude pins it with real ps)
+    def test_doctor_remote_links_ignores_a_recycled_pid_beside_a_healthy_session
+      write_claude_session("1", live_session)
+      write_claude_session("leftover", live_session("pid" => 1, "procStart" => "Mon Jan  5 09:00:00 2026",
+                                                     "bridgeSessionId" => "session_old"))
+      out = doctor_as_claude
+      refute_includes out, "fail the start-time check"
+      assert_includes out, "1 linked"
+    end
+
+    # Value: protects=one drifted session among several live CLAUDE sessions is a recycled
+    # pid, not a format change — only drift across every live session alarms;
+    # fails_when=the guard loosens to any drift (drift.positive?); why_new=ship 2 pass 3
+    # testing review (no doctor test had 0 < drift < alive); seam=none (a sleep child stands
+    # in for a second Claude); no_claim=a real recycled Claude pid
+    def test_doctor_remote_links_ignores_one_drifted_claude_among_healthy_ones
+      child = Process.spawn("sleep", "30", out: File::NULL, err: File::NULL)
+      write_claude_session("1", live_session)
+      write_claude_session("2", live_session("pid" => child, "procStart" => "Mon Jan  5 09:00:00 2026",
+                                              "bridgeSessionId" => "session_old"))
+      out = doctor_as_claude(also: [child])
+      refute_includes out, "fail the start-time check"
+      assert_includes out, "1 linked"
+    ensure
+      Process.kill("TERM", child) if child
+      Process.wait(child) if child
+    end
+
+    # Value: protects=a dir holding only dead leftovers (no live Claude) reads healthy, not as a
+    # procStart format change; fails_when=the alarm's alive.positive? guard goes (0 drift == 0 alive);
+    # why_new=every doctor test has a live session or no shape; seam=none; no_claim=a real crash leftover
+    def test_doctor_remote_links_does_not_alarm_on_only_dead_leftovers
+      write_claude_session("dead", live_session("pid" => 2**22 + 12_345, "procStart" => "Mon Jan  5 09:00:00 2026"))
+      out = doctor_as_claude
+      refute_includes out, "fail the start-time check"
+      assert_includes out, "remote links (⇅): 0 linked (1 Claude sessions in"
+    end
+
+    # Value: protects=doctor warns when this shell and tmux (where sidebars run) disagree on
+    # CLAUDE_CONFIG_DIR; fails_when=the check reads only this shell's env; why_new=new branch;
+    # seam=none (stubs the one tmux read); no_claim=a real tmux server's environment
+    def test_doctor_remote_links_flags_a_claude_config_dir_tmux_cannot_see
+      write_claude_session("1", live_session)
+      ENV["TMUX"] = "/tmp/fake,1,0"
+      ENV["CLAUDE_CONFIG_DIR"] = path("claude-elsewhere")
+      out = capture { stub_method(CLI, :tmux_global_env, ->(_) { nil }) { CLI.send(:doctor_remote_links) } }
+      assert_includes out, "but unset in tmux"
+      dir = path("claude-elsewhere") # outside the stub: define_singleton_method rebinds self
+      same = capture { stub_method(CLI, :tmux_global_env, ->(_) { dir }) { CLI.send(:doctor_remote_links) } }
+      refute_includes same, "in tmux"
+    end
+
+    # Value: protects=unset in one place and `~/.claude` (or a trailing-slash spelling) in the
+    # other name the SAME dir, so doctor stays quiet; fails_when=the raw strings are compared
+    # again (a false "wrong dir" warning); why_new=ship 2 pass 3 red team; seam=none (stubs the
+    # one tmux read); no_claim=a real tmux environment
+    def test_doctor_claude_config_dir_compares_the_resolved_dirs
+      write_claude_session("1", live_session)
+      ENV["TMUX"] = "/tmp/fake,1,0"
+      ENV.delete("CLAUDE_CONFIG_DIR")
+      default = "#{File.join(Dir.home, '.claude')}/"
+      out = capture { stub_method(CLI, :tmux_global_env, ->(_) { default }) { CLI.send(:doctor_remote_links) } }
+      refute_includes out, "in tmux"
+    end
+
+    # Value: protects=tmux's three answers (`NAME=value`, `-NAME` unset, unknown variable)
+    # map to value / nil / nil; fails_when=the prefix parse breaks and every set dir reads as
+    # unset (a false warning for everyone who sets CLAUDE_CONFIG_DIR); why_new=the doctor test
+    # stubs this method; seam=none (stubs IO.popen); no_claim=a real tmux binary's output
+    def test_tmux_global_env_reads_set_unset_and_unknown
+      { "CLAUDE_CONFIG_DIR=/x/claude\n" => "/x/claude", "-CLAUDE_CONFIG_DIR\n" => nil,
+        "unknown variable: CLAUDE_CONFIG_DIR\n" => nil, "" => nil }.each do |out, want|
+        got = stub_method(IO, :popen, ->(*, **) { out }) { CLI.send(:tmux_global_env, "CLAUDE_CONFIG_DIR") }
+        want ? assert_equal(want, got, "tmux printed #{out.inspect}") : assert_nil(got, "tmux printed #{out.inspect}")
+      end
+    end
+
+    # Value: protects=the CLAUDE_CONFIG_DIR mismatch hint shows on doctor's FAILURE paths too
+    # (it is the likely cause of "no files"); fails_when=the hint only runs on the success
+    # row; why_new=QA pass 2 probes 002/003 reproduced it missing; seam=none (stubs the tmux
+    # read); no_claim=a real tmux server's environment
+    def test_doctor_remote_links_shows_the_config_dir_hint_when_no_files_are_found
+      ENV["TMUX"] = "/tmp/fake,1,0"
+      ENV["CLAUDE_CONFIG_DIR"] = path("claude-elsewhere")
+      out = capture do
+        stub_method(CLI, :tmux_global_env, ->(_) { nil }) do
+          stub_method(CLI, :`, ->(_) { "/usr/local/bin/claude\n" }) do
+            stub_method(RemoteLink, :claude_running?, -> { true }) { CLI.send(:doctor_remote_links) }
+          end
+        end
+      end
+      assert_includes out, "no session files"
+      assert_includes out, "but unset in tmux"
+    end
+
+    def test_doctor_remote_links_notes_a_missing_dir_only_when_claude_is_installed
+      without = capture { stub_method(CLI, :`, ->(_) { "" }) { CLI.send(:doctor_remote_links) } }
+      assert_empty without, "no Claude Code, no row"
+      with = capture do
+        stub_method(CLI, :`, ->(_) { "/usr/local/bin/claude\n" }) do
+          stub_method(RemoteLink, :claude_running?, -> { true }) { CLI.send(:doctor_remote_links) }
+        end
+      end
+      assert_includes with, "Claude is running but there are no session files"
+      idle = capture do
+        stub_method(CLI, :`, ->(_) { "/usr/local/bin/claude\n" }) do
+          stub_method(RemoteLink, :claude_running?, -> { false }) { CLI.send(:doctor_remote_links) }
+        end
+      end
+      assert_includes idle, "no live Claude sessions", "Claude removes its file on exit: nothing open is not a warning"
+      refute_includes idle, "may have moved"
     end
 
     # --- doctor: PATH symlink rows (the required command + the optional alias) ---

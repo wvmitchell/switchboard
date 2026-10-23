@@ -707,7 +707,64 @@ module Switchboard
       doctor_prs
       doctor_sounds
       doctor_sessions
+      doctor_remote_links
       doctor_orphan_sidebars
+    end
+
+    # The ⇅ glyph reads Claude's UNDOCUMENTED per-session files, and degrades to "no
+    # glyph" on anything it doesn't recognize — so doctor is the canary for a Claude
+    # update that moved or reshaped them. It can catch a moved dir (0 files while Claude
+    # runs — 0 with nothing open is normal, Claude removes its file on exit), a changed
+    # shape (files, none parse), and a drifted start-time format (EVERY live Claude pid
+    # failing the match; one is a recycled pid). A RENAMED bridge key can't be told from "nothing linked".
+    # Silent for someone without Claude Code installed.
+    def doctor_remote_links
+      doctor_remote_link_status
+      doctor_claude_config_dir # on every path: a mismatch is the likely CAUSE of the failures above
+    end
+
+    def doctor_remote_link_status
+      h = RemoteLink.health
+      if h[:files].zero?
+        return if `command -v claude 2>/dev/null`.strip.empty?
+        # Claude removes its file on exit, so no files with nothing open is the normal state
+        return puts row(true, "remote links (⇅): no live Claude sessions") unless RemoteLink.claude_running?
+
+        return puts "  \e[33m–\e[0m remote links (⇅): Claude is running but there are no session files in #{h[:dir]} — a Claude update may have moved them"
+      end
+      if h[:shaped].zero?
+        return puts row(false, "remote links (⇅): #{h[:files]} session files in #{h[:dir]}, none in the shape switchboard reads — Claude changed the format; the ⇅ won't show")
+      end
+      if h[:alive].positive? && h[:drift] == h[:alive] # every live one: a format change, not a recycled pid
+        return puts row(false, "remote links (⇅): #{h[:drift]} live session(s) fail the start-time check — Claude changed procStart; the ⇅ won't show")
+      end
+
+      puts row(true, "remote links (⇅): #{h[:linked]} linked (#{h[:files]} Claude sessions in #{h[:dir]})")
+    end
+
+    # Sidebars are spawned by tmux, which never reads your shell rc — so a
+    # CLAUDE_CONFIG_DIR exported only in .zshrc points Claude (started from that shell)
+    # at one dir while every sidebar reads ~/.claude: no ⇅, ever, and the row above
+    # (read from THIS shell) looks fine. Only checkable from inside tmux.
+    def doctor_claude_config_dir
+      return unless ENV["TMUX"]
+
+      mine = ENV["CLAUDE_CONFIG_DIR"].to_s
+      theirs = tmux_global_env("CLAUDE_CONFIG_DIR").to_s
+      # Resolved dirs, not raw strings: unset vs ~/.claude (or a trailing /) is the same dir
+      return if File.expand_path(ClaudeHistory.claude_root(mine)) == File.expand_path(ClaudeHistory.claude_root(theirs))
+
+      puts "  \e[33m–\e[0m remote links (⇅): CLAUDE_CONFIG_DIR is #{mine.empty? ? 'unset' : mine.inspect} here but " \
+           "#{theirs.empty? ? 'unset' : theirs.inspect} in tmux, where sidebars run — export it in .zshenv " \
+           "or `tmux set-environment -g CLAUDE_CONFIG_DIR …` so the ⇅ reads the right dir"
+    end
+
+    # A tmux global environment value, or nil when unset (`-NAME` / unknown variable).
+    def tmux_global_env(name)
+      out = IO.popen(["tmux", "show-environment", "-g", name], err: File::NULL, &:read).to_s.strip
+      out.start_with?("#{name}=") ? out.delete_prefix("#{name}=") : nil
+    rescue StandardError
+      nil
     end
 
     # Flag top-level config keys switchboard doesn't recognize. The cause this catches
