@@ -42,7 +42,7 @@ module Switchboard
 
     def test_scaffold_template_advertises_the_optional_knobs
       %w[tmux_keys sidebar_keys sounds session_command worktree_creation_command base prune_on_launch
-         projects_root auto_rename diff_counts prewarm].each do |knob|
+         projects_root auto_rename diff_counts prewarm remote_link_stale_after].each do |knob|
         assert_includes Config::SCAFFOLD_TEMPLATE, knob, "a fresh config should advertise #{knob}"
       end
     end
@@ -254,6 +254,33 @@ module Switchboard
       assert cfg({}).prune_on_launch?
       assert cfg("prune_on_launch" => true).prune_on_launch?
       refute cfg("prune_on_launch" => false).prune_on_launch?
+    end
+
+    # Minutes in the file, seconds out; false / 0 turn the grey stale ⇅ off, and a
+    # value that makes no sense keeps the 120-minute default rather than misbehaving.
+    def test_remote_link_stale_after_minutes_with_off_and_a_safe_default
+      assert_equal 7200, cfg({}).remote_link_stale_after
+      assert_equal 1800, cfg("remote_link_stale_after" => 30).remote_link_stale_after
+      assert_nil cfg("remote_link_stale_after" => false).remote_link_stale_after
+      assert_nil cfg("remote_link_stale_after" => 0).remote_link_stale_after
+      assert_equal 7200, cfg("remote_link_stale_after" => -5).remote_link_stale_after
+      assert_equal 7200, cfg("remote_link_stale_after" => "soon").remote_link_stale_after
+      assert_empty cfg("remote_link_stale_after" => 30).unknown_keys, "a known key, so doctor never flags it"
+      # YAML's .inf / .nan are Floats that pass positive?-style guards, then raise in to_i
+      # (every ⇅ would silently vanish); a fractional minute is still a real threshold
+      assert_equal 7200, cfg("remote_link_stale_after" => Float::INFINITY).remote_link_stale_after
+      assert_equal 7200, cfg("remote_link_stale_after" => Float::NAN).remote_link_stale_after
+      assert_equal 30, cfg("remote_link_stale_after" => 0.5).remote_link_stale_after
+    end
+
+    # Value: protects=a finite but huge value (1e308 overflows to Infinity at * 60) falls back
+    # instead of raising — the raise lands in warm_fingerprint and switches prewarm off for every
+    # hidden pane — and a sub-second value floors at 1s instead of greying every idle link at
+    # once; fails_when=the guard checks the minutes, not the seconds; why_new=ship adversarial
+    # review (reproduced FloatDomainError); seam=none; no_claim=none beyond protects
+    def test_remote_link_stale_after_judges_the_seconds_not_the_minutes
+      assert_equal 7200, cfg("remote_link_stale_after" => 1e308).remote_link_stale_after
+      assert_equal 1, cfg("remote_link_stale_after" => 0.001).remote_link_stale_after
     end
 
     def test_prewarm_on_by_default_off_only_when_false

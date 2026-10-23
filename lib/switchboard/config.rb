@@ -31,6 +31,7 @@ module Switchboard
     KNOWN_KEYS = %w[
       worktree_root projects_root base branch_prefix session_command worktree_creation_command
       agent_state_hooks prune_on_launch auto_rename diff_counts prewarm background_presence
+      remote_link_stale_after
       sounds tmux_keys sidebar_keys projects
     ].freeze
 
@@ -79,6 +80,7 @@ module Switchboard
       # background_presence: true                  # nudge the agent to flag background monitors/loops (`switchboard monitoring on`) so the sidebar shows a ∞
       # diff_counts: true                          # show +adds −dels of each branch vs base on the workspace row
       # prewarm: true                              # keep off-screen sidebars warm so switching sessions doesn't flash a stale tree
+      # remote_link_stale_after: 120               # minutes a /remote-control-linked session can sit idle before its ⇅ turns grey; false turns it off
 
       # Completion sounds (on by default): a built-in (train / chime / alert / failed,
       # or train_1..3 / chime_1..3), a file path, or a macOS system-sound name. enabled:
@@ -288,6 +290,23 @@ module Switchboard
     # full dormancy (no off-screen work). Global only, like diff_counts.
     def prewarm?
       @data.fetch("prewarm", true) != false
+    end
+
+    # Seconds a /remote-control-linked session may sit idle before its ⇅ turns grey
+    # (a link you likely forgot), or nil when off. Configured in MINUTES (default
+    # 120); `false` / 0 turns it off; anything unparseable falls back to the default,
+    # like every other knob. Global only.
+    REMOTE_LINK_STALE_DEFAULT = 120
+
+    def remote_link_stale_after
+      raw = @data.fetch("remote_link_stale_after", REMOTE_LINK_STALE_DEFAULT)
+      return nil if raw == false || raw == 0
+
+      # Judged in SECONDS: a finite huge value (1e308) overflows to Infinity at * 60, and
+      # the raise from to_i would land in warm_fingerprint and switch prewarm off for good.
+      secs = raw * 60 if raw.is_a?(Numeric) && raw.positive?
+      secs = REMOTE_LINK_STALE_DEFAULT * 60 unless secs&.finite?
+      [secs.to_i, 1].max # a sub-second value would grey every idle link the instant it idles
     end
 
     # Optional prefix for new branches, e.g. "wvmitchell" -> wvmitchell/<name>.

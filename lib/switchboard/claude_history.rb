@@ -104,15 +104,20 @@ module Switchboard
     end
 
     # Where Claude keeps its per-project transcript dirs. A test/override seam
-    # first (keeps the suite off the real ~/.claude), then Claude's own
-    # CLAUDE_CONFIG_DIR, then the ~/.claude default.
+    # first (keeps the suite off the real ~/.claude), then Claude's own dir.
     def projects_root
       override = ENV["SWITCHBOARD_CLAUDE_PROJECTS_DIR"]
       return override unless override.nil? || override.empty?
 
-      base = ENV["CLAUDE_CONFIG_DIR"]
-      base = File.join(Dir.home, ".claude") if base.nil? || base.empty?
-      File.join(base, "projects")
+      File.join(claude_root, "projects")
+    end
+
+    # Claude's own config dir: CLAUDE_CONFIG_DIR (empty = unset), else ~/.claude.
+    # The one answer every reader of Claude's files shares (transcripts here, the
+    # live session files in RemoteLink), so they can never disagree.
+    # `base` is a CLAUDE_CONFIG_DIR value to resolve (doctor compares tmux's with yours).
+    def claude_root(base = ENV["CLAUDE_CONFIG_DIR"])
+      base.nil? || base.empty? ? File.join(Dir.home, ".claude") : base
     end
 
     # The real dir behind a path: a bridge symlink's target, a plain dir as-is, or
