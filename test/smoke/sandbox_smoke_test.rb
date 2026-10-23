@@ -53,6 +53,14 @@ module Switchboard
       assert_includes screen, "watch-ci", "the background-monitor worktree row"
       assert_includes screen, "∞", "the monitored workspace renders the ∞ dot (resting -> ∞, not ●)"
 
+      # 1b. the seeded phone link: a live process parked in quiet-cleanup plus its
+      #     session file renders the ⇅ on that row (seeded after boot: the pid lives in
+      #     the server).
+      refute_nil Sandbox.seed_link(File.join(@seed, "worktrees", "sandbox", "quiet-cleanup")), "seed_link starts its sleeper"
+      wait_until("the seeded ⇅ link renders on quiet-cleanup") do
+        capture(pane).lines.any? { |l| l.include?("quiet-cleanup") && l.include?("⇅") }
+      end
+
       # 2. isolation proof: two GLOBAL view-state toggles (branch-fold `z`, full-header
       #    `H`) must write their markers into the THROWAWAY state tree, never real state.
       #    (The markers resolve under XDG_STATE_HOME here, which SandboxTest roots in @dir.)
