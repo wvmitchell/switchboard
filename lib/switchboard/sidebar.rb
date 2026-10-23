@@ -89,6 +89,8 @@ module Switchboard
       @agents = {}         # worktree path => :thinking | :done | :waiting
       @attention = Set.new # worktree paths with an unviewed completion (rendered bold)
       @monitoring = Set.new # worktree paths with a live background-monitor marker (∞)
+      @links = {}          # worktree path => [RemoteLink::Link] — live /remote-control links (⇅)
+      @link_fp_cache = {}  # session file => [[mtime, size, ino], record]: the warm gate's stamp-gated parse
       @pending_delete = Set.new # worktree paths being deleted right now — hidden from the
                            # tree while a detached daemon runs `git worktree remove` off the
                            # input loop (shared PendingDelete marker, hydrated every rebuild)
@@ -438,10 +440,22 @@ module Switchboard
       ring_creations if announce_sounds
       refresh_diffs if edges.any? # a finished turn likely just committed — repaint its count
       @attention = Attention.marked(ws_paths)          # load for render, after the marks land
+      @links = remote_links(ws_paths, cheap: !@visible) # LAST and self-rescued: can add a ⇅, never touch a dot
       true
     rescue StandardError
       @agents = {}
       false
+    end
+
+    # Live /remote-control links per worktree. Its own rescue (RemoteLink.scan is
+    # total already) because a raise reaching refresh_agents' would blank every dot.
+    # `cheap` while off screen, so a hidden pane spawns no ps/lsof for links. Not
+    # hooks_only: an ON-screen reload passes that too (after a delete), and a visible
+    # pane must place links by kernel cwd.
+    def remote_links(ws_paths, cheap: false)
+      RemoteLink.scan(ws_paths, stale_after: @config.remote_link_stale_after, cheap: cheap)
+    rescue StandardError
+      {}
     end
 
     # Rows whose dispatched task still owns its first-turn ping, so the normal :done
@@ -522,6 +536,8 @@ module Switchboard
        file_fingerprint(BranchFold.marker),    # branch-fold toggle
        file_fingerprint(Width.state_file),     # sidebar width
        file_fingerprint(Config.path),          # project registry (add/remove project elsewhere)
+       RemoteLink.fingerprint(@link_fp_cache,  # ⇅ links: the linked SET, not dir mtimes — Claude
+                              stale_after: @config.remote_link_stale_after), # rewrites every session's file on each busy/idle flip
        reflogs.sort]                           # diff counts (commits)
     rescue StandardError
       nil
