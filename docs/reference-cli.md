@@ -26,7 +26,7 @@ in `$HOME`), carries its own sidebar, and is the stable launch + settings base.
 Landing here also prunes orphaned `sb/` sessions unless `prune_on_launch: false`.
 
 ### `switchboard install [--no-tmux] [--print-tmux] [--tmux-conf PATH] [--codex-hooks] [--no-codex-hooks]`
-Stand switchboard up from a fresh clone or a Homebrew install. Idempotent. Four steps:
+Stand switchboard up from a fresh clone or a Homebrew install. Idempotent. Five steps:
 
 1. Symlink `switchboard` (and the `sb` alias) into `~/.local/bin` (or
    `$SWITCHBOARD_BIN_DIR`). Skipped under Homebrew, which already put both on
@@ -42,6 +42,8 @@ Stand switchboard up from a fresh clone or a Homebrew install. Idempotent. Four 
    If the block is already there, it's re-ensured without a prompt. Tables codex
    itself wrote inside the block (`[desktop]`, `[plugins."…"]`, …) are moved,
    unchanged and in order, to just above it, and your `/hooks` approvals are kept.
+5. Update the Claude hooks in existing worktrees that already have them, as
+   `switchboard upgrade` does (only when run as the `switchboard` on your PATH).
 
 | Flag | Effect |
 |------|--------|
@@ -65,6 +67,43 @@ Under Homebrew, every path it writes uses the stable `<prefix>/opt/switchboard`
 link rather than the versioned `Cellar` folder, so the wiring survives
 `brew upgrade` + `brew cleanup` (see
 [Explanation: distribution](explanation-distribution.md)).
+
+### `switchboard upgrade`
+Update switchboard and bring the setup up to date. First it checks for a newer
+version: the newest release tag on GitHub for a Homebrew install, the upstream branch
+for a clone. Then, if there is one, or it can't tell (a `--HEAD` install, offline, a
+branch with no upstream):
+
+1. Fetches it: `brew update` + `brew upgrade switchboard` (Homebrew), `brew upgrade
+   --fetch-HEAD switchboard` (a `--HEAD` install), or `git fetch` + `git merge
+   --no-overwrite-ignore --ff-only @{upstream}` (a clone; refused while tracked files
+   have uncommitted changes, and git itself refuses an update that would overwrite an
+   untracked or ignored file).
+2. Hands off to the new binary, which:
+   - refreshes the agent-state reporter script;
+   - updates the Claude hooks in every worktree of the configured projects that
+     already has them, when the hooks differ from this version's. It never adds hooks
+     where there are none. A file Claude changed mid-update is skipped and reported, and
+     so is a broken (unparseable) settings file holding switchboard's hooks, with the
+     specific reason;
+   - re-ensures the global codex block if it's installed (never adds one);
+   - runs `switchboard.tmux` in the running tmux server, from any shell, when your
+     tmux.conf sources this install.
+
+   The first three run only when the running binary is the `switchboard` on your PATH,
+   because the hooks and the reporter call back into whichever binary wrote them; from
+   any other copy (a clone's `bin/switchboard`, say) the worktree hooks are skipped with
+   a note, and the reporter and codex block are left as they are.
+
+Already current, it prints `switchboard X is up to date` and exits 0, unless the setup
+is stale (old worktree hooks, hook slots or the toggle key not live, an old or missing reporter, or an old
+codex block), in which case it runs step 2. Exits 1 if a fetch or setup step fails,
+and also when `brew update` failed and nothing was upgraded (Homebrew may not have the
+newest release, so it says so instead of "nothing newer"). A `brew update` failure is
+only a note when the upgrade still lands.
+A release tag Homebrew doesn't have yet is reported, not treated as an error, and so is
+a fetch that brought nothing new ("Homebrew has nothing newer", "already the newest
+commit on your branch"); as when already current, a stale setup still gets step 2.
 
 ### `switchboard uninstall [--tmux-conf PATH]`
 Reverse `install`: remove both symlinks (under Homebrew it leaves PATH to
@@ -120,14 +159,18 @@ specific pane.
 Wire exact agent-state hooks for the **Claude** worktree adapter
 (`<worktree>/.claude/settings.local.json`) — scoped to that worktree, never your
 global `~/.claude`. Defaults to the worktree you're standing in; pass a path to
-target another. Restart `claude` there to pick them up. New switchboard-created
+target another. A running `claude` there picks them up on its own. New switchboard-created
 worktrees get this automatically.
 
 Codex is **not** wired here: it can't discover project-local hooks in a linked
 worktree, so its hooks ship as one global block in `~/.codex/config.toml`,
 installed once via `switchboard install --codex-hooks` (or the install prompt).
 `enable-hooks` re-ensures that global block if it's already present, and exits 1
-if that codex write is refused (the Claude hooks are still wired).
+if that codex write is refused (the Claude hooks are still wired). It also exits 1
+when the Claude hooks couldn't be written (a settings file that isn't valid JSON or
+UTF-8, has a malformed hooks section, can't be read, isn't a regular file under 4 MiB,
+or can't be written: fix it, then re-run; `doctor` names the reason) or the reporter
+script couldn't be.
 
 ### `switchboard disable-hooks [path]`
 Remove switchboard's Claude hooks from a worktree, leaving any other settings
@@ -219,11 +262,17 @@ trap), PATH symlinks (under Homebrew: that `switchboard` and `sb` on PATH are th
 missing or shadowed by an old clone's link, a clone's `bin/` directory, or another program), which install tmux.conf is wired to (this
 one ✓, another that still exists –, or one that's gone ✗), tmux wiring (bound keys +
 hooks, and whether they're *live* in the running server vs only in config), a bad or clashing `sidebar_keys` remap,
-the Claude hooks in the worktree you're standing in, the global codex block (how many
+whether a newer release is out (Homebrew installs: a `git ls-remote` to GitHub, bounded
+to 5s, and it says so when it can't check; a clone or `--HEAD` install says which branch
+it follows instead), the Claude hooks in the worktree you're standing in (missing,
+unreadable, out of date because an older release wrote them, or unparseable, naming why), the global codex block (how many
 of its hooks codex has approved, `N/M trusted`, or a fix when the block is stale, can't
 be rewritten safely, or collides with your own `[hooks]`), `gh`
 auth + per-project badge staleness, audio player +
-sound resolution, orphaned sessions, and orphaned sidebar processes. Read-only.
+sound resolution, orphaned sessions, and orphaned sidebar processes. Read-only. Its
+network calls are the release check (Homebrew only) and `gh`'s auth check. Hook staleness is judged
+only from the installed `switchboard`; run from another copy, doctor just reports the
+hooks as present.
 The first place to look when something's off.
 
 ### `switchboard sandbox`

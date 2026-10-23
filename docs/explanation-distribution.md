@@ -60,9 +60,11 @@ installs behave exactly as before.
 - **It recognizes Homebrew by path shape.** A keg with no `opt/` link (only
   possible in a hand-broken prefix; brew creates it on install and keeps it
   through `brew unlink`) falls back to the real path and is treated like a clone.
-- **New tmux bindings still need a reload after an upgrade.** The paths stay
-  valid, but a running tmux server keeps the bindings and hooks it loaded. That's
-  the same as a `git pull` upgrade; `switchboard doctor` tells you when.
+- **An upgrade still has to touch the running setup.** The paths stay valid, but
+  a running tmux server keeps the bindings and hooks it loaded, and each worktree's
+  Claude hooks keep the set the release that wrote them had. `switchboard upgrade`
+  does both after fetching the new version (tmux from any shell, hooks only from the
+  installed binary); `switchboard doctor` tells you when either is stale.
 - **Under brew, PATH belongs to brew.** `install` skips the `~/.local/bin`
   symlinks and `uninstall` leaves PATH to `brew uninstall`; `doctor` checks that
   `switchboard` and `sb` on your PATH are this install, and says how to fix

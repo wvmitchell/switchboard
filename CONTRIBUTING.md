@@ -151,9 +151,9 @@ Release, and updates the Homebrew tap, once `test` and `formula` are green on
 main. Never tag by hand. See [How to cut a release](docs/howto-release.md) and
 [the release pipeline reference](docs/reference-release.md).
 
-After upgrading (`brew upgrade switchboard` or `git pull`), users re-run
-`switchboard install` (or reload tmux) so new
-tmux bindings/hooks go live — the CHANGELOG header says so.
+Users upgrade with `switchboard upgrade` (0.52.0+): it fetches the new version and has
+the new binary re-wire tmux and every hooked worktree — the CHANGELOG header says so.
+`switchboard install` is the manual repair (inside tmux, it also reloads the bindings).
 
 ## Where things live
 
@@ -165,6 +165,7 @@ tmux bindings/hooks go live — the CHANGELOG header says so.
 | The sidebar TUI | `lib/switchboard/sidebar.rb` (run-loop core) + `lib/switchboard/sidebar/{edges,render,input,actions,prompt,rows}.rb` (its test files: `test/sidebar_*_test.rb`, sharing `test/support/sidebar_case.rb`) |
 | tmux integration | `lib/switchboard/tmux.rb`, `switchboard.tmux` |
 | Install / keybindings | `lib/switchboard/installer.rb`, `stable_path.rb` (Homebrew `opt/` paths) |
+| Upgrade / release check | `lib/switchboard/upgrade.rb`, `latest_release.rb` |
 | Packaging / releases | `packaging/homebrew/switchboard.rb` (formula), `packaging/release.rb`, `.github/workflows/{release,formula}.yml` |
 | Marker-block surgery (tmux.conf + `~/.codex/config.toml`) | `lib/switchboard/marker_block.rb` |
 | Agent state / hooks | `lib/switchboard/agent_state.rb`, `agents.rb`; adapters `claude_hook.rb` (Claude, per-worktree) + `codex_hook.rb` (Codex, global `~/.codex/config.toml` block) over shared base `hook_file.rb`, behind registry `agent_hooks.rb` |

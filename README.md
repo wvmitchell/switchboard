@@ -77,10 +77,14 @@ toggles the sidebar from any pane.
 
 ### Upgrading
 
-`brew upgrade switchboard` (or `git pull` in your clone), then re-run
-`switchboard install` or reload tmux so any new key bindings and hooks go live.
-When a release's CHANGELOG says so, also run `switchboard enable-hooks` in each
-existing worktree to pick up new agent hooks. Moving a clone install to Homebrew, or uninstalling, is covered in
+```sh
+switchboard upgrade
+```
+
+It updates switchboard the way you installed it (Homebrew, or a fast-forward pull in
+a clone), then brings your setup up to date: tmux's key bindings and hooks, every
+existing worktree's agent hooks, and the codex hooks if you use them. Already on the
+newest release, it says so. Moving a clone install to Homebrew, or uninstalling, is covered in
 [How to install, upgrade, or move to Homebrew](docs/howto-install-and-upgrade.md).
 
 ## The core loop
