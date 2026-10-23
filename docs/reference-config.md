@@ -29,6 +29,7 @@ or `e` in the sidebar — both reload on save.
 | `auto_rename` | bool | `true` | Nudge the agent to `switchboard rename` a placeholder-named workspace once it knows the work (a `SessionStart` hook). `false` opts out. Per-project override wins. See [`auto_rename`](#auto_rename). |
 | `diff_counts` | bool | `true` | Show the `+adds −dels` diff count on each workspace/branch row. `false` hides it and skips the per-worktree `git diff` entirely. |
 | `prewarm` | bool | `true` | Keep off-screen sidebars warm so switching sessions doesn't flash a stale tree. `false` restores full dormancy (no off-screen work). See [`prewarm`](#prewarm). |
+| `remote_link_stale_after` | minutes or `false` | `120` | How long a `/remote-control`-linked Claude session can sit idle before its `⇅` turns grey and it counts as an **idle link**. `false` or `0` turns that off; anything else invalid uses 120. Global only. See [`remote_link_stale_after`](#remote_link_stale_after). |
 | `session_command` | string | _(none)_ | The agent a new workspace runs, after its setup. The task typed after `n` is appended when the command is plain words starting with `claude`/`codex` (no quotes, `#`, `&`, `;`, `|` or redirects); anywhere else, write `{task}` where it goes — bare, in quotes, or inside a quoted string (`aider --message {task}`, `claude "fix: {task}"`) — and it arrives as one argument, byte-exact. Inside a command that hands its text to another shell (`bash -c '…'`, `ssh host …`), use `"$SWITCHBOARD_TASK"` directly instead: that inner shell would read a substituted task as code. Otherwise the pane says "task not sent". `false` turns it off. Per-project override wins. |
 | `worktree_creation_command` | string or list | _(none)_ | Setup script run **once in a new worktree**, before `session_command` — the `.env` / `bundle install` a fresh checkout needs. Per-project override wins; a per-project `false` turns it off. See [`worktree_creation_command`](#worktree_creation_command). |
 | `sounds` | map or `false` | _(on, built-ins)_ | Completion sounds. See [`sounds`](#sounds). |
@@ -50,6 +51,7 @@ prune_on_launch: true                    # tidy orphaned sessions on landing hom
 auto_rename: true                        # let the agent name a placeholder workspace (on by default)
 diff_counts: true                        # show +adds −dels on each row (false skips the git diff)
 prewarm: true                            # keep off-screen sidebars warm (false = full dormancy)
+remote_link_stale_after: 120             # minutes before an idle /rc link's ⇅ turns grey
 session_command: claude                  # run this on a worktree's first session
 worktree_creation_command:               # run ONCE in a new worktree, before the agent
   - cp "$SWITCHBOARD_PROJECT_PATH/.env" .
@@ -130,6 +132,26 @@ than via pre-warming.
 Set `prewarm: false` to restore full off-screen dormancy (the flash returns). It's
 a global knob — there's no per-project override. For the full mechanism see
 `docs/explanation-sidebar-lifecycle.md`.
+
+---
+
+## `remote_link_stale_after`
+
+```yaml
+remote_link_stale_after: 120    # default, in minutes
+```
+
+A workspace whose Claude session has `/remote-control` (`/rc`) on shows `⇅` after its
+name: you can reach it from your phone. switchboard reads this from the session file
+Claude already writes, so there's nothing to set up. A link whose session has sat
+**idle** longer than this many minutes turns its `⇅` grey and is counted in the home
+header as an **idle link**: likely a door you opened and forgot. Background Claude
+jobs never count as idle. `false` (or `0`) turns the idle check off; the `⇅` still
+shows. Global only. If the glyph never appears, `switchboard doctor`'s "remote links"
+row says whether Claude's session files moved or changed shape.
+If you set `CLAUDE_CONFIG_DIR`, export it where tmux sees it (`.zshenv`, or
+`tmux set-environment -g CLAUDE_CONFIG_DIR …`): sidebars are started by tmux, which
+never reads your `.zshrc`. `doctor` warns when the two disagree.
 
 ---
 

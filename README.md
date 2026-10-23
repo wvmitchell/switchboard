@@ -40,6 +40,13 @@ watching for — the agent runs `switchboard monitoring notify` and that workspa
 and plays a distinct **alert** sound, the one exception to the silent ticks, so a
 background find still reaches you.
 
+A workspace you can reach **from your phone** right now — a Claude session with
+`/remote-control` (`/rc`) on — shows a `⇅` after its name, and the home header counts
+your links. Nothing to set up: switchboard reads the session file Claude already
+writes. A link left idle past `remote_link_stale_after` (default 120 minutes) turns
+its `⇅` grey and is counted as an **idle link**, so a door you opened and forgot
+doesn't stay open unnoticed.
+
 ## Why
 
 Coding agents pay off in parallel — several at once, each in its own worktree.
