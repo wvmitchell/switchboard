@@ -80,12 +80,21 @@ module Switchboard
     end
 
     # rename lifecycle (#94): dir move + branch + tmux session rename, in place.
+    # The session and sidebar appear while the background build is still running, and
+    # rename refuses (:building) until the agent has started. A slow setup script holds
+    # that window open on purpose, so the test always crosses it: re-issue the rename
+    # until it's accepted (a refusal moves nothing), as switch_client does for switches.
     def test_renaming_a_workspace_moves_its_dir_and_session
+      File.open(ENV["SWITCHBOARD_CONFIG"], "a") { |f| f.puts "worktree_creation_command: sleep 2" }
       sess = create_workspace
       leaf = sess.split("/").last
       newname = "renamed"
-      system(BIN, "rename", newname, chdir: worktree_path(leaf), out: File::NULL, err: File::NULL)
-      wait_until("the renamed session exists and the old one is gone") do
+      said = nil
+      wait_until("the build lets the rename through") do
+        said = IO.popen([BIN, "rename", newname, { chdir: worktree_path(leaf), err: %i[child out] }], &:read)
+        !said.include?("still being created")
+      end
+      wait_until("the renamed session exists and the old one is gone (rename said: #{said.strip})") do
         session?("sb/proj/#{newname}") && !session?(sess)
       end
       assert Dir.exist?(worktree_path(newname)), "the worktree dir moved to the new name"
