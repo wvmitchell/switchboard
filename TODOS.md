@@ -14,6 +14,67 @@ and where to start.
   equals `GATES.split`, and that each gate is the `name:` of a file under
   `.github/workflows/`. **Priority:** P2.
 
+## `switchboard upgrade` (issue #10) follow-ups
+
+Found by the 0.52.0 ship reviews and deliberately deferred (the behavior fails loudly or
+safe today; each is narrow).
+
+- **doctor/upgrade check the toggle key switchboard bound, not the configured one.** *Why:*
+  `Installer.bound_toggle_key` prefers `@switchboard-toggle-key`, so a `tmux_keys.toggle`
+  edited in config.yml by hand (not via `e`/`switchboard config`, which rebind at once)
+  reads green in doctor and `upgrade` never rebinds it — on main, doctor checked the
+  configured key. *Start in:* tell "tmux rejected the configured key" (a recorded fallback)
+  apart from "config changed since bind"; feed both doctor's row and `Upgrade.tmux_stale?`.
+  Workaround: `switchboard config` or reload tmux. **Priority:** P1.
+- **A malformed config.yml makes install/upgrade skip the hook refresh silently.** *Why:*
+  `Config.new` rescues a parse error to `{}`, so `Installer.configured_worktrees` is empty,
+  `step_rewire_hooks` prints nothing and `upgrade` says up to date. *Start in:* check
+  `Config.new.load_error` in `refresh_wiring` and fail with it. **Priority:** P1.
+- **A settings file with an overflowing number (`1e400`) crashes current?/refresh.** *Why:*
+  `JSON.parse` yields Infinity, `merged`'s `JSON.generate` raises `GeneratorError`, unrescued
+  on `leftovers?`, `doctor` and `enable-hooks`. *Start in:* round-trip in `load_settings`
+  and raise `Corrupt`. **Priority:** P2.
+- **Clear GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE for the clone upgrade's git commands.**
+  *Why:* `-C` doesn't override them, so upgrade run with them exported (inside a git hook)
+  acts on another repo. *Start in:* `Upgrade.clone_pull`/`clone_behind?`/`stamp`/`git_out`.
+  **Priority:** P2.
+- **Other binaries still rewrite the shared reporter.** *Why:* `HookFile.enable` (enable-hooks,
+  `Creator.work`) and `CodexHook.install_global` call `ensure_script` from any binary, so a
+  dogfood checkout flips the reporter and the installed `upgrade` re-finishes. *Start in:*
+  gate on `Installer.installed_bin?` unless the script is missing. **Priority:** P2.
+- **Confirm a running Claude picks up hooks after an atomic rename.** *Why:* `write_json`
+  now replaces settings.local.json by rename and the output says "a running Claude picks the
+  change up on its own"; unverified live. *Start in:* rewrite mid-session, check a new hook
+  fires; else restore the restart / `/hooks` hint. **Priority:** P2.
+- **Homebrew edges.** *Why:* the bare `brew upgrade switchboard` resolves through PATH (a
+  second Homebrew prefix, a same-named core formula, a pinned keg), and a formula revision at
+  the same version is never applied (up-to-date is decided by the tag). *Start in:* the
+  keg's own `brew`, the qualified `wvmitchell/switchboard/switchboard`, `brew outdated`.
+  **Priority:** P2.
+- **A clone on a merged/deleted branch reads up to date forever.** *Why:* clones compare
+  only with their upstream, never release tags. *Start in:* add `LatestRelease` to the clone
+  path as a note. **Priority:** P2.
+- **Smaller upgrade/doctor nits.** Refuse a non-Homebrew install that isn't its repo's
+  top level; doctor's tmux rows advise `upgrade` where it can't help (tmux < 3.0, unwired);
+  clone failure advice on a diverged or detached clone says "re-run", which can't succeed;
+  install's closing hint names the configured key, not a fallback; concurrent upgrades can
+  re-apply the older one's wiring; release lookup: proxy/CA dropped, `GIT_CONFIG_PARAMETERS`
+  inherited, repo discovery when TMPDIR sits in a repo (`GIT_CEILING_DIRECTORIES`), a git
+  helper that ignores TERM outlives the deadline; doctor's network call could be cached;
+  the reporter's `script_state` reads a FIFO/`/dev/zero` unbounded; a non-UTF-8 `$HOME`
+  keeps hooks from ever converging. **Priority:** P3.
+- **Code tidy-ups.** `Upgrade.git_out` → a status-aware `Git` helper; `HookFile.bin` ==
+  `CodexHook.bin`; `unreadable?` reads the whole file; the tmux 3.0 floor literal ×4 → a
+  constant; the `upgrade.rb` header diagram lacks `update_blocked`; `reporter_unwritable`'s
+  message omits the exec bit; `hooked_worktrees`' comment omits unreadable files;
+  `doctor_hooks` calls Claude-only adapter methods; a 0444 settings file is now replaced
+  by the rename; `refresh` drops a user's empty hook groups once; `install --print-tmux`
+  still refreshes hooks; the `'{ // mine'` test fixtures trip json's comment warning; the
+  stalled-lookup test's timing margin. **Priority:** P3.
+- **tmux fragment digest.** *Why:* `leftovers?` notices stale hook slots and the toggle key,
+  not a fragment whose other lines changed. *Start in:* hash the fragment into a
+  `@switchboard-*` option at bind time. **Priority:** P3.
+
 ## Background dispatch (v0.51.0) follow-ups
 
 - **Scope typeahead to the task prompt, and never let it submit.** *Why:* `Sidebar#handle`
@@ -49,8 +110,16 @@ and where to start.
   long-lived process; after `brew upgrade` / `git pull` an old one keeps running the old
   `switch`, which starts the agent without checking the dispatch record (so it can start
   on a failed build's un-set-up tree). The 0.51.0 CHANGELOG tells users to refresh by
-  hand. *Start in:* compare `VERSION` (or the bin's mtime) with the value at startup in
+  hand, and `switchboard upgrade` (0.52.0) prints the "press prefix-s twice in each
+  session" hint rather than restarting them (the user chose no automatic restart from
+  `upgrade`; a sidebar replacing ITSELF on a version change is this item). *Start in:*
+  compare `VERSION` (or the bin's mtime) with the value at startup in
   `tick`, then exit and let `reconcile_sidebars` respawn. **Priority:** P2.
+- **"Update available" cue in the home header.** *Why:* `doctor` and `upgrade` say when
+  a release is out, but nothing tells you unprompted. *Start in:* `LatestRelease.latest`
+  (bounded, 5s) run off the paint loop and cached on disk like the PR badges, read in
+  `Sidebar#header`; add the cache file to `warm_fingerprint`. Deferred from the 0.52.0
+  upgrade-command review (D6). **Priority:** P3.
 - **Input edges in the task prompt and modals.** *Why:* an unpaired paste-start marker
   wedges the task prompt in paste mode (Esc/^C/↵ all become text; `prefix-s` escapes); a
   literal paste-end inside pasted text ends the paste early; a 1 KB read split on a
@@ -485,15 +554,6 @@ and where to start.
   copy that parses as JSON, changed and newer than the real file, via a 0600 temp + rename
   removed on failure; never create a real auth.json that wasn't there. Or the smaller
   alternative: refuse CodexHook writes under SWITCHBOARD_SANDBOX. **Priority:** P2.
-
-- **Doctor: flag a worktree whose Claude hooks predate the current entries.** *Why:*
-  new Claude hook entries (v0.51.1's `PermissionRequest → waiting` and the SessionEnd
-  `timeout`) reach a worktree only on create or `switchboard enable-hooks`, but
-  `HookFile.enabled?` is presence-only, so doctor shows ✓ for a worktree still on the old
-  set (decision dec-0dd4f937; `gstack-shortcut` marker in `CLI#doctor_hooks`). *Start in:*
-  compare the worktree's switchboard entries with `HookFile.command_entries` + `HookFile::SESSION_END_TIMEOUT` (added per event in `HookFile.enable`)
-  (the Claude twin of `CodexHook.block_state`'s `:stale`) and suggest `enable-hooks`; or
-  re-ensure tracked worktrees from `install`. **Priority:** P3.
 
 - **Doctor: tell a codex approval from a stale carried-over one.** *Why:* v0.50.1's install
   carries every `[hooks.state]` approval across a command change (a brew ↔ clone bin switch) —

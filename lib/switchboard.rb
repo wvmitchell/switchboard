@@ -1,5 +1,11 @@
 # frozen_string_literal: true
 
+module Switchboard
+  # An environment value as UTF-8. Under a C/POSIX locale Ruby hands ENV back as BINARY,
+  # which can't be combined with the UTF-8 strings (hook commands, messages) built from it.
+  def self.env(name) = ENV[name]&.dup&.force_encoding(Encoding::UTF_8)
+end
+
 require_relative "switchboard/version"
 require_relative "switchboard/stable_path"
 require_relative "switchboard/config"
@@ -32,7 +38,9 @@ require_relative "switchboard/tree"
 require_relative "switchboard/placeholder"
 require_relative "switchboard/creator"
 require_relative "switchboard/registrar"
+require_relative "switchboard/latest_release"
 require_relative "switchboard/installer"
+require_relative "switchboard/upgrade"
 require_relative "switchboard/tmux"
 require_relative "switchboard/isolated_server"
 require_relative "switchboard/claude_history"

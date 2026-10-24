@@ -47,31 +47,41 @@ cd switchboard && bin/switchboard install
 
 ## Upgrade
 
-**Homebrew:**
-
 ```sh
-brew upgrade switchboard
-switchboard install        # or: tmux source-file ~/.tmux.conf
+switchboard upgrade
 ```
 
-**Clone:**
+`upgrade` fetches the new version the way you installed it:
 
-```sh
-git -C <your clone> pull --ff-only
-switchboard install        # or: tmux source-file ~/.tmux.conf
-```
+- **Homebrew:** `brew update`, then `brew upgrade switchboard`. A `--HEAD` install
+  runs `brew upgrade --fetch-HEAD switchboard` and follows `main`.
+- **Clone:** `git fetch`, then a fast-forward-only merge of the upstream of the
+  branch your clone tracks (`git merge --no-overwrite-ignore --ff-only @{upstream}`).
+  It refuses if tracked files have uncommitted changes. Untracked and ignored files
+  are fine, unless the update would overwrite one: then git refuses and names the file.
 
-Either way the new code runs immediately, but a running tmux server keeps the key
-bindings and hooks it loaded at startup. Re-running `install` (idempotent) or
-reloading tmux picks up any new ones. Under Homebrew every path switchboard wrote
-into your config points at `$(brew --prefix)/opt/switchboard`, which brew moves to
-the new version, so nothing goes stale when the old version is cleaned up. See
+Then the new version finishes the setup:
+
+- reloads switchboard's tmux bindings and hooks in the running server, even from a
+  shell outside tmux (only if your tmux.conf sources this install);
+- updates the agent hooks in every worktree of your configured projects that already
+  has them, including primary checkouts. A running Claude picks the change up on its own;
+- refreshes the global codex hooks if you installed them. If their commands changed it
+  tells you to run `/hooks` in codex once.
+
+Running sidebars keep the old code until they restart: press your sidebar toggle key
+(`prefix-s` unless you remapped it) twice in each switchboard session.
+
+If you're already on the newest release, `upgrade` says so and stops. If an earlier
+upgrade was interrupted before it finished, running `upgrade` again finishes it. The
+version that first ships `upgrade` (0.52.0) still has to be installed the old way:
+`brew upgrade switchboard` (or `git pull`), then `switchboard install`.
+
+`switchboard install` does the same worktree-hook update, so it still works as a
+manual repair. Under Homebrew every path switchboard wrote into your config points at
+`$(brew --prefix)/opt/switchboard`, which brew moves to the new version, so nothing
+goes stale when the old version is cleaned up. See
 [Explanation: distribution](explanation-distribution.md).
-
-A release that adds a Claude hook (the CHANGELOG's **Upgrading** notes say so)
-reaches an existing worktree only when you re-run `switchboard enable-hooks` in it;
-new worktrees get it automatically. `doctor` still shows ✓ for a worktree on the
-older hook set.
 
 ## Move from a git clone to Homebrew
 
@@ -100,21 +110,14 @@ older hook set.
    `switchboard: No such file or directory`, it remembered the clone's deleted
    link: run `hash -r` (bash) or `rehash` (zsh), or open a new shell.
 
-3. Point each existing worktree's Claude hooks at the new install. Hooks are
-   written per worktree with the install path baked in, so re-enable them in
-   every worktree that had them:
+3. Check that each existing worktree's Claude hooks point at the new install.
+   Hooks are written per worktree with the install path baked in. Step 2's
+   `install` already repointed every worktree of the projects in your config that
+   had them (it prints `worktree hooks: updated N`). For a repo you hooked that
+   isn't in your config, run:
 
    ```sh
    switchboard enable-hooks <worktree path>
-   ```
-
-   For every worktree of a repo that already had switchboard's hooks:
-
-   ```sh
-   git -C <repo> worktree list --porcelain | sed -n 's/^worktree //p' |
-     while read -r wt; do
-       grep -qs switchboard "$wt/.claude/settings.local.json" && switchboard enable-hooks "$wt"
-     done
    ```
 
    `enable-hooks` replaces switchboard's own entries and leaves yours alone.
@@ -125,8 +128,8 @@ older hook set.
    your sidebar toggle key (`prefix-s` unless you remapped it) twice: once to
    dismiss its sidebars, once to bring them back from the new install. (If a
    session's sidebar was hidden, the first press brings back a new one, so press
-   it once more if you want it hidden again.) Then restart `claude` in each workspace (or run `/hooks`) so it
-   picks up the hooks from step 3.
+   it once more if you want it hidden again.) A running `claude` picks up the
+   hooks from step 3 on its own.
 
    To restart everything at once instead, `switchboard quit` closes every
    switchboard session. **This kills every agent, editor and shell running in
@@ -191,9 +194,10 @@ switchboard doctor
   `brew link switchboard`. If brew reports a conflict on `sb`, another program
   owns that name; `brew link --overwrite switchboard` takes it over.
 - **Workspaces stopped getting auto-named, or the ∞ monitoring dot doesn't clear,
-  after the move.** Step 3 wasn't run for that worktree, so its hooks still call
-  the old install (or nothing, if the clone is gone). The status dots keep working
-  either way. Run `switchboard enable-hooks` there.
+  after the move.** That worktree's hooks still call the old install (or nothing, if
+  the clone is gone): it isn't in a project in your config, or `install` reported it
+  as not updated. The status dots keep working either way. Run `switchboard
+  enable-hooks <worktree path>` there.
 - **Codex dots stopped after the move.** The codex hook commands changed path, so
   codex wants them approved again. Run `/hooks` in codex once. (`doctor`'s
   `N/M trusted` can't help here: the old approvals are still on file, so it counts
@@ -209,8 +213,25 @@ switchboard doctor
   `switchboard uninstall`. Don't delete the block by hand: codex may have written
   some of its own settings inside it.
 - **`prefix-s` does nothing after an upgrade.** tmux still has the old bindings.
-  Run `switchboard install` or `tmux source-file ~/.tmux.conf`; `doctor` confirms
-  with `prefix-s bound (toggle-sidebar)`.
+  Run `switchboard upgrade` (it finishes a setup an earlier upgrade left undone) or
+  `tmux source-file ~/.tmux.conf`; `doctor` confirms with `prefix-s bound (toggle-sidebar)`.
+- **`– claude hooks here are out of date`.** This worktree's hooks were written by an
+  older release. Run `switchboard upgrade`, or `switchboard enable-hooks` in it. If the
+  worktree isn't in a configured project, `upgrade` skips it (doctor says so): run
+  `switchboard enable-hooks` there.
+- **`upgrade` says a version is tagged but Homebrew doesn't have it yet.** The release
+  is published before the Homebrew formula is updated. Try again in a few minutes.
+- **`upgrade` says `` `brew update` failed `` and exits 1.** `brew update` failed and
+  nothing was upgraded, so Homebrew may not know about the newest switchboard. Read
+  brew's output above the message. An untrusted tap is a common cause
+  (`brew trust wvmitchell/switchboard`). Then re-run `switchboard upgrade`. (If
+  `brew update` fails but the upgrade still lands, it's only a note.)
+- **`upgrade` stops at `git merge` in a clone.** The update would overwrite an
+  untracked or ignored file in your clone, and git names it. Move that file aside,
+  then re-run `switchboard upgrade`.
+- **`worktree hooks: not refreshed — … isn't the switchboard on your PATH`.** You ran
+  a different copy of switchboard (a clone's `bin/switchboard`, say). It leaves the hooks
+  alone so they don't end up pointing at that copy. Run `switchboard upgrade` instead.
 
 ## Related
 

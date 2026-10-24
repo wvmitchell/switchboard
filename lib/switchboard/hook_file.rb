@@ -99,7 +99,30 @@ module Switchboard
     # the switchboard checkout/cellar (which moves on upgrade). One reporter is
     # shared by every adapter — the state-file format is agent-neutral.
     def script_path
-      File.expand_path(File.join(ENV["XDG_DATA_HOME"] || "~/.local/share", "switchboard", MARK))
+      File.expand_path(File.join(Switchboard.env("XDG_DATA_HOME") || "~/.local/share", "switchboard", MARK))
+          .dup.force_encoding(Encoding::UTF_8) # `~` expands from $HOME, BINARY under a C locale
+    end
+
+    MAX_SETTINGS = 1 << 22 # 4 MiB; a real settings file is a few KB
+
+    # A settings path that is safe to read: a regular file of sane size. A FIFO would block
+    # and /dev/zero would never end, and every configured worktree's file gets read.
+    def readable_settings?(path) = File.file?(path) && File.size(path) <= MAX_SETTINGS
+
+    # :current, :stale (another release's) or :missing — what upgrade and doctor both read.
+    # Whether a missing one matters is the caller's call (Installer.reporter_needed?).
+    def script_state
+      return :missing unless File.exist?(script_path)
+
+      script_current? ? :current : :stale
+    end
+
+    # This version's bytes AND runnable: hooks exec it directly, so a lost exec bit is as
+    # broken as old contents.
+    def script_current?
+      File.binread(script_path) == SCRIPT.b && File.executable?(script_path)
+    rescue StandardError
+      false
     end
 
     # Write the script out if missing or stale, mark it executable. Idempotent;
@@ -109,9 +132,9 @@ module Switchboard
     # PermissionRequest).
     def ensure_script
       path = script_path
-      if !File.exist?(path) || File.read(path) != SCRIPT
+      if !File.exist?(path) || File.binread(path) != SCRIPT.b # bytes: SCRIPT isn't ASCII, the locale may be
         FileUtils.mkdir_p(File.dirname(path))
-        MarkerBlock.atomic_write(path, SCRIPT)
+        MarkerBlock.atomic_write(path, SCRIPT, mode: 0o755) # hooks exec it directly
       end
       File.chmod(0o755, path)
       path
@@ -174,7 +197,131 @@ module Switchboard
     def enable(worktree, settings_rel, events)
       script = ensure_script
       path = settings_path(worktree, settings_rel)
+      write_json(path, merged(load_settings(path), events, script, bin))
+      ignore_local_settings(worktree, settings_rel)
+      path
+    rescue Corrupt => e
+      warn "switchboard: #{e.message} — leaving it untouched"
+      nil
+    end
+
+    # Bring an already-hooked worktree up to date, for an upgrade: a no-op when the file
+    # already holds what `enable` would write, else the same rewrite — unless the file
+    # changed while we merged. Claude writes this file too (a "don't ask again" grant), and
+    # replacing it from our earlier read would silently drop that grant. Returns :current,
+    # :rewired, :conflict (skipped; re-run) or :corrupt (left untouched).
+    #
+    # It only updates: a file without switchboard's hooks (disabled, or deleted since the
+    # caller listed it) is left as it is, never re-hooked.
+    def refresh(worktree, settings_rel, events)
+      ensure_script # before the snapshot, so the changed-file check spans every step up to the write
+      path = settings_path(worktree, settings_rel)
+      return :corrupt if File.exist?(path) && !(readable_settings?(path) && File.readable?(path))
+
+      before = File.exist?(path) ? File.binread(path) : nil
       data = load_settings(path)
+      return :current unless ours_in?(data)
+
+      want = merged(data, events, script_path, bin)
+      return :current if same_hooks?(want, data)
+      return :conflict unless (File.exist?(path) ? File.binread(path) : nil) == before
+
+      write_json(path, want)
+      ignore_local_settings(worktree, settings_rel)
+      :rewired
+    rescue Corrupt
+      :corrupt
+    end
+
+    # Whether the file already holds exactly what `enable` would write. A missing or
+    # unparseable file is not current.
+    def current?(worktree, settings_rel, events)
+      data = load_settings(settings_path(worktree, settings_rel))
+      same_hooks?(merged(data, events, script_path, bin), data)
+    rescue Corrupt, SystemCallError
+      false
+    end
+
+    # Equal up to the order of groups within an event. `merged` re-appends switchboard's
+    # groups at the end, so a hook added after them would otherwise read as stale forever;
+    # Claude runs an event's hooks in parallel, so their order carries no meaning.
+    def same_hooks?(a, b)
+      normalize = lambda do |data|
+        d = JSON.parse(JSON.generate(data))
+        d["hooks"]&.each { |event, groups| d["hooks"][event] = Array(groups).sort_by { |g| JSON.generate(canonical(g)) } }
+        d
+      end
+      normalize.call(a) == normalize.call(b)
+    rescue StandardError
+      false
+    end
+
+    # Hash keys sorted at every level, so a sort key built from it ignores key order (a file
+    # Claude rewrote can hold the same group with its keys in another order).
+    def canonical(value)
+      case value
+      when Hash  then value.keys.sort.to_h { |k| [k, canonical(value[k])] }
+      when Array then value.map { |v| canonical(v) }
+      else value
+      end
+    end
+
+    # A settings file holding switchboard's hooks that no longer parses: the caller reports
+    # it. A broken file without our marks is the user's own and none of our business. One
+    # we won't or can't read (a FIFO, /dev/zero, a huge file, no permission) can't be checked for marks, so it's
+    # reported too rather than silently dropped from install's and upgrade's scan. A
+    # directory there is plainly not a settings file: doctor's unreadable? row has it.
+    def corrupt?(worktree, settings_rel)
+      path = settings_path(worktree, settings_rel)
+      load_settings(path)
+      false
+    rescue Corrupt
+      return !File.directory?(path) unless readable_settings?(path)
+
+      raw = File.binread(path)
+      [MARK, NUDGE_MARK, MONITOR_MARK].any? { |m| raw.include?(m.b) }
+    rescue SystemCallError
+      File.exist?(path) && !File.directory?(path) # no permission: reported, like a FIFO
+    end
+
+    # Why a settings file won't parse (load_settings' message), or nil when it does — what
+    # install and doctor print, since "invalid JSON" isn't the only way to fail.
+    def corrupt_reason(worktree, settings_rel)
+      load_settings(settings_path(worktree, settings_rel))
+      nil
+    rescue Corrupt => e
+      e.message
+    rescue SystemCallError
+      "#{settings_path(worktree, settings_rel)} can't be read"
+    end
+
+    # Any settings file that won't parse, ours or not (doctor's row; Installer's hooked and
+    # stale lists use corrupt?, which also needs our marks).
+    def unparseable?(worktree, settings_rel)
+      load_settings(settings_path(worktree, settings_rel))
+      false
+    rescue Corrupt
+      true
+    rescue SystemCallError
+      false # unreadable: see unreadable?
+    end
+
+    # A settings path that exists but can't be read (a directory, no permission).
+    def unreadable?(worktree, settings_rel)
+      path = settings_path(worktree, settings_rel)
+      return false unless File.exist?(path)
+      return true unless readable_settings?(path)
+
+      File.read(path)
+      false
+    rescue SystemCallError
+      true
+    end
+
+    # Pure: `data` with switchboard's entries reset to this version's set — what `enable`
+    # writes. Leaves `data` itself untouched, so `refresh` can compare the two.
+    def merged(data, events, script, bin)
+      data = JSON.parse(JSON.generate(data))
       hooks = (data["hooks"] ||= {})
 
       # Idempotent RESET first: clear every switchboard-owned entry across ALL events so a
@@ -182,7 +329,7 @@ module Switchboard
       # adapter declares (appending without this would double SessionStart/Stop).
       hooks.each_key { |event| hooks[event] = strip_ours(hooks[event]) }
 
-      command_entries(events, script, ENV["SWITCHBOARD_BIN"] || "switchboard").each do |e|
+      command_entries(events, script, bin).each do |e|
         hook = { "type" => "command", "command" => e[:command] }
         hook["timeout"] = SESSION_END_TIMEOUT if e[:event] == "SessionEnd"
         group = { "hooks" => [hook] }
@@ -192,13 +339,12 @@ module Switchboard
 
       # Drop any event left empty by the reset (had only switchboard entries, not re-added).
       hooks.reject! { |_event, groups| groups.empty? }
+      data
+    end
 
-      write_json(path, data)
-      ignore_local_settings(worktree, settings_rel)
-      path
-    rescue Corrupt => e
-      warn "switchboard: #{e.message} — leaving it untouched"
-      nil
+    # The binary the hook commands call back into.
+    def bin
+      Switchboard.env("SWITCHBOARD_BIN") || "switchboard"
     end
 
     def disable(worktree, settings_rel)
@@ -216,7 +362,10 @@ module Switchboard
     end
 
     def enabled?(worktree, settings_rel)
-      data = read_json(settings_path(worktree, settings_rel))
+      ours_in?(read_json(settings_path(worktree, settings_rel)))
+    end
+
+    def ours_in?(data)
       (data["hooks"] || {}).values.flatten.any? do |group|
         Array(group["hooks"]).any? { |h| ours?(h["command"]) }
       end
@@ -265,26 +414,47 @@ module Switchboard
     # (or, in disable, delete) settings switchboard doesn't own. Raise instead.
     def load_settings(path)
       return {} unless File.exist?(path)
+      raise Corrupt, "#{path} isn't a regular file under #{MAX_SETTINGS >> 20} MiB" unless readable_settings?(path)
 
-      body = File.read(path)
+      body = File.read(path, encoding: Encoding::UTF_8) # UTF-8 whatever the locale (a C-locale tmux pane)
+      raise Corrupt, "#{path} isn't valid JSON" unless body.valid_encoding? # strip raises on bad bytes
       return {} if body.strip.empty?
 
-      JSON.parse(body) || {}
-    rescue JSON::ParserError
+      data = JSON.parse(body) || {}
+      raise Corrupt, "#{path} isn't valid JSON" unless data.is_a?(Hash) # `[]` parses, but holds no settings
+      raise Corrupt, "#{path} has a malformed hooks section" unless hooks_shape?(data["hooks"])
+
+      data
+    rescue JSON::ParserError, EncodingError
       raise Corrupt, "#{path} isn't valid JSON"
+    end
+
+    # The shape merged/strip_ours walk: { event => [ { "hooks" => [ {...} ] } ] }. Anything
+    # else (an array, a null entry) is the user's to fix, never ours to rewrite or crash on.
+    def hooks_shape?(hooks)
+      return true if hooks.nil?
+
+      hooks.is_a?(Hash) && hooks.values.all? do |groups|
+        groups.is_a?(Array) && groups.all? do |g|
+          g.is_a?(Hash) && (g["hooks"].nil? || (g["hooks"].is_a?(Array) && g["hooks"].all?(Hash)))
+        end
+      end
     end
 
     # Read-only/best-effort parse for the enabled? probe — corrupt reads as {}
     # (i.e. "not enabled"), which is harmless since nothing is written.
     def read_json(path)
-      File.exist?(path) ? (JSON.parse(File.read(path)) || {}) : {}
+      return {} unless File.exist?(path) && readable_settings?(path)
+
+      JSON.parse(File.read(path, encoding: Encoding::UTF_8)) || {}
     rescue StandardError
       {}
     end
 
+    # Atomic (temp + rename): Claude watches this file and reloads it live, so it must
+    # never catch a half-written one.
     def write_json(path, data)
-      FileUtils.mkdir_p(File.dirname(path))
-      File.write(path, "#{JSON.pretty_generate(data)}\n")
+      MarkerBlock.atomic_write(path, "#{JSON.pretty_generate(data)}\n")
     end
   end
 end

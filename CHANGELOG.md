@@ -4,11 +4,50 @@ Notable changes per version. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions match the `vX.Y.Z`
 prefixes in the git history and `lib/switchboard/version.rb`.
 
-After upgrading, re-run `bin/switchboard install` (or reload tmux) so any new
-tmux bindings/hooks go live — see the "Upgrading" section in the README.
+Upgrade with `switchboard upgrade` (0.52.0 and later); it re-wires tmux and your
+worktrees' hooks too. See the "Upgrading" section in the README.
 
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
+
+## [0.52.0] — `switchboard upgrade` (2026-10-23)
+
+### Upgrading
+- This one last time, upgrade the old way: `brew update && brew upgrade switchboard`
+  (or `git pull` in a clone), then `switchboard install`. From here on, `switchboard
+  upgrade` does it. This release's `install` also brings your configured projects'
+  hooked worktrees up to date, including 0.51.1's new hooks.
+
+### Added
+- **`switchboard upgrade`** updates switchboard the way you installed it (Homebrew,
+  Homebrew `--HEAD`, or a fast-forward pull in a clone) and then finishes the job:
+  - reloads switchboard's tmux bindings and hooks, even from a shell outside tmux;
+  - updates the agent hooks in every existing worktree that has them;
+  - refreshes the codex hooks if you installed them.
+
+  On the newest release already, it says so and stops; if an earlier upgrade didn't
+  finish, it finishes it. In a clone it won't update over uncommitted changes, or over
+  an untracked or ignored local file the update would replace. A freshly tagged release
+  that Homebrew doesn't have yet is reported as such, and if `brew update` fails and
+  nothing moved, it says so and exits 1.
+- **`doctor` says when a newer release is out** (a Homebrew install; a clone or `--HEAD`
+  install says which branch it follows), and flags a worktree whose Claude hooks
+  an older release wrote (it used to show ✓ as long as any switchboard hook was there).
+
+### Changed
+- `switchboard install` now updates the Claude hooks in your configured projects'
+  existing worktrees too, so moving from a clone to Homebrew no longer needs
+  `enable-hooks` in each of them (a hooked repo you never added still does).
+- `switchboard enable-hooks` exits 1, instead of saying "enabled", when it couldn't
+  write the Claude hooks (a settings file it can't read or parse, or can't write) or
+  the reporter script.
+- A worktree settings file switchboard can't use (invalid JSON or UTF-8, a malformed
+  `hooks` section, no read permission, or not a regular file under 4 MiB) is reported by
+  `install`, `upgrade` and `doctor` with the reason and left untouched, instead of
+  crashing them, hanging on it, or being skipped silently.
+- Rewriting a worktree's `.claude/settings.local.json` is atomic. When `upgrade` or
+  `install` finds the file changed while it was updating it (Claude saving a permission,
+  say), it leaves that worktree alone and asks you to re-run, instead of overwriting.
 
 ## [0.51.1] — agent hooks for Claude Code 2.1.30x and Codex 0.163 (2026-10-22)
 

@@ -69,6 +69,11 @@ module Switchboard
 
       other = %(bind-key  -T prefix s  send-keys hi\n)
       refute Installer.toggle_key_live_from?(other), "a foreign prefix-s binding isn't ours"
+      # tmux lists punctuation keys escaped; a `$` or `#` toggle must still read as bound.
+      escaped = %(bind-key -T prefix \\$ run-shell "'/bin/switchboard' toggle-sidebar"\n)
+      assert Installer.toggle_key_live_from?(escaped, "$"), "an escaped `$` binding reads live"
+      odd = "bind-key -T prefix x display caf\xC3\nbind-key -T prefix s run-shell \"'/x/switchboard' toggle-sidebar\"\n".dup.force_encoding(Encoding::UTF_8)
+      assert Installer.toggle_key_live_from?(odd, "s"), "an invalid byte in another binding doesn't raise"
 
       refute Installer.toggle_key_live_from?(""), "no binding reads not-live"
     end
@@ -773,6 +778,118 @@ module Switchboard
                      err: %i[child out], &:read)
       assert $?.success?, out
       assert_equal File.expand_path("..", __dir__), File.realpath(out.strip)
+    end
+
+
+    # Value: protects=the no-arg live probe (upgrade's leftovers check) testing the key switchboard
+    # actually bound, its fallback included; fails_when=the default arg reverts to the configured
+    # key or "s"; why_new=coverage gap; seam=none; no_claim=tmux's list-keys output format
+    def test_toggle_key_live_with_no_argument_probes_the_bound_key
+      raw = %(bind-key -T prefix F13 run-shell "'/x/switchboard' toggle-sidebar"\n)
+      cmds = []
+      fake = ->(cmd) { cmds << cmd; Kernel.send(:`, "true"); raw }
+      result = stub_method(Installer, :tmux_server?, -> { true }) do
+        stub_method(Installer, :bound_toggle_key, -> { "F13" }) do
+          stub_method(Installer, :`, fake) { Installer.toggle_key_live? }
+        end
+      end
+      assert_equal true, result
+      assert_includes cmds.first, "-- F13", "probed the bound key, not the configured one"
+    end
+
+    # Value: protects=doctor and upgrade reading "no tmux server" as unknown, not "key
+    # unbound" (tmux 3.8's list-keys starts a server and lists tmux's defaults);
+    # fails_when=toggle_key_live? drops its server check; why_new=cycle-2 probe; seam=none
+    def test_toggle_key_live_is_unknown_without_a_server
+      stub_method(Installer, :tmux_server?, -> { false }) { assert_nil Installer.toggle_key_live?("s") }
+      # Extended: a list-keys that would succeed (starting a server, listing tmux's defaults)
+      # must not be asked at all. Value: fails_when=the server check is dropped (the bare
+      # assertion above passed then, since this sandbox's list-keys fails); seam=none
+      defaults = ->(_cmd) { Kernel.send(:`, "true"); %(bind-key -T prefix s choose-tree -Zs\n) }
+      got = stub_method(Installer, :tmux_server?, -> { false }) do
+        stub_method(Installer, :`, defaults) { Installer.toggle_key_live?("s") }
+      end
+      assert_nil got, "no server: unknown, not unbound"
+    end
+
+    # Value: protects=a tmux too old to take a key in list-keys still reading a bound toggle
+    # as bound (from the whole table), and a failed read saying nothing either way; fails_when=
+    # the fallback is dropped or a failed read reads as "not bound"; why_new=cycle-3 testing +
+    # Red Team; seam=none; no_claim=which tmux versions lack the key argument
+    def test_toggle_key_live_falls_back_to_the_whole_table
+      full = %(bind-key -T prefix F13 run-shell "'/x/switchboard' toggle-sidebar"\n)
+      table_ok = true
+      fake = lambda do |cmd|
+        ok = cmd.include?(" -- ") ? false : table_ok # the keyed form is "unsupported"
+        Kernel.send(:`, ok ? "true" : "false")
+        ok ? full : ""
+      end
+      live = -> { stub_method(Installer, :tmux_server?, -> { true }) { stub_method(Installer, :`, fake) { Installer.toggle_key_live?("F13") } } }
+      assert_equal true, live.call
+      table_ok = false
+      assert_nil live.call, "neither read worked: unknown, not unbound"
+    end
+
+
+    # Value: protects=install and upgrade finding a tmux.conf tmux loads from
+    # $XDG_CONFIG_HOME/tmux (tmux 3.2+) when no server can be asked, after ~/.tmux.conf;
+    # fails_when=the XDG path drops out of the fallback, or jumps ahead of ~/.tmux.conf;
+    # why_new=Red Team run 4 (D3); seam=none; no_claim=a running server (smoke)
+    def test_tmux_conf_falls_back_in_tmuxs_own_order
+      xdg = File.join(ENV["XDG_CONFIG_HOME"], "tmux", "tmux.conf")
+      FileUtils.mkdir_p(File.dirname(xdg))
+      File.write(xdg, "# mine\n")
+      assert_equal xdg, Installer.tmux_conf
+      home = File.expand_path("~/.tmux.conf")
+      File.write(home, "# mine\n")
+      assert_equal home, Installer.tmux_conf, "~/.tmux.conf first, as tmux reads it"
+    end
+
+
+    # Value: protects=install/upgrade picking the conf tmux actually started from, not a theme
+    # or plugin file it sourced, with a real $HOME boundary; fails_when=the first listed file
+    # under $HOME wins again, or the prefix match lets /home/will match /home/william;
+    # why_new=security run 4 (D8); seam=none
+    def test_loaded_user_conf_prefers_the_standard_conf_the_server_loaded
+      home = File.expand_path("~")
+      theme = File.join(home, "themes", "dark.conf")
+      FileUtils.mkdir_p(File.dirname(theme))
+      main = File.join(home, ".tmux.conf")
+      [theme, main].each { |f| File.write(f, "# x\n") }
+      listed = ->(*files) { ->(_cmd) { Kernel.send(:`, "true"); files.join(",") } }
+      got = stub_method(Installer, :`, listed.call("/opt/tmux/main.conf", theme, main)) { Installer.loaded_user_conf }
+      assert_equal main, got, "the standard conf beats a sourced file listed earlier"
+      sibling = "#{home}x/.tmux.conf" # shares the prefix, not the directory
+      FileUtils.mkdir_p(File.dirname(sibling))
+      File.write(sibling, "# x\n")
+      got = stub_method(Installer, :`, listed.call(sibling)) { Installer.loaded_user_conf }
+      assert_nil got, "a path merely sharing $HOME's prefix isn't under it"
+    end
+
+    # Value: protects=a HOME of "/" (a service account) not making every loaded file read as
+    # the user's conf; fails_when=the root-home guard is dropped; why_new=coverage audit
+    # (proposed test 5); seam=none; no_claim=other odd HOME values
+    def test_loaded_user_conf_is_nil_when_home_is_the_root
+      sourced = path("plugins", "theme.conf")
+      FileUtils.mkdir_p(File.dirname(sourced))
+      File.write(sourced, "# x\n")
+      ENV["HOME"] = "/"
+      got = stub_method(Installer, :`, ->(_cmd) { Kernel.send(:`, "true"); sourced }) { Installer.loaded_user_conf }
+      assert_nil got
+    ensure
+      ENV["HOME"] = @dir
+    end
+
+    # Value: protects=a conf the server loaded but that was since deleted never being picked
+    # (upgrade would source a missing file); fails_when=the File.exist? filter is dropped;
+    # why_new=coverage audit (proposed test 6); seam=none; no_claim=a conf replaced by a dir
+    def test_loaded_user_conf_skips_a_listed_conf_that_no_longer_exists
+      gone = File.expand_path("~/.tmux.conf") # a standard location, so it would win if kept
+      kept = File.expand_path("~/confs/tmux.conf")
+      FileUtils.mkdir_p(File.dirname(kept))
+      File.write(kept, "# x\n")
+      got = stub_method(Installer, :`, ->(_cmd) { Kernel.send(:`, "true"); "#{gone},#{kept}" }) { Installer.loaded_user_conf }
+      assert_equal kept, got
     end
 
     private

@@ -19,6 +19,7 @@ module Switchboard
       when "home"              then Tmux.go_home
       when "install"           then exit(1) if install(argv.drop(1)) == false
       when "uninstall"         then exit(1) unless uninstall(argv.drop(1))
+      when "upgrade"           then exit(1) unless Upgrade.run(argv.drop(1))
       when "init"              then init
       when "config", "edit"    then edit_config
       when "add"               then add_project(argv[1], argv[2], argv[3])
@@ -424,9 +425,19 @@ module Switchboard
       worktree = worktree_at(path) or return warn("not inside a git worktree (pass a path)")
 
       AgentHooks.enable(worktree) # claude, per-worktree
+      # current?, not enabled?: an older release's hooks would still read as enabled after a
+      # rewrite that failed (an unparseable or unwritable file).
+      unless ClaudeHook.current?(worktree)
+        Installer.bad "claude hooks not enabled in #{worktree} — fix #{ClaudeHook.settings_path(worktree)}, then re-run"
+        return false
+      end
+      unless HookFile.script_current? # ensure_script swallows a failed write
+        Installer.bad Installer.reporter_unwritable
+        return false
+      end
       puts "enabled agent-state hooks in #{worktree}"
       puts "  reporter: #{HookFile.script_path}"
-      puts "  claude: #{ClaudeHook.settings_path(worktree)} — restart `claude` here (or /hooks) to pick it up"
+      puts "  claude: #{ClaudeHook.settings_path(worktree)} — a running claude picks it up on its own"
       # Codex is GLOBAL (one ~/.codex/config.toml block — codex can't see project hooks in
       # linked worktrees). Re-ensure it if already opted in (self-heal); else point at install.
       if CodexHook.installed?
@@ -686,6 +697,7 @@ module Switchboard
       %w[tmux git gh].each do |tool|
         puts row(!`command -v #{tool} 2>/dev/null`.strip.empty?, tool)
       end
+      doctor_version
       exists = Config.exist?
       puts row(exists, exists ? "config: #{Config.path}" : "no config — run `switchboard install`")
       doctor_unknown_keys
@@ -882,17 +894,17 @@ module Switchboard
       end
     end
 
-    # Is prefix-s actually bound to toggle-sidebar in the running server? The sibling
+    # Is the toggle key actually bound to toggle-sidebar in the running server? The sibling
     # of doctor_hooks_live for the BINDING: an upgrade that hasn't re-sourced the
-    # fragment can leave prefix-s unbound (or on an ancient binding) while the config
-    # still looks wired — the "prefix-s stopped working after a pull" case. Skipped
+    # fragment can leave the toggle key unbound (or on an ancient binding) while the config
+    # still looks wired — the "toggle key stopped working after a pull" case. Skipped
     # when there's no server to ask.
     def doctor_binding_live
       doctor_key_config
-      live = Installer.toggle_key_live?
+      toggle = Installer.bound_toggle_key # the key actually bound, as upgrade checks it (a rejected one fell back)
+      live = Installer.toggle_key_live?(toggle)
       unless live.nil?
-        key = config.tmux_key("toggle")
-        puts row(live, live ? "prefix-#{key} bound (toggle-sidebar)" : "prefix-#{key} NOT bound — running tmux is stale; reload tmux or re-run `switchboard install`")
+        puts row(live, live ? "prefix-#{toggle} bound (toggle-sidebar)" : "prefix-#{toggle} NOT bound — running tmux is stale; run `switchboard upgrade` (or reload tmux)")
       end
       doctor_clobber
     end
@@ -940,7 +952,7 @@ module Switchboard
       if missing.empty?
         puts row(true, "tmux hooks live (#{live.size} slots)")
       else
-        puts row(false, "tmux hooks not live: #{missing.join(', ')} — reload tmux or re-run `switchboard install`")
+        puts row(false, "tmux hooks not live: #{missing.join(', ')} — run `switchboard upgrade` (or reload tmux)")
       end
     end
 
@@ -996,6 +1008,43 @@ module Switchboard
       false
     end
 
+    # The running version against what `upgrade` would fetch: release tags for Homebrew
+    # (bounded, LatestRelease::DEADLINE, so offline it says so), else the branch followed.
+    def doctor_version
+      # Only a Homebrew install follows release tags; a clone and --HEAD follow a branch.
+      unless (method = Upgrade.install_method) == :brew
+        follows = method == :clone ? "your clone's branch" : "main (--HEAD)"
+        puts row(true, "switchboard #{VERSION} — follows #{follows}; `switchboard upgrade` pulls it")
+        return
+      end
+
+      latest = LatestRelease.latest
+      if latest.nil?
+        puts "  \e[33m–\e[0m switchboard #{VERSION} — couldn't check for a newer release (offline?)"
+      elsif LatestRelease.compare(latest, VERSION).positive?
+        puts "  \e[33m–\e[0m switchboard #{latest} is available (you have #{VERSION}) — `switchboard upgrade`"
+      else
+        puts row(true, "switchboard #{VERSION} (latest)")
+      end
+    end
+
+    # The shared reporter script, read the way `upgrade` reads it (HookFile.script_state).
+    def doctor_reporter
+      script = HookFile.script_path
+      case HookFile.script_state
+      when :current then puts row(true, "agent-state reporter: #{script}")
+      when :stale
+        # Another binary's SCRIPT may differ from the installed one's; only that one can judge.
+        puts(Installer.installed_bin? ? "  \e[33m–\e[0m agent-state reporter is from another release — `switchboard upgrade`" : "  \e[33m–\e[0m agent-state reporter: #{script}")
+      else
+        if Installer.reporter_needed?
+          puts row(false, "agent-state reporter missing (#{script}) — hooked agents can't report; `switchboard upgrade`")
+        else
+          puts "  \e[33m–\e[0m agent-state reporter not materialized yet (created on first worktree/enable-hooks)"
+        end
+      end
+    end
+
     # ✓/✗ status line shared by the doctor checks.
     def row(ok, msg)
       format("  %s %s", ok ? "\e[32m✓\e[0m" : "\e[31m✗\e[0m", msg)
@@ -1015,18 +1064,28 @@ module Switchboard
     # status. A present hook file/block isn't proof the agent runs it — Codex needs a
     # one-time `/hooks` trust — so a bare "enabled" line would be false confidence.
     def doctor_hooks
-      script = HookFile.script_path
-      puts(File.exist?(script) ? "  \e[32m✓\e[0m agent-state reporter: #{script}" : "  \e[33m–\e[0m agent-state reporter not materialized yet (created on first worktree/enable-hooks)")
+      doctor_reporter
       here = worktree_at(nil)
       return unless here
 
       AgentHooks::ADAPTERS.each do |adapter| # claude, per-worktree
-        # gstack-shortcut(dec-0dd4f937): presence only, so a worktree whose hooks predate a new
-        # entry (v0.51.1 PermissionRequest / SessionEnd timeout) still reads ✓; upgrade when users
-        # miss a new dot after upgrading or the next hook-entry change ships.
-        on = adapter.enabled?(here)
-        puts(on ? "  \e[32m✓\e[0m #{adapter.label} hooks here: #{adapter.settings_path(here)}"
-                : "  \e[33m–\e[0m #{adapter.label} hooks off here — `switchboard enable-hooks`")
+        # Present isn't enough: hooks written by an older release miss its new entries. Only
+        # the installed binary can judge that: hooks call back into the binary that wrote them.
+        if adapter.unreadable?(here)
+          puts row(false, "#{adapter.label} hooks here: can't read #{adapter.settings_path(here)}")
+        elsif adapter.unparseable?(here) # ours or not: enable-hooks refuses either
+          puts row(false, "#{adapter.label} hooks here: #{adapter.corrupt_reason(here)} — fix it, then `switchboard enable-hooks`")
+        elsif !adapter.enabled?(here)
+          puts "  \e[33m–\e[0m #{adapter.label} hooks off here — `switchboard enable-hooks`"
+        elsif !Installer.installed_bin?
+          puts "  \e[33m–\e[0m #{adapter.label} hooks here: #{adapter.settings_path(here)} (run the installed `switchboard doctor` to check they're current)"
+        elsif adapter.current?(here)
+          puts "  \e[32m✓\e[0m #{adapter.label} hooks here: #{adapter.settings_path(here)}"
+        elsif Installer.configured_worktrees.any? { |wt| File.identical?(wt, here) }
+          puts "  \e[33m–\e[0m #{adapter.label} hooks here are out of date — `switchboard upgrade` (or `switchboard enable-hooks`)"
+        else # upgrade only refreshes configured projects
+          puts "  \e[33m–\e[0m #{adapter.label} hooks here are out of date — `switchboard enable-hooks` (not a configured project, so `upgrade` skips it)"
+        end
       end
 
       if CodexHook.installed? # codex, global
@@ -1068,6 +1127,7 @@ module Switchboard
           switchboard install      symlink onto PATH + wire tmux bindings + empty config
                                      (--no-tmux | --print-tmux | --tmux-conf PATH)
           switchboard uninstall    reverse install (symlink + tmux bindings)
+          switchboard upgrade      update to the newest release (Homebrew, or a fast-forward pull in a clone) and re-wire tmux + hooks
           switchboard init         create an empty config (no projects yet)
           switchboard config       edit config.yml in $EDITOR (per-project settings)
           switchboard add N P [B]  register an existing repo (name, path, base ref)

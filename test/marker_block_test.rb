@@ -111,5 +111,67 @@ module Switchboard
       Timeout.timeout(5) { out = MarkerBlock.real_target(path("a")) }
       assert_includes [path("a"), path("b")], out, "returns one of the cycle nodes, no infinite loop"
     end
+
+    # Value: protects=a failed atomic write leaving no stray temp file beside the target
+    # (in .claude/ it would dirty git status and keep a tree from being discarded);
+    # fails_when=the rescue cleanup is dropped; why_new=cycle-2 Red Team; seam=none
+    def test_a_failed_atomic_write_removes_its_temp_file
+      dir = path("w")
+      FileUtils.mkdir_p(dir)
+      target = File.join(dir, "settings.json")
+      stub_method(File, :rename, ->(*) { raise Errno::EXDEV, "rename" }) do
+        assert_raises(Errno::EXDEV) { MarkerBlock.atomic_write(target, "{}") }
+      end
+      assert_empty Dir.children(dir)
+    end
+
+    # Value: protects=a file written with a mode never existing without it (the temp file gets
+    # it before the rename); fails_when=atomic_write ignores mode:; why_new=run 4 (D6); seam=none
+    # Value: protects=the reporter never landing un-runnable, even for an instant hooks exec it;
+    # fails_when=the chmod moves after the rename or an existing mode wins; why_new=audit tests 2+3;
+    # seam=none; no_claim=a crash between write and rename
+    def test_atomic_write_sets_a_given_mode_before_the_file_appears
+      target = path("script.sh")
+      at_rename = nil
+      real = File.method(:rename)
+      spy = ->(from, to) { at_rename = File.stat(from).mode & 0o777; real.call(from, to) }
+      stub_method(File, :rename, spy) { MarkerBlock.atomic_write(target, "#!/bin/sh\n", mode: 0o755) }
+      assert_equal 0o755, at_rename, "the temp file already had the mode when it was renamed in"
+      assert_equal 0o755, File.stat(target).mode & 0o777
+
+      File.chmod(0o644, target) # a stale script: the requested mode outranks the existing one
+      MarkerBlock.atomic_write(target, "#!/bin/sh\n", mode: 0o755)
+      assert_equal 0o755, File.stat(target).mode & 0o777, "mode: overrides an existing file's mode"
+    end
+
+    # Value: protects=a private (0600) file's contents never sitting world-readable in the
+    # temp copy, while a new file still gets the usual umask mode; fails_when=the temp file is
+    # written before its mode is set; why_new=Codex adversarial run 4 (High); seam=none
+    def test_the_temp_file_is_never_wider_than_private
+      target = path("settings.json")
+      File.write(target, "old")
+      File.chmod(0o600, target)
+      seen = nil
+      real = File.method(:chmod)
+      spy = ->(mode, f) { seen ||= File.stat(f).mode & 0o777; real.call(mode, f) }
+      stub_method(File, :chmod, spy) { MarkerBlock.atomic_write(target, "secret") }
+      assert_equal 0o600, seen, "the temp file was created private"
+      assert_equal 0o600, File.stat(target).mode & 0o777
+      fresh = path("fresh.json")
+      MarkerBlock.atomic_write(fresh, "x")
+      assert_equal 0o666 & ~File.umask, File.stat(fresh).mode & 0o777, "a new file keeps the umask default"
+    end
+
+    # Value: protects=every atomic write (config, tmux.conf, codex block, hook settings, the
+    # reporter) after a crashed run left its temp file under this same pid; fails_when=the
+    # rm_f before the EXCL create is dropped (EEXIST forever); why_new=run-5 testing
+    # specialist; seam=none
+    def test_a_leftover_temp_from_a_crashed_run_with_this_pid_doesnt_block_the_write
+      target = path("settings.json")
+      File.write("#{target}.#{Process.pid}.sb-tmp", "half-written")
+      MarkerBlock.atomic_write(target, "{}")
+      assert_equal "{}", File.read(target)
+      assert_empty Dir.glob(path("*.sb-tmp")), "the stale temp was replaced, not left behind"
+    end
   end
 end

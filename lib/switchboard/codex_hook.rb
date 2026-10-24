@@ -187,7 +187,7 @@ module Switchboard
     end
 
     # The switchboard command the block's commands call (doctor names it in its :stale advice).
-    def bin = ENV["SWITCHBOARD_BIN"] || "switchboard"
+    def bin = Switchboard.env("SWITCHBOARD_BIN") || "switchboard"
 
     # --- internals -----------------------------------------------------------
 

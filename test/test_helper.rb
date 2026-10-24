@@ -72,6 +72,8 @@ module Switchboard
       ENV["SWITCHBOARD_WIDTH_FILE"]    = path("width")     # Width (shared sidebar pane width, ←/→ resize)
       ENV["SWITCHBOARD_CACHE_DIR"]     = path("cache")     # Pr cache (T3 seam)
       ENV["SWITCHBOARD_CLAUDE_PROJECTS_DIR"] = path("claude-projects") # ClaudeHistory (rename carries /resume history)
+      ENV["SWITCHBOARD_RELEASES_URL"] = path("no-releases") # LatestRelease: never GitHub from a test
+      ENV.delete("SWITCHBOARD_BIN") # else installed_bin? answers differently in a switchboard pane than in CI
 
       # Anything that reads $HOME / XDG / git-global must land in the sandbox —
       # HookFile.ensure_script writes a reporter into XDG_DATA_HOME, Creator shells
@@ -96,6 +98,8 @@ module Switchboard
       ENV["GIT_CONFIG_VALUE_1"] = "0"
       ENV["GH_CONFIG_DIR"]     = path("gh")
       ENV.delete("GH_TOKEN")
+      ENV.delete("GIT_SSH_COMMAND") # the clone fetch and release lookup honor a user's ssh choice
+      ENV.delete("GIT_SSH")
       ENV.delete("TMUX")
       # Unsetting TMUX only stops a test from looking like it's INSIDE a server;
       # a fresh `tmux` shell-out still talks to the default socket. Point that

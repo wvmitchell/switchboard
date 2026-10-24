@@ -90,8 +90,12 @@ off. It checks, with the fix inline for anything red:
   **live in the running server** — not just present in config. These diverge
   after a `git pull` until tmux reloads; `doctor` tells you when a reload is
   needed.
+- Whether a newer release is out (Homebrew installs check GitHub's release tags,
+  bounded to 5s, and say so when offline); a clone or `--HEAD` install says which
+  branch it follows. `switchboard upgrade` fetches it.
 - Agent hooks: whether the worktree you're standing in has switchboard's Claude
-  hooks, and the global codex block: how many of its hooks codex has approved
+  hooks, and whether they're out of date or unparseable (with the reason), and the
+  global codex block: how many of its hooks codex has approved
   (`N/M trusted`), or the fix when the block is stale, can't be rewritten safely,
   or collides with your own `[hooks]`. See
   [How-to: agent state & sounds](howto-agent-state-and-sounds.md).
@@ -109,8 +113,8 @@ off. It checks, with the fix inline for anything red:
 - **Moved from a clone to Homebrew and things half-work.** See
   [How to install, upgrade, or move to Homebrew](howto-install-and-upgrade.md#move-from-a-git-clone-to-homebrew).
 - **`prefix-s` stopped working after a `git pull`.** The running tmux has the old
-  bindings. `switchboard install` (idempotent) or `tmux source-file <your conf>`
-  reloads them. `doctor` confirms with "NOT bound — running tmux is stale".
+  bindings. `switchboard upgrade` reloads them from any shell (or `tmux source-file
+  <your conf>`). `doctor` confirms with "NOT bound — running tmux is stale".
 - **A session won't go away with `prune`.** Its project is unverifiable (moved or
   unregistered repo), so `prune` deliberately spares it. Use `quit` for a full
   teardown, or re-register/fix the repo path and prune again.

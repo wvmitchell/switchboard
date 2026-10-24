@@ -35,8 +35,9 @@ You get *something* for free and *something better* by opting in:
 
 **Claude (per worktree).** Worktrees switchboard *creates* get the Claude hook
 automatically (when `agent_state_hooks` is on, the default). For a worktree you
-made elsewhere, run this once from inside it, then restart `claude` so it picks it
-up:
+made elsewhere, run this once from inside it. A running `claude` picks it up on
+its own (Claude Code watches its settings files; if a dot doesn't move, run `/hooks`
+in it once):
 
 ```sh
 switchboard enable-hooks
@@ -150,14 +151,15 @@ one-time global install above. Observation-only agents show a dot but stay silen
 - **No sound at all.** Check `switchboard doctor` for "audio player" — with none
   on PATH, sounds stay silent by design. Install one (`afplay` ships with macOS).
 - **Dot never goes magenta (waiting).** That state only comes from hooks. For
-  Claude, run `switchboard enable-hooks` in the worktree and restart it; for Codex,
+  Claude, run `switchboard enable-hooks` in the worktree (a running claude picks it
+  up on its own); for Codex,
   install the global block (`switchboard install --codex-hooks`) and `/hooks`-trust
   it. (Codex's waiting also needs a permission gate to fire — a bypass-all session
   command suppresses it.)
 - **Claude's dot turns magenta only seconds after a permission prompt opens.** That
   worktree's hooks predate the instant permission-prompt hook. Run `switchboard
-  enable-hooks` there and restart `claude`. (`doctor` still shows ✓ for a worktree on
-  the older hook set.)
+  upgrade` (or `switchboard enable-hooks` there); `doctor` flags such a worktree as
+  `claude hooks here are out of date`.
 - **Codex dots don't move.** Check `doctor`. If it says the block is stale, re-run
   `switchboard install` from the install you use first. Then run `/hooks` in codex
   and approve the switchboard hooks. Do that even when `doctor` shows every hook

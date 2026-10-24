@@ -31,6 +31,7 @@ here.
 ```sh
 bin/switchboard            # start: attach home from a shell, or toggle the sidebar inside tmux (alias: sb)
 bin/switchboard install    # symlinks (switchboard + sb) onto PATH (skipped under Homebrew) + wire tmux bindings + empty config (--no-tmux/--print-tmux/--tmux-conf)
+bin/switchboard upgrade    # fetch the newest version the way it was installed (brew / brew --HEAD / clone fetch + ff-only merge), then exec the NEW binary's `upgrade --finish`: refresh reporter + stale worktree hooks + codex block, run the tmux fragment in the live server from any shell. Already current ⇒ says so, unless setup is stale (then finishes it)
 bin/switchboard uninstall  # reverse install (both symlinks — left to `brew uninstall` under Homebrew — + tmux marker block + live unbind)
 bin/switchboard doctor     # check that tmux/git/gh + config + install wiring exist
 bin/switchboard init       # create ~/.config/switchboard/config.yml (empty; grown by the add-project flow)
@@ -152,6 +153,8 @@ detail: `docs/reference-release.md`, `docs/howto-release.md`.
 Useful env overrides when running locally without disturbing real state:
 `SWITCHBOARD_CONFIG` (config path), `SWITCHBOARD_STATE_DIR` (agent-state files),
 `SWITCHBOARD_ATTENTION_DIR` (bold "needs attention" markers),
+`SWITCHBOARD_RELEASES_URL` (where `LatestRelease` reads release tags — the suite points
+it at a dead path so nothing reaches GitHub),
 `XDG_DATA_HOME`/`XDG_STATE_HOME` (reporter script + state dirs), `CODEX_HOME` (the
 global codex `config.toml` the codex hooks block is written into — sandboxed in tests).
 
@@ -520,6 +523,43 @@ under multiple clients of different sizes until the switch-in poke re-renders
 reporter writes atomically (temp+rename, `hook_file.rb`; the reporter script itself too, since sh
 reads a running script as it goes) so the warm fingerprint
 can never catch — and stamp-as-clean — a torn state file.
+
+### Upgrading (`switchboard upgrade`, #10)
+
+`Upgrade` (`upgrade.rb`) fetches the newest version the way switchboard was installed —
+the install method IS the channel: Homebrew (`brew update` + `brew upgrade`), a `--HEAD`
+keg (`brew upgrade --fetch-HEAD`), or a clone (`Upgrade.clone_pull`: refused over tracked
+changes, then `git fetch` + `git merge --no-overwrite-ignore --ff-only @{upstream}`, so
+git itself refuses an update that would overwrite an untracked OR ignored local file —
+a plain pull silently overwrites ignored ones). A failed `brew update` is only a note,
+unless nothing moved: then `update_blocked` exits 1 instead of claiming "nothing newer"
+(switchboard's own tap may be the one that failed). "Up to date" is per method: the
+newest release tag for brew (`LatestRelease`, `latest_release.rb`: one `git ls-remote`
+bounded to 5s, with the user's global/system git config AND any repo config kept OUT —
+`GIT_CONFIG_GLOBAL=/dev/null`, `GIT_CONFIG_NOSYSTEM`, run from the tmpdir — so an
+`insteadOf` can't hijack it), HEAD vs its upstream
+for a clone (bounded `Git.fetch_base`, ssh in BatchMode). A stamp (keg realpath / HEAD
+commit) taken before and after decides whether anything moved. Then it **execs the new
+binary** with `upgrade --finish <old>` — the old process has the old code loaded — and
+clears `SB_REEXEC` so a clone's new binary can still re-exec under a modern Ruby. Finish
+= `Installer.refresh_wiring` (the reporter + every hooked worktree of every configured
+project, primaries too, via `HookFile.refresh`) + the codex block if installed + running
+the tmux fragment in the live server from any shell (`reload_fragment`, only when
+tmux.conf sources THIS install). An up-to-date run still finishes leftover setup
+(`leftovers?`), so re-running repairs an interrupted upgrade.
+
+Two guards carry the design. **Only the installed binary rewrites anything shared**
+(`Installer.installed_bin?`: the running `SWITCHBOARD_BIN` is the `switchboard` on PATH):
+hook commands, the reporter and the codex block all call back into whichever binary wrote
+them, so a dogfood checkout would otherwise repoint every worktree at a path that
+vanishes. **`HookFile.refresh` only updates, never adds or clobbers**: it skips a file
+without our hooks, compares order-insensitively (`same_hooks?` / `canonical`), re-reads
+before the atomic write and returns `:conflict` if Claude saved the file meanwhile, and
+treats an unparseable file as ours (`:corrupt`, reported with `HookFile.corrupt_reason`'s
+specific cause — invalid JSON/UTF-8, a malformed hooks section, unreadable, not a regular
+file under 4 MiB — as `doctor` does) only when it carries one of our
+marks — an unreadable or foreign file is never touched. `install` runs the same
+`refresh_wiring`, so the manual route converges too.
 
 ### Agent-state dots (the subtle part)
 
