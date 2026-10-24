@@ -256,6 +256,21 @@ safe today; each is narrow).
 
 ## Rename / worktree-move (issue #42) follow-ups
 
+- **Agent dots may land on the wrong row after a rename onto a dead bridge
+  (suspected, verify first).** *What:* rename `A->B` while its agent runs, then rename
+  another workspace `C->A` (`Rename.perform` clears the stale `A` bridge,
+  `rename.rb:49-51`). The hook reporter keys state on `cwd=$(pwd -P)`
+  (`hook_file.rb:82`). If Claude spawns hooks with cwd = its remembered project path
+  `A`, the B agent's dots and chimes now show on C's row; if hooks inherit Claude's
+  kernel cwd, it's already right (`lsof -a -d cwd` and tmux `pane_current_path` both
+  report the moved dir, probe-verified 2026-10-22). *Why:* wrong-row dots/chimes/bold.
+  *Pros:* one attribution rule for dots and the remote-link glyph. *Cons:* a fix needs
+  the reporter to write its pid (a reporter-script rewrite on every machine, the
+  `hook-reporter-atomic-rewrite` care applies). *Context:* the remote-link glyph
+  (eng review D10) already attributes by live pid cwd via one batched `lsof`; start by
+  reproducing the sequence above with a real hooked agent, then reuse that helper.
+  *Depends on:* remote-link PR 1 (the lsof helper).
+
 - **Claude history bridge: clobber-on-name-reuse race.** `ClaudeHistory.migrate`
   (added in v0.31.1) carries the transcript dir and leaves a bridge `encode(old) ->
   encode(new)` in `~/.claude/projects`. If you rename `A->B`, keep that agent running,
@@ -509,6 +524,63 @@ safe today; each is narrow).
 
 
 ## Agent CLI hooks (Claude 2.1.301 / Codex 0.163 compat review) follow-ups
+
+- **A non-ASCII worktree path breaks `Git.worktrees` under a C locale (verify scope
+  first).** *What:* with `LC_ALL=C`, `git worktree list --porcelain` output for a
+  worktree like `…/café` arrives US-ASCII with raw high bytes, and
+  `Git.worktrees`' `.split("\n\n")` raises `ArgumentError: invalid byte sequence in
+  US-ASCII` (`git.rb:14`, reproduced at ship time, 2026-10-23). *Why:* in a C-locale
+  tmux that project's tree may fail to list at all; check how `Model` handles the raise.
+  *Pros:* fixes the root that makes every other C-locale encoding guard (the ⇅ byte
+  compare, `Agents.lsof_path`) mostly moot. *Cons:* touches the core git read path.
+  *Context:* read git output as bytes or force UTF-8 + scrub, the way `RemoteLink.read_json`
+  and `CodexHook.read_config` already do. *Depends on:* nothing.
+
+- **Remote-link glyph: rare edges deferred at ship review (v0.53.0).** *What, in priority
+  order:* (1) `RemoteLink`'s three `Dir.glob(File.join(sessions_dir, "*.json"))` calls
+  read `[`/`{`/`*`/`?` in the dir path as pattern syntax, so a `CLAUDE_CONFIG_DIR` like
+  `~/cfg [work]` finds no session files: no `⇅` anywhere, and doctor wrongly says Claude
+  moved them (verified) — one `session_files` helper using `Dir.glob("*.json", base:)`;
+  (2) `Sidebar#refresh_agents`' outer rescue leaves the previous `@links` standing, so an
+  ended link can keep its `⇅` until a scan succeeds — reset or compute links first;
+  (3) the doctor canary misses a format change while one old-format leftover file sits
+  beside the new ones (shaped > 0, alive 0 reads healthy); (4) `claude_pids` misses a
+  Claude whose process shows as `node …/cli.js`; (5) a workspace name ending in ` ⇅` on
+  a very narrow pane can take the cursor-bar grey, and an empty name shifts that row's
+  columns — let `fit_plain` report whether the cues were kept and share it with
+  `colored`/`link_in_bar`; (6) two stale comments: `WS_PREFIX_COLS` still names
+  `link_in_bar`, and `Agents.lsof_path`'s encoding rationale predates the byte compares.
+  *Why:* none hits a normal setup; (1) is the only verified user-visible one. *Pros:*
+  small, testable changes. *Cons:* each touches a reviewed path, so give it its own short
+  review. *Context:* ship review of v0.53.0 (D2/D3 — deferred to keep the release from
+  reopening its review loop). *Depends on:* v0.53.0.
+
+- **Remote-link glyph: one batched `ps` for the start-time checks.** *What:* the full
+  scan (`RemoteLink.scan`, visible panes, every `REFRESH`) calls
+  `ProcessIdentity.same?` once per LIVE linked session on the machine (dead leftovers
+  already skip it via `kill(0)`), each a `ps` fork; batch them into one
+  `LC_ALL=C TZ=UTC ps -o pid=,lstart= -p a,b,c` (a `ProcessIdentity.starts_of(pids)`).
+  *Why:* N linked sessions = N forks every 3s on the visible pane's input loop (6 on
+  Will's machine at ship time, ~30-60 ms). *Pros:* one subprocess per scan whatever
+  the count. *Cons:* a new helper + tests. *Context:* deferred at ship review (pass 2,
+  D2=B); measure first. *Depends on:* remote-link PR 1.
+
+- **Agents' own session files as a presence source (research Claude AND Codex).**
+  *What:* Claude Code (2.1.308) writes `~/.claude/sessions/<pid>.json` per live session
+  with `status` (busy/idle/waiting), `statusUpdatedAt`, `cwd`, `procStart`, `kind`; let
+  `AgentState` read it for Claude sessions WITHOUT a fresh hook file. Research whether
+  Codex keeps an equivalent live state: candidates seen locally are
+  `~/.codex/sessions/YYYY/MM/DD/` (transcripts), `~/.codex/app-server-control/`,
+  `~/.codex/ipc/`, and the `*.sqlite` stores; no per-pid status file like Claude's was
+  visible. *Why:* exact thinking/waiting/done for hook-less sessions, and possibly
+  retiring much of the coarse fallback (`Agents.active`: tmux panes + `pgrep`/`lsof` +
+  `capture-pane` hashing) and some hook plumbing; Will expects it would "simplify a lot
+  of code". *Pros:* one source each agent writes itself; reuses the remote-link
+  `RemoteLink` reader (PR 1). *Cons:* ties core dot logic to undocumented files (the
+  reason the remote-link design ruled it out of scope); must never override a fresh hook
+  state; a format change needs a doctor canary like the remote-link one. *Context:*
+  `agent_state.rb` merge path; start with the Codex research (decides whether this is
+  one mechanism or Claude-only). *Depends on:* remote-link PR 1.
 
 - **Check whether Claude fires `Stop` when a turn ends on an API error.** *Why:*
   Claude documents a separate `StopFailure` event for a turn that dies on an API

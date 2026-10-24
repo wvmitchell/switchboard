@@ -103,6 +103,10 @@ off. It checks, with the fix inline for anything red:
   "why are my badges old?" has an answer).
 - An audio player on PATH, and whether each sound spec resolves.
 - Orphaned `sb/` sessions (points you at `prune`).
+- Remote links (`⇅`): how many Claude sessions are linked, or a warning when a
+  Claude update moved or reshaped the session files the glyph reads, and (inside
+  tmux) when your shell and tmux disagree on `CLAUDE_CONFIG_DIR`. See
+  [`remote_link_stale_after`](reference-config.md#remote_link_stale_after).
 - Orphaned sidebar *processes* — a `switchboard sidebar` that outlived its pane.
   Harmless to the UI, but because tmux recycles pane ids a straggler can
   double-ring completion sounds, so it's worth seeing. See

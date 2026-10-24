@@ -40,7 +40,7 @@ so the numbers stack instead of staircasing.
 | Form | Shown | Contains |
 |------|-------|----------|
 | **Wordmark** | every non-home session | just `◖═◗ Switchboard` (bold cyan) |
-| **Full header** | the home session always; every session when toggled with `H` | wordmark + a time-of-day greeting (`good evening, will`) + a one-line console (`4 worktrees · 2 active · 3 PRs open`, zero clauses dropped) + a rule |
+| **Full header** | the home session always; every session when toggled with `H` | wordmark + a time-of-day greeting (`good evening, will`) + a one-line console (`4 worktrees · 1 idle link · 2 active · 3 PRs open · 2 linked`, zero clauses dropped; on a narrow pane whole clauses drop, `linked` then `PRs` then `active`, instead of cutting the line, so the worktree count and idle links always show) + a rule |
 
 `H` toggles the full header onto **all** sessions at once. It's a shared on-disk
 view preference, so every window follows and it survives a restart. See
@@ -130,6 +130,14 @@ The workspace name, with two color states layered on top:
 
 A normal, looked-at workspace with no running agent is plain text.
 
+**`⇅` after the name** — the workspace is reachable **from your phone**: a Claude
+session there has `/remote-control` (`/rc`) on. `⇅2` means several linked sessions.
+It sits right after the name and before any `▸N` fold cue, on workspace rows only
+(never a branch row), and clears when the link ends. A **grey `⇅`** is a link idle
+past [`remote_link_stale_after`](reference-config.md#remote_link_stale_after)
+(default 120 minutes), likely one you opened and forgot; background Claude jobs never
+go grey. On a long name, the name is truncated before the cues are.
+
 ---
 
 ## Diff counts
@@ -210,4 +218,4 @@ the diff-count meaning, and the tmux keys that operate the sidebar — lives in 
 - [Reference: keybindings](reference-keybindings.md) — the keys that act on every row here.
 - [Explanation: agent presence](explanation-agent-presence.md) — why the dot, sound, and bold all ride one signal.
 - [Explanation: sidebar lifecycle](explanation-sidebar-lifecycle.md) — why the view preferences (fold, full header, width) live on disk.
-- [Reference: config](reference-config.md) — `diff_counts`, `sounds`, and the rest.
+- [Reference: config](reference-config.md) — `diff_counts`, `remote_link_stale_after`, `sounds`, and the rest.

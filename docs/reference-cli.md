@@ -269,7 +269,11 @@ unreadable, out of date because an older release wrote them, or unparseable, nam
 of its hooks codex has approved, `N/M trusted`, or a fix when the block is stale, can't
 be rewritten safely, or collides with your own `[hooks]`), `gh`
 auth + per-project badge staleness, audio player +
-sound resolution, orphaned sessions, and orphaned sidebar processes. Read-only. Its
+sound resolution, orphaned sessions, the remote links (`⇅`) it sees (or a warning
+when Claude is running but its session files are missing, none are in the shape
+switchboard reads, or every live one fails the start-time check, i.e. a Claude update
+moved or reshaped them), a `CLAUDE_CONFIG_DIR` that differs between your shell and tmux
+(inside tmux only), and orphaned sidebar processes. Read-only. Its
 network calls are the release check (Homebrew only) and `gh`'s auth check. Hook staleness is judged
 only from the installed `switchboard`; run from another copy, doctor just reports the
 hooks as present.
@@ -278,7 +282,7 @@ The first place to look when something's off.
 ### `switchboard sandbox`
 Dogfood **this checkout's** sidebar in a throwaway, fully-isolated tmux — a hermetic
 repo seeded with worktrees in varied visual states (an open-PR badge, a big `+/−` diff,
-a no-PR row, a multi-branch workspace, a monitored `∞` row), on its own tmux server and
+a no-PR row, a multi-branch workspace, a monitored `∞` row, a phone-linked `⇅` row), on its own tmux server and
 socket, torn down automatically on detach. The interactive twin of `bin/test-smoke`
 (#126); nothing it does touches your real sessions or state. It also disables Claude
 Code's self-updater inside the sandbox (`DISABLE_UPDATES` + `DISABLE_AUTOUPDATER`), so an

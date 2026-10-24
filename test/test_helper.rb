@@ -72,6 +72,7 @@ module Switchboard
       ENV["SWITCHBOARD_WIDTH_FILE"]    = path("width")     # Width (shared sidebar pane width, ←/→ resize)
       ENV["SWITCHBOARD_CACHE_DIR"]     = path("cache")     # Pr cache (T3 seam)
       ENV["SWITCHBOARD_CLAUDE_PROJECTS_DIR"] = path("claude-projects") # ClaudeHistory (rename carries /resume history)
+      ENV["SWITCHBOARD_CLAUDE_SESSIONS_DIR"] = path("claude-sessions") # RemoteLink (Claude's live session files, /rc links)
       ENV["SWITCHBOARD_RELEASES_URL"] = path("no-releases") # LatestRelease: never GitHub from a test
       ENV.delete("SWITCHBOARD_BIN") # else installed_bin? answers differently in a switchboard pane than in CI
 

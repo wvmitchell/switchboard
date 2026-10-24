@@ -28,6 +28,9 @@ module Switchboard
       MONITORING = "\e[1;32m∞\e[0m" # a background monitor/loop runs continuously here. Shares DONE's green ON PURPOSE — the ∞ glyph (not a new color) distinguishes it from ●, so the palette stays tight. Steady, so it stays off the pulse cadence — dormancy preserved.
       BUILDING = "\e[33m◌\e[0m"   # a dispatched workspace being built / set up: a hollow "not yet" slot. Steady (dormancy), yellow at normal weight so it reads on light themes too (DR4/DR10)
       FAILED   = "\e[1;31m✘\e[0m" # a dispatch whose build/setup/launch failed: the heavy ✘ keeps its shape in reverse video (DR5)
+      LINK_GLYPH    = "⇅"        # a live /remote-control link: this workspace is reachable from your phone (picked by eye)
+      LINK_STALE_FG = "\e[90m"    # ...and grey when idle past remote_link_stale_after (bold read identical; the theme-relative dim branch rows use)
+      WS_PREFIX_COLS = 4          # a ws row's "<pointer> <dot> " before its name: fit_plain, colored and link_in_bar must agree on it
       NOTE_FG  = "\e[2m"          # the dim task label / failure reason in the right region (DR3/DR8)
       NOTE_INVISIBLE = /[\p{Cc}\p{Cf}\p{Mn}\p{Me}]/ # dropped from a task label: controls, bidi/zero-width, combining
       NOTE_WIDE = /[\p{Emoji_Presentation}ᄀ-ᅟ⺀-꓏가-힣豈-﫿︰-﹏＀-｠￠-￦\u{1F300}-\u{1FAFF}\u{20000}-\u{3FFFD}]/ # two columns wide
@@ -84,7 +87,8 @@ module Switchboard
       # What the row glyphs mean (DR9) — nothing else teaches them. Seated right under
       # the help wordmark so help_body's height cap never drops it.
       LEGEND = [[SPIN_COLORED.first, "⠋", "working"], [WANTS_ON, "◆", "input"], [DONE, "●", "done"],
-                [MONITORING, "∞", "watching"], [BUILDING, "◌", "building"], [FAILED, "✘", "failed"]].freeze
+                [MONITORING, "∞", "watching"], [BUILDING, "◌", "building"], [FAILED, "✘", "failed"],
+                [LINK_GLYPH, "⇅", "on phone"], ["#{LINK_STALE_FG}#{LINK_GLYPH}\e[0m", "⇅", "idle link"]].freeze
 
       private
 
@@ -160,7 +164,7 @@ module Switchboard
         [
           wordmark,
           "\e[2m#{trunc(greeting, cols)}\e[0m",
-          "\e[2m#{trunc(console, cols)}\e[0m",
+          "\e[2m#{trunc(console(cols), cols)}\e[0m",
           "\e[2m#{'─' * cols}\e[0m"
         ]
       end
@@ -196,14 +200,26 @@ module Switchboard
       # is patching, how many agents are working right now, how many PRs are open.
       # Counts the whole tree (@nodes) so a collapsed project still tallies; the
       # active/PR clauses drop when zero to keep the line calm. Terse to fit the pane.
-      def console
+      # Remote links add two: idle links (likely forgotten — the one that matters) and
+      # the total linked. Given `cols`, whole clauses drop before the line would be cut,
+      # least important first (linked, PRs, active); the count and idle links stay.
+      def console(cols = nil)
         trees  = @nodes.count { |n| n.kind == "ws" }
         active = @agents.values.count(:thinking)
         prs    = @nodes.count { |n| n.pr.is_a?(Hash) && View.pr_state(n.pr) == "OPEN" }
-        parts  = ["#{trees} #{trees == 1 ? 'worktree' : 'worktrees'}"]
-        parts << "#{active} active"                       if active.positive?
-        parts << "#{prs} #{prs == 1 ? 'PR' : 'PRs'} open" if prs.positive?
-        parts.join(" · ")
+        links  = @links.values.flatten
+        idle   = links.count(&:stale)
+        parts  = { trees: "#{trees} #{trees == 1 ? 'worktree' : 'worktrees'}" }
+        parts[:idle]   = "#{idle} idle #{idle == 1 ? 'link' : 'links'}" if idle.positive?
+        parts[:active] = "#{active} active"                       if active.positive?
+        parts[:prs]    = "#{prs} #{prs == 1 ? 'PR' : 'PRs'} open" if prs.positive?
+        parts[:linked] = "#{links.size} linked"                   if links.any?
+        %i[linked prs active].each do |k|
+          break if cols.nil? || parts.values.join(" · ").length <= cols
+
+          parts.delete(k)
+        end
+        parts.values.join(" · ")
       end
 
       def render
@@ -378,7 +394,7 @@ module Switchboard
           region_w = region_width(diff_w, pr_w)
         end
         left_cols = region_w.zero? ? cols : [cols - region_w - 1, 1].max
-        text = trunc(plain(node), left_cols)
+        text = fit_plain(node, left_cols)
 
         # The reverse-video cursor bar only when the sidebar is the focused pane;
         # off-focus the cursor row renders like any other, so the bright bar never
@@ -387,7 +403,7 @@ module Switchboard
         if active && @focused
           right = right_region(counts, node.pr, adds_w, dels_w, pr_w, with_color: false)
           bar = region_w.zero? ? text : "#{text.ljust(left_cols)} #{right}"
-          return "\e[7m#{bar.ljust(cols)}\e[0m"
+          return "\e[7m#{link_in_bar(node, bar.ljust(cols), text)}\e[0m"
         end
 
         body = colored(node, text, current: node.kind == "ws" && node.path == @current_path)
@@ -417,7 +433,7 @@ module Switchboard
       # takes what's left and drops entirely below a few columns (#79's order: the
       # extra label goes before the name does).
       def note_line(node, active, cols, note)
-        text = trunc(plain(node), cols)
+        text = fit_plain(node, cols)
         room = cols - text.length - 1
         return line_without_note(node, active, cols, text) if room < 4
 
@@ -425,7 +441,7 @@ module Switchboard
         shown = (" " * (room - columns(shown))) + shown
         if active && @focused
           body = "#{text} #{shown}"
-          return "\e[7m#{body}#{' ' * [cols - columns(body), 0].max}\e[0m" # padded in COLUMNS, like the note
+          return "\e[7m#{link_in_bar(node, body, text)}#{' ' * [cols - columns(body), 0].max}\e[0m" # padded in COLUMNS, like the note
         end
 
         body = colored(node, text, current: node.kind == "ws" && node.path == @current_path)
@@ -456,7 +472,7 @@ module Switchboard
       end
 
       def line_without_note(node, active, cols, text)
-        return "\e[7m#{text.ljust(cols)}\e[0m" if active && @focused
+        return "\e[7m#{link_in_bar(node, text.ljust(cols), text)}\e[0m" if active && @focused
 
         colored(node, text, current: node.kind == "ws" && node.path == @current_path)
       end
@@ -507,7 +523,7 @@ module Switchboard
           # reads expanded (▾); the ▸ collapsed glyph only applies to the normal tree.
           folded = @filter.nil? && @collapsed.include?(node.project)
           "#{folded ? '▸' : '▾'} #{node.project}"
-        when "ws"   then "#{pointer(node.path)} #{ws_glyph(node.path)} #{node.name}#{fold_cue(node)}"
+        when "ws"   then ws_parts(node).join
         else             "     #{node.last ? '└' : '├'}#{node.active ? '●' : ' '}#{node.branch}"
         end
       end
@@ -519,6 +535,60 @@ module Switchboard
       # stay the same visible width (the line()/right-region alignment depends on it).
       def fold_cue(node)
         node.folded ? " ▸#{node.folded}" : ""
+      end
+
+      # " ⇅" on a workspace with a live /remote-control link (" ⇅2" for several), right
+      # after the name and before any ▸N, folded or expanded. Workspace rows only: the
+      # link belongs to the worktree, so a branch row never carries it.
+      def link_cue(node)
+        links = node.kind == "ws" && @links[node.path]
+        return "" unless links && !links.empty?
+
+        " #{LINK_GLYPH}#{links.size > 1 ? links.size : ''}"
+      end
+
+      # Any interactive link here idle past the threshold (a likely-forgotten door).
+      def link_stale?(path)
+        @links[path]&.any?(&:stale)
+      end
+
+      # A ws row's plain parts: [pointer + glyph + name, link cue, fold cue].
+      def ws_parts(node, name = node.name.to_s)
+        ["#{pointer(node.path)} #{ws_glyph(node.path)} #{name}", link_cue(node), fold_cue(node)]
+      end
+
+      # The row's plain text fit to `width`. A ws row gives up NAME columns, never its
+      # trailing cues: truncating the whole string from the right (the old way) cut
+      # the ⇅ and ▸N first, so they vanished under the cursor bar on a long name. Only
+      # when not even one name column would remain do the cues drop (colored's rule).
+      def fit_plain(node, width)
+        return trunc(plain(node), width) unless node.kind == "ws"
+
+        _, link, cue = ws_parts(node)
+        budget = width - WS_PREFIX_COLS - link.length - cue.length
+        return trunc(plain(node).delete_suffix(link + cue), width) if budget < 1
+
+        ws_parts(node, trunc(node.name.to_s, budget)).join
+      end
+
+      def styled_link(path, link)
+        return "" if link.empty?
+
+        link_stale?(path) ? "#{LINK_STALE_FG}#{link}\e[0m" : link
+      end
+
+      # The cursor bar prints plain text, so a stale ⇅ would read like a fresh one
+      # there. Re-grey just the cue inside the reverse video (39 restores the bar's fg).
+      # `bar` starts with the row's fitted `text`, whose tail IS the cue — located there,
+      # not by search: a worktree name or a typed task note can contain " ⇅" too.
+      def link_in_bar(node, bar, text)
+        return bar unless node.kind == "ws" && link_stale?(node.path)
+
+        _, link, cue = ws_parts(node)
+        return bar unless text.end_with?(link + cue) # the cues dropped on a very narrow pane
+
+        at = text.length - (link + cue).length
+        "#{bar[0, at]}#{LINK_STALE_FG}#{link}\e[39m#{bar[(at + link.length)..]}"
       end
 
       # The bare (uncolored) "you are here" gutter pointer for a workspace path —
@@ -534,15 +604,19 @@ module Switchboard
         when "proj" then "\e[1m#{text}\e[0m"
         when "ws"
           dot = sparkling?(node.path) ? SPARKLE_COLORED[(@pulse / 2) % SPARKLE_COLORED.size] : dot_for(render_state(node.path))
-          # The " ▸N" fold cue is appended ONLY when its full width was reserved off the
-          # name budget (budget >= 1 ⇒ ≥1 name col left after the cue). At a very narrow
-          # pane the budget floors and there's no room: drop the cue so colored's visible
-          # width matches plain's `text` (== the pre-#107 no-cue width) instead of
-          # overrunning and staircasing the #118 diff/PR columns. The cue returns as the
-          # pane widens; the common case is unchanged (budget large, cue always shows).
+          # The trailing cues (the " ⇅" link, then the " ▸N" fold) are appended ONLY when
+          # their full width was reserved off the name budget (budget >= 1 ⇒ ≥1 name col
+          # left after them) — the same rule fit_plain applies to `text`. At a very narrow
+          # pane the budget floors and there's no room: drop both so colored's visible
+          # width matches `text` instead of overrunning and staircasing the #118 diff/PR
+          # columns. They return as the pane widens; the common case always shows them.
+          link = link_cue(node)
           cue = fold_cue(node)
-          budget = text.length - 4 - cue.length
-          cue = "" if budget < 1
+          budget = text.length - WS_PREFIX_COLS - link.length - cue.length
+          if budget < 1 # no room for the cues: the name gets their columns back, as in fit_plain's `text`
+            link = cue = ""
+            budget = text.length - WS_PREFIX_COLS
+          end
           name = trunc(node.name.to_s, [budget, 1].max)
           ptr = " "
           if current
@@ -551,7 +625,7 @@ module Switchboard
           elsif @attention.include?(node.path) || unseen_failure?(node.path)
             name = "\e[1;33m#{name}\e[0m"          # unviewed completion — bold yellow until you look (the current row is never marked)
           end
-          "#{ptr} #{dot} #{name}#{cue.empty? ? '' : "\e[2m#{cue}\e[0m"}" # dim ▸N cue last, its width already reserved
+          "#{ptr} #{dot} #{name}#{styled_link(node.path, link)}#{cue.empty? ? '' : "\e[2m#{cue}\e[0m"}" # cues last (link, then dim ▸N), widths already reserved
         else "#{BRANCH_FG}#{text}\e[0m"
         end
       end

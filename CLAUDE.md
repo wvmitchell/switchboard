@@ -940,6 +940,77 @@ clears) is gated on the `background_presence` config knob (global + per-project,
 project using only monitoring still gets the hook wired. Cloud routines remain invisible
 (they never reach the local reporter) — a hard limit stated, not worked around.
 
+### Remote-link glyph (the ⇅ — observed, not declared)
+
+A workspace reachable from the phone — a Claude session with `/remote-control` (`/rc`)
+on — shows `⇅` right after its name (`⇅2` for several links; before any `▸N`, folded or
+expanded; workspace rows only). Unlike the ∞ there is nothing to declare: Claude
+already writes the truth. Every live Claude session has `<claude dir>/sessions/<pid>.json`
+(`ClaudeHistory.claude_root`, shared with the transcript reader; test seam
+`SWITCHBOARD_CLAUDE_SESSIONS_DIR`), and `/rc` adds a `bridgeSessionId` (removed on
+disconnect, a NEW id on reconnect; the link is `https://claude.ai/code/<id>`). Verified
+live on Claude Code 2.1.308; no hook or env exposes it. `RemoteLink` (`remote_link.rb`)
+reads it, and because the file is **undocumented**, everything fails closed — an
+unrecognized shape is no link, never a wrong one, and `scan` is total (the sidebar
+hydrates `@links` LAST in `refresh_agents` behind its own rescue: a raise reaching
+`refresh_agents`' rescue would blank every agent dot). Files are read as UTF-8 whatever
+the locale (a smart-quoted session name would otherwise fail to parse).
+
+Three hard-won rules:
+- **Liveness is `ProcessIdentity.same?(pid, procStart)`.** Claude writes `procStart`
+  byte-identical to `LC_ALL=C TZ=UTC ps -o lstart=` (double-space day padding kept), so
+  no parsing; a crashed session's leftover file or a recycled pid shows nothing. Claude
+  removes its file on clean exit. `kill(0)` runs first, so a dead leftover never forks a
+  `ps` (the files can sit there forever).
+- **Place a session by its KERNEL cwd, not the file's `cwd`.** `cwd` and `tmux` are
+  startup stamps. After `rename A→B` the bridge keeps `realpath(A)` correct — until
+  another workspace is renamed ONTO `A` (`Rename.perform` clears a dead bridge), when
+  `realpath(A)` names the wrong tree. One batched `lsof -a -d cwd` (`Agents.cwds_of`,
+  shared with `Agents.process_cwds`; ~27 ms for 4 pids, only when ≥1 link is live)
+  follows the moved dir; the recorded `cwd` is only the fallback. (The agent dots may
+  share this flaw — a verify-first TODO.)
+- **The warm gate fingerprints the linked SET, not dir mtimes.** Claude rewrites EVERY
+  session's file on each busy/idle flip, hooked or not, inside switchboard or not, so a
+  `dir_fingerprint` would wake every hidden sidebar for unrelated work.
+  `RemoteLink.fingerprint` keeps a per-file (mtime, size, inode) stamp cache
+  (`@link_fp_cache` — a same-tick `/rc` toggle still changes the size), re-parses only
+  changed files (no `ps`, no lsof), and moves only when a link appears, ends, or
+  crosses the stale line.
+
+An OFF-SCREEN pane runs the cheap scan (`cheap: !@visible`): `kill(0)` liveness and the
+recorded `cwd`, no `ps`/lsof — hidden panes warm whenever anything in the fingerprint
+moves. Its rare misses (a recycled pid, a rename onto an old name) last until the pane's
+next visible scan, within `REFRESH`. It follows `@visible`, not `hooks_only`: the
+on-screen post-delete reload passes `hooks_only` too. Paths are compared as bytes — under
+tmux's C locale git's paths arrive US-ASCII and the JSON's UTF-8, and a non-ASCII pair
+would raise.
+
+All of a worktree's links are kept (`{path => [Link, …]}`, newest first by `startedAt`
+→ parsed `procStart` → pid; a bad ordering field only demotes). A link idle past
+`remote_link_stale_after` (minutes, default 120, global; `false`/0 off; invalid → 120)
+renders its `⇅` **grey** (`LINK_STALE_FG`, `\e[90m`) — bold read identical in Will's
+terminal — and ANY stale link greys the row, so an old forgotten link can't hide behind
+a newer busy one. Background jobs (`kind: "bg"`, apparently always bridged) show the
+glyph but are never stale. The grey survives the reverse-video cursor bar
+(`link_in_bar`). Truncation: `fit_plain` gives up NAME columns, never the trailing cues
+(the old `trunc(plain(node))` cut `⇅`/`▸N` first, so they vanished under the cursor bar
+on a long name); the cues drop only when no name column would remain. The home
+`console` adds `N idle links` and `N linked`, and given `cols` drops WHOLE clauses
+(`linked` → `PRs` → `active`) before it would cut mid-word — the idle-link warning
+always seats at 40 cols. `doctor` is the canary (`RemoteLink.health`): 0 files while a
+Claude process runs (the dir moved — 0 with nothing open is normal, since Claude removes
+its file on exit), files but none in the expected shape (format changed), or EVERY live
+Claude pid failing the start-time match (`procStart` format drifted; a single drift is a
+recycled pid). Only pids whose process IS Claude count (`claude_pids`: argv[0] or the
+node script named `claude`, not a substring), and it warns when this shell's
+`CLAUDE_CONFIG_DIR` differs from tmux's (sidebars never read your rc). A
+RENAMED `bridgeSessionId` key is undetectable — it reads as "nothing linked". The
+sandbox seeds a link on `quiet-cleanup` (`Sandbox.seed_link`: a `sleep` parked in the
+worktree in a detached non-`sb/` session, so its kernel cwd is right and it dies with the
+server); a real `claude /rc` inside the sandbox writes the real `~/.claude` and isn't
+shown. Codex has no per-session equivalent (`codex remote-control` is a separate
+app-server process). Proven end to end by `test/smoke/remote_link_smoke_test.rb`.
+
 ### Shared project collapse (the same multi-process trick)
 
 Folding a project header (▸/▾ on ↵) hides its workspace rows. `Collapse`

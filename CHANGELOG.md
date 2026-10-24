@@ -10,6 +10,30 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
+## [0.53.0] — see which workspaces your phone can reach (2026-10-24)
+
+### Added
+- **`⇅` on a workspace you can reach from your phone**: a Claude session with
+  `/remote-control` (`/rc`) on. It sits right after the name (`⇅2` for several), folded
+  or expanded, and clears when the link ends. Nothing to set up: switchboard reads the
+  session file Claude already writes, and places a session by where it really is, so a
+  renamed workspace keeps its glyph.
+- **A forgotten link turns grey.** A linked session idle past `remote_link_stale_after`
+  (default 120 minutes; `false` or `0` turns it off) greys its `⇅` and counts in the home
+  header as an **idle link**. Background Claude jobs show the glyph but never go grey.
+- The home header counts `N idle links` and `N linked`; on a narrow pane it drops whole
+  counts (linked, then PRs, then active) instead of cutting the line mid-word, so the
+  idle-link warning always shows.
+- `doctor` reports the remote links it sees and warns if a Claude update moved or
+  reshaped its session files (the glyph would otherwise just stop appearing), or if
+  your shell and tmux point Claude at different `CLAUDE_CONFIG_DIR`s.
+- `switchboard sandbox` seeds a linked workspace (`quiet-cleanup`), and the `?` help
+  legend explains both `⇅` states.
+
+### Fixed
+- A long workspace name under the cursor bar no longer hides the `▸N` branch-fold cue:
+  the name gives way, the cues stay.
+
 ## [0.52.0] — `switchboard upgrade` (2026-10-23)
 
 ### Upgrading

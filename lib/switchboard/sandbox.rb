@@ -53,6 +53,7 @@ module Switchboard
         seed_repo(state_dir)
         write_config(state_dir)
         boot(sock_dir, checkout)
+        seed_link(File.join(state_dir, "worktrees", PROJECT, "quiet-cleanup")) # needs the server: the pid lives in it
         system("tmux", "attach", "-t", Tmux::HOME)       # BLOCKS until you detach; NOT exec, so teardown runs
       ensure
         teardown(sock_dir)
@@ -90,6 +91,7 @@ module Switchboard
           "SWITCHBOARD_WIDTH_FILE"          => File.join(state_dir, "width"),
           "SWITCHBOARD_CACHE_DIR"           => File.join(state_dir, "cache"),
           "SWITCHBOARD_CLAUDE_PROJECTS_DIR" => File.join(state_dir, "claude-projects"),
+          "SWITCHBOARD_CLAUDE_SESSIONS_DIR" => File.join(state_dir, "claude-sessions"),
           "XDG_STATE_HOME"                  => File.join(state_dir, "xdg-state"),
           "XDG_DATA_HOME"                   => File.join(state_dir, "xdg-data"),
           "XDG_CONFIG_HOME"                 => File.join(state_dir, "xdg-config"),
@@ -222,6 +224,30 @@ module Switchboard
       Monitoring.mark(File.realpath(worktree))
     rescue StandardError
       nil # a marker that fails to seed just doesn't render the ∞ — never abort the sandbox
+    end
+
+    # Mark a worktree reachable from the phone (the ⇅ glyph). RemoteLink only trusts a
+    # LIVE process whose start time matches and places it by its KERNEL cwd, so a fake
+    # file alone would never render: park a `sleep` in the worktree, in a detached
+    # non-sb/ session of THIS server (prune/reconcile only touch sb/), so it dies with
+    # the sandbox, and point a session file at it. A real `claude /rc` inside the
+    # sandbox writes the real ~/.claude (HOME is kept), so it deliberately doesn't show.
+    def seed_link(worktree)
+      out = IO.popen(["tmux", "new-session", "-d", "-s", "_sandbox-link", "-c", worktree,
+                      "-P", "-F", '#{pane_pid}', "exec sleep 2147483647"], err: File::NULL, &:read)
+      pid = out.to_s.strip.to_i
+      return unless pid.positive?
+
+      now = (Time.now.to_f * 1000).to_i
+      FileUtils.mkdir_p(RemoteLink.sessions_dir)
+      File.write(File.join(RemoteLink.sessions_dir, "#{pid}.json"), JSON.generate(
+        "pid" => pid, "sessionId" => "sandbox-link", "cwd" => File.realpath(worktree), "kind" => "interactive",
+        "name" => "sandbox link", "startedAt" => now, "procStart" => ProcessIdentity.start_of(pid),
+        "status" => "idle", "statusUpdatedAt" => now, "bridgeSessionId" => "session_sandbox"
+      ))
+      pid
+    rescue StandardError
+      nil # a link that fails to seed just doesn't render the ⇅ — never abort the sandbox
     end
 
     # base: main + projects: are load-bearing (F2): without base the no-origin repo
