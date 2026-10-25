@@ -81,13 +81,13 @@ module Switchboard
       # The `?` overlay's key map is built at render time from the resolved bindings
       # (Keymap.help_rows, issue #108) so the shown keys can never drift from what
       # dispatch honors — [key, description] rows, a blank key marking a section
-      # heading. Top-loaded with navigation, so a short pane drops the tail, not the
-      # top. The tmux-layer keys that operate the sidebar (prefix-toggle/home) are
+      # heading. Top-loaded with navigation, so page 1 of a paged overlay is the part
+      # you need most. The tmux-layer keys that operate the sidebar (prefix-toggle/home) are
       # appended from config (tmux_help_rows), resolved, not static.
       HELP_KEY_COLS = 6 # key column width; longer combos (move/prefix rows) overflow it
 
       # What the row glyphs mean (DR9) — nothing else teaches them. Seated right under
-      # the help wordmark so help_body's height cap never drops it.
+      # the help wordmark, so it's always on page 1.
       LEGEND = [[SPIN_COLORED.first, "⠋", "working"], [WANTS_ON, "◆", "input"], [DONE, "●", "done"],
                 [MONITORING, "∞", "watching"], [BUILDING, "◌", "building"], [FAILED, "✘", "failed"],
                 ["#{LINK_LIVE_FG}#{LINK_GLYPH}\e[0m", "⇅", LINK_LIVE_LABEL], ["#{LINK_STALE_FG}#{LINK_GLYPH}\e[0m", "⇅", "idle link"]].freeze
@@ -256,29 +256,66 @@ module Switchboard
         $stdout.write(out)
       end
 
-      # The ? help overlay (issue #62). Paints the full key map with the same
+      # The ? help overlay (issue #62). Paints one page of the key map with the same
       # cursor-addressed \e[K / \e[0J no-flash technique as render (no full \e[2J, so
-      # the per-tick repaint while it's open doesn't flicker), with a dim "any key to
-      # close" hint pinned to the bottom row. The body comes from help_body, capped so
-      # the hint always seats.
+      # the per-tick repaint while it's open doesn't flicker), with a dim hint pinned to
+      # the bottom row. The page index is clamped here because the pane can shrink
+      # while help is open, leaving fewer pages than the one we were on. Painting more
+      # than one page makes the paging keys sticky (help_key): a resize between this
+      # paint and the next key can't turn the → you aimed at "2/2" into a dismiss.
       def render_help
         rows, cols = winsize
-        lines = help_body(rows, cols)
+        pages = help_pages(rows, cols)
+        @help_paged ||= pages.size > 1
+        @help_page = @help_page.clamp(0, pages.size - 1)
+        lines = pages[@help_page]
         out = +"\e[H"
         lines.each_with_index do |text, i|
           out << "\e[#{i + 1};1H\e[K#{text}" # each line carries (and resets) its own ANSI
         end
         out << "\e[#{lines.size + 1};1H\e[0J" # erase below the last line (incl. any old footer)
-        out << "\e[#{rows};1H\e[K\e[2m#{trunc('any key to close', cols)}\e[0m"
+        out << "\e[#{rows};1H\e[K\e[2m#{trunc(help_page_hint(@help_page, pages.size, @help_paged), cols)}\e[0m"
         $stdout.write(out)
       end
 
-      # The overlay's lines, capped to leave the bottom row for the "any key to close"
-      # hint. A short pane drops the tail (HELP is top-loaded with navigation), never
-      # the top. Pure given winsize + @config, so the height-cap is unit-testable
-      # without raw I/O — the suite keeps render-to-stdout out of scope.
-      def help_body(rows, cols)
-        help_lines(cols).first([rows - 1, 0].max)
+      # The overlay split into pages of rows-1 lines (the hint keeps the bottom row),
+      # so nothing is ever cut off a short pane. Whole sections go on a page; a
+      # section moves to the next page rather than split, unless it alone is taller
+      # than a page. A separator landing at a page top is dropped. A pane too short
+      # for any body line gets one empty page (hint only) — a 0-line page would never
+      # fill. Pure given winsize + @config, so it's unit-testable without raw I/O.
+      def help_pages(rows, cols)
+        return [[]] if rows < 2
+
+        height = rows - 1
+        pages = [[]]
+        help_sections(cols).each do |section|
+          pages << [] if pages.last.any? && pages.last.size + section.size > height
+          section = section.drop(1) if pages.last.empty? && section.first == ""
+          section.each do |text|
+            pages << [] if pages.last.size == height
+            pages.last << text
+          end
+        end
+        pages
+      end
+
+      # One page: the original "any key to close". Several: where you are and which
+      # way the rest is (the last page points back). "Other" keys, because →/Space/←
+      # only page — at an end they stay put rather than close. A paged overlay the
+      # pane grew to fit on one page keeps its paging keys, so it says "other" too.
+      def help_page_hint(page, count, paged = false)
+        return "any key to close" if count < 2 && !paged
+        return "1/1 · other keys close" if count < 2
+
+        "#{page + 1}/#{count} · #{page < count - 1 ? '→ more' : '← back'} · other keys close"
+      end
+
+      # The whole overlay as one flat list of lines (the pages, before splitting) —
+      # the view the tests check content and width against; rendering goes through
+      # help_pages.
+      def help_lines(cols)
+        help_sections(cols).flatten
       end
 
       # The p overlay (layout picked by eye, design review D2): where you are, which
@@ -390,20 +427,22 @@ module Switchboard
       end
 
       # Format the key map (Keymap.help_rows, built from the live @bindings so the
-      # shown keys never drift — issue #108) plus the resolved tmux rows into rendered
-      # lines: the wordmark, then each section as a blank separator + bold heading, and
-      # each key row as `key.ljust(HELP_KEY_COLS)  desc`. trunc runs on the PLAIN string
-      # BEFORE the ANSI is wrapped on, so truncation can never cut an escape (line()).
-      def help_lines(cols)
-        out = ["#{BRAND}#{trunc(WORDMARK, cols)}\e[0m", *legend_lines(cols)]
+      # shown keys never drift — issue #108) plus the resolved tmux rows into
+      # sections: the head (wordmark + legend), then one per heading row — a blank
+      # separator, the bold heading, and each key row as `key.ljust(HELP_KEY_COLS)
+      # desc`. Grouped from the rows themselves (a blank key starts a section), so
+      # paging never has to re-split drawn text. trunc runs on the PLAIN string BEFORE
+      # the ANSI is wrapped on, so truncation can never cut an escape (line()).
+      def help_sections(cols)
+        sections = [["#{BRAND}#{trunc(WORDMARK, cols)}\e[0m", *legend_lines(cols)]]
         (Keymap.help_rows(@bindings) + tmux_help_rows).each do |key, desc|
           if key.empty?
-            out << "" << "#{BRAND}#{trunc(desc, cols)}\e[0m" # blank separator, then the heading
+            sections << ["", "#{BRAND}#{trunc(desc, cols)}\e[0m"] # blank separator, then the heading
           else
-            out << trunc("#{key.ljust(HELP_KEY_COLS)}  #{desc}", cols)
+            sections.last << trunc("#{key.ljust(HELP_KEY_COLS)}  #{desc}", cols)
           end
         end
-        out
+        sections
       end
 
       # Help's glyph legend: the row glyphs, wrapped to the pane, each in its row color.

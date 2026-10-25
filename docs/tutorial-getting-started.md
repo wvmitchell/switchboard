@@ -67,7 +67,7 @@ bottom of the pane shows the keys that apply right now.
 
 You've now seen the sidebar. Everything from here is keys inside it. The footer
 only has room for the most common ones, so whenever you forget a key, press
-**`?`** for the full map — any key closes it again.
+**`?`** for the full map — on a short pane it splits into pages (`→`/`Space` next, `←` back), and any other key closes it.
 
 ## Step 3: Add your first project
 

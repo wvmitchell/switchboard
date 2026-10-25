@@ -661,7 +661,8 @@ module Switchboard
 
     def test_help_opens_with_the_glyph_legend
       sb = sidebar
-      body = sb.send(:help_body, 8, 40).map { |l| strip_ansi(l) }
+      sb.instance_variable_set(:@pane_switch_keys, [])
+      body = sb.send(:help_pages, 8, 40).first.map { |l| strip_ansi(l) }
       legend = body[1..2].join(" ")
       %w[working input done watching building failed].each { |w| assert_includes legend, w }
       body.each { |l| assert_operator l.length, :<=, 40 }
