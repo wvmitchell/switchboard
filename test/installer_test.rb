@@ -208,6 +208,30 @@ module Switchboard
         Installer.run_rebind("toggle", "b", recorded: "s", legacy_toggle: false, clobbered: nil)
       end
       assert_includes cmds, ["set-option", "-gu", "@switchboard-toggle-rejected"]
+      # Extended (audit): a role unbound in config forgets a refusal too, so a later hand edit
+      # back to that key still reads as drift.
+      cmds.clear
+      stub_method(Installer, :run_tmux, ->(*argv) { cmds << argv; true }) do
+        Installer.run_rebind("home", nil, recorded: "H", legacy_toggle: false, clobbered: nil)
+      end
+      assert_includes cmds, ["set-option", "-gu", "@switchboard-home-rejected"]
+    end
+
+    # Value: protects=uninstall leaving no switchboard option in the live server for either role,
+    # the new -rejected one included; fails_when=teardown_live drops a role's unbind or option
+    # clear; why_new=teardown_live's commands were never asserted (only noted as manual); seam=run_tmux
+    def test_teardown_live_unbinds_and_forgets_every_recorded_option
+      cmds = []
+      opts = { "@switchboard-toggle-key" => "t", "@switchboard-home-key" => "H" }
+      stub_method(Installer, :tmux_option, ->(name) { opts[name] }) do
+        stub_method(Installer, :run_tmux, ->(*argv) { cmds << argv; true }) { Installer.teardown_live }
+      end
+      assert_includes cmds, ["unbind-key", "t"]
+      assert_includes cmds, ["unbind-key", "H"]
+      %w[toggle home].product(%w[key clobbered rejected]).each do |role, kind|
+        assert_includes cmds, ["set-option", "-gu", "@switchboard-#{role}-#{kind}"]
+      end
+      Installer::HOOK_SLOTS.each { |slot| assert_includes cmds, ["set-hook", "-gu", slot] }
     end
 
     # Value: protects=doctor/upgrade telling a hand-edited tmux_keys apart from a key tmux

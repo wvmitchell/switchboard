@@ -409,6 +409,20 @@ module Switchboard
       assert Git.branch_exists?(repo, "old"), "the source branch is untouched on refusal"
     end
 
+    # Value: protects=the rollback's proof of ownership — a base that won't resolve is nil, never
+    # a non-sha string; fails_when=rev_parse drops --verify/^{commit} or the exit check (git echoes
+    # an unresolved arg to stdout); why_new=undo_add tests only pass a resolvable "main"; seam=none
+    def test_rev_parse_names_a_commit_or_nil
+      repo = temp_git_repo("app")
+      git(repo, "tag", "-a", "-m", "annotated", "v1")
+      head = git(repo, "rev-parse", "HEAD").strip
+      assert_equal head, Git.rev_parse(repo, "main")
+      assert_equal head, Git.rev_parse(repo, "v1"), "an annotated tag peels to its commit"
+      assert_nil Git.rev_parse(repo, "no-such-ref")
+      assert_nil Git.rev_parse(repo, "")
+      assert_nil Git.rev_parse(repo, nil)
+    end
+
     def test_branch_exists
       repo = temp_git_repo("app")
       git(repo, "branch", "here")

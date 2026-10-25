@@ -1246,15 +1246,19 @@ module Switchboard
     # Value: protects=doctor flagging a tmux_keys edit nobody applied, and staying quiet
     # about a key tmux refused; fails_when=doctor_key_drift is dropped or ignores the rejected
     # key; why_new=the bound key still works, so every other row read green; seam=tmux_server?
+    # Extended (audit): the home role too — protects=a home key added by hand and never bound
+    # reading "nothing bound", not an empty `prefix-`; fails_when=the drift loop skips home or
+    # the unbound side's wording breaks; seam=tmux_server?
     def test_doctor_flags_a_tmux_key_edited_by_hand_but_not_a_refused_one
-      File.write(Config.path, YAML.dump("tmux_keys" => { "toggle" => "t" }))
+      File.write(Config.path, YAML.dump("tmux_keys" => { "toggle" => "t", "home" => "H" }))
       drift = "tmux_keys.toggle is t in config, but tmux has prefix-s bound"
       out = stub_method(Installer, :tmux_server?, -> { true }) do
         with_key_stubs(live: true, options: { "@switchboard-toggle-key" => "s" }) { capture { CLI.send(:doctor_binding_live) } }
       end
       assert_includes out, drift
+      assert_includes out, "tmux_keys.home is H in config, but tmux has nothing bound"
       out = stub_method(Installer, :tmux_server?, -> { true }) do
-        options = { "@switchboard-toggle-key" => "s", "@switchboard-toggle-rejected" => "t" }
+        options = { "@switchboard-toggle-key" => "s", "@switchboard-toggle-rejected" => "t", "@switchboard-home-key" => "H" }
         with_key_stubs(live: true, options: options) { capture { CLI.send(:doctor_binding_live) } }
       end
       refute_includes out, "in config, but tmux has"

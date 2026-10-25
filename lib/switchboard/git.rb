@@ -185,8 +185,6 @@ module Switchboard
       system("git", "-C", repo, "branch", "-m", old, new, out: File::NULL, err: File::NULL)
     end
 
-    # A local branch by this name already exists. Used to pre-check a rename target
-    # before moving anything, so a collision fails clean (nothing renamed/moved).
     # The commit `ref` names, or nil when it doesn't resolve.
     def rev_parse(repo, ref)
       return nil if blank?(ref)
@@ -204,6 +202,8 @@ module Switchboard
       system("git", "-C", repo, "update-ref", "-d", "refs/heads/#{branch}", sha, out: File::NULL, err: File::NULL)
     end
 
+    # A local branch by this name already exists. Used to pre-check a rename target
+    # before moving anything, so a collision fails clean (nothing renamed/moved).
     def branch_exists?(repo, branch)
       return false if blank?(branch)
 
