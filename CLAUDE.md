@@ -990,9 +990,11 @@ All of a worktree's links are kept (`{path => [Link, …]}`, newest first by `st
 `remote_link_stale_after` (minutes, default 120, global; `false`/0 off; invalid → 120)
 renders its `⇅` **grey** (`LINK_STALE_FG`, `\e[90m`) — bold read identical in Will's
 terminal — and ANY stale link greys the row, so an old forgotten link can't hide behind
-a newer busy one. Background jobs (`kind: "bg"`, apparently always bridged) show the
-glyph but are never stale. The grey survives the reverse-video cursor bar
-(`link_in_bar`). Truncation: `fit_plain` gives up NAME columns, never the trailing cues
+a newer busy one. A live link is **green** (`LINK_LIVE_FG`, `\e[32m`): the default fg read
+too close to the grey. Background jobs (`kind: "bg"`, apparently always bridged) show the
+glyph but are never stale. Under the reverse-video cursor bar the `⇅` is uncolored like
+the dots: a color code inside `\e[7m` paints the cell's BACKGROUND (fg/bg swap), an
+off-shade block in the bar (keeping colors there is a TODOS.md item). Truncation: `fit_plain` gives up NAME columns, never the trailing cues
 (the old `trunc(plain(node))` cut `⇅`/`▸N` first, so they vanished under the cursor bar
 on a long name); the cues drop only when no name column would remain. The home
 `console` adds `N idle links` and `N linked`, and given `cols` drops WHOLE clauses

@@ -544,11 +544,10 @@ safe today; each is narrow).
   (2) ~~`@links` survives refresh_agents' outer rescue~~ (done in v0.54.0: hydrated in its ensure);
   (3) the doctor canary misses a format change while one old-format leftover file sits
   beside the new ones (shaped > 0, alive 0 reads healthy); (4) `claude_pids` misses a
-  Claude whose process shows as `node …/cli.js`; (5) a workspace name ending in ` ⇅` on
-  a very narrow pane can take the cursor-bar grey, and an empty name shifts that row's
-  columns — let `fit_plain` report whether the cues were kept and share it with
-  `colored`/`link_in_bar`; (6) two stale comments: `WS_PREFIX_COLS` still names
-  `link_in_bar`, and `Agents.lsof_path`'s encoding rationale predates the byte compares.
+  Claude whose process shows as `node …/cli.js`; (5) an empty workspace name shifts that
+  row's columns — let `fit_plain` report whether the cues were kept and share it with
+  `colored` (the cursor-bar grey half of this went away in v0.53.1); (6) a stale comment:
+  `Agents.lsof_path`'s encoding rationale predates the byte compares.
   *Why:* none hits a normal setup; (1) is the only verified user-visible one. *Pros:*
   small, testable changes. *Cons:* each touches a reviewed path, so give it its own short
   review. *Context:* ship review of v0.53.0 (D2/D3 — deferred to keep the release from
@@ -705,3 +704,19 @@ safe today; each is narrow).
   no test exercises (bare `[hooks.state]` on reinstall, `--no-codex-hooks` over each block state,
   enable-hooks over codex tables or a missing end marker, …). *Start in:* the cell list in the
   ship review; `test/codex_hook_test.rb`, `test/installer_test.rb`. **Priority:** P4.
+
+## Sidebar cursor bar follow-ups
+
+- **Keep row colors under the cursor bar.** *Why:* the focused cursor row is reverse video
+  (`\e[7m`), so every color on it is stripped: the agent dot, the attention/current-name
+  colors, the `⇅` live/idle color, the diff `+/−` and the PR state. Only shapes survive, and
+  the selected row is exactly the one you're reading. Re-coloring a cell inside the reverse
+  run doesn't work: fg and bg swap, so the color paints that cell's *background* (the idle
+  `⇅` showed an off-shade block, which is why v0.53.1 dropped it). *Start in:* `Sidebar#line`,
+  `note_line` and `line_without_note` (`sidebar/render.rb`), the three `\e[7m` bar returns.
+  Likely shape: draw the bar as an explicit background (`\e[48;…m`) with the normal `colored`
+  row on top instead of reverse video, which keeps fg colors intact. The hard part is
+  theme-relativity: a fixed bg has to read on light and dark themes (the #23 constraint behind
+  the bright-black branch rows), so audition candidates in Will's terminal before choosing.
+  Check the reset codes inside `colored` (`\e[0m` would also clear the bar's bg mid-row; they'd
+  need to re-assert it or use targeted resets like `\e[39m`). **Priority:** P2.

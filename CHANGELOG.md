@@ -25,6 +25,17 @@ refer to the project's earlier, private repository; the public tracker starts at
 - A remote link now refreshes even when a scan of the agent dots fails, so an ended
   link can't keep its `⇅`.
 
+## [0.53.1] — a live `⇅` reads green (2026-10-24)
+
+### Changed
+- A live remote link's `⇅` is now green, the done dot's color, so it stands apart from
+  an idle link's grey. Before, it used the default text color, which looked almost the
+  same as the grey.
+- The cursor bar no longer greys an idle `⇅`. Inside the reverse-video bar that grey
+  painted the glyph's background a slightly different shade from the rest of the bar;
+  the highlighted row now shows a plain `⇅`, like its dot, and the color returns when the
+  cursor moves off.
+
 ## [0.53.0] — see which workspaces your phone can reach (2026-10-24)
 
 ### Added

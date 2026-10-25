@@ -29,8 +29,9 @@ module Switchboard
       BUILDING = "\e[33m◌\e[0m"   # a dispatched workspace being built / set up: a hollow "not yet" slot. Steady (dormancy), yellow at normal weight so it reads on light themes too (DR4/DR10)
       FAILED   = "\e[1;31m✘\e[0m" # a dispatch whose build/setup/launch failed: the heavy ✘ keeps its shape in reverse video (DR5)
       LINK_GLYPH    = "⇅"        # a live /remote-control link: this workspace is reachable from your phone (picked by eye)
+      LINK_LIVE_FG  = "\e[32m"    # ...green while live: the resting dots' green, normal weight (default fg read too close to the grey)
       LINK_STALE_FG = "\e[90m"    # ...and grey when idle past remote_link_stale_after (bold read identical; the theme-relative dim branch rows use)
-      WS_PREFIX_COLS = 4          # a ws row's "<pointer> <dot> " before its name: fit_plain, colored and link_in_bar must agree on it
+      WS_PREFIX_COLS = 4          # a ws row's "<pointer> <dot> " before its name: fit_plain and colored must agree on it
       NOTE_FG  = "\e[2m"          # the dim task label / failure reason in the right region (DR3/DR8)
       NOTE_INVISIBLE = /[\p{Cc}\p{Cf}\p{Mn}\p{Me}]/ # dropped from a task label: controls, bidi/zero-width, combining
       NOTE_WIDE = /[\p{Emoji_Presentation}ᄀ-ᅟ⺀-꓏가-힣豈-﫿︰-﹏＀-｠￠-￦\u{1F300}-\u{1FAFF}\u{20000}-\u{3FFFD}]/ # two columns wide
@@ -88,7 +89,7 @@ module Switchboard
       # the help wordmark so help_body's height cap never drops it.
       LEGEND = [[SPIN_COLORED.first, "⠋", "working"], [WANTS_ON, "◆", "input"], [DONE, "●", "done"],
                 [MONITORING, "∞", "watching"], [BUILDING, "◌", "building"], [FAILED, "✘", "failed"],
-                [LINK_GLYPH, "⇅", "on phone"], ["#{LINK_STALE_FG}#{LINK_GLYPH}\e[0m", "⇅", "idle link"]].freeze
+                ["#{LINK_LIVE_FG}#{LINK_GLYPH}\e[0m", "⇅", "on phone"], ["#{LINK_STALE_FG}#{LINK_GLYPH}\e[0m", "⇅", "idle link"]].freeze
 
       private
 
@@ -391,7 +392,7 @@ module Switchboard
         width = 0
         qr_key = @bindings && @bindings[:phone_link]
         LEGEND.each do |colored, glyph, label|
-          label = "#{label} · #{qr_key} shows a QR" if colored == LINK_GLYPH && qr_key # the live key, or no hint
+          label = "#{label} · #{qr_key} shows a QR" if label == "on phone" && qr_key # the live key, or no hint
           item_w = "#{glyph} #{label}".length
           if width.positive? && width + 2 + item_w > cols
             lines << []
@@ -495,7 +496,7 @@ module Switchboard
         if active && @focused
           right = right_region(counts, node.pr, adds_w, dels_w, pr_w, with_color: false)
           bar = region_w.zero? ? text : "#{text.ljust(left_cols)} #{right}"
-          return "\e[7m#{link_in_bar(node, bar.ljust(cols), text)}\e[0m"
+          return "\e[7m#{bar.ljust(cols)}\e[0m"
         end
 
         body = colored(node, text, current: node.kind == "ws" && node.path == @current_path)
@@ -533,7 +534,7 @@ module Switchboard
         shown = (" " * (room - columns(shown))) + shown
         if active && @focused
           body = "#{text} #{shown}"
-          return "\e[7m#{link_in_bar(node, body, text)}#{' ' * [cols - columns(body), 0].max}\e[0m" # padded in COLUMNS, like the note
+          return "\e[7m#{body}#{' ' * [cols - columns(body), 0].max}\e[0m" # padded in COLUMNS, like the note
         end
 
         body = colored(node, text, current: node.kind == "ws" && node.path == @current_path)
@@ -564,7 +565,7 @@ module Switchboard
       end
 
       def line_without_note(node, active, cols, text)
-        return "\e[7m#{link_in_bar(node, text.ljust(cols), text)}\e[0m" if active && @focused
+        return "\e[7m#{text.ljust(cols)}\e[0m" if active && @focused
 
         colored(node, text, current: node.kind == "ws" && node.path == @current_path)
       end
@@ -666,21 +667,7 @@ module Switchboard
       def styled_link(path, link)
         return "" if link.empty?
 
-        link_stale?(path) ? "#{LINK_STALE_FG}#{link}\e[0m" : link
-      end
-
-      # The cursor bar prints plain text, so a stale ⇅ would read like a fresh one
-      # there. Re-grey just the cue inside the reverse video (39 restores the bar's fg).
-      # `bar` starts with the row's fitted `text`, whose tail IS the cue — located there,
-      # not by search: a worktree name or a typed task note can contain " ⇅" too.
-      def link_in_bar(node, bar, text)
-        return bar unless node.kind == "ws" && link_stale?(node.path)
-
-        _, link, cue = ws_parts(node)
-        return bar unless text.end_with?(link + cue) # the cues dropped on a very narrow pane
-
-        at = text.length - (link + cue).length
-        "#{bar[0, at]}#{LINK_STALE_FG}#{link}\e[39m#{bar[(at + link.length)..]}"
+        "#{link_stale?(path) ? LINK_STALE_FG : LINK_LIVE_FG}#{link}\e[0m"
       end
 
       # The bare (uncolored) "you are here" gutter pointer for a workspace path —
