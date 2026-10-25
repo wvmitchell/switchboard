@@ -50,6 +50,21 @@ module Switchboard
       assert_includes out, "updated 2 (2 hooked)"
     end
 
+    # Value: protects=a broken config.yml failing install/upgrade loudly; fails_when=the
+    # config_readable? guard is dropped (an unparseable registry lists no worktrees, so the
+    # refresh "succeeds" having touched nothing); why_new=only doctor read load_error; seam=none
+    def test_refresh_fails_with_the_parse_error_when_the_config_is_malformed
+      hook_with("/old/bin/switchboard", @linked)
+      ENV["SWITCHBOARD_BIN"] = "/new/bin/switchboard"
+      File.write(Config.path, "--\nprojects:\n  - name: app\n    path: #{@repo}\n") # the #14 repro: one dash short
+
+      ok, out = as_installed { quietly { Installer.refresh_wiring } }
+      refute ok
+      assert_includes out, "config failed to parse (", out
+      assert_includes out, "fix #{Config.path}"
+      refute ClaudeHook.current?(@linked), "nothing was refreshed against an empty registry"
+    end
+
     def test_refresh_reports_all_current_without_rewriting
       hook_with("/bin/switchboard", @linked)
       ino = File.stat(ClaudeHook.settings_path(@linked)).ino

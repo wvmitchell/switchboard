@@ -97,6 +97,19 @@ module Switchboard
       assert_empty r[:ran]
     end
 
+    # Value: protects=upgrade never calling itself current over a config it couldn't read;
+    # fails_when=either nothing-to-fetch exit skips config_readable?; why_new=a broken config
+    # listed no worktrees, so leftovers? said false and upgrade printed "up to date"; seam=none
+    def test_a_config_that_wont_parse_fails_instead_of_reading_as_up_to_date
+      File.write(Config.path, "--\nprojects:\n  - name: app\n")
+      [brew_upgrade(latest: VERSION), brew_upgrade(stamps: %w[same same])].each do |r|
+        refute r[:result]
+        assert_includes r[:out], "config failed to parse ("
+        refute_includes r[:out], "is up to date"
+        refute r[:handed]
+      end
+    end
+
     def test_an_unreachable_release_list_lets_brew_decide
       r = brew_upgrade(latest: nil)
       assert_includes r[:out], "couldn't check for a newer release"

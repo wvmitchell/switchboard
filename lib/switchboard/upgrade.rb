@@ -10,6 +10,9 @@ module Switchboard
   #     └ yes / couldn't tell ─► brew | git pull ─ moved? ─ no ─► "nothing newer yet" ─ leftovers? ─ yes ─► finish
   #                                                   └ yes ─► exec <bin> upgrade --finish <old>
   #
+  # Both "nothing to fetch" exits check the config parses first: an unparseable one lists
+  # no projects, so stale hooks would read as current. Fail with the parse error instead.
+  #
   # The install method is the channel: a Homebrew install follows releases, a `--HEAD`
   # one follows main, a clone follows whatever branch it tracks. The hand-off is an exec,
   # not a call, because this process has the OLD code loaded and only the new binary
@@ -32,6 +35,7 @@ module Switchboard
       latest = LatestRelease.latest if method == :brew
       case behind?(method, latest)
       when false
+        return false unless Installer.config_readable? # else stale hooks would read as current
         return finish(nil, leftovers: true) if leftovers?
 
         puts "switchboard #{VERSION} is up to date — run `switchboard doctor` if something seems off."
@@ -50,6 +54,7 @@ module Switchboard
       if before && stamp(method) == before # unknown ⇒ hand off
         return update_blocked if fetched == :update_failed
         nothing_newer(method, latest)
+        return false unless Installer.config_readable?
         return leftovers? ? finish(nil, leftovers: true) : true
       end
 

@@ -140,8 +140,8 @@ module Switchboard
     # (which each caller runs its own way): the current reporter script, and every
     # worktree that already carries switchboard's Claude hooks brought up to this version's
     # set — they're only written at worktree creation / enable-hooks, so they'd otherwise
-    # stay on whatever release created them. False when a worktree couldn't be updated, or
-    # the reporter couldn't be written while something runs it.
+    # stay on whatever release created them. False when a worktree couldn't be updated, the
+    # reporter couldn't be written while something runs it, or the config didn't parse.
     def refresh_wiring
       reporter_ok = true
       if installed_bin? # every hooked worktree runs this one shared script
@@ -152,7 +152,15 @@ module Switchboard
           (reporter_ok = !reporter_needed?) ? note("#{msg} (nothing is hooked yet)") : bad(msg)
         end
       end
-      step_rewire_hooks && reporter_ok
+      config_readable? && step_rewire_hooks && reporter_ok
+    end
+
+    # An unparseable config reads as no projects, so the hook refresh would skip every
+    # worktree in silence (and upgrade would call itself current): say so and fail instead.
+    def config_readable?
+      err = Config.new.load_error_message or return true
+      bad "#{err} — fix #{Config.path}, then re-run"
+      false
     end
 
     def reporter_unwritable = "agent-state reporter: couldn't write #{HookFile.script_path} — check that directory's permissions"

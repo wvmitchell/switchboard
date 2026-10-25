@@ -970,7 +970,7 @@ module Switchboard
     # failed to parse (fell back to defaults), a value that isn't a usable key, and a
     # home key that collides with the toggle (so home was left unbound).
     def doctor_key_config
-      puts row(false, "config failed to parse (#{config.load_error}) — using defaults; fix #{Config.path}") if config.load_error
+      puts row(false, "#{config.load_error_message} — using defaults; fix #{Config.path}") if config.load_error
       %w[toggle home].each do |role|
         raw = config.raw_tmux_key(role)
         next if raw.nil? || config.valid_tmux_key?(raw)

@@ -191,6 +191,9 @@ module Switchboard
     # the parse error so `doctor` can report it; a valid file is unaffected.
     attr_reader :load_error
 
+    # The one wording doctor, install and upgrade use for it.
+    def load_error_message = load_error && "config failed to parse (#{load_error})"
+
     def load_data(file)
       return {} unless File.exist?(file)
 
