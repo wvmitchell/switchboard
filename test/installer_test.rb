@@ -260,6 +260,19 @@ module Switchboard
       end
     end
 
+    # Value: protects=no drift verdict with no tmux server (upgrade from a plain shell must not
+    # read every configured key as unapplied and "finish" on each run); fails_when=key_drift?
+    # drops its tmux_server? gate (tmux_option reads nil, so any configured key looks drifted);
+    # why_new=every drift test stubs tmux_server? true; seam=tmux_server?
+    def test_key_drift_has_no_verdict_without_a_tmux_server
+      File.write(Config.path, YAML.dump("tmux_keys" => { "toggle" => "t" }))
+      stub_method(Installer, :tmux_server?, -> { false }) do
+        stub_method(Installer, :tmux_option, ->(*) { flunk "no server, nothing to read" }) do
+          assert_nil Installer.key_drift?("toggle", config: Config.new)
+        end
+      end
+    end
+
     # Value: protects=doctor/upgrade telling a hand-edited tmux_keys apart from a key tmux
     # refused; fails_when=key_drift_from? ignores the recorded or the rejected key; why_new=
     # new (R4: doctor and upgrade read only the bound key); seam=none

@@ -198,7 +198,12 @@ module Switchboard
     def load_data(file)
       return {} unless File.exist?(file)
 
-      YAML.safe_load_file(file) || {}
+      data = YAML.safe_load_file(file) || {}
+      # Valid YAML can still be no config: a dropped colon reads the file as one string, a
+      # leading dash as a list. Either lists no projects (or raises on lookup), so it's broken.
+      raise "the top level isn't a map of settings" unless data.is_a?(Hash)
+
+      data
     rescue StandardError => e
       @load_error = e.message
       {}

@@ -65,6 +65,15 @@ module Switchboard
       refute ClaudeHook.current?(@linked), "nothing was refreshed against an empty registry"
     end
 
+    # Value: protects=install/upgrade failing loudly on a config.yml that parses but isn't a map;
+    # fails_when=config_readable? sees no load_error for it; why_new=ship 2 red team; seam=none
+    def test_refresh_fails_on_a_config_that_is_not_a_map
+      File.write(Config.path, "worktree_root ~/wt\n") # one dropped colon: a plain string
+      ok, out = as_installed { quietly { Installer.refresh_wiring } }
+      refute ok
+      assert_includes out, "the top level isn't a map of settings"
+    end
+
     def test_refresh_reports_all_current_without_rewriting
       hook_with("/bin/switchboard", @linked)
       ino = File.stat(ClaudeHook.settings_path(@linked)).ino

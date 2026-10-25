@@ -1250,6 +1250,19 @@ module Switchboard
       assert_includes out, "collides with the toggle key"
     end
 
+    # Value: protects=a config.yml that parses but isn't a map (a dropped colon makes it one
+    # string; leading dashes a list) reads as broken, not as an empty healthy config; fails_when=
+    # load_data accepts any parsed value; why_new=ship 2 red team; seam=none
+    def test_doctor_config_row_fails_on_a_config_that_is_not_a_map
+      { "a string" => "worktree_root ~/wt\n", "a list" => "- projects\n- base\n" }.each do |label, body|
+        File.write(Config.path, body)
+        CLI.instance_variable_set(:@config, nil)
+        out = capture { CLI.send(:doctor_config) }
+        assert_includes out, "config failed to parse (the top level isn't a map of settings)", label
+        assert_empty Config.new.projects, "#{label}: degrades to no projects, never raises"
+      end
+    end
+
     def test_doctor_reports_a_config_parse_error
       File.write(Config.path, "}{ not yaml")
       out = with_key_stubs(live: true) { capture { CLI.send(:doctor_binding_live) } }

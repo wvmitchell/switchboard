@@ -16,8 +16,9 @@ refer to the project's earlier, private repository; the public tracker starts at
 - A `config.yml` that won't parse no longer lets `install` and `upgrade` look successful.
   They used to skip every worktree's hooks without a word (an unreadable config lists no
   projects), and `upgrade` reported "up to date". Both now print the parse error and
-  exit 1. `doctor`'s config row also turns red instead of showing a green check above the
-  error (#14).
+  exit 1, and so does a file that parses but isn't a map of settings (a dropped colon turns
+  it into one string; a list used to crash all three commands). `doctor`'s config row also
+  turns red instead of showing a green check above the error (#14).
 - A failed workspace create can no longer delete someone else's commits. If a branch
   with the new workspace's name appeared while the worktree was being made, the cleanup
   used to force-delete it. Now the cleanup removes the branch only while it still points
@@ -27,8 +28,8 @@ refer to the project's earlier, private repository; the public tracker starts at
 - Reading git's output no longer depends on the locale: switchboard's own binary already
   read it as UTF-8 (since 0.52.0), and now every `Git` helper does, whoever loads it. A
   worktree whose path isn't valid UTF-8 (possible only on Linux) is now skipped in the
-  sidebar instead of breaking its whole project's list, and `prune` and a failed create's cleanup leave that project's
-  sessions and branches alone rather than act on a list they couldn't fully read.
+  sidebar instead of crashing it, and `prune` and a failed create's cleanup leave that
+  project's sessions and branches alone rather than act on a list they couldn't fully read.
 - `doctor` and `upgrade` now notice a `tmux_keys` change made by editing `config.yml`
   by hand, for both the toggle and the home key. The key tmux still had bound worked, so
   `doctor` showed green and `upgrade` never applied the change; `doctor` now names the

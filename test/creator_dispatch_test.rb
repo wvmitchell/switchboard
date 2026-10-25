@@ -761,6 +761,21 @@ module Switchboard
       refute Git.branch_exists?(repo, "orphan")
     end
 
+    # Value: protects=the ✘ detail telling a failed delete apart from a branch that gained
+    # commits; fails_when=keep_branch reports every refused delete as "it moved off the base"
+    # (sending the user to look for work that isn't there); why_new=only the moved case was
+    # exercised; seam=Git.delete_branch_at
+    def test_undo_add_names_a_branch_it_could_not_delete_at_base
+      repo = temp_git_repo("proj", origin: true)
+      config = config_for(repo)
+      git(repo, "branch", "stuck-ref", "main")
+      note = stub_method(Git, :delete_branch_at, ->(*) { false }) do
+        Creator.undo_add(config.project("proj"), path("wts", "never-made"), "stuck-ref", Git.rev_parse(repo, "main"))
+      end
+      assert_equal "kept branch stuck-ref (couldn't delete it)", note
+      assert Git.branch_exists?(repo, "stuck-ref")
+    end
+
     # Value: protects=a racing writer's tree and branch (git says they already existed) are
     # never force-removed, even dirty and commitless, for every message our `add -b` can get;
     # fails_when=a *_PREEXISTED check misses a real git last line, or a path clash keeps our new
@@ -847,7 +862,9 @@ module Switchboard
         Creator.undo_add(config.project("proj"), dest, "unknown", Git.rev_parse(repo, "main"))
       end
       assert_includes note, "#{dest} (couldn't check its commits)"
+      assert_includes note, "branch unknown (its tree was kept)"
       assert_path_exists dest
+      assert Git.branch_exists?(repo, "unknown")
     end
 
     # Value: protects=a branch a hidden (unreadable-path) worktree may have checked out is
@@ -919,6 +936,40 @@ module Switchboard
       FileUtils.mkdir_p(dest)
       note = stub_method(Git, :undecodable_worktrees?, ->(_repo) { true }) { Creator.undo_add(project, dest, "hid", base) }
       assert_includes note, "branch hid (a worktree's path couldn't be read)"
+    end
+
+    # Value: protects=the branch git just cut on a path clash is kept, not deleted, when a
+    # worktree the repo lists couldn't be read; fails_when=the path-clash branch skips keep_branch's
+    # undecodable guard; why_new=ship 2 state-machines (cell: path clash x undecodable); seam=Git.undecodable_worktrees?
+    def test_a_path_clash_keeps_our_branch_when_a_worktree_is_unreadable
+      repo = temp_git_repo("proj", origin: true)
+      config = config_for(repo)
+      project = config.project("proj")
+      base = Git.rev_parse(repo, "main")
+      dest = path("wts", "clash")
+      FileUtils.mkdir_p(dest)
+      File.write(File.join(dest, "theirs.txt"), "x")
+      ok, err = Creator.add_worktree(config, project, "clash", dest, base) # real git: cuts the branch, refuses the path
+      refute ok
+      note = stub_method(Git, :undecodable_worktrees?, ->(_repo) { true }) { Creator.undo_add(project, dest, "clash", base, err) }
+      assert_equal "kept #{dest} (it was there before) and branch clash (a worktree's path couldn't be read)", note
+      assert Git.branch_exists?(repo, "clash")
+    end
+
+    # Value: protects=a half-registered tree (git lists our branch there, but HEAD doesn't read
+    # as it) keeps both and says why; fails_when=keep_branch deletes a branch git still shows
+    # checked out at dest; why_new=ship 2 state-machines (cell: not on branch x held at dest); seam=Git.current_branch
+    def test_a_half_registered_tree_keeps_its_branch
+      repo = temp_git_repo("proj", origin: true)
+      config = config_for(repo)
+      dest = path("wts", "half-reg")
+      git(repo, "worktree", "add", "-q", "-b", "half-reg", dest, "main")
+      note = stub_method(Git, :current_branch, ->(_wt) { "" }) do
+        Creator.undo_add(config.project("proj"), dest, "half-reg", Git.rev_parse(repo, "main"), "timed out after 120s")
+      end
+      assert_equal "kept #{dest} (not on this create's branch) and branch half-reg (its tree was kept)", note
+      assert_path_exists dest
+      assert Git.branch_exists?(repo, "half-reg")
     end
 
     # Value: protects=the branch check and the delete being one step; fails_when=delete_branch_at
