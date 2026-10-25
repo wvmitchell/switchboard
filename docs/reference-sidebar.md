@@ -138,6 +138,16 @@ past [`remote_link_stale_after`](reference-config.md#remote_link_stale_after)
 (default 120 minutes), likely one you opened and forgot; background Claude jobs never
 go grey. On a long name, the name is truncated before the cues are.
 
+Press **`p`** on a `⇅` row to draw that session's link as a **QR code**: point your
+phone's camera at it and that exact session opens there. The overlay reads top down:
+the workspace, the session's name, the code (in your theme's black and bright white),
+and the URL as text underneath. `Tab` steps through several links (`1/2` in the
+corner), `←`/`→` resize, and any other key closes it. If the link ends while it's
+open, the overlay moves to that workspace's newest remaining link, or closes back to
+the tree when none is left. A pane too narrow or too short for the code shows the
+URL and says so (`→ widen` or `pane too short`). The link only opens for someone signed in to
+claude.ai as you; anyone else gets the sign-in page.
+
 ---
 
 ## Diff counts

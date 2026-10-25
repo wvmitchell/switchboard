@@ -226,6 +226,9 @@ module Switchboard
       nil # a marker that fails to seed just doesn't render the ∞ — never abort the sandbox
     end
 
+    # Production-length (session_ + 24), so `p` draws the real 33-module code you'd scan.
+    SEED_LINK_ID = "session_01SandboxLinkNotRealXyzA"
+
     # Mark a worktree reachable from the phone (the ⇅ glyph). RemoteLink only trusts a
     # LIVE process whose start time matches and places it by its KERNEL cwd, so a fake
     # file alone would never render: park a `sleep` in the worktree, in a detached
@@ -243,7 +246,7 @@ module Switchboard
       File.write(File.join(RemoteLink.sessions_dir, "#{pid}.json"), JSON.generate(
         "pid" => pid, "sessionId" => "sandbox-link", "cwd" => File.realpath(worktree), "kind" => "interactive",
         "name" => "sandbox link", "startedAt" => now, "procStart" => ProcessIdentity.start_of(pid),
-        "status" => "idle", "statusUpdatedAt" => now, "bridgeSessionId" => "session_sandbox"
+        "status" => "idle", "statusUpdatedAt" => now, "bridgeSessionId" => SEED_LINK_ID
       ))
       pid
     rescue StandardError

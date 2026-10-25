@@ -115,7 +115,10 @@ in the running server — the "prefix-s stopped working after a `git pull`" case
   "isn't a single printable key", you used more than one character (or a named
   key) — `sidebar_keys` takes exactly one printable char. If it says the key
   "clashes with" another action, two actions resolved to the same key; the loser
-  is left unbound (its arrow/ctrl aliases still work). Pick a free key.
+  is left unbound (any arrow/ctrl aliases it has still work). Pick a free key. If
+  it says an action's default "is taken by" another action, one of your remaps
+  claimed that default (say `rename: p` takes `p` from `phone_link`); give the
+  left-out action a free key of its own under `sidebar_keys`.
 
 ## Related
 

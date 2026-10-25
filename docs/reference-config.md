@@ -264,6 +264,7 @@ top level does nothing`) and names the parent it belongs under.
 | `new_workspace` | `n` | `toggle_full_header` | `H` |
 | `open_pr` | `o` | `help` | `?` |
 | | | `quit` | `q` |
+| | | `phone_link` | `p` |
 
 Each value is a **single printable character** (`0x20`–`0x7E`). That rule reserves
 every structural key for free — `↵`, `Esc`, `Backspace`, the arrows, the resize
@@ -272,7 +273,7 @@ never shadow them. An invalid value (more than one char, a named key, a non-stri
 falls back to the action's default, and `doctor` flags it.
 
 If two actions resolve to the same key, the earlier one (in the table order above)
-keeps it and the later is **left unbound** — but its fixed aliases still fire, so
+keeps it and the later is **left unbound** — but any fixed aliases it has still fire, so
 you can't lose movement (`↓`/`↑`/`Ctrl-N`/`Ctrl-P` work even if `j`/`k` collide away).
 `doctor` reports the clash. Everything degrades to defaults and keeps running;
 nothing crashes.

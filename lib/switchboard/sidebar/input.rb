@@ -7,7 +7,7 @@ module Switchboard
     # sequences first, then the #108 keymap), the / filter and ? help key
     # modes, focus handling, and keymap resolution. A concern module on
     # Sidebar (see CLAUDE.md conventions); the input-grammar constants live
-    # here WITH their consumers — HELP_IGNORED_BYTES references the poke
+    # here WITH their consumers — POKE_BYTES references the poke
     # bytes at require time, so splitting them across files would be a
     # load-order crash (the #57 same-file rule for constant initializers).
     module Input
@@ -35,7 +35,9 @@ module Switchboard
       # can't open the editor while help is up — `e` dismisses it first — and C-r isn't
       # broadcast, it targets the just-focused pane); focus is cosmetic under the overlay.
       # If C-r ever becomes broadcast, revisit this (it'd then need honoring). (issue #62)
-      HELP_IGNORED_BYTES = ["\f", RELOAD_CONFIG_BYTE, WARM_POKE_BYTE, "\e[I", "\e[O"].freeze
+      # The p overlay is different: there these bytes run their handlers (`poke`, which
+      # must have an arm for every one), so a switch-in reload re-checks its link.
+      POKE_BYTES = ["\f", RELOAD_CONFIG_BYTE, WARM_POKE_BYTE, "\e[I", "\e[O"].freeze
 
       # Pure terminal-input tokenizer: returns [complete tokens, trailing incomplete
       # sequence]. The grammar it recognizes (the only escapes a tmux pane delivers):
@@ -135,6 +137,7 @@ module Switchboard
       end
 
       def dispatch(key)
+        return link_view_key(key) if @link_view # p overlay is open: Tab/←/→ act, pokes run, other keys close
         return help_key(key) if @help     # ? overlay is open: a real key closes it, pokes pass through
         return filter_key(key) if @filter # / filter mode swallows the normal bindings
 
@@ -147,12 +150,21 @@ module Switchboard
         when "\e[C"             then resize(WIDTH_STEP)  # → widen the pane (issue #78)
         when "\e[D"             then resize(-WIDTH_STEP) # ← narrow the pane
         when "\r", "\n"         then enter
+        when *POKE_BYTES then return poke(key)
+        else                         return dispatch_action(key)
+        end
+        true
+      end
+
+      # The tmux pokes and focus reports: never keystrokes, so they keep doing their job
+      # under the p overlay too (a switch-in reload is what re-checks its link).
+      def poke(key)
+        case key
         when "\f"               then reload_and_refresh # Ctrl-L (hook poke on switch)
         when WARM_POKE_BYTE     then warm_poke # Ctrl-W (peer broadcast: shared view-state changed)
         when RELOAD_CONFIG_BYTE then reload_config_and_rebuild # Ctrl-R (post-edit reload)
         when "\e[I"             then return false if focus_in # focus-in: light cursor; #64 fast reap may exit the loop
         when "\e[O"             then @focused = false # tmux focus-out: drop it
-        else                         return dispatch_action(key)
         end
         true
       end
@@ -179,6 +191,7 @@ module Switchboard
         when :toggle_branch_fold then toggle_branch_fold # fold/unfold every workspace's branches (#107)
         when :toggle_full_header then toggle_full_header # seat the full header on every session
         when :help               then show_help # the full key map overlay (issue #62)
+        when :phone_link         then open_link_view # the row's /rc link as a QR
         when :quit               then return quit # q: tear down ALL switchboard sessions
         end
         true
@@ -196,7 +209,9 @@ module Switchboard
         reappeared = !@visible
         set_visible(true)
         reload(announce_sounds: false) if reappeared
-        cursor_to_current # going back to the sidebar selects the workspace you're in
+        # Going back to the sidebar selects the workspace you're in; under the p overlay,
+        # keep the row p was pressed on, so closing the QR lands where you left.
+        cursor_to_current unless @link_view
         # #64 fast reap: we may have just gained focus BECAUSE our work sibling closed and
         # we became the lone (active) pane. Check now so the wedge is caught within a frame
         # instead of up to one REFRESH tick. Returns true (=> dispatch exits the loop) only
@@ -256,7 +271,7 @@ module Switchboard
       #
       # `?` opens the full key map over the tree (render_help). While it's open,
       # dispatch routes every key here: a real keystroke closes it, but a synthetic
-      # tmux byte (HELP_IGNORED_BYTES — the C-l/C-r pokes, focus in/out) is ignored so a
+      # tmux byte (POKE_BYTES — the C-l/C-r pokes, focus in/out) is ignored so a
       # background PR-refresh poke or a focus change can't dismiss it out from under
       # the reader — the same robustness filter_key has. `?` can't open while filtering
       # (there it's a query char), so @help and @filter are never both set.
@@ -270,12 +285,72 @@ module Switchboard
       # returns true (the loop lives on, and the dismissing key only closes the
       # overlay — no passthrough into an action, even a typed q).
       def help_key(key)
-        dismiss_help unless HELP_IGNORED_BYTES.include?(key)
+        dismiss_help unless POKE_BYTES.include?(key)
         true
       end
 
       def dismiss_help
         @help = false
+      end
+
+      # --- p phone-link overlay ------------------------------------------------
+      #
+      # `p` on a workspace (or one of its branch rows) with a live /remote-control link
+      # draws that session's URL as a QR code (render_link_view), so a phone camera opens
+      # that exact session. Tab steps through several links, ←/→ resize, the pokes run as
+      # usual, and any other key closes. Every scan re-checks the link (revalidate).
+
+      # A row without a link does nothing: the missing ⇅ already says there's none.
+      def open_link_view
+        node = current
+        return unless node && node.kind != "proj"
+
+        links = @links[node.path]
+        return if links.nil? || links.empty?
+
+        @link_view = { path: node.path, bridge_id: links.first.bridge_id, qr: {} }
+      end
+
+      def link_view_key(key)
+        case key
+        when "\t"   then cycle_link
+        when "\e[C" then resize(WIDTH_STEP)
+        when "\e[D" then resize(-WIDTH_STEP)
+        when *POKE_BYTES then return poke(key)
+        else @link_view = nil
+        end
+        true
+      end
+
+      def cycle_link
+        links = view_links
+        return if links.size < 2
+
+        at = links.index { |l| l.bridge_id == @link_view[:bridge_id] } || -1
+        @link_view[:bridge_id] = links[(at + 1) % links.size].bridge_id
+      end
+
+      # After every scan: keep the same session if it's still linked, else show the
+      # newest remaining one; with none left, close back to the tree. Never a flash —
+      # this runs inside the scan, and a flash would block it on a keypress.
+      def revalidate_link_view
+        return unless @link_view
+
+        links = view_links
+        if links.empty?
+          @link_view = nil
+        elsif links.none? { |l| l.bridge_id == @link_view[:bridge_id] }
+          @link_view[:bridge_id] = links.first.bridge_id
+        end
+      end
+
+      def view_links
+        @links[@link_view[:path]] || []
+      end
+
+      # The link the overlay is showing (nil only mid-revalidate).
+      def view_link
+        view_links.find { |l| l.bridge_id == @link_view[:bridge_id] }
       end
 
       # --- / filter mode (issue #60) -------------------------------------------

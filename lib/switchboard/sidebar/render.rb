@@ -30,6 +30,7 @@ module Switchboard
       FAILED   = "\e[1;31m✘\e[0m" # a dispatch whose build/setup/launch failed: the heavy ✘ keeps its shape in reverse video (DR5)
       LINK_GLYPH    = "⇅"        # a live /remote-control link: this workspace is reachable from your phone (picked by eye)
       LINK_LIVE_FG  = "\e[32m"    # ...green while live: the resting dots' green, normal weight (default fg read too close to the grey)
+      LINK_LIVE_LABEL = "on phone" # the legend entry the p hint attaches to
       LINK_STALE_FG = "\e[90m"    # ...and grey when idle past remote_link_stale_after (bold read identical; the theme-relative dim branch rows use)
       WS_PREFIX_COLS = 4          # a ws row's "<pointer> <dot> " before its name: fit_plain and colored must agree on it
       NOTE_FG  = "\e[2m"          # the dim task label / failure reason in the right region (DR3/DR8)
@@ -89,7 +90,7 @@ module Switchboard
       # the help wordmark so help_body's height cap never drops it.
       LEGEND = [[SPIN_COLORED.first, "⠋", "working"], [WANTS_ON, "◆", "input"], [DONE, "●", "done"],
                 [MONITORING, "∞", "watching"], [BUILDING, "◌", "building"], [FAILED, "✘", "failed"],
-                ["#{LINK_LIVE_FG}#{LINK_GLYPH}\e[0m", "⇅", "on phone"], ["#{LINK_STALE_FG}#{LINK_GLYPH}\e[0m", "⇅", "idle link"]].freeze
+                ["#{LINK_LIVE_FG}#{LINK_GLYPH}\e[0m", "⇅", LINK_LIVE_LABEL], ["#{LINK_STALE_FG}#{LINK_GLYPH}\e[0m", "⇅", "idle link"]].freeze
 
       private
 
@@ -225,6 +226,7 @@ module Switchboard
 
       def render
         return render_help if @help # the ? overlay replaces the tree (issue #62)
+        return render_link_view if @link_view
 
         rows, cols = winsize
         head = header(cols)
@@ -279,6 +281,114 @@ module Switchboard
         help_lines(cols).first([rows - 1, 0].max)
       end
 
+      # The p overlay (layout picked by eye, design review D2): where you are, which
+      # session, the code, the URL as a readable backup, and the way out on the bottom
+      # row. Painted like render_help (cursor-addressed, no full clear).
+      # The overlay draws text from Claude's undocumented session file and git, and this runs
+      # in the unrescued run loop: input nobody foresaw closes the QR and repaints the tree
+      # rather than killing the pane. Only building the frame is rescued; a write error to a
+      # dead pane still propagates as before.
+      def render_link_view
+        frame = link_view_frame
+        return $stdout.write(frame) if frame
+
+        @link_view = nil # close BEFORE repainting, or render would route straight back here
+        # Say why, non-blocking, but only on screen: a hidden pane's warm repaint can land
+        # here too, and an untargeted display-message would flash in whatever session you're in.
+        Tmux.notify("switchboard: couldn't draw this link's QR (#{@link_view_error})") if @visible
+        render
+      end
+
+      # The overlay's whole frame as one string, or nil when building it raised.
+      def link_view_frame
+        rows, cols = winsize
+        lines, hint = link_view_lines(rows, cols)
+        lines = lines.first([rows - 1, 0].max) # a fallback's wrapped URL can outgrow a short pane
+        out = +"\e[H"
+        lines.each_with_index { |text, i| out << "\e[#{i + 1};1H\e[K#{text}" }
+        out << "\e[#{lines.size + 1};1H\e[0J"
+        out << "\e[#{rows};1H\e[K#{NOTE_FG}#{trunc(hint, cols)}\e[0m"
+      rescue StandardError => e
+        @link_view_error = e.class
+        nil
+      end
+
+      QR_MIN_QUIET = 2 # the margin a code needs before it's drawn at all
+      QR_MAX_QUIET = 4 # the spec's full quiet zone, used when the pane has room
+      QR_DARK  = 0     # the theme's own black and bright white (design review D3), so
+      QR_LIGHT = 15    # the code matches the theme; dark stays darker in any sane palette
+
+      # [body lines, bottom hint] for a rows×cols pane. Reads @link_view/@links/@nodes and
+      # only writes the matrix memo, so layout and fallbacks are testable without raw I/O.
+      def link_view_lines(rows, cols)
+        link = view_link
+        return [[], "any key closes"] unless link
+
+        links = view_links
+        head = [link_view_header(links, link, cols), "#{NOTE_FG}#{fit_columns(session_label(link), cols)}\e[0m", ""]
+        url = link.url.scan(/.{1,#{[cols, 1].max}}/).map { |l| "#{NOTE_FG}#{l}\e[0m" }
+        keys = links.size > 1 ? "tab next · any key closes" : "any key closes"
+        matrix = (@link_view[:qr][link.url] ||= QR.matrix(link.url))
+        return link_view_fallback(head, url, "no QR for this link", keys, cols) unless matrix
+
+        n = matrix.size
+        return link_view_fallback(head, url, "too narrow for the QR", "→ widen · #{keys}", cols) if cols < n + (2 * QR_MIN_QUIET)
+
+        room = rows - head.size - 1 - url.size - 1 # a blank under the code, the hint row
+        vert = [QR_MAX_QUIET, QR_MIN_QUIET].find { |q| (n + (2 * q) + 1) / 2 <= room }
+        return link_view_fallback(head, url, "pane too short for the QR", "pane too short · #{keys}", cols) unless vert
+
+        side = ((cols - n) / 2).clamp(QR_MIN_QUIET, QR_MAX_QUIET) # as wide as fits, up to 4 (eng D5)
+        indent = " " * ((cols - n - (2 * side)) / 2) # centered in a wider pane (design review D5)
+        [head + qr_rows(matrix, side, vert).map { |row| indent + row } + [""] + url, keys]
+      end
+
+      def link_view_fallback(head, url, why, hint, cols)
+        [head + ["#{NOTE_FG}#{trunc(why, cols)}\e[0m", ""] + url, hint]
+      end
+
+      # `<project>/<leaf>` in the brand color, with `1/2` flush right when there are several.
+      def link_view_header(links, link, cols)
+        node = @nodes.find { |n| n.kind == "ws" && n.path == @link_view[:path] }
+        name = node ? "#{node.project}/#{node.name}" : File.basename(@link_view[:path].to_s)
+        count = links.size > 1 ? "#{links.index(link) + 1}/#{links.size}" : ""
+        room = count.empty? ? cols : cols - count.size - 1
+        shown = fit_columns(name, [room, 1].max)
+        pad = " " * [cols - columns(shown) - count.size, 0].max
+        "#{BRAND}#{shown}\e[0m#{pad}#{NOTE_FG}#{count}\e[0m"
+      end
+
+      # The session's name, else when it started, else its pid. Free text from Claude's
+      # file, so it loses invisible characters like the task note. A start time of 0
+      # means RemoteLink couldn't read one.
+      def session_label(link)
+        name = link.name.to_s.gsub(/\s+/, " ").gsub(NOTE_INVISIBLE, "").strip
+        return name unless name.empty?
+        return "started #{Time.at(link.started_at / 1000).strftime('%H:%M')}" if link.started_at.to_i.positive?
+
+        "pid #{link.pid}"
+      end
+
+      # Two modules per text row: `▀` paints the top module in the foreground color and
+      # the bottom one in the background. Colors change only where the run changes.
+      def qr_rows(matrix, side, vert)
+        width = matrix.size + (2 * side)
+        light = Array.new(width, false)
+        grid = Array.new(vert) { light } +
+               matrix.map { |r| Array.new(side, false) + r + Array.new(side, false) } +
+               Array.new(vert) { light }
+        grid << light if grid.size.odd?
+        grid.each_slice(2).map do |top, bottom|
+          last = nil
+          top.zip(bottom).map do |t, b|
+            pair = [t ? QR_DARK : QR_LIGHT, b ? QR_DARK : QR_LIGHT]
+            cell = pair == last ? "▀" : "\e[38;5;#{pair[0]};48;5;#{pair[1]}m▀"
+            last = pair
+            cell
+          end.join << "\e[0m"
+        end
+      end
+
       # Format the key map (Keymap.help_rows, built from the live @bindings so the
       # shown keys never drift — issue #108) plus the resolved tmux rows into rendered
       # lines: the wordmark, then each section as a blank separator + bold heading, and
@@ -300,7 +410,10 @@ module Switchboard
       def legend_lines(cols)
         lines = [[]]
         width = 0
+        qr_key = @bindings && @bindings[:phone_link]
         LEGEND.each do |colored, glyph, label|
+          label = "#{label} · #{qr_key} shows a QR" if label == LINK_LIVE_LABEL && qr_key # the live key, or no hint
+          label = trunc(label, [cols - 2, 1].max) # one item never runs past a narrow pane
           item_w = "#{glyph} #{label}".length
           if width.positive? && width + 2 + item_w > cols
             lines << []
@@ -454,10 +567,13 @@ module Switchboard
       # would push the row past the pane edge. Invisible characters (controls, bidi and
       # zero-width marks, combining marks) are dropped before it's drawn.
       def columns(str)
-        str.each_char.sum { |c| c.match?(NOTE_WIDE) ? 2 : 1 }
+        str.to_s.scrub.each_char.sum { |c| c.match?(NOTE_WIDE) ? 2 : 1 }
       end
 
+      # Scrubbed first: a worktree name from git may hold bytes that aren't UTF-8, and
+      # the width regex raises on them.
       def fit_columns(str, width)
+        str = str.to_s.scrub
         return str if columns(str) <= width
 
         out = +""

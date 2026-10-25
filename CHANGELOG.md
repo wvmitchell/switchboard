@@ -10,6 +10,23 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
+## [0.54.0] — scan a workspace's phone link (2026-10-24)
+
+### Added
+- **`p` shows a workspace's phone link as a QR code.** On a `⇅` row, press `p` and point
+  your phone's camera at the pane: that exact Claude session opens there. The overlay
+  shows the workspace, the session's name, the code in your theme's own black and white,
+  and the URL as text underneath. `Tab` steps through several links, `←`/`→` resize, and
+  any other key closes it. If the link ends while it's open, it closes back to the tree.
+  A pane too narrow or too short for the code shows the URL and says which.
+- The `?` legend names the key (`⇅ on phone · p shows a QR`), following any remap.
+
+### Fixed
+- A remote link now refreshes even when a scan of the agent dots fails, so an ended
+  link can't keep its `⇅`.
+- A malformed Claude session file (an odd escape in any field, an out-of-range start
+  time) now loses only its own link instead of hiding every `⇅`.
+
 ## [0.53.1] — a live `⇅` reads green (2026-10-24)
 
 ### Changed

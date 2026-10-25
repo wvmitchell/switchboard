@@ -54,6 +54,7 @@ drifts from a remap.
 | `n` | `new_workspace` | Dispatch a new worktree + branch in the highlighted project, in the background: type a task for the agent (or `↵` for none, `Esc` to cancel). You stay put; the row shows `◌` while it builds and pings you when it's ready (`✘` if it fails). No name prompt — it gets a throwaway placeholder name you rename later with `r` (or let the agent name it). |
 | `o` / `Ctrl-O` | `open_pr` | Open the highlighted PR in the browser (`gh pr view --web`). Only the `o` letter is remappable; `Ctrl-O` is a fixed alias. |
 | `O` | `open_repo` | Open the highlighted row's repo in the browser (`gh browse`). Works on every row kind, including the project header. Opens the repo at the row's branch when it has an open PR, otherwise the repo home (default branch). |
+| `p` | `phone_link` | On a row with a `⇅`, draw that session's phone link as a QR code to scan with your phone camera (`Tab` steps through several links, `←`/`→` resize, any other key closes). Does nothing on a row without a link. |
 | `R` | `refresh_prs` | Refresh PR badges now (catch a PR merged/closed *on GitHub*). |
 | `z` | `toggle_branch_fold` | Fold / unfold **every** workspace's branch-history rows at once — tree-wide, regardless of where the cursor is. A folded multi-branch workspace collapses to a single row that shows its own diff/PR badge plus a dim `▸N` cue (N branches tucked away). A shared on-disk view preference, so all sessions follow and it survives restarts. |
 | `H` | `toggle_full_header` | Toggle the full header (wordmark + greeting + console + rule) on **every** session, not just home. A shared on-disk view preference, so all sessions follow and it survives restarts. |
@@ -67,8 +68,8 @@ A `sidebar_keys` value is a **single printable character**. That rule is what
 keeps the structural keys reserved: `↵`, `Esc`, `Backspace`, the arrows, and the
 `Ctrl-N`/`Ctrl-P`/`Ctrl-O` aliases are all non-printable, so a remap can never land
 on one. `switchboard doctor` flags an invalid value or a clash (two actions on one
-key) — the loser is left unbound, but its arrow/ctrl aliases still work, so you can
-never lock yourself out of movement. See
+key) — the loser is left unbound, but any arrow/ctrl aliases it has still work, so you
+can never lock yourself out of movement. See
 [How-to: keybindings](howto-keybindings.md#change-the-in-sidebar-keys).
 
 The footer legend shows only the common keys for the highlighted row; `g`/`G` and
