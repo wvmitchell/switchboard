@@ -89,7 +89,7 @@ module Switchboard
       write_session("1", cwd: w, name: "Compass’s Night Watch ⇅")
       old = Encoding.default_external
       Encoding.default_external = Encoding::US_ASCII
-      assert_equal "Compass’s Night Watch ⇅", scan([w])[w].first.name
+      assert_equal ["session_01L45oDnx5EE9wmapDpFmAfd"], scan([w])[w].map(&:bridge_id), "the smart-quoted name doesn't cost the link"
     ensure
       Encoding.default_external = old
     end
@@ -522,7 +522,6 @@ module Switchboard
       File.write(bad, File.read(bad).gsub('"MARK"', '"session_\udcff"'))
       links = stub_method(ProcessIdentity, :same?, ->(*) { true }) { scan([w])[w] }
       assert_equal ["session_good"], links.map(&:bridge_id), "the bad file just isn't a link"
-      assert links.first.name.valid_encoding?
       assert_equal 2, as_claude { RemoteLink.health }[:files], "doctor still counts both files"
     end
 

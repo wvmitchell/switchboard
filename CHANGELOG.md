@@ -15,7 +15,15 @@ refer to the project's earlier, private repository; the public tracker starts at
 ### Changed
 - The `p` QR overlay now leads with the same header as the tree (the full one at home or
   with `H`), then the workspace's name. The session's own name is gone: Claude defaults it
-  to the workspace's first name, which goes stale once the workspace is renamed.
+  to the workspace's first name, which goes stale once the workspace is renamed. When the
+  full header would cost the code or the URL, only the wordmark stays.
+
+### Fixed
+- Folder, project and branch names, and the greeting's git name, can no longer send
+  terminal control codes from the tree; names keep their accents.
+- An open QR stays on its session through a `/rc` reconnect.
+- A tmux poke that arrives with the key closing the QR or `?` overlay still runs, and keys
+  typed at the QR as a scan closes it no longer run on the tree.
 
 ## [0.55.1] — the QR overlay's edge cases (2026-10-24)
 

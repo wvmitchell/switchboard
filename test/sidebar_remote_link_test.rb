@@ -9,7 +9,7 @@ module Switchboard
   # remote_link_test.rb; here @links is seeded directly unless the wiring is the point.
   class SidebarRemoteLinkTest < SidebarCase
     def link(stale: false, kind: "interactive", id: "session_abc")
-      RemoteLink::Link.new(pid: 1, bridge_id: id, kind: kind, name: "n", started_at: 0, stale: stale)
+      RemoteLink::Link.new(pid: 1, bridge_id: id, kind: kind, started_at: 0, stale: stale)
     end
 
     def with_links(sb, links)

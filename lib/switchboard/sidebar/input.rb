@@ -126,6 +126,11 @@ module Switchboard
       # the rest of the buffer past it, so a key buffered after a confirmed `q` can't
       # fall through into another action.
       #
+      # Keys read in the same batch AFTER one that closes an overlay (the QR or `?`) were
+      # aimed at the overlay, not at whatever row the tree is on, so they're dropped —
+      # however it closed, a dismissing key or a scan finding the link ended. The tmux
+      # pokes among them still run: they're not keys.
+      #
       # Keys read in the same batch AFTER one that opens a prompt (`n` then the start of
       # its task, typed during a busy tick) are the prompt's, not the tree's: it takes
       # them from @typeahead, so they neither vanish from the task nor fire as commands.
@@ -133,7 +138,10 @@ module Switchboard
         tokens, @pending = Input.tokenize(@pending + buf.to_s)
         @typeahead = tokens
         while (t = @typeahead.shift)
+          was_open = overlay_open?
           return false unless dispatch(t)
+
+          @typeahead.select! { |k| POKE_BYTES.include?(k) } if was_open && !overlay_open?
         end
         true
       ensure
@@ -309,7 +317,7 @@ module Switchboard
         if step
           @help_page = (@help_page + step).clamp(0, count - 1)
         else
-          close_overlay { dismiss_help }
+          dismiss_help
         end
         true
       end
@@ -345,7 +353,7 @@ module Switchboard
         when "\e[C" then resize(WIDTH_STEP)
         when "\e[D" then resize(-WIDTH_STEP)
         when *POKE_BYTES then return poke(key)
-        else close_overlay { @link_view = nil }
+        else @link_view = nil
         end
         true
       end
@@ -358,16 +366,15 @@ module Switchboard
         hold_link(links[(at + 1) % links.size])
       end
 
-      # After every scan: keep the same session if it's still linked, following it if its
-      # workspace was renamed (another workspace renamed onto the old path must not take
-      # over the QR), else show the newest remaining one; with none left, close back to the
-      # tree. Never a flash — this runs inside the scan, and a flash would block it on a
+      # After every scan: keep the same session if it's still linked (through a reconnect
+      # too), following it if its workspace was renamed (another workspace renamed onto
+      # the old path must not take over the QR), else show the newest remaining one; with
+      # none left, close back to the tree. Never a flash — this runs inside the scan, and a flash would block it on a
       # keypress.
       def revalidate_link_view
         return unless @link_view
 
-        moved = @links.find { |_, ls| ls.any? { |l| held?(l) } }&.first
-        @link_view[:path] = moved if moved
+        follow_held_link
         links = view_links
         if links.empty?
           @link_view = nil
@@ -376,6 +383,19 @@ module Switchboard
           urls = links.map(&:url)
           @link_view[:qr].select! { |url, _| urls.include?(url) } # reconnects mint new URLs
         end
+      rescue StandardError
+        @link_view = nil # this runs in refresh_agents' ensure, outside its rescue
+      end
+
+      # Where the held session is now: the same link, or the same pid with the new
+      # bridge a reconnect minted, wherever its workspace was renamed to.
+      def follow_held_link
+        all = @links.flat_map { |path, ls| ls.map { |l| [path, l] } }
+        path, link = all.find { |_, l| held?(l) } || all.find { |_, l| l.pid == @link_view[:pid] }
+        return unless link
+
+        @link_view[:path] = path
+        hold_link(link)
       end
 
       # A link is its session (pid) AND its bridge: a crash leftover beside its resumed
@@ -389,11 +409,8 @@ module Switchboard
         link.pid == @link_view[:pid] && link.bridge_id == @link_view[:bridge_id]
       end
 
-      # A key that closes an overlay ends its batch: keys typed in the same instant were
-      # aimed at the overlay, not at whatever row the tree is on.
-      def close_overlay
-        yield
-        @typeahead&.clear
+      def overlay_open?
+        @link_view || @help
       end
 
       def view_links

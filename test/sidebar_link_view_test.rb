@@ -10,9 +10,8 @@ module Switchboard
     ID_A = "session_01AbCdEfGhJkMnPqRsTuVwXy" # a production-length id: a 55-byte URL, a v4 code
     ID_B = "session_01ZyXwVuTsRqPnMkJhGfEdCb"
 
-    def link(id = ID_A, name: "fix the rename bug", started_at: 0, pid: 7)
-      RemoteLink::Link.new(pid: pid, bridge_id: id, kind: "interactive", name: name,
-                           started_at: started_at, stale: false)
+    def link(id = ID_A, started_at: 0, pid: 7)
+      RemoteLink::Link.new(pid: pid, bridge_id: id, kind: "interactive", started_at: started_at, stale: false)
     end
 
     def linked(links = [link], nodes: [ws("alpha", path: "/wt/a"), ws("beta", path: "/wt/b")])
@@ -71,7 +70,7 @@ module Switchboard
     # --- keys -----------------------------------------------------------------
 
     def test_tab_steps_through_several_links_and_the_header_counts
-      sb = open(linked([link(ID_A, name: "first"), link(ID_B, name: "second")]))
+      sb = open(linked([link(ID_A), link(ID_B)]))
       assert_match(%r{alpha\s+1/2\z}, name_line(sb))
       sb.send(:dispatch, "\t")
       assert_equal ID_B, view(sb)[:bridge_id]
@@ -547,6 +546,121 @@ module Switchboard
       assert_equal head, text.first(head.size)
       assert_equal "app/alpha", name_line(sb).strip
       refute_empty qr_lines(lines(sb)[2]), "the code still fits under it at 40x40"
+    end
+
+    # Value: protects=a tmux poke that lands in the same read as the key closing an overlay still
+    # runs (a C-l reload, a C-r config reload, focus); fails_when=the close fence drops the whole
+    # batch; why_new=review of v0.54.1 (core + state machines + Codex); seam=reload_and_refresh
+    # stubbed; no_claim=tmux's read sizes
+    def test_a_poke_after_the_closing_key_still_runs
+      [->(sb) { open(sb) }, ->(sb) { sb.send(:dispatch, "?") }].each do |opener|
+        sb = linked
+        opener.call(sb)
+        ran = []
+        stub_method(sb, :reload_and_refresh, ->(*) { ran << :reload }) do
+          stub_method(sb, :start_filter, ->(*) { ran << :filter }) { assert sb.send(:handle, "x\f/") }
+        end
+        assert_equal [:reload], ran, "the poke ran, the / aimed at the overlay didn't"
+      end
+    end
+
+    # Value: protects=keys typed at the QR don't run on the tree when a scan (not a key) closes it
+    # because the link ended; fails_when=only a dismissing key fences the batch; why_new=Codex
+    # review of v0.54.1 (handle("\f/") started a filter); seam=reload_and_refresh stubbed to end the
+    # link; no_claim=the real scan
+    def test_keys_after_a_scan_closes_the_qr_do_not_reach_the_tree
+      sb = open(linked)
+      fired = []
+      ended = lambda do |*|
+        sb.instance_variable_set(:@links, {})
+        sb.send(:revalidate_link_view)
+      end
+      stub_method(sb, :reload_and_refresh, ended) do
+        stub_method(sb, :start_filter, ->(*) { fired << :filter }) { assert sb.send(:handle, "\f/") }
+      end
+      assert_nil view(sb)
+      assert_empty fired
+    end
+
+    # Value: protects=a /rc reconnect (same session, new bridge id) keeps the QR on that session,
+    # even after a rename, instead of jumping to another link; fails_when=the follow matches the
+    # bridge id only; why_new=Codex review of v0.54.1; seam=none; no_claim=Claude's reconnect timing
+    def test_a_reconnect_keeps_the_same_session_through_a_rename
+      sb = open(linked([link(ID_A, pid: 7)]))
+      sb.instance_variable_set(:@links, { "/wt/b" => [link(ID_B, pid: 7)], "/wt/a" => [link("session_01CcCcCcCcCcCcCcCcCcCcCcCc", pid: 9)] })
+      sb.send(:revalidate_link_view)
+      assert_equal ["/wt/b", 7, ID_B], view(sb).values_at(:path, :pid, :bridge_id)
+    end
+
+    # Value: protects=a scan that keeps the link keeps its code, so it isn't rebuilt every few
+    # seconds; fails_when=the memo prune drops too much; why_new=testing specialist, review of
+    # v0.54.1; seam=QR.matrix counted; no_claim=timing
+    def test_a_scan_that_keeps_the_link_keeps_its_code
+      sb = open(linked)
+      built = 0
+      real = QR.method(:matrix)
+      stub_method(QR, :matrix, ->(*a, **k) { built += 1; real.call(*a, **k) }) do
+        lines(sb)
+        sb.send(:revalidate_link_view)
+        lines(sb)
+      end
+      assert_equal 1, built
+    end
+
+    # Value: protects=a broken overlay state found during the scan closes the QR instead of killing
+    # the pane (revalidate runs in refresh_agents' ensure, outside its rescue); fails_when=the rescue
+    # goes; why_new=adversarial review of v0.54.1; seam=a nil memo; no_claim=which bug would cause it
+    def test_a_broken_overlay_state_closes_on_the_next_scan
+      sb = open(linked)
+      view(sb)[:qr] = nil
+      sb.send(:revalidate_link_view)
+      assert_nil view(sb)
+    end
+
+    # Value: protects=the full home header never costs the QR or the URL: it drops to the wordmark
+    # when it would, and stays when it fits; fails_when=the overlay always seats the full header (a
+    # 28-row home pane loses its code, a tiny one cuts the URL); why_new=review of v0.54.2 (QA probe,
+    # red team, Codex); seam=none; no_claim=other header contents
+    def test_the_full_header_gives_way_before_the_code_or_the_url
+      sb = open(linked)
+      sb.instance_variable_set(:@home, true)
+      full = sb.send(:header, 40).size
+      assert_operator full, :>, 1
+      assert_equal full, lines(sb, rows: 40)[0].index("app/alpha".ljust(40)), "room: the full header"
+      text, _, raw = lines(sb, rows: 28)
+      refute_empty qr_lines(raw), "28 rows: the code stays"
+      assert_equal 1, text.index("app/alpha".ljust(40)), "and the header shrinks to the wordmark"
+      tiny, = lines(sb, rows: 9)
+      assert_includes tiny.join, "hJkMnPqRsTuVwXy", "a tiny pane keeps the whole URL"
+    end
+
+    # Value: protects=a name keeps its accents in the QR header (a decomposed é stays é) while
+    # losing terminal controls; fails_when=names lose combining marks again; why_new=review of
+    # v0.54.1 (Codex, red team, adversarial); seam=none; no_claim=NFC normalization
+    def test_the_header_keeps_a_decomposed_accent
+      sb = open(linked(nodes: [ws("café", path: "/wt/a")]))
+      assert_includes name_line(sb), "café"
+    end
+
+    # Value: protects=a combining accent takes no column, so the header's count stays flush right
+    # and the name isn't cut early; fails_when=columns counts a combining mark as one; why_new=
+    # pass-2 review of v0.54.2; seam=none; no_claim=terminals that draw marks oddly
+    def test_a_decomposed_name_keeps_the_count_flush_right
+      sb = open(linked([link(ID_A), link(ID_B)], nodes: [ws("café", path: "/wt/a")]))
+      line = name_line(sb)
+      assert line.end_with?("1/2"), line
+      assert_equal 40, line.each_char.count { |c| !c.match?(/\p{Mn}/) }, "40 visible columns"
+    end
+
+    # Value: protects=the header choice reads whether the code was drawn, not whether a ▀ appears
+    # somewhere in the text; fails_when=the score sniffs the body for ▀ (a name holding one keeps
+    # the full header and loses the code); why_new=pass-2 review of v0.54.2; seam=none; no_claim=none
+    def test_a_name_with_a_half_block_does_not_fool_the_header_choice
+      sb = open(linked(nodes: [ws("a▀b", path: "/wt/a")]))
+      sb.instance_variable_set(:@home, true)
+      _, hint, raw = lines(sb, rows: 28)
+      assert_equal "any key closes", hint, "the code drew, under the wordmark only"
+      assert_operator qr_lines(raw).size, :>, 1
     end
 
     def sidebar_with_links = open(linked)

@@ -1020,16 +1020,17 @@ bytes, so there are no version-information blocks), pinned module for module by
 hand-worked penalty cases, not by another encoder's choice: encoders legitimately differ
 on rule 3 (libqrencode#220), and segno pads differently (an extra `0x00` before the
 `0xEC/0x11` run), so neither is a bit-exact reference for that. The overlay leads with the tree's own `header`
-(full at home or with `H`), then the workspace name; no session name, since Claude defaults it to
+(full at home or with `H`, but only the wordmark when the full one would cost the code or the URL),
+then the workspace name; no session name, since Claude defaults it to
 the workspace's FIRST name, stale after a rename. The code is drawn in half blocks
 in the theme's ANSI 0/15 (picked by eye and scanned; the fixed 256-color 16/231 pair
 looked wrong in a themed terminal), with a quiet zone as wide as fits up to 4 and never
 under 2, centered in a wider pane; a pane that can't fit it shows the URL instead. The
 link is held by pid + `bridge_id`, not index (a crash leftover can share its resumed session's
 bridge id), and every scan re-checks it (`revalidate_link_view`): the same session stays
-through a re-sort and follows its workspace through a rename (another workspace renamed onto
+through a re-sort and a reconnect (same pid, new bridge id) and follows its workspace through a rename (another workspace renamed onto
 the old path doesn't take over the QR), an ended one falls back to the newest left, and the
-last one ending closes the overlay. The key that closes an overlay drops the rest of its read. Never `flash` there: it blocks on a keypress inside
+last one ending closes the overlay. Whatever closes an overlay (a key, or a scan finding the link ended) drops the rest of that read's keys, but not its tmux pokes. Every name the sidebar draws (projects, workspaces, branches, the greeting's git name, the QR header) goes through `shown`: controls and bidi stripped, accents kept. Never `flash` there: it blocks on a keypress inside
 the scan. For that check to mean anything, `@links` is hydrated in `refresh_agents`'
 `ensure`, so links refresh even when the dot scan raises. Unlike the `?` overlay, the tmux
 pokes keep running under it (`poke`), so switching back to a session re-checks its link at
