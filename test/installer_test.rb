@@ -692,7 +692,9 @@ module Switchboard
       File.write(conf, "# mine\n")
       # A FAILED write (remove_global's rescue → false) would fail again on a re-run, so it
       # must not wedge uninstall: report it, don't claim removal, and finish the rest.
-      out = stub_method(CodexHook, :remove_global, -> { false }) { silently { Installer.uninstall(conf: conf) } }
+      ok = nil
+      out = stub_method(CodexHook, :remove_global, -> { false }) { silently { ok = Installer.uninstall(conf: conf) } }
+      refute ok, "uninstall exits 1 with the block still there, as install does"
       assert_includes out, "codex hooks block is still there"
       # Never "delete it by hand": codex keeps its own tables inside the block (plan R8).
       refute_match(/by hand|delete/i, out)
@@ -700,7 +702,7 @@ module Switchboard
       assert_includes out, "#{File.join(Installer.repo_root, 'bin', 'switchboard')} uninstall"
       refute_includes out, "removed global codex hooks"
       refute_includes out, "Stopped before removing anything else"
-      assert_includes out, "Done."
+      assert_includes out, "Done, except the codex hooks"
     end
 
     # Value: protects=a refused or raced uninstall never reads as success and never advises

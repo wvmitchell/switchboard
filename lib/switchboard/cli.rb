@@ -1123,9 +1123,9 @@ module Switchboard
     def doctor_hooks
       doctor_reporter
       here = worktree_at(nil)
-      return unless here
-
       AgentHooks::ADAPTERS.each do |adapter| # claude, per-worktree
+        next unless here # the codex block below is global, so it reports from any shell
+
         # Present isn't enough: hooks written by an older release miss its new entries. Only
         # the installed binary can judge that: hooks call back into the binary that wrote them.
         if adapter.unreadable?(here)

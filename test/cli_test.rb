@@ -911,6 +911,20 @@ module Switchboard
       assert_includes out, "/hooks"
     end
 
+    # Value: protects=the global codex rows (trust count, stale/unsafe advice) showing from a
+    # home shell; fails_when=doctor_hooks returns before the codex section outside a worktree;
+    # why_new=every codex doctor test ran inside a repo; seam=none
+    def test_doctor_hooks_reports_codex_outside_a_worktree
+      ENV["CODEX_HOME"] = path("codexhome")
+      FileUtils.mkdir_p(ENV["CODEX_HOME"])
+      CodexHook.install_global
+      elsewhere = path("not-a-repo")
+      FileUtils.mkdir_p(elsewhere)
+      out = Dir.chdir(elsewhere) { capture { CLI.doctor_hooks } }
+      assert_match(%r{codex hooks \(global\): .*/config\.toml}, out)
+      refute_includes out, "claude hooks", "no per-worktree row without a worktree"
+    end
+
     # Value: protects=doctor telling the user codex hooks are unapproved (dead dots) and
     # going quiet once they're all approved; fails_when=the row ignores trust_status or the
     # warning shows at N == M; why_new=doctor printed the same caveat regardless; seam=stub

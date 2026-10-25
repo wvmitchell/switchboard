@@ -387,20 +387,22 @@ module Switchboard
       puts "switchboard uninstall"
       # Codex first, and stop on a refusal: its advice is "re-run uninstall", so nothing else
       # (the PATH command included) may be removed before the user can follow it.
-      unless step_codex_unhooks
+      unless (codex = step_codex_unhooks)
         puts "\nStopped before removing anything else — fix the codex block above, then re-run `switchboard uninstall`."
         return false # nothing was removed: the CLI exits 1
       end
       unlink_symlink
       unwire_tmux(conf)
       teardown_live
-      puts "\nDone. Your config (#{Config.path}) and agent state were left untouched."
-      true
+      done = codex == :failed ? "Done, except the codex hooks (✗ above)" : "Done"
+      puts "\n#{done}. Your config (#{Config.path}) and agent state were left untouched."
+      codex != :failed # the CLI exits 1, as install does for the same failure
     end
 
     # Remove the global codex [hooks] block (the one place codex delivery is global). The
     # per-worktree disable-hooks deliberately leaves it; full teardown removes it. False only on
-    # a refusal the user can fix and re-run (:unsafe/:conflict) — the caller stops there.
+    # a refusal the user can fix and re-run (:unsafe/:conflict) — the caller stops there;
+    # :failed for a write that failed, which the caller reports but doesn't stop on.
     def step_codex_unhooks
       return true unless CodexHook.installed?
 
@@ -420,7 +422,11 @@ module Switchboard
             "(and the file) writable, then run " \
             "`#{bin_path} uninstall` again"
       end
-      result != :unsafe && result != :conflict # only a refusal the user can fix and re-run stops uninstall
+      case result
+      when true then true
+      when :unsafe, :conflict then false # only a refusal the user can fix and re-run stops uninstall
+      else :failed
+      end
     end
 
     def unlink_symlink
