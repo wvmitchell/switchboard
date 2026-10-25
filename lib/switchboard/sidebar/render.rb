@@ -285,13 +285,24 @@ module Switchboard
       # session, the code, the URL as a readable backup, and the way out on the bottom
       # row. Painted like render_help (cursor-addressed, no full clear).
       def render_link_view
+        $stdout.write(link_view_frame)
+      end
+
+      # The overlay draws text from Claude's undocumented session file and git, and this runs
+      # in the unrescued run loop: input nobody foresaw closes the QR and repaints the tree
+      # rather than killing the pane. Only building the frame is rescued; a write error to a
+      # dead pane still propagates as before.
+      def link_view_frame
         rows, cols = winsize
         lines, hint = link_view_lines(rows, cols)
         out = +"\e[H"
         lines.each_with_index { |text, i| out << "\e[#{i + 1};1H\e[K#{text}" }
         out << "\e[#{lines.size + 1};1H\e[0J"
         out << "\e[#{rows};1H\e[K#{NOTE_FG}#{trunc(hint, cols)}\e[0m"
-        $stdout.write(out)
+      rescue StandardError
+        @link_view = nil
+        render # the tree, now that the overlay is closed
+        +""
       end
 
       QR_MIN_QUIET = 2 # the margin a code needs before it's drawn at all

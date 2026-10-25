@@ -1029,7 +1029,9 @@ the last one ending closes the overlay. Never `flash` there: it blocks on a keyp
 the scan. For that check to mean anything, `@links` is hydrated in `refresh_agents`'
 `ensure`, so links refresh even when the dot scan raises. Unlike the `?` overlay, the tmux
 pokes keep running under it (`poke`), so switching back to a session re-checks its link at
-once. `p` on a row without a link does nothing (the missing `⇅` already says so).
+once. `p` on a row without a link does nothing (the missing `⇅` already says so). Building the
+overlay frame is rescued (`link_view_frame`): an input nobody foresaw closes the QR and repaints
+the tree instead of killing the pane; every specific hardening still has its own test.
 `:phone_link` sits LAST in `Keymap::ACTIONS`, because an earlier action's default beats a
 later one's remap: added mid-list, `p` would have taken the key from anyone who had remapped
 `rename` (or any later action) to it.

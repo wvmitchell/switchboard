@@ -378,6 +378,22 @@ module Switchboard
       assert_includes lines(sb)[0][0], "app/caf"
     end
 
+    # Value: protects=an input nobody foresaw, raising while the overlay builds its frame, closes
+    # the QR and repaints the tree instead of killing the sidebar (the unrescued run loop); fails_when=
+    # the backstop rescue goes or stops closing the overlay; why_new=three review passes each found a
+    # new crash path here (Will, ship D4); seam=none (stubs one method to raise); no_claim=write errors
+    def test_a_raise_while_building_the_overlay_closes_it_and_repaints_the_tree
+      sb = open(linked)
+      repainted = []
+      stub_method(sb, :winsize, ->(*) { [40, 40] }) do
+        stub_method(sb, :link_view_lines, ->(*) { raise ArgumentError, "unforeseen" }) do
+          stub_method(sb, :render, ->(*) { repainted << :tree }) { sb.send(:render_link_view) }
+        end
+      end
+      assert_nil view(sb), "the overlay closed"
+      assert_equal [:tree], repainted
+    end
+
     def sidebar_with_links = open(linked)
   end
 end
