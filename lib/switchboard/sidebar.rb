@@ -428,6 +428,7 @@ module Switchboard
     # the gate would suppress every retry and the dot would stick stale). Other
     # callers ignore the return.
     def refresh_agents(announce_sounds: true, refresh_prs: true, hooks_only: false)
+      finished = false # set on both normal exits; a signal or exit propagating leaves it false
       ws_paths = @nodes.select { |n| n.kind == "ws" }.map(&:path)
       @agents = @agent_state.scan(ws_paths, hooks_only: hooks_only)
       @monitoring = Monitoring.monitored(ws_paths)     # BEFORE on_scan: gates the :done suppression
@@ -443,16 +444,18 @@ module Switchboard
       ring_creations if announce_sounds
       refresh_diffs if edges.any? # a finished turn likely just committed — repaint its count
       @attention = Attention.marked(ws_paths)          # load for render, after the marks land
-      true
+      finished = true
     rescue StandardError
       @agents = {}
+      finished = true
       false
     ensure
       # LAST, and in the ensure: links refresh even when the dot scan above raised, so
       # an open QR overlay never keeps showing a link that ended. remote_links is
       # self-rescued, so it can add a ⇅ but never blank a dot. Not while a signal or exit
-      # propagates ($! set): a sidebar being reaped shouldn't fork ps/lsof on its way out.
-      if ws_paths && $!.nil?
+      # propagates (finished false): a sidebar being reaped shouldn't fork ps/lsof on its way
+      # out. A local flag, not $!, which an enclosing caller's rescue would also set.
+      if ws_paths && finished
         @links = remote_links(ws_paths, cheap: !@visible)
         revalidate_link_view
       end

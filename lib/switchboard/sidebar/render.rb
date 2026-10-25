@@ -284,25 +284,31 @@ module Switchboard
       # The p overlay (layout picked by eye, design review D2): where you are, which
       # session, the code, the URL as a readable backup, and the way out on the bottom
       # row. Painted like render_help (cursor-addressed, no full clear).
-      def render_link_view
-        $stdout.write(link_view_frame)
-      end
-
       # The overlay draws text from Claude's undocumented session file and git, and this runs
       # in the unrescued run loop: input nobody foresaw closes the QR and repaints the tree
       # rather than killing the pane. Only building the frame is rescued; a write error to a
       # dead pane still propagates as before.
+      def render_link_view
+        frame = link_view_frame
+        return $stdout.write(frame) if frame
+
+        @link_view = nil # close BEFORE repainting, or render would route straight back here
+        Tmux.notify("switchboard: couldn't draw this link's QR (#{@link_view_error})") # say why, non-blocking
+        render
+      end
+
+      # The overlay's whole frame as one string, or nil when building it raised.
       def link_view_frame
         rows, cols = winsize
         lines, hint = link_view_lines(rows, cols)
+        lines = lines.first([rows - 1, 0].max) # a fallback's wrapped URL can outgrow a short pane
         out = +"\e[H"
         lines.each_with_index { |text, i| out << "\e[#{i + 1};1H\e[K#{text}" }
         out << "\e[#{lines.size + 1};1H\e[0J"
         out << "\e[#{rows};1H\e[K#{NOTE_FG}#{trunc(hint, cols)}\e[0m"
-      rescue StandardError
-        @link_view = nil
-        render # the tree, now that the overlay is closed
-        +""
+      rescue StandardError => e
+        @link_view_error = e.class
+        nil
       end
 
       QR_MIN_QUIET = 2 # the margin a code needs before it's drawn at all

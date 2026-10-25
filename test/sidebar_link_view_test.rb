@@ -385,13 +385,17 @@ module Switchboard
     def test_a_raise_while_building_the_overlay_closes_it_and_repaints_the_tree
       sb = open(linked)
       repainted = []
+      said = []
       stub_method(sb, :winsize, ->(*) { [40, 40] }) do
         stub_method(sb, :link_view_lines, ->(*) { raise ArgumentError, "unforeseen" }) do
-          stub_method(sb, :render, ->(*) { repainted << :tree }) { sb.send(:render_link_view) }
+          stub_method(Tmux, :notify, ->(msg) { said << msg }) do
+            stub_method(sb, :render, ->(*) { repainted << sb.instance_variable_get(:@link_view) }) { sb.send(:render_link_view) }
+          end
         end
       end
       assert_nil view(sb), "the overlay closed"
-      assert_equal [:tree], repainted
+      assert_equal [nil], repainted, "closed before the repaint, or render would loop back in"
+      assert_equal ["switchboard: couldn't draw this link's QR (ArgumentError)"], said, "says why (review D2)"
     end
 
     # Value: protects=p on an empty tree (no row under the cursor) is a no-op, not a crash in the
@@ -416,6 +420,35 @@ module Switchboard
       refute_nil hint, "the hint is addressed to row 30"
       assert_operator strip_ansi(hint).length, :<=, 20
       assert strip_ansi(hint).start_with?("→ widen"), strip_ansi(hint)
+    end
+
+    # Value: protects=the drawn frame never addresses rows below the pane (a fallback's wrapped URL
+    # outgrows a short pane); fails_when=link_view_frame stops capping the body to rows - 1; why_new=
+    # red team, ship of v0.54.0; seam=none (winsize stubbed); no_claim=which rows a short pane keeps
+    def test_a_short_pane_frame_stays_inside_the_pane
+      sb = open(linked)
+      frame = stub_method(sb, :winsize, ->(*) { [6, 20] }) { sb.send(:link_view_frame) }
+      rows = frame.scan(/\e\[(\d+);1H/).flatten.map(&:to_i)
+      assert_operator rows.max, :<=, 6
+    end
+
+    # Value: protects=the link refresh still runs when refresh_agents is called from inside an
+    # enclosing rescue (where $! is set); fails_when=the guard goes back to $!.nil?; why_new=red
+    # team, ship of v0.54.0; seam=none; no_claim=real signal delivery (covered by the signal test)
+    def test_the_link_refresh_runs_when_called_from_inside_a_rescue
+      sb = open(linked)
+      as = Struct.new(:last_hook_states).new({})
+      as.define_singleton_method(:scan) { |*, **| {} }
+      sb.instance_variable_set(:@agent_state, as)
+      scans = 0
+      stub_method(RemoteLink, :scan, ->(*, **) { scans += 1; {} }) do
+        begin
+          raise "an unrelated error a caller is handling"
+        rescue StandardError
+          sb.send(:refresh_agents, refresh_prs: false)
+        end
+      end
+      assert_equal 1, scans
     end
 
     def sidebar_with_links = open(linked)
