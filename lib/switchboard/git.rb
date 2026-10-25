@@ -33,6 +33,14 @@ module Switchboard
       end
     end
 
+    # Did worktrees skip an entry (its path isn't valid UTF-8)? Display can live without it;
+    # anything deciding what's safe to destroy must treat the repo as not fully known.
+    def undecodable_worktrees?(repo)
+      capture(repo, "worktree", "list", "--porcelain").b.split("\n\n").any? do |block|
+        !block.force_encoding(Encoding::UTF_8).valid_encoding?
+      end
+    end
+
     def dirty?(worktree)
       !capture(worktree, "status", "--porcelain").strip.empty?
     end

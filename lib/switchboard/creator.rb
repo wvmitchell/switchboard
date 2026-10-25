@@ -12,9 +12,10 @@ module Switchboard
     module_function
 
     PLACEHOLDER_TRIES = 5 # bounded retries past a generated name already taken
-    # git's English failure text for a path or branch that existed before its `worktree add`
-    # (a localized git falls back to the commit-only proof).
-    PREEXISTING = /already exists|already checked out|is already used by worktree|is a missing but (?:locked|already registered)/
+    # git's own last line (English) when the path or branch existed before its `worktree add
+    # -b`: anchored, so a failing hook whose output merely mentions it can't match. A localized
+    # git falls back to the commit-only proof.
+    PREEXISTING = /\A(?:'.+' already exists|a branch named '.+' already exists)\z/
 
     # Wire the per-worktree agent hooks (agent-state reporter + the #92 self-naming nudge
     # + the background-presence monitoring nudge/clears), scoped to this worktree, never
@@ -189,10 +190,15 @@ module Switchboard
         kept << "branch #{branch} (it was there before)" if Git.branch_exists?(repo, branch)
         return kept.empty? ? nil : "kept #{kept.join(' and ')}"
       end
-      if File.exist?(dest) && Git.current_branch(dest) == branch
+      if File.exist?(dest) && Git.current_branch(dest) != branch
+        kept << "#{dest} (not on this create's branch)" # a half-registered tree, or someone's: say so
+      elsif File.exist?(dest)
+        count = base_sha && Git.commits_since(dest, base_sha)
         if !base_sha
           kept << "#{dest} (base commit unknown)"
-        elsif !Git.commits_since(dest, base_sha)&.zero?
+        elsif count.nil?
+          kept << "#{dest} (couldn't check its commits)"
+        elsif !count.zero?
           kept << "#{dest} (it has commits)"
         else
           Git.remove_worktree(repo, dest, force: true, locked: true)
@@ -200,9 +206,15 @@ module Switchboard
         end
       end
       if Git.branch_exists?(repo, branch)
-        free = kept.empty? && Git.worktrees(repo).none? { |w| w[:branch] == branch }
+        # A worktree Git.worktrees skipped (an unreadable path) could have it checked out.
+        hidden = Git.undecodable_worktrees?(repo)
+        free = kept.empty? && !hidden && Git.worktrees(repo).none? { |w| w[:branch] == branch }
         unless base_sha && free && Git.delete_branch_at(repo, branch, base_sha)
-          why = !base_sha ? "base commit unknown" : (free ? "it moved off the base" : "it's checked out")
+          why = if !base_sha then "base commit unknown"
+                elsif hidden then "a worktree's path couldn't be read"
+                elsif free then "it moved off the base"
+                else "it's checked out"
+                end
           kept << "branch #{branch} (#{why})"
         end
       end
@@ -218,7 +230,9 @@ module Switchboard
     # not pin the row on ◌ with no way out but `d`.
     def add_worktree(config, project, name, dest, base, timeout: ADD_DEADLINE)
       Tempfile.create("sb-add") do |log|
-        pid = Process.spawn({ "GIT_TERMINAL_PROMPT" => "0" },
+        # English messages whatever git's language, so PREEXISTING can read the failure; only
+        # the message catalog changes (LC_CTYPE, paths and checkout are untouched).
+        pid = Process.spawn({ "GIT_TERMINAL_PROMPT" => "0", "LANGUAGE" => "en" },
                             "git", "-C", project["path"], "worktree", "add", "--no-track",
                             "-b", branch_for(config, name), dest, base,
                             in: File::NULL, out: log, err: log, pgroup: true)

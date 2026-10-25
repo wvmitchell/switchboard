@@ -64,7 +64,9 @@ module Switchboard
       parents = []
       Model.new(config, with_dirty: false).projects.each do |project|
         names = project.worktrees.map { |w| Tmux.session_name(w) }
-        next if names.empty?
+        # A worktree git listed but we couldn't read (non-UTF-8 path) would make its live
+        # session look orphaned: leave the whole project alone, like an unverifiable one.
+        next if names.empty? || Git.undecodable_worktrees?(project.path)
 
         prefixes << Tmux.session_prefix(project.name)
         valid.concat(names)

@@ -16,16 +16,19 @@ refer to the project's earlier, private repository; the public tracker starts at
 - A `config.yml` that won't parse no longer lets `install` and `upgrade` look successful.
   They used to skip every worktree's hooks without a word (an unreadable config lists no
   projects), and `upgrade` reported "up to date". Both now print the parse error and
-  exit 1, the way `doctor` already did (#14).
+  exit 1. `doctor`'s config row also turns red instead of showing a green check above the
+  error (#14).
 - A failed workspace create can no longer delete someone else's commits. If a branch
   with the new workspace's name appeared while the worktree was being made, the cleanup
   used to force-delete it. Now the cleanup removes the branch only while it still points
-  at the commit the create started from, and keeps any tree that has a commit in it, and the
-  failed row now names what it kept. A create that timed out halfway still cleans up fully.
+  at the commit the create started from, keeps any tree that has a commit in it, and keeps
+  anything git says was already there. The failed row now names what it kept and why. A
+  create that timed out halfway still cleans up.
 - Reading git's output no longer depends on the locale: switchboard's own binary already
-  read it as UTF-8 (since 0.52.0), and now every caller does. A worktree whose path isn't
-  valid UTF-8 (possible only on Linux) is now skipped instead of breaking its whole project's
-  list.
+  read it as UTF-8 (since 0.52.0), and now every `Git` helper does, whoever loads it. A worktree whose path isn't
+  valid UTF-8 (possible only on Linux) is now skipped in the sidebar instead of breaking its
+  whole project's list, and `prune` and a failed create's cleanup leave that project's
+  sessions and branches alone rather than act on a list they couldn't fully read.
 - `doctor` and `upgrade` now notice a `tmux_keys` change made by editing `config.yml`
   by hand, for both the toggle and the home key. The key tmux still had bound worked, so
   `doctor` showed green and `upgrade` never applied the change; `doctor` now names the
@@ -34,7 +37,7 @@ refer to the project's earlier, private repository; the public tracker starts at
 - The `⇅` glyph and `doctor`'s remote-link check now find Claude's session files when
   `CLAUDE_CONFIG_DIR` contains glob characters, like `~/cfg [work]`.
 - `doctor` run outside a worktree now shows the global codex hooks rows (the trust count
-  and any advice). They used to appear only inside a worktree.
+  and any advice) when the block is installed. They used to appear only inside a worktree.
 - `uninstall` now exits 1 when it can't remove the codex hooks block, and says "Done,
   except the codex hooks", like `install` does for the same failure. It still finishes
   the rest of the uninstall.

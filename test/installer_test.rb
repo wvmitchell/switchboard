@@ -790,6 +790,34 @@ module Switchboard
       assert_includes out, "Done, except the codex hooks"
     end
 
+    # Value: protects=a codex removal that found nothing left (remove_global's plain false)
+    # not failing uninstall; fails_when=step_codex_unhooks maps every false to :failed;
+    # why_new=cycle-2 maintainability; seam=CodexHook.remove_global, CodexHook.installed?
+    def test_uninstall_treats_nothing_left_to_remove_as_done
+      codex_home!
+      with_codex { CodexHook.install_global }
+      conf = path("tmux.conf")
+      File.write(conf, "# mine\n")
+      ok = nil
+      gone = [true, false] # installed? before the remove, then after it
+      out = stub_method(CodexHook, :installed?, -> { gone.shift || false }) do
+        stub_method(CodexHook, :remove_global, -> { false }) { silently { ok = Installer.uninstall(conf: conf) } }
+      end
+      assert ok, out
+      refute_includes out, "Done, except the codex hooks"
+      refute_includes out, "still there"
+    end
+
+    # Value: protects=install blaming the config, not the hooks, when config.yml won't parse;
+    # fails_when=the summary always says "the agent-state hooks"; why_new=cycle-2 red team; seam=step_*
+    def test_install_names_the_config_when_it_will_not_parse
+      File.write(Config.path, "--\nprojects:\n")
+      out = %i[step_symlink wire_tmux step_init step_codex_hooks warn_path warn_tmux_version].reduce(-> { silently { Installer.install(no_tmux: true) } }) do |inner, m|
+        -> { stub_method(Installer, m, ->(*, **) { true }) { inner.call } }
+      end.call
+      assert_includes out, "Done, except the config (✗ above)"
+    end
+
     # Value: protects=a refused or raced uninstall never reads as success and never advises
     # deleting the block by hand (codex keeps its own tables inside it); fails_when=a
     # truthy :unsafe/:conflict falls into the ✓ branch, or the old "delete it by hand"

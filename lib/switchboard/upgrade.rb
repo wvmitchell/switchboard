@@ -10,8 +10,9 @@ module Switchboard
   #     └ yes / couldn't tell ─► brew | git pull ─ moved? ─ no ─► "nothing newer yet" ─ leftovers? ─ yes ─► finish
   #                                                   └ yes ─► exec <bin> upgrade --finish <old>
   #
-  # Both "nothing to fetch" exits check the config parses first: an unparseable one lists
-  # no projects, so stale hooks would read as current. Fail with the parse error instead.
+  # Both "nothing to fetch" exits check the config parses before reporting current or
+  # finishing leftovers: an unparseable one lists no projects, so stale hooks would read as
+  # current. Fail with the parse error instead.
   #
   # The install method is the channel: a Homebrew install follows releases, a `--HEAD`
   # one follows main, a clone follows whatever branch it tracks. The hand-off is an exec,

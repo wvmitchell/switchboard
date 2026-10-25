@@ -139,6 +139,16 @@ module Switchboard
       assert_empty killed, "a missing-dir project's sessions are never pruned"
     end
 
+    # Value: protects=a live session whose worktree git listed but we couldn't read (non-UTF-8
+    # path, Linux) is never killed as an orphan; fails_when=prune skips the undecodable_worktrees?
+    # guard; why_new=ship cycle-2 red team, D10; seam=Git.undecodable_worktrees?
+    def test_prune_leaves_a_project_with_an_unreadable_worktree_alone
+      setup_app_project
+      live = [sess("sb/app/app"), sess("sb/app/feat"), sess("sb/app/gone")]
+      killed = stub_method(Git, :undecodable_worktrees?, ->(_repo) { true }) { run_prune(live) }
+      assert_empty killed, "a project we can't fully read is unverifiable: hands off"
+    end
+
     def test_prune_reports_unreachable_when_no_tmux_server
       setup_app_project
       killed = []

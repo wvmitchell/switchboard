@@ -62,6 +62,14 @@ module Switchboard
       assert_equal ["/ok"], wts.map { |w| w[:path] }
     end
 
+    # Value: protects=destructive callers can tell a skipped worktree happened; fails_when=
+    # undecodable_worktrees? misses an invalid block or flags a valid repo; why_new=D10; seam=Git.capture
+    def test_undecodable_worktrees_reports_a_skipped_entry
+      bad = "worktree /ok\nHEAD abc\n\nworktree /caf\xE9\nHEAD def\n".dup.force_encoding(Encoding::UTF_8)
+      assert(stub_method(Git, :capture, ->(*) { bad }) { Git.undecodable_worktrees?("/repo") })
+      refute Git.undecodable_worktrees?(temp_git_repo("app"))
+    end
+
     def test_worktrees_flags_a_bare_repo
       repo = temp_git_repo("app", origin: true)
       assert(Git.worktrees("#{repo}.git").any? { |w| w[:bare] }, "bare clone reports bare: true")

@@ -1281,8 +1281,10 @@ module Switchboard
     def test_doctor_flags_a_tmux_key_edited_by_hand_but_not_a_refused_one
       File.write(Config.path, YAML.dump("tmux_keys" => { "toggle" => "t", "home" => "H" }))
       drift = "tmux_keys.toggle is t in config, but tmux has prefix-s bound"
-      unwired = stub_method(Installer, :tmux_server?, -> { true }) do # --no-tmux: no keys of ours to drift
-        with_key_stubs(live: true, options: { "@switchboard-toggle-key" => "s" }) { capture { CLI.send(:doctor_binding_live) } }
+      unwired = stub_method(Installer, :tmux_wired?, ->(*) { false }) do # --no-tmux: no keys of ours to drift
+        stub_method(Installer, :tmux_server?, -> { true }) do
+          with_key_stubs(live: true, options: { "@switchboard-toggle-key" => "s" }) { capture { CLI.send(:doctor_binding_live) } }
+        end
       end
       refute_includes unwired, "in config, but tmux has", "no drift row when tmux isn't wired to switchboard"
       out = stub_method(Installer, :tmux_wired?, ->(*) { true }) do
@@ -1299,6 +1301,15 @@ module Switchboard
         end
       end
       refute_includes out, "in config, but tmux has"
+      File.write(Config.path, YAML.dump("tmux_keys" => { "toggle" => "s" })) # home removed from config
+      CLI.instance_variable_set(:@config, nil) # CLI memoizes config
+      out = stub_method(Installer, :tmux_wired?, ->(*) { true }) do
+        stub_method(Installer, :tmux_server?, -> { true }) do
+          options = { "@switchboard-toggle-key" => "s", "@switchboard-home-key" => "S" }
+          with_key_stubs(live: true, options: options) { capture { CLI.send(:doctor_binding_live) } }
+        end
+      end
+      assert_includes out, "tmux_keys.home is unbound in config, but tmux has prefix-S bound"
     end
 
     def test_doctor_warns_about_a_clobbered_binding

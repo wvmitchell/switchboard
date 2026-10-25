@@ -127,7 +127,8 @@ module Switchboard
       warn_path
       warn_tmux_version
       key = Config.new.tmux_key("toggle")
-      failed = [("the codex hooks" unless codex_ok), ("the agent-state hooks" unless hooks_ok)].compact
+      hooks_part = Config.new.load_error ? "the config" : "the agent-state hooks" # refresh_wiring fails on either
+      failed = [("the codex hooks" unless codex_ok), (hooks_part unless hooks_ok)].compact
       done = failed.empty? ? "Done" : "Done, except #{failed.join(' and ')} (✗ above)"
       puts "\n#{done} — run `switchboard` (or `sb`) from any shell to start; press prefix-#{key} to toggle the sidebar inside tmux."
       puts "(If the key doesn't respond yet, reload tmux: `tmux source-file <your conf>`.)"
@@ -408,24 +409,28 @@ module Switchboard
 
       # Never advise deleting the block by hand: codex appends its own tables inside it,
       # and removing the region would take them too.
-      case (result = CodexHook.remove_global)
-      when true then ok "removed global codex hooks from #{CodexHook.config_path}"
+      case CodexHook.remove_global
+      when true
+        ok "removed global codex hooks from #{CodexHook.config_path}"
+        true
       when :unsafe
         bad "left the codex hooks block in #{CodexHook.config_path} in place, can't be removed safely — " \
             "#{CodexHook::UNSAFE_ADVICE} uninstall"
-      when :conflict then bad "#{CodexHook.config_path} changed while uninstalling (codex wrote to it) — re-run uninstall"
+        false # a refusal the user can fix and re-run: stop uninstall
+      when :conflict
+        bad "#{CodexHook.config_path} changed while uninstalling (codex wrote to it) — re-run uninstall"
+        false
       else
+        # remove_global's false also means "nothing to remove" (the block went meanwhile).
+        return true unless CodexHook.installed?
+
         # A write that FAILED (read-only/symlinked config) would fail again on a re-run, so
         # stopping here would wedge uninstall forever: report it and let the rest proceed.
         bad "couldn't read or write #{CodexHook.config_path}, so its codex hooks block is still there and " \
             "codex will keep running its state reporter — make #{File.dirname(MarkerBlock.real_target(CodexHook.config_path))} " \
             "(and the file) writable, then run " \
             "`#{bin_path} uninstall` again"
-      end
-      case result
-      when true then true
-      when :unsafe, :conflict then false # only a refusal the user can fix and re-run stops uninstall
-      else :failed
+        :failed
       end
     end
 
@@ -656,7 +661,8 @@ module Switchboard
 
     # Does config.yml name a different key for `role` than tmux-bind last applied? Checked
     # against what was bound AND what tmux refused (that one fell back on purpose), so only a
-    # hand edit nobody re-applied reads as drift. nil = can't tell (no server, or no config).
+    # hand edit nobody re-applied reads as drift. nil = can't tell (no tmux server, or config.yml
+    # didn't parse).
     def key_drift?(role, config: Config.new)
       return nil if config.load_error # its keys read as defaults, not what the user wrote
       return nil unless tmux_server?
