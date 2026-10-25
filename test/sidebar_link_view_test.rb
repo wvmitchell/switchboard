@@ -394,6 +394,30 @@ module Switchboard
       assert_equal [:tree], repainted
     end
 
+    # Value: protects=p on an empty tree (no row under the cursor) is a no-op, not a crash in the
+    # unrescued input loop; fails_when=open_link_view's nil-node guard goes (nil.kind raises);
+    # why_new=only unlinked rows and headers were pressed; seam=none; no_claim=none beyond protects
+    def test_p_on_an_empty_tree_does_nothing
+      sb = sidebar(nodes: [])
+      sb.instance_variable_set(:@links, { "/wt/a" => [link] })
+      assert sb.send(:dispatch, "p")
+      assert_nil view(sb)
+    end
+
+    # Value: protects=the drawn frame seats the hint on the pane's bottom row, truncated to the
+    # pane width (the "→ widen" hint is 24 cols, wider than the 20-col floor); fails_when=the
+    # frame stops trunc'ing the hint or addresses the wrong row; why_new=the 20-col test checked
+    # only the body from link_view_lines, not the frame; seam=none (winsize stubbed); no_claim=tmux
+    def test_the_frame_seats_a_truncated_hint_on_the_bottom_row
+      sb = open(linked)
+      frame = stub_method(sb, :winsize, ->(*) { [30, 20] }) { sb.send(:link_view_frame) }
+      refute_nil view(sb), "the frame built without hitting the backstop"
+      hint = frame[/\e\[30;1H\e\[K(.*)\z/m, 1]
+      refute_nil hint, "the hint is addressed to row 30"
+      assert_operator strip_ansi(hint).length, :<=, 20
+      assert strip_ansi(hint).start_with?("→ widen"), strip_ansi(hint)
+    end
+
     def sidebar_with_links = open(linked)
   end
 end
