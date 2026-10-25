@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "test_helper"
+require "open3"
 
 module Switchboard
   # Git is the runtime source of truth, so these run against real throwaway repos
@@ -34,6 +35,21 @@ module Switchboard
       assert File.identical?(cafe, found[:path])
     ensure
       Encoding.default_external = saved if saved
+    end
+
+    # Value: protects=the real C-locale path (backticks tag output from LC_ALL, not from
+    # Ruby's default_external set in-process); fails_when=capture loses its UTF-8 tag under
+    # LC_ALL=C; why_new=the test above only sets default_external; seam=none
+    def test_worktrees_lists_a_non_ascii_path_in_an_lc_all_c_process
+      repo = temp_git_repo("app")
+      cafe = path("caf\u00e9")
+      git(repo, "worktree", "add", "-q", cafe, "-b", "cafe")
+      lib = File.expand_path("../lib", __dir__)
+      script = 'require "switchboard"; w = Switchboard::Git.worktrees(ARGV[0]).find { |x| x[:branch] == "cafe" }; ' \
+               'print w && w[:path].encoding.to_s + " " + w[:path].valid_encoding?.to_s'
+      out, status = Open3.capture2({ "LC_ALL" => "C", "LANG" => "C" }, RbConfig.ruby, "-I", lib, "-e", script, repo)
+      assert status.success?, out
+      assert_equal "UTF-8 true", out
     end
 
     # Value: protects=one undecodable worktree (a Latin-1 path on Linux) not taking the whole

@@ -681,7 +681,7 @@ module Switchboard
       dest = path("wts", "half")
       git(repo, "worktree", "add", "-q", "-b", "half", dest, "main")
       File.write(File.join(dest, "partial.bin"), "half a checkout") # dirty, nothing committed
-      Creator.undo_add(config.project("proj"), dest, "half", Git.rev_parse(repo, "main"))
+      assert_nil Creator.undo_add(config.project("proj"), dest, "half", Git.rev_parse(repo, "main")), "nothing kept, nothing said"
       refute_path_exists dest
       refute Git.branch_exists?(repo, "half")
     end
@@ -696,8 +696,9 @@ module Switchboard
       dest = path("wts", "worked")
       git(repo, "worktree", "add", "-q", "-b", "worked", dest, "main")
       git(dest, "commit", "-q", "--allow-empty", "-m", "real work")
-      Creator.undo_add(config.project("proj"), dest, "worked", base)
+      note = Creator.undo_add(config.project("proj"), dest, "worked", base)
       assert_path_exists dest, "a tree with a commit stays"
+      assert_includes note, "kept #{dest}", "and the ✘ detail says so"
       assert Git.branch_exists?(repo, "worked")
 
       # A racing writer's same-name branch with its own commit, no tree at our path.
@@ -705,8 +706,33 @@ module Switchboard
       git(repo, "worktree", "add", "-q", "-b", "racer", other, "main")
       git(other, "commit", "-q", "--allow-empty", "-m", "theirs")
       git(repo, "worktree", "remove", other)
-      Creator.undo_add(config.project("proj"), path("wts", "never-made"), "racer", base)
+      note = Creator.undo_add(config.project("proj"), path("wts", "never-made"), "racer", base)
       assert Git.branch_exists?(repo, "racer"), "a branch past base is someone's work"
+      assert_includes note, "kept branch racer"
+    end
+
+    # Value: protects=a branch the rollback refused to delete being named on the ✘ row, not
+    # left silently; fails_when=add_reserved drops undo_add's note from the failure detail;
+    # why_new=plan item 2 ("say so in the failure detail"), D2 of the ship gate; seam=add_worktree
+    def test_a_kept_branch_is_named_in_the_failure_detail
+      repo = temp_git_repo("proj", origin: true)
+      config = config_for(repo)
+      rec = dispatch(config)
+      branch = Creator.branch_for(config, rec["name"])
+      tmp = path("wts", "racer-tmp")
+      run_git = method(:git) # the stub runs with Creator as self
+      racer = lambda do |_config, project, _name, _dest, base, **|
+        # A racing writer cuts the same branch with its own commit, then the add fails.
+        run_git.call(project["path"], "worktree", "add", "-q", "-b", branch, tmp, base)
+        run_git.call(tmp, "commit", "-q", "--allow-empty", "-m", "theirs")
+        run_git.call(project["path"], "worktree", "remove", tmp)
+        [false, "a branch named '#{branch}' already exists"]
+      end
+      with_fake_tmux { stub_method(Creator, :add_worktree, racer) { Creator.work(config, rec["id"]) } }
+      found = Creation.find(rec["id"])
+      assert_equal "failed", found["state"]
+      assert_includes found["detail"], "kept branch #{branch}"
+      assert Git.branch_exists?(repo, branch)
     end
 
     # Value: protects=the branch check and the delete being one step; fails_when=delete_branch_at
@@ -734,7 +760,8 @@ module Switchboard
       config = config_for(repo)
       dest = path("wts", "nobase")
       git(repo, "worktree", "add", "-q", "-b", "nobase", dest, "main")
-      Creator.undo_add(config.project("proj"), dest, "nobase", nil)
+      note = Creator.undo_add(config.project("proj"), dest, "nobase", nil)
+      assert_includes note, "kept #{dest} and branch nobase"
       assert_path_exists dest
       assert Git.branch_exists?(repo, "nobase")
 

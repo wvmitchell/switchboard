@@ -145,7 +145,8 @@ module Switchboard
         return [name, dest, nil] if ok
 
         unless clash
-          undo_add(project, dest, branch, base_sha)
+          kept = undo_add(project, dest, branch, base_sha)
+          err = [err, kept].compact.join("; ") # a leftover the rollback refused to touch is said, not silent
           break
         end
 
@@ -171,19 +172,24 @@ module Switchboard
     #     (the record fails as a guarded ✘).
     #   - the branch: only while it still points at base, atomically, and never while a
     #     worktree has it checked out.
-    # No base commit, no proof: delete nothing.
+    # No base commit, no proof: delete nothing. Returns what it kept (for the ✘ detail),
+    # or nil when nothing of ours was left behind.
     def undo_add(project, dest, branch, base_sha)
-      return unless base_sha
-
       repo = project["path"]
+      kept = []
       if File.exist?(dest) && Git.current_branch(dest) == branch
-        return unless Git.commits_since(dest, base_sha)&.zero?
-
-        Git.remove_worktree(repo, dest, force: true, locked: true)
+        if base_sha && Git.commits_since(dest, base_sha)&.zero?
+          Git.remove_worktree(repo, dest, force: true, locked: true)
+          kept << dest if File.exist?(dest) # the remove itself failed
+        else
+          kept << dest
+        end
       end
-      return if Git.worktrees(repo).any? { |w| w[:branch] == branch }
-
-      Git.delete_branch_at(repo, branch, base_sha)
+      if Git.branch_exists?(repo, branch)
+        free = kept.empty? && Git.worktrees(repo).none? { |w| w[:branch] == branch }
+        kept << "branch #{branch}" unless base_sha && free && Git.delete_branch_at(repo, branch, base_sha)
+      end
+      "kept #{kept.join(' and ')}: it may hold work that isn't this create's" unless kept.empty?
     end
 
     # `--no-track` so a branch cut from a remote-tracking base (origin/main) does NOT

@@ -20,8 +20,8 @@ refer to the project's earlier, private repository; the public tracker starts at
 - A failed workspace create can no longer delete someone else's commits. If a branch
   with the new workspace's name appeared while the worktree was being made, the cleanup
   used to force-delete it. Now the cleanup removes the branch only while it still points
-  at the commit the create started from, and keeps any tree that has a commit in it. A
-  create that timed out halfway still cleans up fully.
+  at the commit the create started from, and keeps any tree that has a commit in it, and the
+  failed row now names what it kept. A create that timed out halfway still cleans up fully.
 - A workspace whose path has a non-ASCII character (`café`) now shows up when tmux runs
   in a C locale. Listing that project's worktrees used to fail.
 - `doctor` and `upgrade` now notice a `tmux_keys` change made by editing `config.yml`
