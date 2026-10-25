@@ -402,13 +402,16 @@ module Switchboard
 
     # Poll `yield` until it returns truthy (returning that value) or `timeout` elapses, in
     # which case flunk with a tmux state dump. Every smoke assertion goes through this —
-    # never a fixed sleep then a snapshot assert.
+    # never a fixed sleep then a snapshot assert. `what` may be a lambda, called only on
+    # timeout, so the message can carry what the last poll actually saw.
     def wait_until(what = "a condition", timeout: WAIT, interval: 0.05)
       deadline = monotonic + timeout
       loop do
         value = yield
         return value if value
-        flunk("timed out after #{timeout}s waiting for #{what}\n#{state_dump}") if monotonic > deadline
+        if monotonic > deadline
+          flunk("timed out after #{timeout}s waiting for #{what.respond_to?(:call) ? what.call : what}\n#{state_dump}")
+        end
 
         sleep interval
       end

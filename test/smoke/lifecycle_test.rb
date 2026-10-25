@@ -157,21 +157,33 @@ module Switchboard
     # Offline stubs can't reach this — it's real processes + a real session kill. The
     # assertion is end-state (worktree + branch gone, we're home), never a wall-clock
     # bound. Sending `d` then `y` drives the real sidebar confirm (a clean placeholder
-    # needs no force prompt); `j` first lands the cursor on the workspace row.
+    # needs no force prompt); `g` `j` first land the cursor on the workspace row.
     def test_deleting_the_current_workspace_falls_home_and_the_daemon_removes_it
       sess = create_workspace(enter: true) # client is now on sess (a clean placeholder)
       leaf = sess.split("/").last
       wt = worktree_path(leaf)
       pane = sidebar_pane_ids(sess).first or flunk "no sidebar in the workspace to drive"
 
-      tmux!("send-keys", "-t", pane, "j") # proj header is row 0; move onto the workspace row
-      tmux!("send-keys", "-t", pane, "d") # delete
-      # Wait for the confirm prompt before sending `y`: if `d` and `y` land in one read
-      # they tokenize together and confirm's read_char blocks after `d`, never seeing the
-      # buffered `y`. Waiting for [y/N] guarantees read_char is blocking on a fresh read —
-      # and that `d` hit the WORKSPACE row (a project row would prompt "remove", not "delete").
-      wait_until("the delete confirm prompt is up") do
-        tmux("capture-pane", "-p", "-t", pane).include?("delete #{leaf}")
+      # Re-drive `g` `j` `d` until the DELETE prompt is up, as switch_client re-issues its
+      # switch. One shot can lose to the background build (CI flake on #30): until the
+      # sidebar reloads past it, the row can still be the synthetic dispatch row, where `d`
+      # asks "cancel …?", or the keys can land before the tree is drawn (cursor on the
+      # header, "remove …?"). A re-drive's first key answers any wrong prompt no (anything
+      # but `y` is no), so nothing is canceled or removed.
+      # Wait for the prompt before sending `y`: if `d` and `y` land in one read they
+      # tokenize together and confirm's read_char blocks after `d`, never seeing the
+      # buffered `y`. Waiting for [y/N] guarantees read_char is blocking on a fresh read.
+      screen = ""
+      driven = nil
+      wait_until(-> { "the delete confirm prompt is up; the sidebar last showed:\n#{screen}" }) do
+        screen = tmux("capture-pane", "-p", "-t", pane)
+        next true if screen.include?("delete #{leaf}?")
+
+        if driven.nil? || monotonic - driven > 1
+          %w[g j d].each { |k| tmux!("send-keys", "-t", pane, k) } # top (proj header) → the ws row → delete
+          driven = monotonic
+        end
+        false
       end
       tmux!("send-keys", "-t", pane, "y") # confirm (clean placeholder ⇒ no force prompt)
 
