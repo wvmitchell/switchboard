@@ -110,6 +110,8 @@ module Switchboard
       @link_view = nil     # p: the phone-link QR overlay, { path:, bridge_id:, qr: { url => matrix } }
                            # while open. Transient like @help; the link is held by id, not
                            # index, so a re-sorted scan keeps showing the same session.
+      @help_page = 0       # which page of the ? overlay is showing (→/Space/← turn it)
+      @help_paged = false  # this overlay has shown >1 page: the paging keys stay sticky
       @full_header = false # H: seat the full home-style header on EVERY session.
                            # Hydrated from the shared on-disk store (FullHeader) on
                            # every rebuild, so all windows agree and a respawn keeps it

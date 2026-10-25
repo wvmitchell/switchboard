@@ -219,7 +219,10 @@ One line, always ending in the `? help` gateway:
 The footer only has room for the common keys. Everything else — `g`/`G`, `←`/`→`
 resize, the `Ctrl-N`/`Ctrl-P` movement aliases, the filter and prompt sub-modes,
 the diff-count meaning, and the tmux keys that operate the sidebar — lives in the
-`?` overlay. Press `?` for the full key map; any key closes it.
+`?` overlay. Press `?` for the full key map; when it fits on one page, any key closes it. On a
+pane too short for the whole map it splits into pages (the bottom row reads
+`1/2 · → more · other keys close`): `→` or `Space` turns
+forward, `←` back, and any other key closes it.
 
 ---
 

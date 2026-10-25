@@ -593,13 +593,117 @@ module Switchboard
       end
     end
 
-    # help_body caps the body to rows-1 so the "any key to close" hint always seats,
-    # even on a tiny pane (the height-cap, testable without raw I/O).
-    def test_help_body_caps_to_leave_room_for_the_hint
+    # Paging (the overflow fix): no help line is ever dropped. For every pane size the
+    # pages, joined back up, are help_lines minus only the separators that landed at a
+    # page top; no page overruns rows-1 (the hint's row) or the pane width.
+    def test_help_pages_lose_nothing_and_fit_every_pane
+      sb = sidebar(nodes: [proj("app")])
+      stub_method(Tmux, :pane_switch_keys, -> { %w[↑↓←→ o] }) do
+        [2, 3, 5, 10, 20, 30, 45, 100].product([20, 40, 80]).each do |rows, cols|
+          pages = sb.send(:help_pages, rows, cols)
+          lines = sb.send(:help_lines, cols)
+          # walk help_lines through the pages: only a separator at a page top may vanish
+          at = 0
+          pages.each do |page|
+            at += 1 if lines[at] == "" && page.first != ""
+            assert_equal lines[at, page.size], page, "#{rows}x#{cols}: page lines match help_lines in order"
+            at += page.size
+          end
+          assert_equal lines.size, at, "#{rows}x#{cols}: every help line lands on a page"
+          pages.each do |page|
+            assert_operator page.size, :<=, rows - 1, "#{rows}x#{cols}: a page fits above the hint"
+            refute_equal "", page.first, "#{rows}x#{cols}: no page starts on a separator"
+            page.each { |l| assert_operator strip_ansi(l).length, :<=, cols, "#{rows}x#{cols}: #{l.inspect}" }
+          end
+        end
+      end
+    end
+
+    # The regression: on a pane too short for the whole map, the tmux rows (the only
+    # answer to "how do I hide this?") were the tail that got cut. Now they're on a
+    # later page. A normal 45-row pane fits it all on one page since the merged
+    # prompt/filter section.
+    def test_help_pages_reach_the_tmux_rows_on_a_short_pane
+      sb = sidebar(nodes: [proj("app")])
+      stub_method(Tmux, :pane_switch_keys, -> { %w[↑↓←→ o] }) do
+        pages = sb.send(:help_pages, 30, 40).map { |page| page.map { |l| strip_ansi(l) } }
+        assert_operator pages.size, :>=, 2, "a 30-row pane pages"
+        assert(pages.drop(1).flatten.any? { |l| l.include?("show / hide the sidebar") }, "the tmux rows are on a later page")
+        assert_equal 1, sb.send(:help_pages, 45, 40).size, "a 45-row pane holds the whole map"
+        assert_equal sb.send(:help_lines, 40), sb.send(:help_pages, 100, 40).first, "one page is the whole, unchanged map"
+      end
+    end
+
+    # A section that fits on a page is never split across two; one taller than a
+    # page (a tiny pane) splits by line rather than lose anything (the lossless test).
+    def test_help_pages_keep_sections_whole_when_they_fit
       sb = sidebar(nodes: [proj("app")])
       stub_method(Tmux, :pane_switch_keys, -> { [] }) do
-        assert_equal 4, sb.send(:help_body, 5, 40).size, "body capped to rows-1 on a short pane"
-        assert_operator sb.send(:help_body, 100, 40).size, :>, 10, "a tall pane shows the full map"
+        headings = sb.send(:help_sections, 40).drop(1).map { |sec| strip_ansi(sec[1]) }
+        pages = sb.send(:help_pages, 12, 40).map { |page| page.map { |l| strip_ansi(l) } }
+        sb.send(:help_sections, 40).drop(1).each_with_index do |sec, i|
+          page = pages.find { |pg| pg.include?(headings[i]) }
+          sec.drop(1).each { |l| assert_includes page, strip_ansi(l), "#{headings[i]} stays on one page" }
+        end
+      end
+    end
+
+    # A 1-row pane can't seat any body line under the hint; a 0-line page would never
+    # fill, so it's one empty page (hint only) — and it must return, not hang.
+    def test_help_pages_on_a_pane_with_no_room_is_hint_only
+      sb = sidebar(nodes: [proj("app")])
+      stub_method(Tmux, :pane_switch_keys, -> { [] }) do
+        assert_equal [[]], sb.send(:help_pages, 1, 40)
+        assert_equal [[]], sb.send(:help_pages, 0, 40)
+      end
+    end
+
+    def test_help_page_hint_says_where_you_are
+      sb = sidebar
+      assert_equal "any key to close", sb.send(:help_page_hint, 0, 1), "one page reads as it always has"
+      assert_equal "1/2 · → more · other keys close", sb.send(:help_page_hint, 0, 2)
+      assert_equal "2/2 · ← back · other keys close", sb.send(:help_page_hint, 1, 2), "the last page points back"
+      assert_equal "2/3 · → more · other keys close", sb.send(:help_page_hint, 1, 3)
+      assert_equal "1/1 · other keys close", sb.send(:help_page_hint, 0, 1, true),
+                   "a paged overlay grown to one page keeps its sticky keys, so it says other"
+    end
+
+    # The pane can shrink while help is open; a page index past the new end clamps to
+    # the last page instead of painting nothing.
+    def test_render_help_clamps_a_page_past_the_end
+      sb = sidebar(nodes: [proj("app")])
+      sb.instance_variable_set(:@pane_switch_keys, [])
+      sb.instance_variable_set(:@help_page, 5)
+      sb.define_singleton_method(:winsize) { [100, 40] }
+      out = capture_stdout { sb.send(:render_help) }
+      assert_equal 0, sb.instance_variable_get(:@help_page), "one page left: back to page 1"
+      assert_includes strip_ansi(out), "any key to close"
+    end
+
+    # Value: protects=render_help paints the page @help_page names, with its N/M hint;
+    #   fails_when=render paints pages.first (or the 1-page hint) whatever the page;
+    #   why_new=help_key tests only check @help_page and the clamp test has one page;
+    #   seam=none; no_claim=page layout (help_pages tests own that)
+    def test_render_help_paints_the_current_page_and_its_hint
+      sb = sidebar(nodes: [proj("app")])
+      sb.instance_variable_set(:@pane_switch_keys, [])
+      sb.define_singleton_method(:winsize) { [20, 40] }
+      pages = sb.send(:help_pages, 20, 40)
+      assert_operator pages.size, :>=, 3, "a 20-row pane pages"
+      sb.instance_variable_set(:@help_page, 1)
+      out = strip_ansi(capture_stdout { sb.send(:render_help) })
+      second = pages[1].map { |l| strip_ansi(l) }.reject(&:empty?)
+      second.each { |l| assert_includes out, l, "page 2 is painted" }
+      refute_includes out, strip_ansi(pages[0].first), "page 1's wordmark is not"
+      assert_includes out, "2/#{pages.size} · → more · other keys close"
+    end
+
+    # The truncated `new workspace (task → backgroun…` row: at the default 40-col
+    # width every help line seats whole.
+    def test_no_help_line_is_truncated_at_the_default_width
+      sb = sidebar(nodes: [proj("app")])
+      stub_method(Tmux, :pane_switch_keys, -> { %w[↑↓←→ o] }) do
+        sb.send(:help_lines, 40).each { |l| refute strip_ansi(l).end_with?("…"), "truncated: #{strip_ansi(l)}" }
       end
     end
   end

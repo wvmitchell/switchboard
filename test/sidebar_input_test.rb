@@ -289,6 +289,16 @@ module Switchboard
     # --- ? help overlay (issue #62) ------------------------------------------
 
     def help_of(sb) = sb.instance_variable_get(:@help)
+    def help_page_of(sb) = sb.instance_variable_get(:@help_page)
+
+    # help_key sizes the overlay from the pane, so pin the pane and skip the tmux
+    # pane-key probe (offline). 100 rows = one page; 20 rows = several.
+    def help_sidebar(rows: 100, **opts)
+      sb = sidebar(nodes: [proj("app"), ws("a"), ws("b")], **opts)
+      sb.instance_variable_set(:@pane_switch_keys, [])
+      sb.define_singleton_method(:winsize) { [rows, 40] }
+      sb
+    end
 
     def test_question_mark_opens_the_help_overlay
       sb = sidebar(nodes: [proj("app"), ws("a")])
@@ -300,7 +310,7 @@ module Switchboard
     # While the overlay is open a real keystroke dismisses it and does NOTHING else —
     # no passthrough into the action that key would normally fire.
     def test_any_real_key_dismisses_help_without_side_effects
-      sb = sidebar(nodes: [proj("app"), ws("a"), ws("b")], cursor: 0)
+      sb = help_sidebar(cursor: 0)
       sb.send(:dispatch, "?")
       assert_equal true, sb.send(:dispatch, "j"), "dispatch returns true (loop lives on)"
       refute help_of(sb), "j closed the overlay"
@@ -309,7 +319,7 @@ module Switchboard
 
     # Even a typed q just closes the overlay — it never reaches the quit-all path.
     def test_q_in_help_closes_instead_of_quitting
-      sb = sidebar(nodes: [proj("app"), ws("a")])
+      sb = help_sidebar
       sb.send(:dispatch, "?")
       assert_equal true, sb.send(:dispatch, "q"), "q in help doesn't quit the loop"
       refute help_of(sb), "q closed the overlay"
@@ -319,12 +329,82 @@ module Switchboard
     # the C-r config poke, focus in/out) must NOT dismiss the overlay out from under
     # the reader — the gap that "any key dismisses" would have shipped.
     def test_synthetic_pokes_do_not_dismiss_help
-      sb = sidebar(nodes: [proj("app"), ws("a")])
+      sb = help_sidebar(rows: 20)
       sb.send(:dispatch, "?")
-      ["\f", "\e[I", "\e[O", Sidebar::RELOAD_CONFIG_BYTE].each do |poke|
+      sb.send(:dispatch, "\e[C")
+      ["\f", "\e[I", "\e[O", Sidebar::RELOAD_CONFIG_BYTE, Sidebar::WARM_POKE_BYTE].each do |poke|
         sb.send(:dispatch, poke)
         assert help_of(sb), "#{poke.inspect} (a poke/focus byte) must not close help"
+        assert_equal 1, help_page_of(sb), "#{poke.inspect} must not turn the page either"
       end
+    end
+
+    # A paged overlay: →/Space forward, ← back, clamped at both ends — a double-tap
+    # on the last page can't close it, ← on page 1 can't either.
+    def test_arrows_and_space_turn_help_pages_and_clamp
+      sb = help_sidebar(rows: 20)
+      count = sb.send(:help_pages, 20, 40).size
+      assert_operator count, :>=, 3, "a 20-row pane needs several pages"
+      sb.send(:dispatch, "?")
+      sb.send(:dispatch, "\e[D")
+      assert_equal 0, help_page_of(sb), "← on page 1 stays put"
+      sb.send(:dispatch, "\e[C")
+      sb.send(:dispatch, " ")
+      assert_equal 2, help_page_of(sb), "→ and Space both turn forward"
+      sb.send(:dispatch, "\e[D")
+      assert_equal 1, help_page_of(sb), "← turns back"
+      (count + 2).times { sb.send(:dispatch, " ") }
+      (count + 2).times { sb.send(:dispatch, "\e[C") }
+      assert_equal count - 1, help_page_of(sb), "Space and → stop at the last page"
+      assert help_of(sb), "...and help is still open"
+      sb.send(:dispatch, "j")
+      refute help_of(sb), "any other key closes"
+      sb.send(:dispatch, "?")
+      assert_equal 0, help_page_of(sb), "help reopens on page 1"
+    end
+
+    # One page keeps "any key closes" exactly — Space and the arrows included.
+    def test_space_closes_single_page_help
+      ["\e[C", " ", "\e[D"].each do |key|
+        sb = help_sidebar
+        sb.send(:dispatch, "?")
+        sb.send(:dispatch, key)
+        refute help_of(sb), "#{key.inspect} closes a one-page overlay"
+      end
+    end
+
+    # The pane can grow between a paint and the next key (no repaint for up to
+    # REFRESH). An overlay that showed several pages keeps its paging keys: a → aimed
+    # at "2/2" must not dismiss, or the rest of the burst reaches the tree and
+    # resizes the pane (a persisted width). Covers both orders: painted, then keyed.
+    def test_paging_keys_stay_sticky_when_the_pane_grows_to_one_page
+      sb = help_sidebar(rows: 20)
+      sb.send(:dispatch, "?")
+      capture_stdout { sb.send(:render_help) } # painted as page 1 of several
+      sb.define_singleton_method(:winsize) { [100, 40] }
+      sb.send(:handle, "\e[C\e[C\e[D")
+      assert help_of(sb), "a paging key on a painted multi-page overlay never closes it"
+      refute sb.instance_variable_get(:@resized), "...and the burst never reaches the resize"
+      assert_equal 0, help_page_of(sb)
+
+      sb = help_sidebar(rows: 20)
+      sb.send(:handle, "?\e[C")
+      sb.define_singleton_method(:winsize) { [100, 40] }
+      sb.send(:handle, "\e[C\e[C")
+      assert help_of(sb), "paged by key, then grown: → still pages"
+      refute sb.instance_variable_get(:@resized)
+      sb.send(:dispatch, "j")
+      refute help_of(sb), "another key still closes it"
+    end
+
+    # The sidebar dispatches a whole read before it renders again, so `?→` typed fast
+    # arrives in one handle call with no render between. The page count must come from
+    # the pane, not from a render that hasn't happened, or → would close help.
+    def test_question_then_arrow_in_one_read_turns_the_page
+      sb = help_sidebar(rows: 20)
+      sb.send(:handle, "?\e[C")
+      assert help_of(sb), "help is still open"
+      assert_equal 1, help_page_of(sb), "→ turned to page 2"
     end
 
     # `?` while filtering is a query char, not a help trigger: the @filter guard sits

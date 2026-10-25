@@ -39,6 +39,10 @@ module Switchboard
       # must have an arm for every one), so a switch-in reload re-checks its link.
       POKE_BYTES = ["\f", RELOAD_CONFIG_BYTE, WARM_POKE_BYTE, "\e[I", "\e[O"].freeze
 
+      # The keys that turn the ? overlay's pages (→ / Space forward, ← back) when it
+      # spans more than one; every other real key closes it.
+      HELP_PAGE_STEPS = { "\e[C" => 1, " " => 1, "\e[D" => -1 }.freeze
+
       # Pure terminal-input tokenizer: returns [complete tokens, trailing incomplete
       # sequence]. The grammar it recognizes (the only escapes a tmux pane delivers):
       #
@@ -276,21 +280,44 @@ module Switchboard
       # the reader — the same robustness filter_key has. `?` can't open while filtering
       # (there it's a query char), so @help and @filter are never both set.
 
-      # `?`: open the overlay. No recompute — the overlay doesn't read @rows.
+      # `?`: open the overlay on its first page. No recompute — the overlay doesn't
+      # read @rows.
       def show_help
         @help = true
+        @help_page = 0
+        @help_paged = false
       end
 
-      # Any real key dismisses; a poke/focus byte passes through untouched. Always
-      # returns true (the loop lives on, and the dismissing key only closes the
-      # overlay — no passthrough into an action, even a typed q).
+      # When help spans several pages, →/Space turn forward and ← back, clamped at
+      # both ends (a double-tap on the last page can't close it). Any other real key
+      # dismisses; a poke/focus byte passes through untouched. The page count is
+      # computed here, not cached from render: handle dispatches a whole read before
+      # the next render, so a fast `?→` would otherwise see no count and close. Once
+      # this overlay has paged (here or painted, render_help), the paging keys stay
+      # paging keys until it closes: the pane can grow to one page between a paint
+      # and a key, and a → that dismissed would hand the rest of a held-arrow burst
+      # to the tree's resize (a persisted width). A never-paged single page keeps
+      # "any key closes", Space included. Always returns true (the loop lives on,
+      # and the dismissing key only closes the overlay — no passthrough into an
+      # action, even a typed q).
       def help_key(key)
-        dismiss_help unless POKE_BYTES.include?(key)
+        return true if POKE_BYTES.include?(key)
+
+        count = help_pages(*winsize).size
+        @help_paged ||= count > 1
+        step = @help_paged ? HELP_PAGE_STEPS[key] : nil
+        if step
+          @help_page = (@help_page + step).clamp(0, count - 1)
+        else
+          dismiss_help
+        end
         true
       end
 
       def dismiss_help
         @help = false
+        @help_page = 0
+        @help_paged = false
       end
 
       # --- p phone-link overlay ------------------------------------------------
