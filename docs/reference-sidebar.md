@@ -144,7 +144,8 @@ the workspace, the session's name, the code (in your theme's black and bright wh
 and the URL as text underneath. `Tab` steps through several links (`1/2` in the
 corner), `←`/`→` resize, and any other key closes it. If the link ends while it's
 open, it closes back to the tree. A pane too narrow or too short for the code shows the
-URL and says so (`→ widen` or `pane too short`).
+URL and says so (`→ widen` or `pane too short`). The link only opens for someone signed in to
+claude.ai as you; anyone else gets the sign-in page.
 
 ---
 
