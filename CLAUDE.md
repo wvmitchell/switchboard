@@ -1019,13 +1019,18 @@ bytes, so there are no version-information blocks), pinned module for module by
 `qrencode -8` fixtures with each mask forced. Which mask it picks is pinned by
 hand-worked penalty cases, not by another encoder's choice: encoders legitimately differ
 on rule 3 (libqrencode#220), and segno pads differently (an extra `0x00` before the
-`0xEC/0x11` run), so neither is a bit-exact reference for that. The code is drawn in half blocks
+`0xEC/0x11` run), so neither is a bit-exact reference for that. The overlay leads with the tree's own `header`
+(full at home or with `H`, but only the wordmark when the full one would cost the code or the URL),
+then the workspace name; no session name, since Claude defaults it to
+the workspace's FIRST name, stale after a rename. The code is drawn in half blocks
 in the theme's ANSI 0/15 (picked by eye and scanned; the fixed 256-color 16/231 pair
 looked wrong in a themed terminal), with a quiet zone as wide as fits up to 4 and never
 under 2, centered in a wider pane; a pane that can't fit it shows the URL instead. The
-link is held by `bridge_id`, not index, and every scan re-checks it (`revalidate_link_view`):
-the same session stays through a re-sort, an ended one falls back to the newest left, and
-the last one ending closes the overlay. Never `flash` there: it blocks on a keypress inside
+link is held by pid + `bridge_id`, not index (a crash leftover can share its resumed session's
+bridge id), and every scan re-checks it (`revalidate_link_view`): the same session stays
+through a re-sort and a reconnect (same pid, new bridge id) and follows its workspace through a rename (another workspace renamed onto
+the old path doesn't take over the QR), an ended one falls back to the newest left, and the
+last one ending closes the overlay. Whatever closes an overlay (a key, or a scan finding the link ended) drops the rest of that read's keys, but not its tmux pokes. Every name the sidebar draws (projects, workspaces, branches, the greeting's git name, the QR header) goes through `shown`: controls and bidi stripped, accents kept. Never `flash` there: it blocks on a keypress inside
 the scan. For that check to mean anything, `@links` is hydrated in `refresh_agents`'
 `ensure`, so links refresh even when the dot scan raises. Unlike the `?` overlay, the tmux
 pokes keep running under it (`poke`), so switching back to a session re-checks its link at
@@ -1238,7 +1243,8 @@ but it's never persisted, GC'd, or seen by another window's pane.
 ### The `?` help overlay (issue #62 — the discoverable home for the keys)
 
 `?` paints a full-pane key map over the tree (`render_help`); any real keystroke
-dismisses it. `@help` is the flag — transient and per-process like `@filter`, NOT
+dismisses it (except `→`/Space/`←`, which turn a multi-page overlay — see below).
+`@help` is the flag — transient and per-process like `@filter`, NOT
 shared on disk (opening help is an act, not a view preference). It exists because
 the footer is width-bound: a *daily* user never found `g`/`G` because the old 3-line
 legend had no room to teach them. The overlay is where every key the footer can't
@@ -1272,11 +1278,29 @@ while `@help` — a non-animating screen shouldn't ride the `PULSE` repaint. Clo
 latency is unaffected: dismissal is input-driven, so the keypress wakes `IO.select`
 at once and the next iteration renders the tree; the gate only lengthens the idle
 wake while help is up. `render_help` uses the same cursor-addressed `\e[K`/`\e[0J`
-no-flash paint as `render` (no full `\e[2J`), with an "any key to close" hint pinned
-to the bottom row. The body is the pure `help_body(rows, cols)` =
-`help_lines(cols).first(rows - 1)` — the hint always seats, and a short pane drops
-the tail (HELP is top-loaded with nav), never the top; extracted pure so the
-height-cap is unit-testable without raw I/O. `help_lines` truncs the PLAIN string
+no-flash paint as `render` (no full `\e[2J`), with a hint pinned to the bottom row.
+
+**A short pane pages, it never cuts.** The map outgrew a normal pane (the tail it used
+to drop was the tmux section — the one answer to "how do I hide this?"), so the body is
+the pure `help_pages(rows, cols)`: `help_sections` (the head block, then one group per
+`["", heading]` row of `Keymap.help_rows` + `tmux_help_rows` — grouped from the ROWS,
+never by re-splitting drawn text; `help_lines` is just its flatten) packed greedily into
+pages of `rows - 1` lines. A section that fits a page is never split (one taller than a
+page splits by line, so nothing is lost), a separator landing at a page top is dropped,
+and `rows < 2` is `[[]]` (hint only — a 0-line page would never fill). One page reads
+`any key to close`, exactly as before; several read `1/2 · → more · other keys close` / `2/2 · ← back · other keys close`.
+`→`/`Space` turn forward and `←` back (`HELP_PAGE_STEPS`), clamped at both ends so a
+double-tap can't close it; any other real key still closes. `help_key` computes the page
+count from `winsize` on every keypress rather than caching it from render: `handle`
+dispatches a whole read before the next render, so a fast `?→` would see no count and
+close. The flip side (both adversarial reviewers reproduced it): help repaints only every
+`REFRESH`, so the pane can grow to one page between a paint of `2/2` and the next `→`,
+which would dismiss and hand the rest of a held-arrow burst to the tree's resize — a
+persisted width. So `@help_paged` makes the paging keys **sticky**: once an overlay has
+shown more than one page (painted in `render_help` or keyed in `help_key`), `→`/Space/`←`
+stay paging keys until it closes, and a regrown single page reads `1/1 · other keys close`.
+`@help_page`/`@help_paged` are reset by `show_help`/`dismiss_help`, and the page is clamped
+in `render_help` (the pane can shrink while help is open). `help_sections` truncs the PLAIN string
 before wrapping ANSI (the `line()` pattern), so truncation can't cut an escape.
 
 **The magic row: the keys it shows are YOUR keys.** `tmux_help_rows` resolves the

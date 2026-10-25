@@ -140,7 +140,7 @@ go grey. On a long name, the name is truncated before the cues are.
 
 Press **`p`** on a `⇅` row to draw that session's link as a **QR code**: point your
 phone's camera at it and that exact session opens there. The overlay reads top down:
-the workspace, the session's name, the code (in your theme's black and bright white),
+the same switchboard header as the tree, the workspace, the code (in your theme's black and bright white),
 and the URL as text underneath. `Tab` steps through several links (`1/2` in the
 corner), `←`/`→` resize, and any other key closes it. If the link ends while it's
 open, the overlay moves to that workspace's newest remaining link, or closes back to
@@ -219,7 +219,10 @@ One line, always ending in the `? help` gateway:
 The footer only has room for the common keys. Everything else — `g`/`G`, `←`/`→`
 resize, the `Ctrl-N`/`Ctrl-P` movement aliases, the filter and prompt sub-modes,
 the diff-count meaning, and the tmux keys that operate the sidebar — lives in the
-`?` overlay. Press `?` for the full key map; any key closes it.
+`?` overlay. Press `?` for the full key map; when it fits on one page, any key closes it. On a
+pane too short for the whole map it splits into pages (the bottom row reads
+`1/2 · → more · other keys close`): `→` or `Space` turns
+forward, `←` back, and any other key closes it.
 
 ---
 

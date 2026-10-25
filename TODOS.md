@@ -182,6 +182,18 @@ safe today; each is narrow).
   `notify_pane`'s trailing `true`; share the column-walk in `tail_view`/`fit_columns`;
   `@warming` → a `rebuild` kwarg. **Priority:** P3.
 
+## `?` help paging (v0.55.0) follow-ups
+
+- **Input bursts leak past a mode change.** *Why:* two paths let a burst of keys reach the
+  tree after a mode ends. (a) A read that fills `READ_BYTES` can end mid escape sequence;
+  `Input.tokenize` flushes the trailing `\e` as Esc (repro: 344 `→` in one buffer — the
+  first read closes help, the second's arrows resize the pane, a persisted width). (b) A key
+  that closes help hands the rest of its read to `dispatch`: a held `→` on a one-page help
+  (never paged, so not sticky) closes it, then widens the pane. Both predate paging.
+  *Start in:* `help_key` (clear the rest of `@typeahead` on a dismiss) and `tokenize`
+  (carry a trailing `\e` when a read filled `READ_BYTES`, or an Esc timeout in the run
+  loop). **Priority:** P3.
+
 ## Session lifecycle (issue #7) follow-ups
 
 - **Validate/normalize project names at `add` time.** At registration, reject or
@@ -496,23 +508,6 @@ safe today; each is narrow).
 
 
 ## Agent CLI hooks (Claude 2.1.301 / Codex 0.163 compat review) follow-ups
-
-- **QR overlay: edge cases accepted at ship review (v0.54.0).** *What:* (1) two links with
-  the same `bridge_id` (a crash leftover beside its resumed session) trap `Tab` on the
-  first, so a third link is unreachable and the header stays `1/N`: key the overlay on
-  `[pid, bridge_id]` in `open_link_view`/`cycle_link`/`revalidate_link_view`/`view_link`;
-  (2) the overlay holds a path, so renaming workspaces onto each other's old paths while it's
-  open swaps in the other workspace's session: follow the held `bridge_id` across `@links`
-  before falling back; (3) bound `session_label`'s name (say 200 chars) before scrubbing and
-  measuring, so a huge title can't slow every repaint; (4) prune `@link_view[:qr]` to the
-  current links on revalidate, so reconnects with the QR open don't pile up matrices;
-  (5) strip `NOTE_INVISIBLE` from `link_view_header`'s workspace name; (6) drop the rest of
-  `@typeahead` when a key closes the overlay (the `?` overlay has the same gap); (7) the
-  off-screen backstop test should assert the tree still repaints; (8) `Keymap.help_rows`'
-  docstring still says the default map is byte-identical to pre-#108. *Why:* none crashes
-  or leaks (the URL is account-gated); each needs an unusual setup. *Pros:* small, testable,
-  one short review. *Cons:* touches the reviewed overlay. *Context:* ship review of v0.54.0
-  (adversarial D5 + review D3: ship, then a follow-up PR). *Depends on:* v0.54.0.
 
 - **Remote-link glyph: rare edges deferred at ship review (v0.53.0).** *What, in priority
   order:* (1) the doctor canary misses a format change while one old-format leftover file sits

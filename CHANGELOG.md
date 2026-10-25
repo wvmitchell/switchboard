@@ -10,7 +10,7 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
-## [0.54.1] — failures that used to stay silent now say so (2026-10-24)
+## [0.55.3] — failures that used to stay silent now say so (2026-10-25)
 
 ### Fixed
 - A `config.yml` that won't parse no longer lets `install` and `upgrade` look successful.
@@ -49,6 +49,44 @@ refer to the project's earlier, private repository; the public tracker starts at
 - `uninstall` now exits 1 when it can't remove the codex hooks block, and says "Done,
   except the codex hooks", like `install` does for the same failure (an unreadable codex
   config counts too). It still finishes the rest of the uninstall.
+## [0.55.2] — the QR overlay keeps the switchboard header (2026-10-24)
+
+### Changed
+- The `p` QR overlay now leads with the same header as the tree (the full one at home or
+  with `H`), then the workspace's name. The session's own name is gone: Claude defaults it
+  to the workspace's first name, which goes stale once the workspace is renamed. When the
+  full header would cost the code or the URL, only the wordmark stays.
+
+### Fixed
+- Folder, project and branch names, and the greeting's git name, can no longer send
+  terminal control codes from the tree; names keep their accents.
+- An open QR stays on its session through a `/rc` reconnect.
+- A tmux poke that arrives with the key closing the QR or `?` overlay still runs, and keys
+  typed at the QR as a scan closes it no longer run on the tree.
+
+## [0.55.1] — the QR overlay's edge cases (2026-10-24)
+
+### Fixed
+- With two links that share a session id (a crash leftover beside its resumed session),
+  `Tab` now reaches every link instead of bouncing between those two.
+- An open QR stays on its own session when its workspace is renamed, even if another
+  workspace is renamed onto the old name.
+- Keys typed in the same instant as the key that closes the QR or `?` overlay no longer
+  run on the tree.
+- A huge session name no longer slows every repaint of the QR overlay, reconnects with the
+  overlay open no longer pile up old codes in memory, and control characters in a folder
+  name can't reach the terminal through its header.
+
+## [0.55.0] — the `?` overlay pages instead of cutting off (2026-10-24)
+
+### Changed
+- **`?` help splits into pages on a short pane.** The map had grown past a normal pane's
+  height, and the part that got cut off was the bottom: the tmux keys, including how to
+  show or hide the sidebar. Now nothing is dropped. When the map doesn't fit, the bottom
+  row reads `1/2 · → more · other keys close`; `→` or `Space` turns forward, `←` back, and
+  any other key closes help as before. A tall enough pane still shows one page, unchanged.
+- The `filter mode` and `name prompts` sections are one `in a prompt or filter` section,
+  and the `n` row reads `new workspace` (it was cut off at 40 columns).
 
 ## [0.54.0] — scan a workspace's phone link (2026-10-24)
 

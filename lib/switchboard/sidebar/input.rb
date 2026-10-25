@@ -39,6 +39,10 @@ module Switchboard
       # must have an arm for every one), so a switch-in reload re-checks its link.
       POKE_BYTES = ["\f", RELOAD_CONFIG_BYTE, WARM_POKE_BYTE, "\e[I", "\e[O"].freeze
 
+      # The keys that turn the ? overlay's pages (→ / Space forward, ← back) when it
+      # spans more than one; every other real key closes it.
+      HELP_PAGE_STEPS = { "\e[C" => 1, " " => 1, "\e[D" => -1 }.freeze
+
       # Pure terminal-input tokenizer: returns [complete tokens, trailing incomplete
       # sequence]. The grammar it recognizes (the only escapes a tmux pane delivers):
       #
@@ -122,6 +126,11 @@ module Switchboard
       # the rest of the buffer past it, so a key buffered after a confirmed `q` can't
       # fall through into another action.
       #
+      # Keys read in the same batch AFTER one that closes an overlay (the QR or `?`) were
+      # aimed at the overlay, not at whatever row the tree is on, so they're dropped —
+      # however it closed, a dismissing key or a scan finding the link ended. The tmux
+      # pokes among them still run: they're not keys.
+      #
       # Keys read in the same batch AFTER one that opens a prompt (`n` then the start of
       # its task, typed during a busy tick) are the prompt's, not the tree's: it takes
       # them from @typeahead, so they neither vanish from the task nor fire as commands.
@@ -129,7 +138,10 @@ module Switchboard
         tokens, @pending = Input.tokenize(@pending + buf.to_s)
         @typeahead = tokens
         while (t = @typeahead.shift)
+          was_open = overlay_open?
           return false unless dispatch(t)
+
+          @typeahead.select! { |k| POKE_BYTES.include?(k) } if was_open && !overlay_open?
         end
         true
       ensure
@@ -276,21 +288,44 @@ module Switchboard
       # the reader — the same robustness filter_key has. `?` can't open while filtering
       # (there it's a query char), so @help and @filter are never both set.
 
-      # `?`: open the overlay. No recompute — the overlay doesn't read @rows.
+      # `?`: open the overlay on its first page. No recompute — the overlay doesn't
+      # read @rows.
       def show_help
         @help = true
+        @help_page = 0
+        @help_paged = false
       end
 
-      # Any real key dismisses; a poke/focus byte passes through untouched. Always
-      # returns true (the loop lives on, and the dismissing key only closes the
-      # overlay — no passthrough into an action, even a typed q).
+      # When help spans several pages, →/Space turn forward and ← back, clamped at
+      # both ends (a double-tap on the last page can't close it). Any other real key
+      # dismisses; a poke/focus byte passes through untouched. The page count is
+      # computed here, not cached from render: handle dispatches a whole read before
+      # the next render, so a fast `?→` would otherwise see no count and close. Once
+      # this overlay has paged (here or painted, render_help), the paging keys stay
+      # paging keys until it closes: the pane can grow to one page between a paint
+      # and a key, and a → that dismissed would hand the rest of a held-arrow burst
+      # to the tree's resize (a persisted width). A never-paged single page keeps
+      # "any key closes", Space included. Always returns true (the loop lives on,
+      # and the dismissing key only closes the overlay — no passthrough into an
+      # action, even a typed q).
       def help_key(key)
-        dismiss_help unless POKE_BYTES.include?(key)
+        return true if POKE_BYTES.include?(key)
+
+        count = help_pages(*winsize).size
+        @help_paged ||= count > 1
+        step = @help_paged ? HELP_PAGE_STEPS[key] : nil
+        if step
+          @help_page = (@help_page + step).clamp(0, count - 1)
+        else
+          dismiss_help
+        end
         true
       end
 
       def dismiss_help
         @help = false
+        @help_page = 0
+        @help_paged = false
       end
 
       # --- p phone-link overlay ------------------------------------------------
@@ -308,7 +343,8 @@ module Switchboard
         links = @links[node.path]
         return if links.nil? || links.empty?
 
-        @link_view = { path: node.path, bridge_id: links.first.bridge_id, qr: {} }
+        @link_view = { path: node.path, qr: {} }
+        hold_link(links.first)
       end
 
       def link_view_key(key)
@@ -326,22 +362,55 @@ module Switchboard
         links = view_links
         return if links.size < 2
 
-        at = links.index { |l| l.bridge_id == @link_view[:bridge_id] } || -1
-        @link_view[:bridge_id] = links[(at + 1) % links.size].bridge_id
+        at = links.index { |l| held?(l) } || -1
+        hold_link(links[(at + 1) % links.size])
       end
 
-      # After every scan: keep the same session if it's still linked, else show the
-      # newest remaining one; with none left, close back to the tree. Never a flash —
-      # this runs inside the scan, and a flash would block it on a keypress.
+      # After every scan: keep the same session if it's still linked (through a reconnect
+      # too), following it if its workspace was renamed (another workspace renamed onto
+      # the old path must not take over the QR), else show the newest remaining one; with
+      # none left, close back to the tree. Never a flash — this runs inside the scan, and a flash would block it on a
+      # keypress.
       def revalidate_link_view
         return unless @link_view
 
+        follow_held_link
         links = view_links
         if links.empty?
           @link_view = nil
-        elsif links.none? { |l| l.bridge_id == @link_view[:bridge_id] }
-          @link_view[:bridge_id] = links.first.bridge_id
+        else
+          hold_link(links.first) unless links.any? { |l| held?(l) }
+          urls = links.map(&:url)
+          @link_view[:qr].select! { |url, _| urls.include?(url) } # reconnects mint new URLs
         end
+      rescue StandardError
+        @link_view = nil # this runs in refresh_agents' ensure, outside its rescue
+      end
+
+      # Where the held session is now: the same link, or the same pid with the new
+      # bridge a reconnect minted, wherever its workspace was renamed to.
+      def follow_held_link
+        all = @links.flat_map { |path, ls| ls.map { |l| [path, l] } }
+        path, link = all.find { |_, l| held?(l) } || all.find { |_, l| l.pid == @link_view[:pid] }
+        return unless link
+
+        @link_view[:path] = path
+        hold_link(link)
+      end
+
+      # A link is its session (pid) AND its bridge: a crash leftover beside its resumed
+      # session can carry the same bridge id, and Tab must still reach every link.
+      def hold_link(link)
+        @link_view[:pid] = link.pid
+        @link_view[:bridge_id] = link.bridge_id
+      end
+
+      def held?(link)
+        link.pid == @link_view[:pid] && link.bridge_id == @link_view[:bridge_id]
+      end
+
+      def overlay_open?
+        @link_view || @help
       end
 
       def view_links
@@ -350,7 +419,7 @@ module Switchboard
 
       # The link the overlay is showing (nil only mid-revalidate).
       def view_link
-        view_links.find { |l| l.bridge_id == @link_view[:bridge_id] }
+        view_links.find { |l| held?(l) }
       end
 
       # --- / filter mode (issue #60) -------------------------------------------

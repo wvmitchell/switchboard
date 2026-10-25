@@ -105,7 +105,7 @@ Everything happens from inside the sidebar:
 | `n` | dispatch a new workspace in the highlighted project — type what the agent should do (or just `↵`); it builds in the background and pings you when it's ready |
 | `↵` | switch to a workspace (or expand/collapse a project) |
 | `/` | filter — type a few letters to jump straight to a workspace |
-| `?` | the full key map — every shortcut, any key closes it |
+| `?` | the full key map — every shortcut; `→`/`Space` turn the page on a short pane, any other key closes it |
 
 `a` to make a project, `n` to make work, `↵` to move between it — all without
 leaving the keyboard. Forgot a key? Press `?`. That's the whole muscle memory;

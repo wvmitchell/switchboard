@@ -72,7 +72,7 @@ module Switchboard
 
     def test_help_rows_reflect_a_remap
       rows = Keymap.help_rows(Keymap.bindings(cfg("sidebar_keys" => { "new_workspace" => "c" })))
-      new_ws = rows.find { |_key, desc| desc == "new workspace (task → background)" }
+      new_ws = rows.find { |_key, desc| desc == "new workspace" }
       assert_equal "c", new_ws.first, "the overlay shows the configured key, not the default"
     end
 
@@ -80,6 +80,18 @@ module Switchboard
       rows = Keymap.help_rows(Keymap.bindings(cfg("sidebar_keys" => { "delete" => "j" })))
       del = rows.find { |_key, desc| desc == "delete · remove" }
       assert_equal "—", del.first, "an unbound action reads as a dash, never a blank"
+    end
+
+    # The filter and the prompts share one section, but only where they really agree:
+    # an empty filter exits on Bksp and only a prompt clears on ^u (filter_key has no
+    # ^u), so those stay separate rows rather than one row that's wrong for the filter.
+    def test_help_rows_merge_the_filter_and_prompt_keys_honestly
+      rows = Keymap.help_rows(Keymap.bindings(cfg))
+      headings = rows.select { |key, _| key.empty? }.map(&:last)
+      assert_includes headings, "in a prompt or filter"
+      refute(headings.any? { |h| h.start_with?("filter mode") || h == "name prompts" }, "the two old sections are merged")
+      assert_includes rows, ["Bksp", "erase · exits empty filter"]
+      assert_includes rows, ["^u", "clear (prompts)"]
     end
 
     def test_help_rows_section_headings_have_a_blank_key

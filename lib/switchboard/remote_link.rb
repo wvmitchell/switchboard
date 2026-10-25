@@ -27,7 +27,7 @@ module Switchboard
     # One linked session. `stale` = an interactive link idle past the configured
     # threshold (its ⇅ goes grey); a background job (`kind: "bg"`) is never stale —
     # idling is what background jobs do.
-    Link = Struct.new(:pid, :bridge_id, :kind, :name, :started_at, :stale, keyword_init: true) do
+    Link = Struct.new(:pid, :bridge_id, :kind, :started_at, :stale, keyword_init: true) do
       def url
         URL_BASE + bridge_id
       end
@@ -187,7 +187,7 @@ module Switchboard
       pid, cwd, bridge = data.values_at("pid", "cwd", "bridgeSessionId")
       return nil unless bridge.is_a?(String) && bridge.match?(BRIDGE_ID)
 
-      { pid: pid, cwd: cwd, bridge_id: bridge, kind: data["kind"].to_s, name: data["name"].to_s,
+      { pid: pid, cwd: cwd, bridge_id: bridge, kind: data["kind"].to_s,
         started_at: data["startedAt"], proc_start: data["procStart"].to_s,
         status: data["status"].to_s, status_at: data["statusUpdatedAt"] }
     end
@@ -225,7 +225,7 @@ module Switchboard
     end
 
     def link(rec, stale_after, now)
-      Link.new(pid: rec[:pid], bridge_id: rec[:bridge_id], kind: rec[:kind], name: rec[:name],
+      Link.new(pid: rec[:pid], bridge_id: rec[:bridge_id], kind: rec[:kind],
                started_at: start_ms(rec), stale: stale?(rec, stale_after, now))
     end
 

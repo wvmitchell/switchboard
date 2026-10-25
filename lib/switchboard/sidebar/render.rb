@@ -34,7 +34,9 @@ module Switchboard
       LINK_STALE_FG = "\e[90m"    # ...and grey when idle past remote_link_stale_after (bold read identical; the theme-relative dim branch rows use)
       WS_PREFIX_COLS = 4          # a ws row's "<pointer> <dot> " before its name: fit_plain and colored must agree on it
       NOTE_FG  = "\e[2m"          # the dim task label / failure reason in the right region (DR3/DR8)
+      NAME_UNSAFE = /[\p{Cc}\p{Cf}]/ # dropped from a drawn name: controls and bidi/zero-width, not accents
       NOTE_INVISIBLE = /[\p{Cc}\p{Cf}\p{Mn}\p{Me}]/ # dropped from a task label: controls, bidi/zero-width, combining
+      NOTE_ZERO = /[\p{Mn}\p{Me}]/ # combining marks draw on the char before them: no column of their own
       NOTE_WIDE = /[\p{Emoji_Presentation}ᄀ-ᅟ⺀-꓏가-힣豈-﫿︰-﹏＀-｠￠-￦\u{1F300}-\u{1FAFF}\u{20000}-\u{3FFFD}]/ # two columns wide
       BLINK_PERIOD = 4             # @pulse ticks per blink half-cycle (~0.5s at PULSE)
 
@@ -81,13 +83,13 @@ module Switchboard
       # The `?` overlay's key map is built at render time from the resolved bindings
       # (Keymap.help_rows, issue #108) so the shown keys can never drift from what
       # dispatch honors — [key, description] rows, a blank key marking a section
-      # heading. Top-loaded with navigation, so a short pane drops the tail, not the
-      # top. The tmux-layer keys that operate the sidebar (prefix-toggle/home) are
+      # heading. Top-loaded with navigation, so page 1 of a paged overlay is the part
+      # you need most. The tmux-layer keys that operate the sidebar (prefix-toggle/home) are
       # appended from config (tmux_help_rows), resolved, not static.
       HELP_KEY_COLS = 6 # key column width; longer combos (move/prefix rows) overflow it
 
       # What the row glyphs mean (DR9) — nothing else teaches them. Seated right under
-      # the help wordmark so help_body's height cap never drops it.
+      # the help wordmark, so it's always on page 1.
       LEGEND = [[SPIN_COLORED.first, "⠋", "working"], [WANTS_ON, "◆", "input"], [DONE, "●", "done"],
                 [MONITORING, "∞", "watching"], [BUILDING, "◌", "building"], [FAILED, "✘", "failed"],
                 ["#{LINK_LIVE_FG}#{LINK_GLYPH}\e[0m", "⇅", LINK_LIVE_LABEL], ["#{LINK_STALE_FG}#{LINK_GLYPH}\e[0m", "⇅", "idle link"]].freeze
@@ -179,7 +181,8 @@ module Switchboard
         name = `git config user.name 2>/dev/null`.strip
         name = ENV["USER"].to_s if name.empty?
         first = name.split.first
-        first && !first.empty? ? first.downcase : nil
+        first = shown(first).downcase if first
+        first && !first.empty? ? first : nil
       rescue StandardError
         nil
       end
@@ -256,34 +259,72 @@ module Switchboard
         $stdout.write(out)
       end
 
-      # The ? help overlay (issue #62). Paints the full key map with the same
+      # The ? help overlay (issue #62). Paints one page of the key map with the same
       # cursor-addressed \e[K / \e[0J no-flash technique as render (no full \e[2J, so
-      # the per-tick repaint while it's open doesn't flicker), with a dim "any key to
-      # close" hint pinned to the bottom row. The body comes from help_body, capped so
-      # the hint always seats.
+      # the per-tick repaint while it's open doesn't flicker), with a dim hint pinned to
+      # the bottom row. The page index is clamped here because the pane can shrink
+      # while help is open, leaving fewer pages than the one we were on. Painting more
+      # than one page makes the paging keys sticky (help_key): a resize between this
+      # paint and the next key can't turn the → you aimed at "2/2" into a dismiss.
       def render_help
         rows, cols = winsize
-        lines = help_body(rows, cols)
+        pages = help_pages(rows, cols)
+        @help_paged ||= pages.size > 1
+        @help_page = @help_page.clamp(0, pages.size - 1)
+        lines = pages[@help_page]
         out = +"\e[H"
         lines.each_with_index do |text, i|
           out << "\e[#{i + 1};1H\e[K#{text}" # each line carries (and resets) its own ANSI
         end
         out << "\e[#{lines.size + 1};1H\e[0J" # erase below the last line (incl. any old footer)
-        out << "\e[#{rows};1H\e[K\e[2m#{trunc('any key to close', cols)}\e[0m"
+        out << "\e[#{rows};1H\e[K\e[2m#{trunc(help_page_hint(@help_page, pages.size, @help_paged), cols)}\e[0m"
         $stdout.write(out)
       end
 
-      # The overlay's lines, capped to leave the bottom row for the "any key to close"
-      # hint. A short pane drops the tail (HELP is top-loaded with navigation), never
-      # the top. Pure given winsize + @config, so the height-cap is unit-testable
-      # without raw I/O — the suite keeps render-to-stdout out of scope.
-      def help_body(rows, cols)
-        help_lines(cols).first([rows - 1, 0].max)
+      # The overlay split into pages of rows-1 lines (the hint keeps the bottom row),
+      # so nothing is ever cut off a short pane. Whole sections go on a page; a
+      # section moves to the next page rather than split, unless it alone is taller
+      # than a page. A separator landing at a page top is dropped. A pane too short
+      # for any body line gets one empty page (hint only) — a 0-line page would never
+      # fill. Pure given winsize + @config, so it's unit-testable without raw I/O.
+      def help_pages(rows, cols)
+        return [[]] if rows < 2
+
+        height = rows - 1
+        pages = [[]]
+        help_sections(cols).each do |section|
+          pages << [] if pages.last.any? && pages.last.size + section.size > height
+          section = section.drop(1) if pages.last.empty? && section.first == ""
+          section.each do |text|
+            pages << [] if pages.last.size == height
+            pages.last << text
+          end
+        end
+        pages
       end
 
-      # The p overlay (layout picked by eye, design review D2): where you are, which
-      # session, the code, the URL as a readable backup, and the way out on the bottom
-      # row. Painted like render_help (cursor-addressed, no full clear).
+      # One page: the original "any key to close". Several: where you are and which
+      # way the rest is (the last page points back). "Other" keys, because →/Space/←
+      # only page — at an end they stay put rather than close. A paged overlay the
+      # pane grew to fit on one page keeps its paging keys, so it says "other" too.
+      def help_page_hint(page, count, paged = false)
+        return "any key to close" if count < 2 && !paged
+        return "1/1 · other keys close" if count < 2
+
+        "#{page + 1}/#{count} · #{page < count - 1 ? '→ more' : '← back'} · other keys close"
+      end
+
+      # The whole overlay as one flat list of lines (the pages, before splitting) —
+      # the view the tests check content and width against; rendering goes through
+      # help_pages.
+      def help_lines(cols)
+        help_sections(cols).flatten
+      end
+
+      # The p overlay (layout picked by eye, design review D2): the tree's own header, which
+      # workspace, the code, the URL as a readable backup, and the way out on the bottom
+      # row. No session name: Claude's default is the workspace's first name, stale once
+      # it's renamed. Painted like render_help (cursor-addressed, no full clear).
       # The overlay draws text from Claude's undocumented session file and git, and this runs
       # in the unrescued run loop: input nobody foresaw closes the QR and repaints the tree
       # rather than killing the pane. Only building the frame is rescued; a write error to a
@@ -320,12 +361,27 @@ module Switchboard
 
       # [body lines, bottom hint] for a rows×cols pane. Reads @link_view/@links/@nodes and
       # only writes the matrix memo, so layout and fallbacks are testable without raw I/O.
+      # The tree's own header leads, but the code and the URL come first: when the full
+      # header (home, or H) would cost either, the overlay keeps only the wordmark.
       def link_view_lines(rows, cols)
+        full = header(cols)
+        return link_view_body(rows, cols, full).first(2) if full.size == 1
+
+        [full, full.first(1)].map { |top| link_view_body(rows, cols, top) }
+                             .each_with_index.max_by { |r, i| [*link_view_score(r, rows), -i] }.first.first(2)
+      end
+
+      # [shows the code, fits the pane]: a code beats a fallback; either beats a cut URL.
+      def link_view_score((body, _, drawn), rows)
+        [drawn ? 1 : 0, body.size <= rows - 1 ? 1 : 0]
+      end
+
+      def link_view_body(rows, cols, top)
         link = view_link
         return [[], "any key closes"] unless link
 
         links = view_links
-        head = [link_view_header(links, link, cols), "#{NOTE_FG}#{fit_columns(session_label(link), cols)}\e[0m", ""]
+        head = top + [link_view_header(links, link, cols), ""]
         url = link.url.scan(/.{1,#{[cols, 1].max}}/).map { |l| "#{NOTE_FG}#{l}\e[0m" }
         keys = links.size > 1 ? "tab next · any key closes" : "any key closes"
         matrix = (@link_view[:qr][link.url] ||= QR.matrix(link.url))
@@ -340,7 +396,7 @@ module Switchboard
 
         side = ((cols - n) / 2).clamp(QR_MIN_QUIET, QR_MAX_QUIET) # as wide as fits, up to 4 (eng D5)
         indent = " " * ((cols - n - (2 * side)) / 2) # centered in a wider pane (design review D5)
-        [head + qr_rows(matrix, side, vert).map { |row| indent + row } + [""] + url, keys]
+        [head + qr_rows(matrix, side, vert).map { |row| indent + row } + [""] + url, keys, true]
       end
 
       def link_view_fallback(head, url, why, hint, cols)
@@ -351,22 +407,12 @@ module Switchboard
       def link_view_header(links, link, cols)
         node = @nodes.find { |n| n.kind == "ws" && n.path == @link_view[:path] }
         name = node ? "#{node.project}/#{node.name}" : File.basename(@link_view[:path].to_s)
+        name = shown(name)
         count = links.size > 1 ? "#{links.index(link) + 1}/#{links.size}" : ""
         room = count.empty? ? cols : cols - count.size - 1
-        shown = fit_columns(name, [room, 1].max)
-        pad = " " * [cols - columns(shown) - count.size, 0].max
-        "#{BRAND}#{shown}\e[0m#{pad}#{NOTE_FG}#{count}\e[0m"
-      end
-
-      # The session's name, else when it started, else its pid. Free text from Claude's
-      # file, so it loses invisible characters like the task note. A start time of 0
-      # means RemoteLink couldn't read one.
-      def session_label(link)
-        name = link.name.to_s.gsub(/\s+/, " ").gsub(NOTE_INVISIBLE, "").strip
-        return name unless name.empty?
-        return "started #{Time.at(link.started_at / 1000).strftime('%H:%M')}" if link.started_at.to_i.positive?
-
-        "pid #{link.pid}"
+        fit = fit_columns(name, [room, 1].max)
+        pad = " " * [cols - columns(fit) - count.size, 0].max
+        "#{BRAND}#{fit}\e[0m#{pad}#{NOTE_FG}#{count}\e[0m"
       end
 
       # Two modules per text row: `▀` paints the top module in the foreground color and
@@ -390,20 +436,22 @@ module Switchboard
       end
 
       # Format the key map (Keymap.help_rows, built from the live @bindings so the
-      # shown keys never drift — issue #108) plus the resolved tmux rows into rendered
-      # lines: the wordmark, then each section as a blank separator + bold heading, and
-      # each key row as `key.ljust(HELP_KEY_COLS)  desc`. trunc runs on the PLAIN string
-      # BEFORE the ANSI is wrapped on, so truncation can never cut an escape (line()).
-      def help_lines(cols)
-        out = ["#{BRAND}#{trunc(WORDMARK, cols)}\e[0m", *legend_lines(cols)]
+      # shown keys never drift — issue #108) plus the resolved tmux rows into
+      # sections: the head (wordmark + legend), then one per heading row — a blank
+      # separator, the bold heading, and each key row as `key.ljust(HELP_KEY_COLS)
+      # desc`. Grouped from the rows themselves (a blank key starts a section), so
+      # paging never has to re-split drawn text. trunc runs on the PLAIN string BEFORE
+      # the ANSI is wrapped on, so truncation can never cut an escape (line()).
+      def help_sections(cols)
+        sections = [["#{BRAND}#{trunc(WORDMARK, cols)}\e[0m", *legend_lines(cols)]]
         (Keymap.help_rows(@bindings) + tmux_help_rows).each do |key, desc|
           if key.empty?
-            out << "" << "#{BRAND}#{trunc(desc, cols)}\e[0m" # blank separator, then the heading
+            sections << ["", "#{BRAND}#{trunc(desc, cols)}\e[0m"] # blank separator, then the heading
           else
-            out << trunc("#{key.ljust(HELP_KEY_COLS)}  #{desc}", cols)
+            sections.last << trunc("#{key.ljust(HELP_KEY_COLS)}  #{desc}", cols)
           end
         end
-        out
+        sections
       end
 
       # Help's glyph legend: the row glyphs, wrapped to the pane, each in its row color.
@@ -551,15 +599,15 @@ module Switchboard
         room = cols - text.length - 1
         return line_without_note(node, active, cols, text) if room < 4
 
-        shown = fit_columns(note, room)
-        shown = (" " * (room - columns(shown))) + shown
+        fitted = fit_columns(note, room)
+        fitted = (" " * (room - columns(fitted))) + fitted
         if active && @focused
-          body = "#{text} #{shown}"
+          body = "#{text} #{fitted}"
           return "\e[7m#{body}#{' ' * [cols - columns(body), 0].max}\e[0m" # padded in COLUMNS, like the note
         end
 
         body = colored(node, text, current: node.kind == "ws" && node.path == @current_path)
-        "#{body} #{NOTE_FG}#{shown}\e[0m"
+        "#{body} #{NOTE_FG}#{fitted}\e[0m"
       end
 
       # The task note is free text (pasted from anywhere), so it's measured in terminal
@@ -567,7 +615,7 @@ module Switchboard
       # would push the row past the pane edge. Invisible characters (controls, bidi and
       # zero-width marks, combining marks) are dropped before it's drawn.
       def columns(str)
-        str.to_s.scrub.each_char.sum { |c| c.match?(NOTE_WIDE) ? 2 : 1 }
+        str.to_s.scrub.each_char.sum { |c| c.match?(NOTE_WIDE) ? 2 : (c.match?(NOTE_ZERO) ? 0 : 1) }
       end
 
       # Scrubbed first: a worktree name from git may hold bytes that aren't UTF-8, and
@@ -639,9 +687,9 @@ module Switchboard
           # In filter mode the children show regardless of fold, so the header always
           # reads expanded (▾); the ▸ collapsed glyph only applies to the normal tree.
           folded = @filter.nil? && @collapsed.include?(node.project)
-          "#{folded ? '▸' : '▾'} #{node.project}"
+          "#{folded ? '▸' : '▾'} #{shown(node.project)}"
         when "ws"   then ws_parts(node).join
-        else             "     #{node.last ? '└' : '├'}#{node.active ? '●' : ' '}#{node.branch}"
+        else             "     #{node.last ? '└' : '├'}#{node.active ? '●' : ' '}#{shown(node.branch)}"
         end
       end
 
@@ -670,7 +718,7 @@ module Switchboard
       end
 
       # A ws row's plain parts: [pointer + glyph + name, link cue, fold cue].
-      def ws_parts(node, name = node.name.to_s)
+      def ws_parts(node, name = shown(node.name))
         ["#{pointer(node.path)} #{ws_glyph(node.path)} #{name}", link_cue(node), fold_cue(node)]
       end
 
@@ -685,7 +733,7 @@ module Switchboard
         budget = width - WS_PREFIX_COLS - link.length - cue.length
         return trunc(plain(node).delete_suffix(link + cue), width) if budget < 1
 
-        ws_parts(node, trunc(node.name.to_s, budget)).join
+        ws_parts(node, trunc(shown(node.name), budget)).join
       end
 
       def styled_link(path, link)
@@ -720,7 +768,7 @@ module Switchboard
             link = cue = ""
             budget = text.length - WS_PREFIX_COLS
           end
-          name = trunc(node.name.to_s, [budget, 1].max)
+          name = trunc(shown(node.name), [budget, 1].max)
           ptr = " "
           if current
             ptr  = "#{BRAND}#{CURRENT_MARK}\e[0m"  # "you are here" pointer — bold-cyan, switchboard's signature accent
@@ -801,6 +849,12 @@ module Switchboard
         return state if %i[thinking waiting].include?(state)
 
         @monitoring.include?(path) ? :monitoring : state
+      end
+
+      # A git or folder name as drawn: UTF-8 whatever the locale, with no bytes that could
+      # drive the terminal. Combining marks stay (a decomposed é is still é).
+      def shown(str)
+        str.to_s.dup.force_encoding(Encoding::UTF_8).scrub.gsub(/[\t\n\v\f\r]+/, " ").gsub(NAME_UNSAFE, "")
       end
 
       def trunc(str, width)
