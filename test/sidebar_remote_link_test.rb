@@ -97,12 +97,14 @@ module Switchboard
       assert_equal a.index("#31"), b.index("#24"), "the #pr column stays put (#118)"
     end
 
-    def test_a_stale_link_renders_grey_and_a_fresh_one_plain
+    def test_a_stale_link_renders_grey_and_a_fresh_one_green
       node = ws("alpha", path: "/wt/a")
       stale = with_links(sidebar, { "/wt/a" => [link(stale: true)] })
       assert_includes stale.send(:colored, node, stale.send(:plain, node)), "#{Sidebar::LINK_STALE_FG} ⇅\e[0m"
       fresh = with_links(sidebar, { "/wt/a" => [link] })
-      refute_includes fresh.send(:colored, node, fresh.send(:plain, node)), Sidebar::LINK_STALE_FG
+      out = fresh.send(:colored, node, fresh.send(:plain, node))
+      assert_includes out, "#{Sidebar::LINK_LIVE_FG} ⇅\e[0m"
+      refute_includes out, Sidebar::LINK_STALE_FG
     end
 
     def test_any_stale_link_greys_the_row_even_behind_a_newer_busy_one
@@ -120,42 +122,26 @@ module Switchboard
       assert_includes sb.send(:colored, node, sb.send(:plain, node)), Sidebar::LINK_STALE_FG
     end
 
-    # Value: protects=the counted cue (⇅2) is greyed whole under the cursor bar; fails_when=
-    # link_in_bar greys only the glyph or restores fg before the digit; why_new=the bar test
-    # below uses one link; seam=none; no_claim=terminal rendering of the SGR codes
-    def test_a_counted_stale_link_stays_grey_under_the_cursor_bar
+    # Under the reverse-video bar a color code paints the glyph's cell background (fg and
+    # bg swap), an off-shade block in the bar, so the bar row is one uniform run: shape
+    # survives, color doesn't, as with the dots.
+    def assert_uniform_bar(out)
+      assert out.start_with?("\e[7m") && out.end_with?("\e[0m"), "a reverse-video bar"
+      assert_equal ["\e[7m", "\e[0m"], out.scan(/\e\[[\d;]*m/), "no color inside the bar"
+    end
+
+    def test_a_stale_link_under_the_cursor_bar_keeps_the_bar_uniform
       node = ws("alpha", path: "/wt/a")
       sb = with_links(sidebar(nodes: [node], focused: true), { "/wt/a" => [link, link(stale: true, id: "session_old")] })
       out = sb.send(:line, node, true, 40)
-      assert_includes out, "#{Sidebar::LINK_STALE_FG} ⇅2\e[39m"
+      assert_uniform_bar(out)
+      assert_includes out, "alpha ⇅2"
       assert_equal 40, strip_ansi(out).length
     end
 
-    # Value: protects=under the cursor bar the grey lands on the REAL cue, not on a " ⇅" inside
-    # the workspace name (another tool's worktree can be named anything); fails_when=link_in_bar
-    # finds the cue by searching the bar again; why_new=ship adversarial review; seam=none;
-    # no_claim=terminal rendering of the SGR codes
-    def test_the_grey_lands_on_the_real_cue_when_the_name_contains_one
-      node = ws("x ⇅ y", path: "/wt/a")
-      sb = with_links(sidebar(nodes: [node], focused: true), { "/wt/a" => [link(stale: true)] })
-      out = sb.send(:line, node, true, 40)
-      assert_includes out, "x ⇅ y#{Sidebar::LINK_STALE_FG} ⇅\e[39m", "the name stays plain, its trailing cue greys"
-      assert_equal 40, strip_ansi(out).length
-    end
-
-    def test_a_stale_link_stays_grey_under_the_cursor_bar
-      node = ws("alpha", path: "/wt/a")
-      sb = with_links(sidebar(nodes: [node], focused: true), { "/wt/a" => [link(stale: true)] })
-      out = sb.send(:line, node, true, 40)
-      assert out.start_with?("\e[7m")
-      assert_includes out, "#{Sidebar::LINK_STALE_FG} ⇅\e[39m", "grey survives inside the reverse video"
-      assert_equal 40, strip_ansi(out).length
-    end
-
-    # Value: protects=at a pane too narrow for the cues, a stale-linked row under the cursor bar
-    # still paints full width; fails_when=link_in_bar loses its not-found guard (bar[0, nil]
-    # raises mid-render); why_new=bar tests are all wide enough to keep the cue; seam=none;
-    # no_claim=a real resize (@links seeded)
+    # Value: protects=at a pane too narrow for the cues, a linked row under the cursor bar
+    # still paints full width; fails_when=the bar path regains a cue lookup that assumes the
+    # cue fits; seam=none; no_claim=a real resize (@links seeded)
     def test_a_narrow_stale_linked_row_under_the_cursor_bar_paints_without_its_cues
       node = folded_ws("alpha", "/wt/a")
       sb = with_links(sidebar(nodes: [node], focused: true), { "/wt/a" => [link(stale: true)] })
@@ -163,10 +149,11 @@ module Switchboard
       assert_equal "\e[7m    alp…\e[0m", out, "the cues drop and nothing raises"
     end
 
-    # Value: protects=a placeholder ws showing its dispatch task note keeps a grey ⇅ under the cursor
-    # bar; fails_when=note_line goes back to trunc(plain) or drops link_in_bar; why_new=link tests only
-    # drive line's diff/PR path, never the note path; seam=none; no_claim=real Creation record, @links seeded
-    def test_a_task_note_row_keeps_a_grey_link_under_the_cursor_bar
+    # Value: protects=a placeholder ws showing its dispatch task note keeps its ⇅ and a uniform
+    # bar under the cursor; fails_when=note_line goes back to trunc(plain) or colors the cue;
+    # why_new=the tests above drive line's diff/PR path, never the note path; seam=none;
+    # no_claim=real Creation record, @links seeded
+    def test_a_task_note_row_under_the_cursor_bar_keeps_its_link_and_a_uniform_bar
       dir = real_dir("wt/quiet-otter")
       rec = Creation.create(project: "app", name: "quiet-otter", path: dir, task: "fix the flaky test")
       Creation.transition(rec["id"], from: :queued, to: "ready")
@@ -178,14 +165,14 @@ module Switchboard
       assert_equal "fix the flaky test", sb.send(:row_note, row), "the note path is the one under test"
       out = sb.send(:line, row, true, 40)
       assert_match(/quiet-otter ⇅\s+fix the flaky test/, strip_ansi(out))
-      assert_includes out, "#{Sidebar::LINK_STALE_FG} ⇅\e[39m", "grey survives inside the reverse video"
+      assert_uniform_bar(out)
       assert_equal 40, strip_ansi(out).length
     end
 
-    # Value: protects=on a narrowed pane (note dropped) a task row's ⇅ stays grey under the cursor bar;
-    # fails_when=line_without_note's bar skips link_in_bar (RED at HEAD: it does);
-    # why_new=only the wide note path is tested; seam=none; no_claim=real Creation record, @links seeded
-    def test_a_narrow_task_note_row_keeps_a_grey_link_under_the_cursor_bar
+    # Value: protects=on a narrowed pane (note dropped) a task row keeps its ⇅ and a uniform bar;
+    # fails_when=line_without_note colors the cue; why_new=only the wide note path is above;
+    # seam=none; no_claim=real Creation record, @links seeded
+    def test_a_narrow_task_note_row_under_the_cursor_bar_keeps_its_link_and_a_uniform_bar
       dir = real_dir("wt/quiet-otter")
       Creation.create(project: "app", name: "quiet-otter", path: dir, task: "fix the flaky test") # queued
       node = ws("quiet-otter", path: dir)
@@ -195,13 +182,13 @@ module Switchboard
       row = rows_of(sb).find { |n| n.kind == "ws" }
       out = sb.send(:line, row, true, 18) # too narrow for the note: line_without_note
       assert_equal "  ◌ quiet-otter ⇅ ", strip_ansi(out), "the note drops; the name and cue stay"
-      assert_includes out, "#{Sidebar::LINK_STALE_FG} ⇅\e[39m", "grey survives inside the reverse video"
+      assert_uniform_bar(out)
     end
 
     # The ? overlay's legend is the only place the row glyphs are taught.
     def test_the_help_legend_teaches_both_link_states
       legend = sidebar.send(:legend_lines, 40).join("\n")
-      assert_includes strip_ansi(legend), "⇅ on phone"
+      assert_includes legend, "#{Sidebar::LINK_LIVE_FG}⇅\e[0m \e[2mon phone"
       assert_includes legend, "#{Sidebar::LINK_STALE_FG}⇅\e[0m \e[2midle link"
     end
 

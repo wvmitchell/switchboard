@@ -10,6 +10,17 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
+## [0.53.1] — a live `⇅` reads green (2026-10-24)
+
+### Changed
+- A live remote link's `⇅` is now green, the done dot's color, so it stands apart from
+  an idle link's grey. Before, it used the default text color, which looked almost the
+  same as the grey.
+- The cursor bar no longer greys an idle `⇅`. Inside the reverse-video bar that grey
+  painted the glyph's background a slightly different shade from the rest of the bar;
+  the highlighted row now shows a plain `⇅`, like its dot, and the color returns when the
+  cursor moves off.
+
 ## [0.53.0] — see which workspaces your phone can reach (2026-10-24)
 
 ### Added
