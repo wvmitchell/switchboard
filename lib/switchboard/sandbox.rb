@@ -232,6 +232,9 @@ module Switchboard
     # non-sb/ session of THIS server (prune/reconcile only touch sb/), so it dies with
     # the sandbox, and point a session file at it. A real `claude /rc` inside the
     # sandbox writes the real ~/.claude (HOME is kept), so it deliberately doesn't show.
+    # Production-length (session_ + 24), so `p` draws the real 33-module code you'd scan.
+    SEED_LINK_ID = "session_01SandboxLinkNotRealXyzA"
+
     def seed_link(worktree)
       out = IO.popen(["tmux", "new-session", "-d", "-s", "_sandbox-link", "-c", worktree,
                       "-P", "-F", '#{pane_pid}', "exec sleep 2147483647"], err: File::NULL, &:read)
@@ -243,7 +246,7 @@ module Switchboard
       File.write(File.join(RemoteLink.sessions_dir, "#{pid}.json"), JSON.generate(
         "pid" => pid, "sessionId" => "sandbox-link", "cwd" => File.realpath(worktree), "kind" => "interactive",
         "name" => "sandbox link", "startedAt" => now, "procStart" => ProcessIdentity.start_of(pid),
-        "status" => "idle", "statusUpdatedAt" => now, "bridgeSessionId" => "session_sandbox"
+        "status" => "idle", "statusUpdatedAt" => now, "bridgeSessionId" => SEED_LINK_ID
       ))
       pid
     rescue StandardError
