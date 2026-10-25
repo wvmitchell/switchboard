@@ -143,7 +143,8 @@ phone's camera at it and that exact session opens there. The overlay reads top d
 the workspace, the session's name, the code (in your theme's black and bright white),
 and the URL as text underneath. `Tab` steps through several links (`1/2` in the
 corner), `←`/`→` resize, and any other key closes it. If the link ends while it's
-open, it closes back to the tree. A pane too narrow or too short for the code shows the
+open, the overlay moves to that workspace's newest remaining link, or closes back to
+the tree when none is left. A pane too narrow or too short for the code shows the
 URL and says so (`→ widen` or `pane too short`). The link only opens for someone signed in to
 claude.ai as you; anyone else gets the sign-in page.
 

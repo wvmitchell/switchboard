@@ -68,8 +68,8 @@ A `sidebar_keys` value is a **single printable character**. That rule is what
 keeps the structural keys reserved: `↵`, `Esc`, `Backspace`, the arrows, and the
 `Ctrl-N`/`Ctrl-P`/`Ctrl-O` aliases are all non-printable, so a remap can never land
 on one. `switchboard doctor` flags an invalid value or a clash (two actions on one
-key) — the loser is left unbound, but its arrow/ctrl aliases still work, so you can
-never lock yourself out of movement. See
+key) — the loser is left unbound, but any arrow/ctrl aliases it has still work, so you
+can never lock yourself out of movement. See
 [How-to: keybindings](howto-keybindings.md#change-the-in-sidebar-keys).
 
 The footer legend shows only the common keys for the highlighted row; `g`/`G` and
