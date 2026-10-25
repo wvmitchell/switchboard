@@ -202,6 +202,18 @@ safe today; each is narrow).
   `notify_pane`'s trailing `true`; share the column-walk in `tail_view`/`fit_columns`;
   `@warming` → a `rebuild` kwarg. **Priority:** P3.
 
+## `?` help paging (v0.55.0) follow-ups
+
+- **Input bursts leak past a mode change.** *Why:* two paths let a burst of keys reach the
+  tree after a mode ends. (a) A read that fills `READ_BYTES` can end mid escape sequence;
+  `Input.tokenize` flushes the trailing `\e` as Esc (repro: 344 `→` in one buffer — the
+  first read closes help, the second's arrows resize the pane, a persisted width). (b) A key
+  that closes help hands the rest of its read to `dispatch`: a held `→` on a one-page help
+  (never paged, so not sticky) closes it, then widens the pane. Both predate paging.
+  *Start in:* `help_key` (clear the rest of `@typeahead` on a dismiss) and `tokenize`
+  (carry a trailing `\e` when a read filled `READ_BYTES`, or an Esc timeout in the run
+  loop). **Priority:** P3.
+
 ## Session lifecycle (issue #7) follow-ups
 
 - **Validate/normalize project names at `add` time.** At registration, reject or

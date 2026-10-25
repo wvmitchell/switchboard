@@ -10,6 +10,17 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
+## [0.55.0] — the `?` overlay pages instead of cutting off (2026-10-24)
+
+### Changed
+- **`?` help splits into pages on a short pane.** The map had grown past a normal pane's
+  height, and the part that got cut off was the bottom: the tmux keys, including how to
+  show or hide the sidebar. Now nothing is dropped. When the map doesn't fit, the bottom
+  row reads `1/2 · → more · other keys close`; `→` or `Space` turns forward, `←` back, and
+  any other key closes help as before. A tall enough pane still shows one page, unchanged.
+- The `filter mode` and `name prompts` sections are one `in a prompt or filter` section,
+  and the `n` row reads `new workspace` (it was cut off at 40 columns).
+
 ## [0.54.0] — scan a workspace's phone link (2026-10-24)
 
 ### Added
