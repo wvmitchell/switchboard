@@ -15,7 +15,7 @@ module Switchboard
       # Single-key y/N confirmation on the bottom row.
       def confirm(message)
         rows, = winsize
-        print "\e[#{rows};1H\e[K\e[?25h#{message} [y/N] "
+        print "\e[#{rows};1H\e[K\e[?25h#{shown(message)} [y/N] "
         $stdout.flush
         answer = read_char
         print "\e[?25l"
@@ -192,7 +192,7 @@ module Switchboard
       # without the caret jumping past it.
       def draw_prompt(label, buf, hint: " (esc cancel)", tail: false)
         rows, cols = winsize
-        prefix = "#{label} › "
+        prefix = "#{shown(label)} › "
         # The hint must live INSIDE the width budget. Truncating only prefix+buf and
         # tacking the hint on after let a long label + the hint overflow the 40-col pane;
         # the 41st char auto-wrapped (DECAWM) on the bottom row and scrolled a stale
@@ -201,9 +201,9 @@ module Switchboard
         # hint always shows) and restored the moment you type (hint gone). Held plain for
         # the width count; the dim SGR is applied only at print time.
         hint   = buf.empty? ? hint : ""
-        shown  = tail ? tail_view(prefix, buf, cols - hint.length) : trunc(prefix + buf, cols - hint.length)
-        print "\e[#{rows};1H\e[K#{shown}#{hint.empty? ? '' : "\e[2m#{hint}\e[0m"}"
-        caret = [columns(shown) + 1, cols].min # 1-based, parked right after the visible input
+        view   = tail ? tail_view(prefix, buf, cols - hint.length) : trunc(prefix + buf, cols - hint.length)
+        print "\e[#{rows};1H\e[K#{view}#{hint.empty? ? '' : "\e[2m#{hint}\e[0m"}"
+        caret = [columns(view) + 1, cols].min # 1-based, parked right after the visible input
         print "\e[#{rows};#{caret}H\e[?25h"
         $stdout.flush
       end
@@ -240,7 +240,7 @@ module Switchboard
       # readable before the next repaint wipes it.
       def flash(message)
         rows, cols = winsize
-        print "\e[#{rows};1H\e[K\e[31m#{trunc(message, cols - 11)}\e[0m — any key "
+        print "\e[#{rows};1H\e[K\e[31m#{trunc(shown(message), cols - 11)}\e[0m — any key "
         $stdout.flush
         read_char
       end

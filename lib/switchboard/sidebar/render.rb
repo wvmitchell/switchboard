@@ -34,7 +34,9 @@ module Switchboard
       LINK_STALE_FG = "\e[90m"    # ...and grey when idle past remote_link_stale_after (bold read identical; the theme-relative dim branch rows use)
       WS_PREFIX_COLS = 4          # a ws row's "<pointer> <dot> " before its name: fit_plain and colored must agree on it
       NOTE_FG  = "\e[2m"          # the dim task label / failure reason in the right region (DR3/DR8)
+      NAME_UNSAFE = /[\p{Cc}\p{Cf}]/ # dropped from a drawn name: controls and bidi/zero-width, not accents
       NOTE_INVISIBLE = /[\p{Cc}\p{Cf}\p{Mn}\p{Me}]/ # dropped from a task label: controls, bidi/zero-width, combining
+      NOTE_ZERO = /[\p{Mn}\p{Me}]/ # combining marks draw on the char before them: no column of their own
       NOTE_WIDE = /[\p{Emoji_Presentation}ᄀ-ᅟ⺀-꓏가-힣豈-﫿︰-﹏＀-｠￠-￦\u{1F300}-\u{1FAFF}\u{20000}-\u{3FFFD}]/ # two columns wide
       BLINK_PERIOD = 4             # @pulse ticks per blink half-cycle (~0.5s at PULSE)
 
@@ -179,7 +181,8 @@ module Switchboard
         name = `git config user.name 2>/dev/null`.strip
         name = ENV["USER"].to_s if name.empty?
         first = name.split.first
-        first && !first.empty? ? first.downcase : nil
+        first = shown(first).downcase if first
+        first && !first.empty? ? first : nil
       rescue StandardError
         nil
       end
@@ -318,9 +321,10 @@ module Switchboard
         help_sections(cols).flatten
       end
 
-      # The p overlay (layout picked by eye, design review D2): where you are, which
-      # session, the code, the URL as a readable backup, and the way out on the bottom
-      # row. Painted like render_help (cursor-addressed, no full clear).
+      # The p overlay (layout picked by eye, design review D2): the tree's own header, which
+      # workspace, the code, the URL as a readable backup, and the way out on the bottom
+      # row. No session name: Claude's default is the workspace's first name, stale once
+      # it's renamed. Painted like render_help (cursor-addressed, no full clear).
       # The overlay draws text from Claude's undocumented session file and git, and this runs
       # in the unrescued run loop: input nobody foresaw closes the QR and repaints the tree
       # rather than killing the pane. Only building the frame is rescued; a write error to a
@@ -357,12 +361,27 @@ module Switchboard
 
       # [body lines, bottom hint] for a rows×cols pane. Reads @link_view/@links/@nodes and
       # only writes the matrix memo, so layout and fallbacks are testable without raw I/O.
+      # The tree's own header leads, but the code and the URL come first: when the full
+      # header (home, or H) would cost either, the overlay keeps only the wordmark.
       def link_view_lines(rows, cols)
+        full = header(cols)
+        return link_view_body(rows, cols, full).first(2) if full.size == 1
+
+        [full, full.first(1)].map { |top| link_view_body(rows, cols, top) }
+                             .each_with_index.max_by { |r, i| [*link_view_score(r, rows), -i] }.first.first(2)
+      end
+
+      # [shows the code, fits the pane]: a code beats a fallback; either beats a cut URL.
+      def link_view_score((body, _, drawn), rows)
+        [drawn ? 1 : 0, body.size <= rows - 1 ? 1 : 0]
+      end
+
+      def link_view_body(rows, cols, top)
         link = view_link
         return [[], "any key closes"] unless link
 
         links = view_links
-        head = [link_view_header(links, link, cols), "#{NOTE_FG}#{fit_columns(session_label(link), cols)}\e[0m", ""]
+        head = top + [link_view_header(links, link, cols), ""]
         url = link.url.scan(/.{1,#{[cols, 1].max}}/).map { |l| "#{NOTE_FG}#{l}\e[0m" }
         keys = links.size > 1 ? "tab next · any key closes" : "any key closes"
         matrix = (@link_view[:qr][link.url] ||= QR.matrix(link.url))
@@ -377,7 +396,7 @@ module Switchboard
 
         side = ((cols - n) / 2).clamp(QR_MIN_QUIET, QR_MAX_QUIET) # as wide as fits, up to 4 (eng D5)
         indent = " " * ((cols - n - (2 * side)) / 2) # centered in a wider pane (design review D5)
-        [head + qr_rows(matrix, side, vert).map { |row| indent + row } + [""] + url, keys]
+        [head + qr_rows(matrix, side, vert).map { |row| indent + row } + [""] + url, keys, true]
       end
 
       def link_view_fallback(head, url, why, hint, cols)
@@ -388,26 +407,12 @@ module Switchboard
       def link_view_header(links, link, cols)
         node = @nodes.find { |n| n.kind == "ws" && n.path == @link_view[:path] }
         name = node ? "#{node.project}/#{node.name}" : File.basename(@link_view[:path].to_s)
-        name = name.dup.force_encoding(Encoding::UTF_8).scrub.gsub(NOTE_INVISIBLE, "") # a folder name can carry escape bytes
+        name = shown(name)
         count = links.size > 1 ? "#{links.index(link) + 1}/#{links.size}" : ""
         room = count.empty? ? cols : cols - count.size - 1
-        shown = fit_columns(name, [room, 1].max)
-        pad = " " * [cols - columns(shown) - count.size, 0].max
-        "#{BRAND}#{shown}\e[0m#{pad}#{NOTE_FG}#{count}\e[0m"
-      end
-
-      # The session's name, else when it started, else its pid. Free text from Claude's
-      # file, so it loses invisible characters like the task note, and it's cut first: this
-      # runs on every repaint, and no pane shows more than LABEL_MAX of it. A start time of 0
-      # means RemoteLink couldn't read one.
-      LABEL_MAX = 200
-
-      def session_label(link)
-        name = link.name.to_s[0, LABEL_MAX].gsub(/\s+/, " ").gsub(NOTE_INVISIBLE, "").strip
-        return name unless name.empty?
-        return "started #{Time.at(link.started_at / 1000).strftime('%H:%M')}" if link.started_at.to_i.positive?
-
-        "pid #{link.pid}"
+        fit = fit_columns(name, [room, 1].max)
+        pad = " " * [cols - columns(fit) - count.size, 0].max
+        "#{BRAND}#{fit}\e[0m#{pad}#{NOTE_FG}#{count}\e[0m"
       end
 
       # Two modules per text row: `▀` paints the top module in the foreground color and
@@ -594,15 +599,15 @@ module Switchboard
         room = cols - text.length - 1
         return line_without_note(node, active, cols, text) if room < 4
 
-        shown = fit_columns(note, room)
-        shown = (" " * (room - columns(shown))) + shown
+        fitted = fit_columns(note, room)
+        fitted = (" " * (room - columns(fitted))) + fitted
         if active && @focused
-          body = "#{text} #{shown}"
+          body = "#{text} #{fitted}"
           return "\e[7m#{body}#{' ' * [cols - columns(body), 0].max}\e[0m" # padded in COLUMNS, like the note
         end
 
         body = colored(node, text, current: node.kind == "ws" && node.path == @current_path)
-        "#{body} #{NOTE_FG}#{shown}\e[0m"
+        "#{body} #{NOTE_FG}#{fitted}\e[0m"
       end
 
       # The task note is free text (pasted from anywhere), so it's measured in terminal
@@ -610,7 +615,7 @@ module Switchboard
       # would push the row past the pane edge. Invisible characters (controls, bidi and
       # zero-width marks, combining marks) are dropped before it's drawn.
       def columns(str)
-        str.to_s.scrub.each_char.sum { |c| c.match?(NOTE_WIDE) ? 2 : 1 }
+        str.to_s.scrub.each_char.sum { |c| c.match?(NOTE_WIDE) ? 2 : (c.match?(NOTE_ZERO) ? 0 : 1) }
       end
 
       # Scrubbed first: a worktree name from git may hold bytes that aren't UTF-8, and
@@ -682,9 +687,9 @@ module Switchboard
           # In filter mode the children show regardless of fold, so the header always
           # reads expanded (▾); the ▸ collapsed glyph only applies to the normal tree.
           folded = @filter.nil? && @collapsed.include?(node.project)
-          "#{folded ? '▸' : '▾'} #{node.project}"
+          "#{folded ? '▸' : '▾'} #{shown(node.project)}"
         when "ws"   then ws_parts(node).join
-        else             "     #{node.last ? '└' : '├'}#{node.active ? '●' : ' '}#{node.branch}"
+        else             "     #{node.last ? '└' : '├'}#{node.active ? '●' : ' '}#{shown(node.branch)}"
         end
       end
 
@@ -713,7 +718,7 @@ module Switchboard
       end
 
       # A ws row's plain parts: [pointer + glyph + name, link cue, fold cue].
-      def ws_parts(node, name = node.name.to_s)
+      def ws_parts(node, name = shown(node.name))
         ["#{pointer(node.path)} #{ws_glyph(node.path)} #{name}", link_cue(node), fold_cue(node)]
       end
 
@@ -728,7 +733,7 @@ module Switchboard
         budget = width - WS_PREFIX_COLS - link.length - cue.length
         return trunc(plain(node).delete_suffix(link + cue), width) if budget < 1
 
-        ws_parts(node, trunc(node.name.to_s, budget)).join
+        ws_parts(node, trunc(shown(node.name), budget)).join
       end
 
       def styled_link(path, link)
@@ -763,7 +768,7 @@ module Switchboard
             link = cue = ""
             budget = text.length - WS_PREFIX_COLS
           end
-          name = trunc(node.name.to_s, [budget, 1].max)
+          name = trunc(shown(node.name), [budget, 1].max)
           ptr = " "
           if current
             ptr  = "#{BRAND}#{CURRENT_MARK}\e[0m"  # "you are here" pointer — bold-cyan, switchboard's signature accent
@@ -844,6 +849,12 @@ module Switchboard
         return state if %i[thinking waiting].include?(state)
 
         @monitoring.include?(path) ? :monitoring : state
+      end
+
+      # A git or folder name as drawn: UTF-8 whatever the locale, with no bytes that could
+      # drive the terminal. Combining marks stay (a decomposed é is still é).
+      def shown(str)
+        str.to_s.dup.force_encoding(Encoding::UTF_8).scrub.gsub(/[\t\n\v\f\r]+/, " ").gsub(NAME_UNSAFE, "")
       end
 
       def trunc(str, width)

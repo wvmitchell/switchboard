@@ -10,9 +10,8 @@ module Switchboard
     ID_A = "session_01AbCdEfGhJkMnPqRsTuVwXy" # a production-length id: a 55-byte URL, a v4 code
     ID_B = "session_01ZyXwVuTsRqPnMkJhGfEdCb"
 
-    def link(id = ID_A, name: "fix the rename bug", started_at: 0, pid: 7)
-      RemoteLink::Link.new(pid: pid, bridge_id: id, kind: "interactive", name: name,
-                           started_at: started_at, stale: false)
+    def link(id = ID_A, started_at: 0, pid: 7)
+      RemoteLink::Link.new(pid: pid, bridge_id: id, kind: "interactive", started_at: started_at, stale: false)
     end
 
     def linked(links = [link], nodes: [ws("alpha", path: "/wt/a"), ws("beta", path: "/wt/b")])
@@ -34,6 +33,12 @@ module Switchboard
     end
 
     def qr_lines(raw) = raw.select { |l| l.include?("▀") }
+
+    # The workspace line sits right under the tree's own header.
+    def name_line(sb, raw: false, cols: 40)
+      body = sb.send(:link_view_lines, 40, cols)[0][sb.send(:header, cols).size]
+      raw ? body : strip_ansi(body)
+    end
 
     # --- opening ------------------------------------------------------------
 
@@ -65,19 +70,19 @@ module Switchboard
     # --- keys -----------------------------------------------------------------
 
     def test_tab_steps_through_several_links_and_the_header_counts
-      sb = open(linked([link(ID_A, name: "first"), link(ID_B, name: "second")]))
-      assert_match(%r{alpha\s+1/2\z}, lines(sb)[0][0])
+      sb = open(linked([link(ID_A), link(ID_B)]))
+      assert_match(%r{alpha\s+1/2\z}, name_line(sb))
       sb.send(:dispatch, "\t")
       assert_equal ID_B, view(sb)[:bridge_id]
-      assert_match(%r{alpha\s+2/2\z}, lines(sb)[0][0])
-      assert_equal "second", lines(sb)[0][1]
+      assert_match(%r{alpha\s+2/2\z}, name_line(sb))
+      assert_includes lines(sb)[0].join, ID_B[-10..], "the URL under the code is the second link"
       sb.send(:dispatch, "\t")
       assert_equal ID_A, view(sb)[:bridge_id], "wraps around"
     end
 
     def test_one_link_has_no_count_and_tab_does_nothing
       sb = open(linked)
-      assert_equal "app/alpha", lines(sb)[0][0].strip
+      assert_equal "app/alpha", name_line(sb).strip
       sb.send(:dispatch, "\t")
       assert_equal ID_A, view(sb)[:bridge_id]
       assert_equal "any key closes", lines(sb)[1]
@@ -165,12 +170,13 @@ module Switchboard
 
     # --- layout ---------------------------------------------------------------
 
-    def test_layout_reads_header_session_code_url_at_the_default_width
+    def test_layout_reads_header_workspace_code_url_at_the_default_width
       sb = open(linked)
       text, hint, raw = lines(sb)
-      assert_equal "app/alpha", text[0].strip
-      assert_equal "fix the rename bug", text[1]
+      assert_equal strip_ansi(sb.send(:header, 40).join("\n")), text[0], "the tree's header (wordmark here)"
+      assert_equal "app/alpha", text[1].strip
       assert_equal "", text[2]
+      refute_includes text.join, "fix the rename bug", "no session name"
       qr = qr_lines(raw)
       assert_equal 21, qr.size, "33 modules + 4 above and below, two per row"
       assert(qr.all? { |l| strip_ansi(l).length == 39 }, "3-module margin each side at 40 cols")
@@ -218,7 +224,7 @@ module Switchboard
     def test_a_long_name_gives_way_so_the_count_stays_in_the_header
       nodes = [ws("a-very-long-workspace-name-that-will-not-fit", path: "/wt/a")]
       sb = open(linked([link(ID_A), link(ID_B)], nodes: nodes))
-      header = lines(sb)[0][0]
+      header = name_line(sb)
       assert_equal 40, header.length, "fills the pane exactly"
       assert header.start_with?("app/a-very"), header
       assert header.end_with?(" 1/2"), header
@@ -229,14 +235,6 @@ module Switchboard
       assert_includes text, "too narrow for the QR"
       assert_equal "https://claude.ai/code/session", text[-2]
       assert_equal "→ widen · any key closes", hint
-    end
-
-    def test_session_label_falls_back_to_start_time_then_pid
-      sb = sidebar
-      started = Time.new(2026, 10, 24, 9, 5).to_i * 1000
-      assert_equal "ab", sb.send(:session_label, link(name: "a​b"))
-      assert_equal "started 09:05", sb.send(:session_label, link(name: "", started_at: started))
-      assert_equal "pid 7", sb.send(:session_label, link(name: " ", started_at: 0)), "0 means unknown"
     end
 
     def test_the_code_is_built_once_while_the_overlay_is_open
@@ -287,7 +285,7 @@ module Switchboard
     def test_the_header_falls_back_to_the_folder_name_without_a_ws_row
       branch = Tree::Node.new(kind: "br", project: "app", path: "/wt/a", branch: "feat", active: true)
       sb = open(linked(nodes: [branch]))
-      assert_equal "a", lines(sb)[0][0].strip
+      assert_equal "a", name_line(sb).strip
     end
 
     # Value: protects=at the fit boundary (cols = n+4) the code still draws, with the 2-module
@@ -375,7 +373,7 @@ module Switchboard
     def test_a_non_utf8_worktree_name_still_draws_the_header
       bad = "caf\xE9".dup.force_encoding(Encoding::UTF_8)
       sb = open(linked(nodes: [ws(bad, path: "/wt/a")]))
-      assert_includes lines(sb)[0][0], "app/caf"
+      assert_includes name_line(sb), "app/caf"
     end
 
     # Value: protects=an input nobody foresaw, raising while the overlay builds its frame, closes
@@ -482,7 +480,7 @@ module Switchboard
       seen = 3.times.map { sb.send(:dispatch, "\t") && [view(sb)[:pid], view(sb)[:bridge_id]] }
       assert_equal [[8, ID_A], [9, ID_B], [7, ID_A]], seen
       sb.send(:dispatch, "\t")
-    assert_equal "2/3", lines(sb)[0][0].split.last, "the header counts the twin as its own link"
+    assert_equal "2/3", name_line(sb).split.last, "the header counts the twin as its own link"
     end
 
     # Value: protects=the open QR stays on its own session when its workspace is renamed and
@@ -494,7 +492,7 @@ module Switchboard
       sb.instance_variable_set(:@links, { "/wt/b" => [link(ID_A, pid: 7)], "/wt/a" => [link(ID_B, pid: 9)] })
       sb.send(:revalidate_link_view)
       assert_equal ["/wt/b", 7, ID_A], view(sb).values_at(:path, :pid, :bridge_id)
-      assert_includes lines(sb)[0][0], "app/beta", "the header follows it too"
+      assert_includes name_line(sb), "app/beta", "the header follows it too"
     end
 
     # Value: protects=reconnects with the QR open don't pile up a matrix per old URL; fails_when=
@@ -509,22 +507,12 @@ module Switchboard
       assert_equal [link(ID_B).url], view(sb)[:qr].keys
     end
 
-    # Value: protects=a huge session name can't slow every repaint; fails_when=session_label
-    # scrubs and measures the whole name before cutting it; why_new=Codex adversarial review of
-    # v0.54.0 (10 MB took ~1.8 s a frame); seam=none; no_claim=timing
-    def test_a_huge_session_name_is_cut_before_it_is_cleaned
-      label = sb_label("x" * 1_000_000)
-      assert_equal Sidebar::LABEL_MAX, label.size
-    end
-
-    def sb_label(name) = open(linked).send(:session_label, link(name: name))
-
     # Value: protects=control bytes in a project or folder name never reach the terminal from the
     # overlay header; fails_when=link_view_header draws the name unstripped; why_new=adversarial
     # review of v0.54.0; seam=none; no_claim=the tree rows (their own path)
     def test_the_header_drops_control_bytes_from_the_name
       sb = open(linked(nodes: [ws("evil\e[2Jname", path: "/wt/a")]))
-      header = sb.send(:link_view_lines, 40, 40)[0][0]
+      header = name_line(sb, raw: true)
       refute_includes header, "\e[2J"
       assert_includes strip_ansi(header), "evil[2Jname"
     end
@@ -543,6 +531,136 @@ module Switchboard
         refute still_open.call(sb), "the overlay closed"
         assert_empty fired, "the / typed after the closing x never ran"
       end
+    end
+
+    # Value: protects=the QR overlay leads with the same header as the tree (the full one at home or
+    # with H), so the pane keeps its identity while the code is up; fails_when=link_view_lines builds
+    # its own head again; why_new=Will asked for the full header on the overlay; seam=none;
+    # no_claim=the header's contents (sidebar_header tests)
+    def test_the_overlay_leads_with_the_trees_full_header_at_home
+      sb = open(linked)
+      sb.instance_variable_set(:@home, true)
+      text, = lines(sb)
+      head = sb.send(:header, 40).map { |l| strip_ansi(l) }
+      assert_operator head.size, :>, 1, "home draws the full header"
+      assert_equal head, text.first(head.size)
+      assert_equal "app/alpha", name_line(sb).strip
+      refute_empty qr_lines(lines(sb)[2]), "the code still fits under it at 40x40"
+    end
+
+    # Value: protects=a tmux poke that lands in the same read as the key closing an overlay still
+    # runs (a C-l reload, a C-r config reload, focus); fails_when=the close fence drops the whole
+    # batch; why_new=review of v0.54.1 (core + state machines + Codex); seam=reload_and_refresh
+    # stubbed; no_claim=tmux's read sizes
+    def test_a_poke_after_the_closing_key_still_runs
+      [->(sb) { open(sb) }, ->(sb) { sb.send(:dispatch, "?") }].each do |opener|
+        sb = linked
+        opener.call(sb)
+        ran = []
+        stub_method(sb, :reload_and_refresh, ->(*) { ran << :reload }) do
+          stub_method(sb, :start_filter, ->(*) { ran << :filter }) { assert sb.send(:handle, "x\f/") }
+        end
+        assert_equal [:reload], ran, "the poke ran, the / aimed at the overlay didn't"
+      end
+    end
+
+    # Value: protects=keys typed at the QR don't run on the tree when a scan (not a key) closes it
+    # because the link ended; fails_when=only a dismissing key fences the batch; why_new=Codex
+    # review of v0.54.1 (handle("\f/") started a filter); seam=reload_and_refresh stubbed to end the
+    # link; no_claim=the real scan
+    def test_keys_after_a_scan_closes_the_qr_do_not_reach_the_tree
+      sb = open(linked)
+      fired = []
+      ended = lambda do |*|
+        sb.instance_variable_set(:@links, {})
+        sb.send(:revalidate_link_view)
+      end
+      stub_method(sb, :reload_and_refresh, ended) do
+        stub_method(sb, :start_filter, ->(*) { fired << :filter }) { assert sb.send(:handle, "\f/") }
+      end
+      assert_nil view(sb)
+      assert_empty fired
+    end
+
+    # Value: protects=a /rc reconnect (same session, new bridge id) keeps the QR on that session,
+    # even after a rename, instead of jumping to another link; fails_when=the follow matches the
+    # bridge id only; why_new=Codex review of v0.54.1; seam=none; no_claim=Claude's reconnect timing
+    def test_a_reconnect_keeps_the_same_session_through_a_rename
+      sb = open(linked([link(ID_A, pid: 7)]))
+      sb.instance_variable_set(:@links, { "/wt/b" => [link(ID_B, pid: 7)], "/wt/a" => [link("session_01CcCcCcCcCcCcCcCcCcCcCcCc", pid: 9)] })
+      sb.send(:revalidate_link_view)
+      assert_equal ["/wt/b", 7, ID_B], view(sb).values_at(:path, :pid, :bridge_id)
+    end
+
+    # Value: protects=a scan that keeps the link keeps its code, so it isn't rebuilt every few
+    # seconds; fails_when=the memo prune drops too much; why_new=testing specialist, review of
+    # v0.54.1; seam=QR.matrix counted; no_claim=timing
+    def test_a_scan_that_keeps_the_link_keeps_its_code
+      sb = open(linked)
+      built = 0
+      real = QR.method(:matrix)
+      stub_method(QR, :matrix, ->(*a, **k) { built += 1; real.call(*a, **k) }) do
+        lines(sb)
+        sb.send(:revalidate_link_view)
+        lines(sb)
+      end
+      assert_equal 1, built
+    end
+
+    # Value: protects=a broken overlay state found during the scan closes the QR instead of killing
+    # the pane (revalidate runs in refresh_agents' ensure, outside its rescue); fails_when=the rescue
+    # goes; why_new=adversarial review of v0.54.1; seam=a nil memo; no_claim=which bug would cause it
+    def test_a_broken_overlay_state_closes_on_the_next_scan
+      sb = open(linked)
+      view(sb)[:qr] = nil
+      sb.send(:revalidate_link_view)
+      assert_nil view(sb)
+    end
+
+    # Value: protects=the full home header never costs the QR or the URL: it drops to the wordmark
+    # when it would, and stays when it fits; fails_when=the overlay always seats the full header (a
+    # 28-row home pane loses its code, a tiny one cuts the URL); why_new=review of v0.54.2 (QA probe,
+    # red team, Codex); seam=none; no_claim=other header contents
+    def test_the_full_header_gives_way_before_the_code_or_the_url
+      sb = open(linked)
+      sb.instance_variable_set(:@home, true)
+      full = sb.send(:header, 40).size
+      assert_operator full, :>, 1
+      assert_equal full, lines(sb, rows: 40)[0].index("app/alpha".ljust(40)), "room: the full header"
+      text, _, raw = lines(sb, rows: 28)
+      refute_empty qr_lines(raw), "28 rows: the code stays"
+      assert_equal 1, text.index("app/alpha".ljust(40)), "and the header shrinks to the wordmark"
+      tiny, = lines(sb, rows: 9)
+      assert_includes tiny.join, "hJkMnPqRsTuVwXy", "a tiny pane keeps the whole URL"
+    end
+
+    # Value: protects=a name keeps its accents in the QR header (a decomposed é stays é) while
+    # losing terminal controls; fails_when=names lose combining marks again; why_new=review of
+    # v0.54.1 (Codex, red team, adversarial); seam=none; no_claim=NFC normalization
+    def test_the_header_keeps_a_decomposed_accent
+      sb = open(linked(nodes: [ws("café", path: "/wt/a")]))
+      assert_includes name_line(sb), "café"
+    end
+
+    # Value: protects=a combining accent takes no column, so the header's count stays flush right
+    # and the name isn't cut early; fails_when=columns counts a combining mark as one; why_new=
+    # pass-2 review of v0.54.2; seam=none; no_claim=terminals that draw marks oddly
+    def test_a_decomposed_name_keeps_the_count_flush_right
+      sb = open(linked([link(ID_A), link(ID_B)], nodes: [ws("café", path: "/wt/a")]))
+      line = name_line(sb)
+      assert line.end_with?("1/2"), line
+      assert_equal 40, line.each_char.count { |c| !c.match?(/\p{Mn}/) }, "40 visible columns"
+    end
+
+    # Value: protects=the header choice reads whether the code was drawn, not whether a ▀ appears
+    # somewhere in the text; fails_when=the score sniffs the body for ▀ (a name holding one keeps
+    # the full header and loses the code); why_new=pass-2 review of v0.54.2; seam=none; no_claim=none
+    def test_a_name_with_a_half_block_does_not_fool_the_header_choice
+      sb = open(linked(nodes: [ws("a▀b", path: "/wt/a")]))
+      sb.instance_variable_set(:@home, true)
+      _, hint, raw = lines(sb, rows: 28)
+      assert_equal "any key closes", hint, "the code drew, under the wordmark only"
+      assert_operator qr_lines(raw).size, :>, 1
     end
 
     def sidebar_with_links = open(linked)

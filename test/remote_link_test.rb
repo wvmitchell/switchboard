@@ -89,7 +89,7 @@ module Switchboard
       write_session("1", cwd: w, name: "Compass’s Night Watch ⇅")
       old = Encoding.default_external
       Encoding.default_external = Encoding::US_ASCII
-      assert_equal "Compass’s Night Watch ⇅", scan([w])[w].first.name
+      assert_equal ["session_01L45oDnx5EE9wmapDpFmAfd"], scan([w])[w].map(&:bridge_id), "the smart-quoted name doesn't cost the link"
     ensure
       Encoding.default_external = old
     end
@@ -162,8 +162,8 @@ module Switchboard
     end
 
     # Value: protects=a non-finite startedAt fails closed to the procStart fallback; fails_when=
-    # start_ms trusts any Numeric again (1e400 parses to Infinity, and the p overlay's session
-    # label then raises FloatDomainError and kills the pane); why_new=red team, ship of v0.54.0;
+    # start_ms trusts any Numeric again (1e400 parses to Infinity, which would sort that link
+    # newest forever); why_new=red team, ship of v0.54.0;
     # seam=none; no_claim=other malformed fields (covered above)
     def test_a_non_finite_started_at_falls_back_to_proc_start
       w = wt("alpha")
@@ -172,7 +172,6 @@ module Switchboard
       File.write(file, File.read(file).sub('"startedAt":"MARK"', '"startedAt":1e400'))
       link = stub_method(ProcessIdentity, :same?, ->(*) { true }) { scan([w])[w] }.first
       assert link.started_at.finite?, "falls back to the parsed procStart"
-      assert_match(/\Astarted \d\d:\d\d\z/, Sidebar.allocate.send(:session_label, link), "no name, so the label reads the start time")
     end
 
     def test_an_interactive_link_idle_past_the_threshold_is_stale
@@ -523,8 +522,6 @@ module Switchboard
       File.write(bad, File.read(bad).gsub('"MARK"', '"session_\udcff"'))
       links = stub_method(ProcessIdentity, :same?, ->(*) { true }) { scan([w])[w] }
       assert_equal ["session_good"], links.map(&:bridge_id), "the bad file just isn't a link"
-      assert links.first.name.valid_encoding?
-      Sidebar.allocate.send(:session_label, links.first) # no raise in the overlay's label
       assert_equal 2, as_claude { RemoteLink.health }[:files], "doctor still counts both files"
     end
 

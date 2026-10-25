@@ -523,6 +523,32 @@ module Switchboard
       assert_match(/\Agood (morning|afternoon|evening)\z/, sb.send(:greeting), "no name → no comma")
     end
 
+    # Value: protects=a git or folder name never drives the terminal from the tree (project
+    # header, workspace, branch rows, the greeting's git name) and keeps its accents; fails_when=
+    # a name is drawn raw again, or loses combining marks; why_new=review of v0.54.1 (adversarial,
+    # red team, Codex: the overlay header was stripped but the tree wasn't); seam=the git shell-out
+    # stubbed; no_claim=NFC normalization
+    def test_names_lose_terminal_controls_but_keep_their_accents
+      sb = sidebar
+      rows = [sb.send(:plain, proj("ev\e]52;c;x\aal")), sb.send(:plain, ws("ws\e[2Jname", path: "/wt/a")),
+              sb.send(:fit_plain, ws("ws\e[2Jname", path: "/wt/a"), 30),
+              sb.send(:plain, Tree::Node.new(kind: "br", project: "app", path: "/wt/a", branch: "br\e[31mred"))]
+      rows.each { |r| refute_match(/[\e\a]/, r) }
+      bad = ws("ws\e[2Jname", path: "/wt/a")
+    refute_match(/\e\[2J/, sb.send(:colored, bad, sb.send(:fit_plain, bad, 30)), "the painted (non-cursor) row too")
+    stub_method(sb, :winsize, ->(*) { [24, 40] }) do
+      stub_method(sb, :read_char, ->(*) { "n" }) do
+        said = capture_stdout { sb.send(:flash, "kept x\e]52;c;y\a"); sb.send(:confirm, "cancel z\e[2J?") }
+        refute_match(/\e\]|\a|\e\[2J/, said, "flash and confirm messages carry names too")
+      end
+    end
+    assert_includes sb.send(:plain, ws("café", path: "/wt/a")), "café"
+    assert_equal "fatal: x hint: y", sb.send(:shown, "fatal: x\nhint: y"), "a line break reads as a space"
+      stub_method(sb, :`, ->(*) { "Will\e]52;c;x\a Mitchell\n" }) do
+        assert_equal "will]52;c;x", sb.send(:operator_name)
+      end
+    end
+
     def test_console_counts_worktrees_active_agents_and_open_prs
       open_pr  = { "identifier" => "#7", "status" => "OPEN", "is_draft" => 0 }
       draft_pr = { "identifier" => "#8", "status" => "OPEN", "is_draft" => 1 } # draft ≠ open
