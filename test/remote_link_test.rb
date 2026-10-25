@@ -423,6 +423,20 @@ module Switchboard
       as_claude { assert_equal [2, 1, 1], RemoteLink.health.values_at(:files, :shaped, :linked) }
     end
 
+    # Value: protects=⇅ and the doctor canary under a CLAUDE_CONFIG_DIR holding glob
+    # characters; fails_when=the sessions dir is spliced into the glob pattern (`[work]`
+    # reads as a character class and matches no file); why_new=every fixture dir was plain;
+    # seam=none
+    def test_a_sessions_dir_with_glob_characters_still_finds_its_files
+      ENV["SWITCHBOARD_CLAUDE_SESSIONS_DIR"] = path("cfg [work]*?", "sessions")
+      FileUtils.mkdir_p(RemoteLink.sessions_dir)
+      w = wt("alpha")
+      write_session("1", cwd: w)
+      assert_equal 1, scan([w])[w]&.size, "scan"
+      refute_nil RemoteLink.fingerprint({}, stale_after: STALE).first, "fingerprint"
+      assert_equal 1, as_claude { RemoteLink.health }[:linked], "health"
+    end
+
     def test_health_counts_files_shape_links_and_start_time_drift
       w = wt("alpha")
       write_session("1", cwd: w)

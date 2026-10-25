@@ -48,6 +48,13 @@ module Switchboard
       File.join(ClaudeHistory.claude_root, "sessions")
     end
 
+    # Every session file. `base:` keeps the dir out of the pattern: a CLAUDE_CONFIG_DIR like
+    # `~/cfg [work]` would otherwise read its brackets as glob syntax and match nothing.
+    def session_files
+      dir = sessions_dir
+      Dir.glob("*.json", base: dir).map { |f| File.join(dir, f) }
+    end
+
     # { ws_path => [Link, …] } for the tracked worktrees with a LIVE linked session,
     # newest first by startedAt (procStart when that's missing), then pid. `stale_after` is seconds or
     # nil (off). Total: any failure is "no links". `cheap:` is any off-screen scan (the
@@ -90,7 +97,7 @@ module Switchboard
     # status flip would read as unchanged — but adding/removing the bridge id changes
     # the size, and a whole-file rewrite changes the inode.
     def fingerprint(cache, stale_after:, now: Time.now)
-      files = Dir.glob(File.join(sessions_dir, "*.json"))
+      files = session_files
       cache.select! { |f, _| files.include?(f) }
       files.filter_map do |f|
         st = File.stat(f)
@@ -119,7 +126,7 @@ module Switchboard
     # change fails every live session at once — so doctor alarms only on
     # drift == alive. A RENAMED bridge key is undetectable — it reads as "nothing linked".
     def health
-      parsed = Dir.glob(File.join(sessions_dir, "*.json")).map { |f| read_json(f) }
+      parsed = session_files.map { |f| read_json(f) }
       shaped = parsed.select { |d| shaped?(d) }
       running = shaped.select { |d| ProcessIdentity.alive?(d["pid"]) }
       claude = claude_pids(running.map { |d| d["pid"] })
@@ -165,7 +172,7 @@ module Switchboard
     end
 
     def linked_records
-      Dir.glob(File.join(sessions_dir, "*.json")).filter_map { |f| record(read_json(f)) }
+      session_files.filter_map { |f| record(read_json(f)) }
     end
 
     # The fields we use from one session file, or nil when it isn't a linked session
