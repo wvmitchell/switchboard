@@ -721,3 +721,20 @@ safe today; each is narrow).
   the bright-black branch rows), so audition candidates in Will's terminal before choosing.
   Check the reset codes inside `colored` (`\e[0m` would also clear the bar's bg mid-row; they'd
   need to re-assert it or use targeted resets like `\e[39m`). **Priority:** P2.
+
+## Smoke suite follow-ups
+
+- **Flaky: `LifecycleTest#test_deleting_the_current_workspace_falls_home_and_the_daemon_removes_it`.**
+  *What:* timed out after 15s "waiting for the delete confirm prompt is up" on PR #30's
+  pull_request run (CI run 40148388479); the same commit's push run passed it, and the diff
+  doesn't touch delete. *Likely cause (unverified):* the same background-build race #29 fixed
+  for rename. The test sends `j`, `d` right after `create_workspace(enter: true)`; while the
+  build is still in flight the row can be synthetic (`node.creation`), and `Sidebar#remove`
+  routes `d` there to `dismiss_dispatch`, which prompts `cancel <name>?`, never
+  `delete <leaf>?`, so the wait can't succeed. A `j` that lands before the sidebar has drawn
+  its rows (cursor stays on the project header, `d` prompts "remove") is the other
+  candidate. *Start in:* `test/smoke/lifecycle_test.rb` (the test, ~line 160); first make the
+  timeout message include the pane's `capture-pane` text so the next failure says which
+  prompt was up. Then wait for the row to be real (the build finished) before `j`/`d`, like
+  the rename test's retry. *Note:* re-running the failed job is the workaround until then.
+  **Priority:** P2.
