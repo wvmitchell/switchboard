@@ -47,14 +47,17 @@ module Switchboard
       mk.call(:toggle_branch_fold, "z"),
       mk.call(:toggle_full_header, "H"),
       mk.call(:help,               "?"),
-      mk.call(:quit,               "q")
+      mk.call(:quit,               "q"),
+      # New actions go LAST: an earlier default beats a later override, so a default
+      # added mid-list would take its key from anyone who had already remapped to it.
+      mk.call(:phone_link,         "p")
     ].freeze
 
     DEFAULTS = ACTIONS.to_h { |a| [a.name, a.default] }.freeze
 
     # Resolve config into [bindings, collisions]:
     #   bindings:   { action => key | nil }  (nil when the action's key was claimed
-    #               by an earlier action — left unbound, its aliases still fire)
+    #               by an earlier action — left unbound, any aliases it has still fire)
     #   collisions: [{ action:, key:, winner: }, ...]  for doctor to report
     # An override wins only when it validates AND its key is still free; otherwise
     # the action falls back to its default, and a default that's also taken drops
@@ -137,6 +140,7 @@ module Switchboard
         [k[:new_workspace], "new workspace (task → background)"],
         ["#{k[:open_pr]}  ^o", "open its PR"],
         [k[:open_repo], "open its repo"],
+        [k[:phone_link], "its phone link (QR)"],
         [k[:rename], "rename workspace"],
         [k[:delete], "delete · remove"],
         ["", "anywhere"],

@@ -107,7 +107,7 @@ safe today; each is narrow).
   poke and the C-l refresh poke are read as the answer by `confirm`, `flash` and the `a`
   menu (see learning modal-dismiss-must-ignore-synthetic-tmux-bytes). *Start in:*
   `prompt.rb` `edit_buffer`/`read_char` — bound paste mode, and loop `read_char` past
-  `HELP_IGNORED_BYTES`. **Priority:** P2.
+  `POKE_BYTES`. **Priority:** P2.
 - **Say what's actually wrong when the config fails a build.** *Why:* the `config`
   reason's pane/row text says the config couldn't be read, but `setup_invalid?` now fires
   it for a file that parsed fine; `doctor` never checks `setup_invalid?`; the config
@@ -497,16 +497,31 @@ safe today; each is narrow).
 
 ## Agent CLI hooks (Claude 2.1.301 / Codex 0.163 compat review) follow-ups
 
+- **QR overlay: edge cases accepted at ship review (v0.54.0).** *What:* (1) two links with
+  the same `bridge_id` (a crash leftover beside its resumed session) trap `Tab` on the
+  first, so a third link is unreachable and the header stays `1/N`: key the overlay on
+  `[pid, bridge_id]` in `open_link_view`/`cycle_link`/`revalidate_link_view`/`view_link`;
+  (2) the overlay holds a path, so renaming workspaces onto each other's old paths while it's
+  open swaps in the other workspace's session: follow the held `bridge_id` across `@links`
+  before falling back; (3) bound `session_label`'s name (say 200 chars) before scrubbing and
+  measuring, so a huge title can't slow every repaint; (4) prune `@link_view[:qr]` to the
+  current links on revalidate, so reconnects with the QR open don't pile up matrices;
+  (5) strip `NOTE_INVISIBLE` from `link_view_header`'s workspace name; (6) drop the rest of
+  `@typeahead` when a key closes the overlay (the `?` overlay has the same gap); (7) the
+  off-screen backstop test should assert the tree still repaints; (8) `Keymap.help_rows`'
+  docstring still says the default map is byte-identical to pre-#108. *Why:* none crashes
+  or leaks (the URL is account-gated); each needs an unusual setup. *Pros:* small, testable,
+  one short review. *Cons:* touches the reviewed overlay. *Context:* ship review of v0.54.0
+  (adversarial D5 + review D3: ship, then a follow-up PR). *Depends on:* v0.54.0.
+
 - **Remote-link glyph: rare edges deferred at ship review (v0.53.0).** *What, in priority
-  order:* (1) `Sidebar#refresh_agents`' outer rescue leaves the previous `@links` standing, so an
-  ended link can keep its `⇅` until a scan succeeds — reset or compute links first;
-  (2) the doctor canary misses a format change while one old-format leftover file sits
-  beside the new ones (shaped > 0, alive 0 reads healthy); (3) `claude_pids` misses a
-  Claude whose process shows as `node …/cli.js`; (4) an empty workspace name shifts that
+  order:* (1) the doctor canary misses a format change while one old-format leftover file sits
+  beside the new ones (shaped > 0, alive 0 reads healthy); (2) `claude_pids` misses a
+  Claude whose process shows as `node …/cli.js`; (3) an empty workspace name shifts that
   row's columns — let `fit_plain` report whether the cues were kept and share it with
-  `colored` (the cursor-bar grey half of this went away in v0.53.1); (5) a stale comment:
+  `colored` (the cursor-bar grey half of this went away in v0.53.1); (4) a stale comment:
   `Agents.lsof_path`'s encoding rationale predates the byte compares.
-  *Why:* none hits a normal setup (the one verified user-visible item, the glob, shipped in v0.53.2). *Pros:*
+  *Why:* none hits a normal setup (the one verified user-visible item, the glob, shipped in v0.54.1). *Pros:*
   small, testable changes. *Cons:* each touches a reviewed path, so give it its own short
   review. *Context:* ship review of v0.53.0 (D2/D3 — deferred to keep the release from
   reopening its review loop). *Depends on:* v0.53.0.

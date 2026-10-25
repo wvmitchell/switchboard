@@ -1013,6 +1013,31 @@ server); a real `claude /rc` inside the sandbox writes the real `~/.claude` and 
 shown. Codex has no per-session equivalent (`codex remote-control` is a separate
 app-server process). Proven end to end by `test/smoke/remote_link_smoke_test.rb`.
 
+**`p` draws the link as a QR code** (`@link_view`, transient like `@help`). The encoder is
+`QR` (`qr.rb`): zero gems, byte mode, EC level M, versions 1-6 (a link URL is at most 95
+bytes, so there are no version-information blocks), pinned module for module by
+`qrencode -8` fixtures with each mask forced. Which mask it picks is pinned by
+hand-worked penalty cases, not by another encoder's choice: encoders legitimately differ
+on rule 3 (libqrencode#220), and segno pads differently (an extra `0x00` before the
+`0xEC/0x11` run), so neither is a bit-exact reference for that. The code is drawn in half blocks
+in the theme's ANSI 0/15 (picked by eye and scanned; the fixed 256-color 16/231 pair
+looked wrong in a themed terminal), with a quiet zone as wide as fits up to 4 and never
+under 2, centered in a wider pane; a pane that can't fit it shows the URL instead. The
+link is held by `bridge_id`, not index, and every scan re-checks it (`revalidate_link_view`):
+the same session stays through a re-sort, an ended one falls back to the newest left, and
+the last one ending closes the overlay. Never `flash` there: it blocks on a keypress inside
+the scan. For that check to mean anything, `@links` is hydrated in `refresh_agents`'
+`ensure`, so links refresh even when the dot scan raises. Unlike the `?` overlay, the tmux
+pokes keep running under it (`poke`), so switching back to a session re-checks its link at
+once. `p` on a row without a link does nothing (the missing `⇅` already says so). Building the
+overlay frame is rescued (`link_view_frame`): an input nobody foresaw closes the QR and repaints
+the tree instead of killing the pane; every specific hardening still has its own test. The URL
+is account-gated, not a bearer link: opened in a logged-out browser it lands on the claude.ai
+sign-in page (checked 2026-10-24), so a QR on screen only helps someone already signed in as you.
+`:phone_link` sits LAST in `Keymap::ACTIONS`, because an earlier action's default beats a
+later one's remap: added mid-list, `p` would have taken the key from anyone who had remapped
+`rename` (or any later action) to it.
+
 ### Shared project collapse (the same multi-process trick)
 
 Folding a project header (▸/▾ on ↵) hides its workspace rows. `Collapse`
@@ -1233,7 +1258,7 @@ it's live query state, not key-teaching.
 key to `help_key` while `@help` is set. A genuine keystroke (even `q`) only closes
 the overlay — no passthrough into an action. But the non-keystroke bytes the loop
 also receives — the `C-l` switch/background-refresh poke, the `C-r` config poke,
-focus in/out (`HELP_IGNORED_BYTES`) — must NOT dismiss it, or a background PR
+focus in/out (`POKE_BYTES`) — must NOT dismiss it, or a background PR
 refresh would close it out from under the reader (the same robustness `filter_key`
 has against non-printables). Dropping their side effects is safe: `C-l`'s
 reload/visibility self-heals via the `tick` backstop within `REFRESH` (tick runs

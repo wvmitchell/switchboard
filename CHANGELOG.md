@@ -10,7 +10,7 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
-## [0.53.2] — failures that used to stay silent now say so (2026-10-24)
+## [0.54.1] — failures that used to stay silent now say so (2026-10-24)
 
 ### Fixed
 - A `config.yml` that won't parse no longer lets `install` and `upgrade` look successful.
@@ -25,9 +25,9 @@ refer to the project's earlier, private repository; the public tracker starts at
   anything git says was already there. The failed row now names what it kept and why. A
   create that timed out halfway still cleans up.
 - Reading git's output no longer depends on the locale: switchboard's own binary already
-  read it as UTF-8 (since 0.52.0), and now every `Git` helper does, whoever loads it. A worktree whose path isn't
-  valid UTF-8 (possible only on Linux) is now skipped in the sidebar instead of breaking its
-  whole project's list, and `prune` and a failed create's cleanup leave that project's
+  read it as UTF-8 (since 0.52.0), and now every `Git` helper does, whoever loads it. A
+  worktree whose path isn't valid UTF-8 (possible only on Linux) is now skipped in the
+  sidebar instead of breaking its whole project's list, and `prune` and a failed create's cleanup leave that project's
   sessions and branches alone rather than act on a list they couldn't fully read.
 - `doctor` and `upgrade` now notice a `tmux_keys` change made by editing `config.yml`
   by hand, for both the toggle and the home key. The key tmux still had bound worked, so
@@ -41,6 +41,23 @@ refer to the project's earlier, private repository; the public tracker starts at
 - `uninstall` now exits 1 when it can't remove the codex hooks block, and says "Done,
   except the codex hooks", like `install` does for the same failure. It still finishes
   the rest of the uninstall.
+
+## [0.54.0] — scan a workspace's phone link (2026-10-24)
+
+### Added
+- **`p` shows a workspace's phone link as a QR code.** On a `⇅` row, press `p` and point
+  your phone's camera at the pane: that exact Claude session opens there. The overlay
+  shows the workspace, the session's name, the code in your theme's own black and white,
+  and the URL as text underneath. `Tab` steps through several links, `←`/`→` resize, and
+  any other key closes it. If the link ends while it's open, it closes back to the tree.
+  A pane too narrow or too short for the code shows the URL and says which.
+- The `?` legend names the key (`⇅ on phone · p shows a QR`), following any remap.
+
+### Fixed
+- A remote link now refreshes even when a scan of the agent dots fails, so an ended
+  link can't keep its `⇅`.
+- A malformed Claude session file (an odd escape in any field, an out-of-range start
+  time) now loses only its own link instead of hiding every `⇅`.
 
 ## [0.53.1] — a live `⇅` reads green (2026-10-24)
 

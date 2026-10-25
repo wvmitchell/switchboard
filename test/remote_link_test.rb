@@ -161,6 +161,20 @@ module Switchboard
                    "startedAt orders; a missing one falls back to procStart (epoch 0 here) and is kept, not dropped"
     end
 
+    # Value: protects=a non-finite startedAt fails closed to the procStart fallback; fails_when=
+    # start_ms trusts any Numeric again (1e400 parses to Infinity, and the p overlay's session
+    # label then raises FloatDomainError and kills the pane); why_new=red team, ship of v0.54.0;
+    # seam=none; no_claim=other malformed fields (covered above)
+    def test_a_non_finite_started_at_falls_back_to_proc_start
+      w = wt("alpha")
+      write_session("inf", cwd: w, name: "", startedAt: "MARK", bridgeSessionId: "session_inf")
+      file = File.join(RemoteLink.sessions_dir, "inf.json")
+      File.write(file, File.read(file).sub('"startedAt":"MARK"', '"startedAt":1e400'))
+      link = stub_method(ProcessIdentity, :same?, ->(*) { true }) { scan([w])[w] }.first
+      assert link.started_at.finite?, "falls back to the parsed procStart"
+      assert_match(/\Astarted \d\d:\d\d\z/, Sidebar.allocate.send(:session_label, link), "no name, so the label reads the start time")
+    end
+
     def test_an_interactive_link_idle_past_the_threshold_is_stale
       w = wt("alpha")
       now = Time.now
@@ -507,6 +521,39 @@ module Switchboard
       write_session("1", cwd: w, bridgeSessionId: :absent) # /rc off, same tick
       File.utime(t, t, file)
       refute_equal before, RemoteLink.fingerprint(cache, stale_after: STALE)
+    end
+
+    # Value: protects=a \u escape that decodes to invalid UTF-8 (a lone surrogate) in any field
+    # of one session file reads as unrecognized, never raises; fails_when=read_json stops scrubbing
+    # parsed strings (one leftover file then wipes every ⇅, closes the overlay, or zeroes the doctor
+    # canary); why_new=red team + security, ship of v0.54.0; seam=none; no_claim=other JSON oddities
+    def test_a_lone_surrogate_in_one_file_never_takes_the_others_down
+      w = wt("alpha")
+      write_session("good", cwd: w, name: "MARK", bridgeSessionId: "session_good")
+      write_session("bad", cwd: w, bridgeSessionId: "MARK", procStart: "MARK")
+      good = File.join(RemoteLink.sessions_dir, "good.json")
+      bad = File.join(RemoteLink.sessions_dir, "bad.json")
+      File.write(good, File.read(good).sub('"name":"MARK"', '"name":"a\udcffb"'))
+      File.write(bad, File.read(bad).gsub('"MARK"', '"session_\udcff"'))
+      links = stub_method(ProcessIdentity, :same?, ->(*) { true }) { scan([w])[w] }
+      assert_equal ["session_good"], links.map(&:bridge_id), "the bad file just isn't a link"
+      assert links.first.name.valid_encoding?
+      Sidebar.allocate.send(:session_label, links.first) # no raise in the overlay's label
+      assert_equal 2, as_claude { RemoteLink.health }[:files], "doctor still counts both files"
+    end
+
+    # Value: protects=one file whose record raises loses only its own link; fails_when=the
+    # per-file rescue in linked_records goes (a raise then wipes every link via scan's catch-all);
+    # why_new=the surrogate test passes without it (the scrub already defuses that file); seam=none
+    # (stubs record for one file); no_claim=which inputs can still raise
+    def test_one_file_whose_record_raises_loses_only_its_own_link
+      w = wt("alpha")
+      write_session("good", cwd: w, bridgeSessionId: "session_good")
+      write_session("bad", cwd: w, name: "BOOM", bridgeSessionId: "session_bad")
+      real = RemoteLink.method(:record)
+      boom = ->(d) { d.is_a?(Hash) && d["name"] == "BOOM" ? raise("odd") : real.call(d) }
+      links = stub_method(RemoteLink, :record, boom) { stub_method(ProcessIdentity, :same?, ->(*) { true }) { scan([w])[w] } }
+      assert_equal ["session_good"], links.map(&:bridge_id)
     end
   end
 end

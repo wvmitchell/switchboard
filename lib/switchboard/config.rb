@@ -121,6 +121,7 @@ module Switchboard
         # toggle_full_header: H   # toggle full header
         # help: "?"               # help overlay
         # quit: q                 # quit all sessions
+        # phone_link: p           # show the row's phone link as a QR
 
       projects: []   # grown by `a` in the sidebar or `switchboard add <name> <path>`
     YAML
