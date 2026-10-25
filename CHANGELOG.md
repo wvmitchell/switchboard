@@ -10,6 +10,19 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
+## [0.55.1] — the QR overlay's edge cases (2026-10-24)
+
+### Fixed
+- With two links that share a session id (a crash leftover beside its resumed session),
+  `Tab` now reaches every link instead of bouncing between those two.
+- An open QR stays on its own session when its workspace is renamed, even if another
+  workspace is renamed onto the old name.
+- Keys typed in the same instant as the key that closes the QR or `?` overlay no longer
+  run on the tree.
+- A huge session name no longer slows every repaint of the QR overlay, reconnects with the
+  overlay open no longer pile up old codes in memory, and control characters in a folder
+  name can't reach the terminal through its header.
+
 ## [0.55.0] — the `?` overlay pages instead of cutting off (2026-10-24)
 
 ### Changed

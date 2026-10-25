@@ -39,7 +39,7 @@ module Switchboard
 
     def test_p_on_a_linked_workspace_opens_the_newest_link
       sb = open(linked([link(ID_A), link(ID_B)]))
-      assert_equal({ path: "/wt/a", bridge_id: ID_A, qr: {} }, view(sb).merge(qr: {}))
+      assert_equal({ path: "/wt/a", pid: 7, bridge_id: ID_A, qr: {} }, view(sb).merge(qr: {}))
     end
 
     def test_p_on_an_unlinked_row_or_a_header_does_nothing
@@ -460,15 +460,89 @@ module Switchboard
       sb = open(linked)
       sb.instance_variable_set(:@visible, false)
       said = []
+      repainted = []
       stub_method(sb, :winsize, ->(*) { [40, 40] }) do
         stub_method(sb, :link_view_lines, ->(*) { raise ArgumentError, "unforeseen" }) do
           stub_method(Tmux, :notify, ->(msg) { said << msg }) do
-            stub_method(sb, :render, ->(*) {}) { sb.send(:render_link_view) }
+            stub_method(sb, :render, ->(*) { repainted << sb.instance_variable_get(:@link_view) }) { sb.send(:render_link_view) }
           end
         end
       end
       assert_nil view(sb)
       assert_empty said
+      assert_equal [nil], repainted, "the tree still repaints into the hidden pane's buffer"
+    end
+
+    # Value: protects=Tab reaches every link when a crash leftover shares its bridge id with the
+    # resumed session; fails_when=the overlay holds a link by bridge id alone (Tab bounces between
+    # the two twins, the third link is unreachable, the count stays 1/N); why_new=adversarial review
+    # of v0.54.0; seam=none; no_claim=how Claude reuses a bridge id
+    def test_tab_reaches_a_third_link_past_two_that_share_a_bridge_id
+      sb = open(linked([link(ID_A, pid: 7), link(ID_A, pid: 8), link(ID_B, pid: 9)]))
+      seen = 3.times.map { sb.send(:dispatch, "\t") && [view(sb)[:pid], view(sb)[:bridge_id]] }
+      assert_equal [[8, ID_A], [9, ID_B], [7, ID_A]], seen
+      sb.send(:dispatch, "\t")
+    assert_equal "2/3", lines(sb)[0][0].split.last, "the header counts the twin as its own link"
+    end
+
+    # Value: protects=the open QR stays on its own session when its workspace is renamed and
+    # another one is renamed onto the old path; fails_when=revalidate only looks at the held path
+    # (the QR silently becomes the other workspace's session); why_new=Codex adversarial review of
+    # v0.54.0; seam=none; no_claim=Rename's bridge bookkeeping
+    def test_a_renamed_workspace_keeps_its_own_qr_when_another_takes_its_old_path
+      sb = open(linked([link(ID_A, pid: 7)]))
+      sb.instance_variable_set(:@links, { "/wt/b" => [link(ID_A, pid: 7)], "/wt/a" => [link(ID_B, pid: 9)] })
+      sb.send(:revalidate_link_view)
+      assert_equal ["/wt/b", 7, ID_A], view(sb).values_at(:path, :pid, :bridge_id)
+      assert_includes lines(sb)[0][0], "app/beta", "the header follows it too"
+    end
+
+    # Value: protects=reconnects with the QR open don't pile up a matrix per old URL; fails_when=
+    # revalidate stops pruning the memo; why_new=Codex adversarial review of v0.54.0; seam=none;
+    # no_claim=memory use
+    def test_the_code_memo_keeps_only_current_links
+      sb = open(linked)
+      lines(sb)
+      sb.instance_variable_set(:@links, { "/wt/a" => [link(ID_B)] })
+      sb.send(:revalidate_link_view)
+      lines(sb)
+      assert_equal [link(ID_B).url], view(sb)[:qr].keys
+    end
+
+    # Value: protects=a huge session name can't slow every repaint; fails_when=session_label
+    # scrubs and measures the whole name before cutting it; why_new=Codex adversarial review of
+    # v0.54.0 (10 MB took ~1.8 s a frame); seam=none; no_claim=timing
+    def test_a_huge_session_name_is_cut_before_it_is_cleaned
+      label = sb_label("x" * 1_000_000)
+      assert_equal Sidebar::LABEL_MAX, label.size
+    end
+
+    def sb_label(name) = open(linked).send(:session_label, link(name: name))
+
+    # Value: protects=control bytes in a project or folder name never reach the terminal from the
+    # overlay header; fails_when=link_view_header draws the name unstripped; why_new=adversarial
+    # review of v0.54.0; seam=none; no_claim=the tree rows (their own path)
+    def test_the_header_drops_control_bytes_from_the_name
+      sb = open(linked(nodes: [ws("evil\e[2Jname", path: "/wt/a")]))
+      header = sb.send(:link_view_lines, 40, 40)[0][0]
+      refute_includes header, "\e[2J"
+      assert_includes strip_ansi(header), "evil[2Jname"
+    end
+
+    # Value: protects=keys typed in the same instant as the closing key don't fire on the tree
+    # (a buffered d or q after the dismissal); fails_when=closing an overlay leaves the rest of the
+    # batch in @typeahead; why_new=adversarial review of v0.54.0; seam=none; no_claim=tokenizing
+    def test_keys_after_the_closing_key_in_one_read_do_not_reach_the_tree
+      [[->(sb) { open(sb) }, ->(sb) { view(sb) }], [->(sb) { sb.send(:dispatch, "?") }, ->(sb) { sb.instance_variable_get(:@help) }]].each do |opener, still_open|
+        sb = linked
+        opener.call(sb)
+        fired = []
+        stub_method(sb, :start_filter, ->(*) { fired << :filter }) do
+          assert sb.send(:handle, "x/")
+        end
+        refute still_open.call(sb), "the overlay closed"
+        assert_empty fired, "the / typed after the closing x never ran"
+      end
     end
 
     def sidebar_with_links = open(linked)
