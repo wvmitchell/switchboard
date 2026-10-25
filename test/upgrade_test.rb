@@ -110,6 +110,18 @@ module Switchboard
       end
     end
 
+    # Value: protects=a broken config never blocks repairs that don't need it (tmux, codex,
+    # reporter); fails_when=the config check returns before finish(leftovers:); why_new=ship 2
+    # red team (D5); seam=leftovers?/finish (finish's own failure on the config is pinned in
+    # installer_refresh_test)
+    def test_a_broken_config_still_finishes_leftover_setup
+      File.write(Config.path, "--\nprojects:\n")
+      [brew_upgrade(latest: VERSION, leftovers: true), brew_upgrade(stamps: %w[same same], leftovers: true)].each do |r|
+        assert_equal :finished, r[:result], "leftover setup still finished"
+        refute_includes r[:out], "is up to date"
+      end
+    end
+
     def test_an_unreachable_release_list_lets_brew_decide
       r = brew_upgrade(latest: nil)
       assert_includes r[:out], "couldn't check for a newer release"
