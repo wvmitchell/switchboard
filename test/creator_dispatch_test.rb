@@ -698,7 +698,7 @@ module Switchboard
       git(dest, "commit", "-q", "--allow-empty", "-m", "real work")
       note = Creator.undo_add(config.project("proj"), dest, "worked", base)
       assert_path_exists dest, "a tree with a commit stays"
-      assert_equal "kept #{dest} (it has commits) and branch worked (it's checked out)", note, "and the ✘ detail says why"
+      assert_equal "kept #{dest} (it has commits) and branch worked (its tree was kept)", note, "and the ✘ detail says why"
       assert Git.branch_exists?(repo, "worked")
 
       # A racing writer's same-name branch with its own commit, no tree at our path.
@@ -746,7 +746,7 @@ module Switchboard
       note = stub_method(Git, :remove_worktree, ->(*, **) { false }) do
         Creator.undo_add(config.project("proj"), dest, "stuck", Git.rev_parse(repo, "main"))
       end
-      assert_equal "kept #{dest} (couldn't remove it) and branch stuck (it's checked out)", note
+      assert_equal "kept #{dest} (couldn't remove it) and branch stuck (its tree was kept)", note
       assert_path_exists dest
       assert Git.branch_exists?(repo, "stuck"), "never delete the branch under a surviving tree"
     end
@@ -763,7 +763,8 @@ module Switchboard
 
     # Value: protects=a racing writer's tree and branch (git says they already existed) are
     # never force-removed, even dirty and commitless, for every message our `add -b` can get;
-    # fails_when=PREEXISTING misses a real git last line, or undo_add ignores it; why_new=ship
+    # fails_when=a *_PREEXISTED check misses a real git last line, or a path clash keeps our new
+    # branch (git cuts it before refusing the path); why_new=ship
     # review D8 + cycle-2 testing (one hand-written message was the only row); seam=none
     def test_undo_add_keeps_what_git_says_was_already_there
       repo = temp_git_repo("proj", origin: true)
@@ -785,13 +786,18 @@ module Switchboard
         note = Creator.undo_add(project, dest, branch, base, err)
         assert_includes note.to_s, "(it was there before)", "#{label}: #{err}"
         assert_path_exists File.join(dest, "their-edit.txt"), label if File.directory?(dest)
-        assert Git.branch_exists?(repo, branch), label unless label == "plain dir"
+        if label == "plain dir" # only the path was theirs: git had already cut OUR branch
+          refute Git.branch_exists?(repo, branch), "#{label}: our just-cut branch is cleaned up"
+          refute_includes note, "branch #{branch}", label
+        else
+          assert Git.branch_exists?(repo, branch), label
+        end
       end
     end
 
     # Value: protects=a timeout (ours) still cleaning up a dirty, commitless tree (D4) while a
     # hook's output that merely mentions "already exists" doesn't count as a race; fails_when=
-    # PREEXISTING is unanchored or a timeout keeps the tree; why_new=cycle-2 maintainability; seam=none
+    # the race guards are unanchored or a timeout keeps the tree; why_new=cycle-2 maintainability; seam=none
     def test_undo_add_still_cleans_up_after_a_timeout_or_a_noisy_hook
       repo = temp_git_repo("proj", origin: true)
       config = config_for(repo)
@@ -870,6 +876,49 @@ module Switchboard
         Creator.add_worktree(config, config.project("proj"), "lang", path("wts", "lang"), "main")
       end
       assert_equal "en", env["LANGUAGE"]
+    end
+
+    # Value: protects=a kept tree that isn't on our branch never decides the branch's fate or
+    # its reason: the branch is judged on its own state; fails_when=undo_add ties "free" to
+    # whether anything else was kept; why_new=ship cycle 3 (state-machines + maintainability)
+    def test_undo_add_judges_the_branch_on_its_own_when_a_foreign_tree_is_kept
+      repo = temp_git_repo("proj", origin: true)
+      config = config_for(repo)
+      project = config.project("proj")
+      base = Git.rev_parse(repo, "main")
+      run_git = method(:git)
+      cases = {
+        "free at base" => [->(_b) {}, nil],
+        "moved" => [lambda { |b|
+          tmp = path("wts", "mv-#{b}")
+          run_git.call(repo, "worktree", "add", "-q", tmp, b)
+          run_git.call(tmp, "commit", "-q", "--allow-empty", "-m", "moved")
+          run_git.call(repo, "worktree", "remove", tmp)
+        }, "it moved off the base"],
+        "checked out elsewhere" => [->(b) { run_git.call(repo, "worktree", "add", "-q", path("wts", "co-#{b}"), b) }, "it's checked out"]
+      }
+      cases.each_with_index do |(label, (setup, why)), i|
+        branch = "own-#{i}"
+        git(repo, "branch", branch, "main")
+        setup.call(branch)
+        dest = path("wts", "plain-#{i}")
+        FileUtils.mkdir_p(dest) # a non-git dir left by a timeout: not on our branch
+        note = Creator.undo_add(project, dest, branch, base, "timed out after 120s")
+        assert_path_exists dest, label
+        assert_includes note, "#{dest} (not on this create's branch)", label
+        if why
+          assert_includes note, "branch #{branch} (#{why})", label
+          assert Git.branch_exists?(repo, branch), label
+        else
+          refute_includes note, "branch #{branch}", "#{label}: a provably free branch is cleaned up"
+          refute Git.branch_exists?(repo, branch), label
+        end
+      end
+      git(repo, "branch", "hid", "main")
+      dest = path("wts", "plain-hid")
+      FileUtils.mkdir_p(dest)
+      note = stub_method(Git, :undecodable_worktrees?, ->(_repo) { true }) { Creator.undo_add(project, dest, "hid", base) }
+      assert_includes note, "branch hid (a worktree's path couldn't be read)"
     end
 
     # Value: protects=the branch check and the delete being one step; fails_when=delete_branch_at

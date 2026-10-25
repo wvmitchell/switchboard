@@ -12,10 +12,12 @@ module Switchboard
     module_function
 
     PLACEHOLDER_TRIES = 5 # bounded retries past a generated name already taken
-    # git's own last line (English) when the path or branch existed before its `worktree add
-    # -b`: anchored, so a failing hook whose output merely mentions it can't match. A localized
-    # git falls back to the commit-only proof.
-    PREEXISTING = /\A(?:'.+' already exists|a branch named '.+' already exists)\z/
+    # git's own last line (English) when something existed before its `worktree add -b`;
+    # anchored, so a failing hook whose output merely mentions it can't match. The two mean
+    # different things: a branch clash stops git before it makes anything, but a path clash
+    # comes AFTER git cut our new branch.
+    BRANCH_PREEXISTED = /\Aa branch named '.+' already exists\z/
+    PATH_PREEXISTED = /\A'.+' already exists\z/
 
     # Wire the per-worktree agent hooks (agent-state reporter + the #92 self-naming nudge
     # + the background-presence monitoring nudge/clears), scoped to this worktree, never
@@ -178,19 +180,23 @@ module Switchboard
     #     (the record fails as a guarded ✘).
     #   - the branch: only while it still points at base, atomically, and never while a
     #     worktree has it checked out.
-    # No base commit, no proof: delete nothing. And when git's failure says the path or
-    # branch was already there, a racing writer made them between the clash check and the
-    # add: nothing is ours, so a dirty tree there may be its uncommitted work. Returns what
-    # it kept (for the ✘ detail), or nil when nothing of ours was left behind.
+    # No base commit, no proof: delete nothing. When git's failure says the path or branch
+    # was already there, a racing writer made it between the clash check and the add, so
+    # it's never removed (a dirty tree there may be its uncommitted work). Returns what it
+    # kept and why (for the ✘ detail), or nil when nothing of ours was left behind.
     def undo_add(project, dest, branch, base_sha, git_error = nil)
       repo = project["path"]
+      err = git_error.to_s
       kept = []
-      if git_error.to_s.match?(PREEXISTING)
+      if err.match?(BRANCH_PREEXISTED) # git made nothing: the branch (and any tree) is someone's
         kept << "#{dest} (it was there before)" if File.exist?(dest)
         kept << "branch #{branch} (it was there before)" if Git.branch_exists?(repo, branch)
         return kept.empty? ? nil : "kept #{kept.join(' and ')}"
       end
-      if File.exist?(dest) && Git.current_branch(dest) != branch
+
+      if err.match?(PATH_PREEXISTED) # someone's path; the branch git just cut is ours
+        kept << "#{dest} (it was there before)" if File.exist?(dest)
+      elsif File.exist?(dest) && Git.current_branch(dest) != branch
         kept << "#{dest} (not on this create's branch)" # a half-registered tree, or someone's: say so
       elsif File.exist?(dest)
         count = base_sha && Git.commits_since(dest, base_sha)
@@ -205,20 +211,23 @@ module Switchboard
           kept << "#{dest} (couldn't remove it)" if File.exist?(dest)
         end
       end
-      if Git.branch_exists?(repo, branch)
-        # A worktree Git.worktrees skipped (an unreadable path) could have it checked out.
-        hidden = Git.undecodable_worktrees?(repo)
-        free = kept.empty? && !hidden && Git.worktrees(repo).none? { |w| w[:branch] == branch }
-        unless base_sha && free && Git.delete_branch_at(repo, branch, base_sha)
-          why = if !base_sha then "base commit unknown"
-                elsif hidden then "a worktree's path couldn't be read"
-                elsif free then "it moved off the base"
-                else "it's checked out"
-                end
-          kept << "branch #{branch} (#{why})"
-        end
+      if Git.branch_exists?(repo, branch) && (why = keep_branch(repo, dest, branch, base_sha))
+        kept << "branch #{branch} (#{why})"
       end
       "kept #{kept.join(' and ')}" unless kept.empty?
+    end
+
+    # Delete our branch when it's provably free at base (nil); otherwise why it stays.
+    def keep_branch(repo, dest, branch, base_sha)
+      return "base commit unknown" unless base_sha
+      # A worktree Git.worktrees skipped (an unreadable path) could have it checked out.
+      return "a worktree's path couldn't be read" if Git.undecodable_worktrees?(repo)
+
+      holder = Git.worktrees(repo).find { |w| w[:branch] == branch }
+      return File.identical?(holder[:path], dest) ? "its tree was kept" : "it's checked out" if holder
+      return nil if Git.delete_branch_at(repo, branch, base_sha)
+
+      Git.rev_parse(repo, "refs/heads/#{branch}") == base_sha ? "couldn't delete it" : "it moved off the base"
     end
 
     # `--no-track` so a branch cut from a remote-tracking base (origin/main) does NOT
@@ -230,7 +239,7 @@ module Switchboard
     # not pin the row on ◌ with no way out but `d`.
     def add_worktree(config, project, name, dest, base, timeout: ADD_DEADLINE)
       Tempfile.create("sb-add") do |log|
-        # English messages whatever git's language, so PREEXISTING can read the failure; only
+        # English messages whatever git's language, so the *_PREEXISTED checks can read the failure; only
         # the message catalog changes (LC_CTYPE, paths and checkout are untouched).
         pid = Process.spawn({ "GIT_TERMINAL_PROMPT" => "0", "LANGUAGE" => "en" },
                             "git", "-C", project["path"], "worktree", "add", "--no-track",
