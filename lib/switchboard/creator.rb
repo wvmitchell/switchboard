@@ -140,11 +140,12 @@ module Switchboard
       PLACEHOLDER_TRIES.times do
         branch = branch_for(config, name)
         clash = File.exist?(dest) || File.symlink?(dest) || Git.branch_exists?(project["path"], branch)
+        base_sha = Git.rev_parse(project["path"], project["base_ref"]) unless clash
         ok, err = add_worktree(config, project, name, dest, project["base_ref"]) unless clash
         return [name, dest, nil] if ok
 
         unless clash
-          undo_add(project, dest, branch)
+          undo_add(project, dest, branch, base_sha)
           break
         end
 
@@ -161,13 +162,28 @@ module Switchboard
     end
 
     # Roll back a failed add that we started from a clean slate: an un-set-up tree left
-    # behind would re-enter with the agent. Only a tree on OUR branch is ours to remove
-    # (a racing writer's isn't); -D refuses a branch still checked out anywhere.
-    def undo_add(project, dest, branch)
+    # behind would re-enter with the agent. What's ours is proven against the base commit
+    # the add started from, never assumed from a name (a same-name branch can appear
+    # between the clash check and the add):
+    #   - the tree: on OUR branch with nothing committed past base. Dirty is fine — a
+    #     timed-out checkout leaves a half-filled tree, and nobody can have worked in one
+    #     that was never offered as a workspace. A commit means someone's work: keep it
+    #     (the record fails as a guarded ✘).
+    #   - the branch: only while it still points at base, atomically, and never while a
+    #     worktree has it checked out.
+    # No base commit, no proof: delete nothing.
+    def undo_add(project, dest, branch, base_sha)
+      return unless base_sha
+
+      repo = project["path"]
       if File.exist?(dest) && Git.current_branch(dest) == branch
-        Git.remove_worktree(project["path"], dest, force: true, locked: true)
+        return unless Git.commits_since(dest, base_sha)&.zero?
+
+        Git.remove_worktree(repo, dest, force: true, locked: true)
       end
-      Git.delete_branch(project["path"], branch, force: true) if Git.branch_exists?(project["path"], branch)
+      return if Git.worktrees(repo).any? { |w| w[:branch] == branch }
+
+      Git.delete_branch_at(repo, branch, base_sha)
     end
 
     # `--no-track` so a branch cut from a remote-tracking base (origin/main) does NOT

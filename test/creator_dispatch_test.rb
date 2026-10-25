@@ -668,8 +668,80 @@ module Switchboard
       config = config_for(repo)
       dest = path("wts", "theirs")
       git(repo, "worktree", "add", "-q", "-b", "theirs-branch", dest, "main")
-      Creator.undo_add(config.project("proj"), dest, "ours")
+      Creator.undo_add(config.project("proj"), dest, "ours", Git.rev_parse(repo, "main"))
       assert_path_exists dest
+    end
+
+    # Value: protects=a timed-out or hook-failed add still cleaning up fully; fails_when=the
+    # rollback requires a clean tree (a half checkout reads dirty and would be stranded as a
+    # ✘); why_new=R2 (D4) replaced the existence-only rollback; seam=none
+    def test_undo_add_removes_a_half_checked_out_tree_and_its_branch
+      repo = temp_git_repo("proj", origin: true)
+      config = config_for(repo)
+      dest = path("wts", "half")
+      git(repo, "worktree", "add", "-q", "-b", "half", dest, "main")
+      File.write(File.join(dest, "partial.bin"), "half a checkout") # dirty, nothing committed
+      Creator.undo_add(config.project("proj"), dest, "half", Git.rev_parse(repo, "main"))
+      refute_path_exists dest
+      refute Git.branch_exists?(repo, "half")
+    end
+
+    # Value: protects=commits are never force-deleted by a rollback; fails_when=undo_add
+    # removes a tree or deletes a branch past base (the old existence-only -D); why_new=R2
+    # (D4): a same-name branch can appear between the clash check and the add; seam=none
+    def test_undo_add_keeps_anything_with_commits_past_base
+      repo = temp_git_repo("proj", origin: true)
+      config = config_for(repo)
+      base = Git.rev_parse(repo, "main")
+      dest = path("wts", "worked")
+      git(repo, "worktree", "add", "-q", "-b", "worked", dest, "main")
+      git(dest, "commit", "-q", "--allow-empty", "-m", "real work")
+      Creator.undo_add(config.project("proj"), dest, "worked", base)
+      assert_path_exists dest, "a tree with a commit stays"
+      assert Git.branch_exists?(repo, "worked")
+
+      # A racing writer's same-name branch with its own commit, no tree at our path.
+      other = path("wts", "racer-tmp")
+      git(repo, "worktree", "add", "-q", "-b", "racer", other, "main")
+      git(other, "commit", "-q", "--allow-empty", "-m", "theirs")
+      git(repo, "worktree", "remove", other)
+      Creator.undo_add(config.project("proj"), path("wts", "never-made"), "racer", base)
+      assert Git.branch_exists?(repo, "racer"), "a branch past base is someone's work"
+    end
+
+    # Value: protects=the branch check and the delete being one step; fails_when=delete_branch_at
+    # loses update-ref's old-value guard (a tip that moved after the check gets deleted);
+    # why_new=outside voice O1: check-then-`-D` still raced; seam=none
+    def test_delete_branch_at_refuses_a_branch_that_moved
+      repo = temp_git_repo("proj", origin: true)
+      base = Git.rev_parse(repo, "main")
+      git(repo, "branch", "moved", "main")
+      tmp = path("wts", "mover")
+      git(repo, "worktree", "add", "-q", tmp, "moved")
+      git(tmp, "commit", "-q", "--allow-empty", "-m", "landed after the check")
+      git(repo, "worktree", "remove", tmp)
+      refute Git.delete_branch_at(repo, "moved", base)
+      assert Git.branch_exists?(repo, "moved")
+      git(repo, "branch", "still", "main")
+      assert Git.delete_branch_at(repo, "still", base)
+      refute Git.branch_exists?(repo, "still")
+    end
+
+    # Value: protects=no proof, no delete; fails_when=undo_add acts without a base commit or
+    # deletes a branch another worktree has checked out; why_new=R2 (D4); seam=none
+    def test_undo_add_deletes_nothing_without_a_base_or_while_the_branch_is_checked_out
+      repo = temp_git_repo("proj", origin: true)
+      config = config_for(repo)
+      dest = path("wts", "nobase")
+      git(repo, "worktree", "add", "-q", "-b", "nobase", dest, "main")
+      Creator.undo_add(config.project("proj"), dest, "nobase", nil)
+      assert_path_exists dest
+      assert Git.branch_exists?(repo, "nobase")
+
+      elsewhere = path("wts", "elsewhere")
+      git(repo, "worktree", "add", "-q", "-b", "shared", elsewhere, "main")
+      Creator.undo_add(config.project("proj"), path("wts", "not-here"), "shared", Git.rev_parse(repo, "main"))
+      assert Git.branch_exists?(repo, "shared"), "checked out in another worktree"
     end
 
     # Every fresh name collides: the build fails once with a clear reason and leaves

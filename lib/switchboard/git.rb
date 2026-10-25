@@ -181,6 +181,23 @@ module Switchboard
 
     # A local branch by this name already exists. Used to pre-check a rename target
     # before moving anything, so a collision fails clean (nothing renamed/moved).
+    # The commit `ref` names, or nil when it doesn't resolve.
+    def rev_parse(repo, ref)
+      return nil if blank?(ref)
+
+      out = capture(repo, "rev-parse", "--verify", "--quiet", "#{ref}^{commit}").strip
+      $?&.success? && !out.empty? ? out : nil
+    end
+
+    # Delete `branch` only while it still points at `sha` — one atomic step (update-ref's
+    # old-value check), so a commit landing on it after the caller looked is never lost.
+    # Unlike `branch -D` it won't refuse a branch checked out somewhere: callers check.
+    def delete_branch_at(repo, branch, sha)
+      return false if blank?(branch) || blank?(sha)
+
+      system("git", "-C", repo, "update-ref", "-d", "refs/heads/#{branch}", sha, out: File::NULL, err: File::NULL)
+    end
+
     def branch_exists?(repo, branch)
       return false if blank?(branch)
 
