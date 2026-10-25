@@ -19,17 +19,6 @@ and where to start.
 Found by the 0.52.0 ship reviews and deliberately deferred (the behavior fails loudly or
 safe today; each is narrow).
 
-- **doctor/upgrade check the toggle key switchboard bound, not the configured one.** *Why:*
-  `Installer.bound_toggle_key` prefers `@switchboard-toggle-key`, so a `tmux_keys.toggle`
-  edited in config.yml by hand (not via `e`/`switchboard config`, which rebind at once)
-  reads green in doctor and `upgrade` never rebinds it — on main, doctor checked the
-  configured key. *Start in:* tell "tmux rejected the configured key" (a recorded fallback)
-  apart from "config changed since bind"; feed both doctor's row and `Upgrade.tmux_stale?`.
-  Workaround: `switchboard config` or reload tmux. **Priority:** P1.
-- **A malformed config.yml makes install/upgrade skip the hook refresh silently.** *Why:*
-  `Config.new` rescues a parse error to `{}`, so `Installer.configured_worktrees` is empty,
-  `step_rewire_hooks` prints nothing and `upgrade` says up to date. *Start in:* check
-  `Config.new.load_error` in `refresh_wiring` and fail with it. **Priority:** P1.
 - **A settings file with an overflowing number (`1e400`) crashes current?/refresh.** *Why:*
   `JSON.parse` yields Infinity, `merged`'s `JSON.generate` raises `GeneratorError`, unrescued
   on `leftovers?`, `doctor` and `enable-hooks`. *Start in:* round-trip in `load_settings`
@@ -89,15 +78,6 @@ safe today; each is narrow).
   first `\r`/`\n` and keep the prompt open), `input.rb` `handle`; consider bracketed paste
   in tree mode with the pasted span dropped. Tests: a pasted line with `n` must not
   dispatch; assert `@typeahead` is cleared. **Priority:** P1.
-- **Rollback must prove a failed add's tree and branch are its own.** *Why:* `undo_add`
-  force-removes the tree and `-D`s the branch after checking only that the branch exists
-  and is checked out at the path — a same-name branch created between the clash check and
-  `worktree add -b` (or a transient `branch_exists?` false negative) gets force-deleted
-  with its commits, and work done inside a still-building tree goes with it. Codex's
-  structured gate flagged it P1 on the final pass; deferred by choice (D12/D14).
-  *Start in:* `Creator.undo_add` — `-D` only when the branch tip equals the base commit
-  (or git's failure wasn't "already exists"), and run `untouched?` before removing the
-  tree (keep a dirty or committed tree as a guarded ✘, like `discard`). **Priority:** P1.
 - **Renaming an un-set-up build can drop its guard.** *Why:* in the few ms between
   `git worktree move` and `leave_bridge`, another sidebar's GC sees the old path missing
   (rule 3) and deletes the unfinished record; `certified?(nil)` then lets a later
@@ -464,14 +444,6 @@ safe today; each is narrow).
   (a keypress-time remote check) is rejected for the same reasons as the bullet above.
   Captured so the reasoning isn't lost.
 
-## Community / contributor hygiene (devex-review) follow-ups
-
-- ~~**Add CONTRIBUTING.md once there's contributor interest.**~~ ✓ Done — added
-  `CONTRIBUTING.md` (tests, the zero-gem/Ruby-3.0 constraints, the
-  module-vs-class conventions, and the release process) as part of the full
-  `docs/` Diataxis set. The conventions also live human-readable in
-  `docs/explanation-architecture.md`.
-
 ## Sidebar diff count (issue #79) follow-ups
 
 - **Working-tree (uncommitted) diff count as a config knob.** The row diff count
@@ -525,23 +497,8 @@ safe today; each is narrow).
 
 ## Agent CLI hooks (Claude 2.1.301 / Codex 0.163 compat review) follow-ups
 
-- **A non-ASCII worktree path breaks `Git.worktrees` under a C locale (verify scope
-  first).** *What:* with `LC_ALL=C`, `git worktree list --porcelain` output for a
-  worktree like `…/café` arrives US-ASCII with raw high bytes, and
-  `Git.worktrees`' `.split("\n\n")` raises `ArgumentError: invalid byte sequence in
-  US-ASCII` (`git.rb:14`, reproduced at ship time, 2026-10-23). *Why:* in a C-locale
-  tmux that project's tree may fail to list at all; check how `Model` handles the raise.
-  *Pros:* fixes the root that makes every other C-locale encoding guard (the ⇅ byte
-  compare, `Agents.lsof_path`) mostly moot. *Cons:* touches the core git read path.
-  *Context:* read git output as bytes or force UTF-8 + scrub, the way `RemoteLink.read_json`
-  and `CodexHook.read_config` already do. *Depends on:* nothing.
-
 - **Remote-link glyph: rare edges deferred at ship review (v0.53.0).** *What, in priority
-  order:* (1) `RemoteLink`'s three `Dir.glob(File.join(sessions_dir, "*.json"))` calls
-  read `[`/`{`/`*`/`?` in the dir path as pattern syntax, so a `CLAUDE_CONFIG_DIR` like
-  `~/cfg [work]` finds no session files: no `⇅` anywhere, and doctor wrongly says Claude
-  moved them (verified) — one `session_files` helper using `Dir.glob("*.json", base:)`;
-  (2) `Sidebar#refresh_agents`' outer rescue leaves the previous `@links` standing, so an
+  order:* (2) `Sidebar#refresh_agents`' outer rescue leaves the previous `@links` standing, so an
   ended link can keep its `⇅` until a scan succeeds — reset or compute links first;
   (3) the doctor canary misses a format change while one old-format leftover file sits
   beside the new ones (shaped > 0, alive 0 reads healthy); (4) `claude_pids` misses a
@@ -549,7 +506,7 @@ safe today; each is narrow).
   row's columns — let `fit_plain` report whether the cues were kept and share it with
   `colored` (the cursor-bar grey half of this went away in v0.53.1); (6) a stale comment:
   `Agents.lsof_path`'s encoding rationale predates the byte compares.
-  *Why:* none hits a normal setup; (1) is the only verified user-visible one. *Pros:*
+  *Why:* none hits a normal setup (the one verified user-visible item, the glob, shipped in v0.53.2). *Pros:*
   small, testable changes. *Cons:* each touches a reviewed path, so give it its own short
   review. *Context:* ship review of v0.53.0 (D2/D3 — deferred to keep the release from
   reopening its review loop). *Depends on:* v0.53.0.
@@ -641,19 +598,6 @@ safe today; each is narrow).
   decision dec-549dc4af; `gstack-shortcut` marker in `ClaudeHook::EVENTS`). *Start in:* force a
   `/compact` mid-turn in a live session and watch the dot; if it flips, give the reporter a
   matcher skipping `compact` (every worktree then needs `enable-hooks`). **Priority:** P3.
-
-- **Doctor: show the codex rows outside a git worktree.** *Why:* `CLI#doctor_hooks` returns
-  before the global codex section when doctor isn't run inside a worktree, so `switchboard
-  doctor` from a home shell never shows `N/M trusted` or the stale/unsafe/collision advice,
-  though the codex block is global (red team, v0.51.1 ship). *Start in:* print the codex
-  section before `return unless here`; keep only the per-worktree Claude row gated.
-  **Priority:** P2.
-
-- **Uninstall: exit 1 after a codex write error.** *Why:* when the codex block can't be
-  written (read-only config), uninstall prints ✗, carries on, then prints a plain "Done." and
-  exits 0, while `install` now exits 1 for the same failure. *Start in:*
-  `Installer.step_codex_unhooks`' `else` branch: keep going, but have `uninstall` return false
-  and say "Done, except the codex hooks" like install. **Priority:** P3.
 
 - **Install: say `/hooks` when a re-ensure changes the commands.** *Why:* after a brew ↔ clone
   switch, re-running `install` rewrites the block's commands and carries their old approvals,

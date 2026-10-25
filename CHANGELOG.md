@@ -10,6 +10,33 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
+## [0.53.2] — failures that used to stay silent now say so (2026-10-24)
+
+### Fixed
+- A `config.yml` that won't parse no longer lets `install` and `upgrade` look successful.
+  They used to skip every worktree's hooks without a word (an unreadable config lists no
+  projects), and `upgrade` reported "up to date". Both now print the parse error and
+  exit 1, the way `doctor` already did (#14).
+- A failed workspace create can no longer delete someone else's commits. If a branch
+  with the new workspace's name appeared while the worktree was being made, the cleanup
+  used to force-delete it. Now the cleanup removes the branch only while it still points
+  at the commit the create started from, and keeps any tree that has a commit in it. A
+  create that timed out halfway still cleans up fully.
+- A workspace whose path has a non-ASCII character (`café`) now shows up when tmux runs
+  in a C locale. Listing that project's worktrees used to fail.
+- `doctor` and `upgrade` now notice a `tmux_keys` change made by editing `config.yml`
+  by hand, for both the toggle and the home key. The key tmux still had bound worked, so
+  `doctor` showed green and `upgrade` never applied the change; `doctor` now names the
+  mismatch and an up-to-date `upgrade` re-applies the keys. A key tmux refused, and the
+  default it fell back to, still reads as applied.
+- The `⇅` glyph and `doctor`'s remote-link check now find Claude's session files when
+  `CLAUDE_CONFIG_DIR` contains glob characters, like `~/cfg [work]`.
+- `doctor` run outside a worktree now shows the global codex hooks rows (the trust count
+  and any advice). They used to appear only inside a worktree.
+- `uninstall` now exits 1 when it can't remove the codex hooks block, and says "Done,
+  except the codex hooks", like `install` does for the same failure. It still finishes
+  the rest of the uninstall.
+
 ## [0.53.1] — a live `⇅` reads green (2026-10-24)
 
 ### Changed
