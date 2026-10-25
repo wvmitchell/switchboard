@@ -359,5 +359,25 @@ module Switchboard
       end
       assert_equal 0, scans, "no link scan during teardown"
     end
+
+    # Value: protects=nothing the overlay or the ? legend draws runs past a 20-col pane (the
+    # Width floor); fails_when=a fallback reason or the legend's QR hint skips trunc; why_new=red
+    # team, ship of v0.54.0 (only 36+ cols were tested); seam=none; no_claim=how it reads
+    def test_a_twenty_col_pane_never_overflows
+      body, _hint = sidebar_with_links.send(:link_view_lines, 40, 20) # the hint row is trunc'd as it's drawn
+      body.each { |l| assert_operator strip_ansi(l).length, :<=, 20, l.inspect }
+      sidebar.send(:legend_lines, 20).each { |l| assert_operator strip_ansi(l).length, :<=, 20, l.inspect }
+    end
+
+    # Value: protects=a worktree name that isn't valid UTF-8 can't crash the overlay header;
+    # fails_when=columns/fit_columns stop scrubbing (the width regex raises ArgumentError in the
+    # unrescued render); why_new=red team, ship of v0.54.0; seam=none; no_claim=other byte encodings
+    def test_a_non_utf8_worktree_name_still_draws_the_header
+      bad = "caf\xE9".dup.force_encoding(Encoding::UTF_8)
+      sb = open(linked(nodes: [ws(bad, path: "/wt/a")]))
+      assert_includes lines(sb)[0][0], "app/caf"
+    end
+
+    def sidebar_with_links = open(linked)
   end
 end

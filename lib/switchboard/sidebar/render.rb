@@ -310,22 +310,22 @@ module Switchboard
         url = link.url.scan(/.{1,#{[cols, 1].max}}/).map { |l| "#{NOTE_FG}#{l}\e[0m" }
         keys = links.size > 1 ? "tab next · any key closes" : "any key closes"
         matrix = (@link_view[:qr][link.url] ||= QR.matrix(link.url))
-        return link_view_fallback(head, url, "no QR for this link", keys) unless matrix
+        return link_view_fallback(head, url, "no QR for this link", keys, cols) unless matrix
 
         n = matrix.size
-        return link_view_fallback(head, url, "too narrow for the QR", "→ widen · #{keys}") if cols < n + (2 * QR_MIN_QUIET)
+        return link_view_fallback(head, url, "too narrow for the QR", "→ widen · #{keys}", cols) if cols < n + (2 * QR_MIN_QUIET)
 
         room = rows - head.size - 1 - url.size - 1 # a blank under the code, the hint row
         vert = [QR_MAX_QUIET, QR_MIN_QUIET].find { |q| (n + (2 * q) + 1) / 2 <= room }
-        return link_view_fallback(head, url, "pane too short for the QR", "pane too short · #{keys}") unless vert
+        return link_view_fallback(head, url, "pane too short for the QR", "pane too short · #{keys}", cols) unless vert
 
         side = ((cols - n) / 2).clamp(QR_MIN_QUIET, QR_MAX_QUIET) # as wide as fits, up to 4 (eng D5)
         indent = " " * ((cols - n - (2 * side)) / 2) # centered in a wider pane (design review D5)
         [head + qr_rows(matrix, side, vert).map { |row| indent + row } + [""] + url, keys]
       end
 
-      def link_view_fallback(head, url, why, hint)
-        [head + ["#{NOTE_FG}#{why}\e[0m", ""] + url, hint]
+      def link_view_fallback(head, url, why, hint, cols)
+        [head + ["#{NOTE_FG}#{trunc(why, cols)}\e[0m", ""] + url, hint]
       end
 
       # `<project>/<leaf>` in the brand color, with `1/2` flush right when there are several.
@@ -394,6 +394,7 @@ module Switchboard
         qr_key = @bindings && @bindings[:phone_link]
         LEGEND.each do |colored, glyph, label|
           label = "#{label} · #{qr_key} shows a QR" if label == LINK_LIVE_LABEL && qr_key # the live key, or no hint
+          label = trunc(label, [cols - 2, 1].max) # one item never runs past a narrow pane
           item_w = "#{glyph} #{label}".length
           if width.positive? && width + 2 + item_w > cols
             lines << []
@@ -547,10 +548,13 @@ module Switchboard
       # would push the row past the pane edge. Invisible characters (controls, bidi and
       # zero-width marks, combining marks) are dropped before it's drawn.
       def columns(str)
-        str.each_char.sum { |c| c.match?(NOTE_WIDE) ? 2 : 1 }
+        str.to_s.scrub.each_char.sum { |c| c.match?(NOTE_WIDE) ? 2 : 1 }
       end
 
+      # Scrubbed first: a worktree name from git may hold bytes that aren't UTF-8, and
+      # the width regex raises on them.
       def fit_columns(str, width)
+        str = str.to_s.scrub
         return str if columns(str) <= width
 
         out = +""

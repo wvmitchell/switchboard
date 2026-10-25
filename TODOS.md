@@ -127,7 +127,7 @@ safe today; each is narrow).
   poke and the C-l refresh poke are read as the answer by `confirm`, `flash` and the `a`
   menu (see learning modal-dismiss-must-ignore-synthetic-tmux-bytes). *Start in:*
   `prompt.rb` `edit_buffer`/`read_char` — bound paste mode, and loop `read_char` past
-  `HELP_IGNORED_BYTES`. **Priority:** P2.
+  `POKE_BYTES`. **Priority:** P2.
 - **Say what's actually wrong when the config fails a build.** *Why:* the `config`
   reason's pane/row text says the config couldn't be read, but `setup_invalid?` now fires
   it for a file that parsed fine; `doctor` never checks `setup_invalid?`; the config

@@ -527,5 +527,19 @@ module Switchboard
       Sidebar.allocate.send(:session_label, links.first) # no raise in the overlay's label
       assert_equal 2, as_claude { RemoteLink.health }[:files], "doctor still counts both files"
     end
+
+    # Value: protects=one file whose record raises loses only its own link; fails_when=the
+    # per-file rescue in linked_records goes (a raise then wipes every link via scan's catch-all);
+    # why_new=the surrogate test passes without it (the scrub already defuses that file); seam=none
+    # (stubs record for one file); no_claim=which inputs can still raise
+    def test_one_file_whose_record_raises_loses_only_its_own_link
+      w = wt("alpha")
+      write_session("good", cwd: w, bridgeSessionId: "session_good")
+      write_session("bad", cwd: w, name: "BOOM", bridgeSessionId: "session_bad")
+      real = RemoteLink.method(:record)
+      boom = ->(d) { d.is_a?(Hash) && d["name"] == "BOOM" ? raise("odd") : real.call(d) }
+      links = stub_method(RemoteLink, :record, boom) { stub_method(ProcessIdentity, :same?, ->(*) { true }) { scan([w])[w] } }
+      assert_equal ["session_good"], links.map(&:bridge_id)
+    end
   end
 end
