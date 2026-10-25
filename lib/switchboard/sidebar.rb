@@ -450,8 +450,9 @@ module Switchboard
     ensure
       # LAST, and in the ensure: links refresh even when the dot scan above raised, so
       # an open QR overlay never keeps showing a link that ended. remote_links is
-      # self-rescued, so it can add a ⇅ but never blank a dot.
-      if ws_paths
+      # self-rescued, so it can add a ⇅ but never blank a dot. Not while a signal or exit
+      # propagates ($! set): a sidebar being reaped shouldn't fork ps/lsof on its way out.
+      if ws_paths && $!.nil?
         @links = remote_links(ws_paths, cheap: !@visible)
         revalidate_link_view
       end

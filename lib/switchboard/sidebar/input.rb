@@ -7,7 +7,7 @@ module Switchboard
     # sequences first, then the #108 keymap), the / filter and ? help key
     # modes, focus handling, and keymap resolution. A concern module on
     # Sidebar (see CLAUDE.md conventions); the input-grammar constants live
-    # here WITH their consumers — HELP_IGNORED_BYTES references the poke
+    # here WITH their consumers — POKE_BYTES references the poke
     # bytes at require time, so splitting them across files would be a
     # load-order crash (the #57 same-file rule for constant initializers).
     module Input
@@ -37,7 +37,7 @@ module Switchboard
       # If C-r ever becomes broadcast, revisit this (it'd then need honoring). (issue #62)
       # The p overlay is different: there these bytes run their handlers (`poke`, which
       # must have an arm for every one), so a switch-in reload re-checks its link.
-      HELP_IGNORED_BYTES = ["\f", RELOAD_CONFIG_BYTE, WARM_POKE_BYTE, "\e[I", "\e[O"].freeze
+      POKE_BYTES = ["\f", RELOAD_CONFIG_BYTE, WARM_POKE_BYTE, "\e[I", "\e[O"].freeze
 
       # Pure terminal-input tokenizer: returns [complete tokens, trailing incomplete
       # sequence]. The grammar it recognizes (the only escapes a tmux pane delivers):
@@ -150,7 +150,7 @@ module Switchboard
         when "\e[C"             then resize(WIDTH_STEP)  # → widen the pane (issue #78)
         when "\e[D"             then resize(-WIDTH_STEP) # ← narrow the pane
         when "\r", "\n"         then enter
-        when *HELP_IGNORED_BYTES then return poke(key)
+        when *POKE_BYTES then return poke(key)
         else                         return dispatch_action(key)
         end
         true
@@ -271,7 +271,7 @@ module Switchboard
       #
       # `?` opens the full key map over the tree (render_help). While it's open,
       # dispatch routes every key here: a real keystroke closes it, but a synthetic
-      # tmux byte (HELP_IGNORED_BYTES — the C-l/C-r pokes, focus in/out) is ignored so a
+      # tmux byte (POKE_BYTES — the C-l/C-r pokes, focus in/out) is ignored so a
       # background PR-refresh poke or a focus change can't dismiss it out from under
       # the reader — the same robustness filter_key has. `?` can't open while filtering
       # (there it's a query char), so @help and @filter are never both set.
@@ -285,7 +285,7 @@ module Switchboard
       # returns true (the loop lives on, and the dismissing key only closes the
       # overlay — no passthrough into an action, even a typed q).
       def help_key(key)
-        dismiss_help unless HELP_IGNORED_BYTES.include?(key)
+        dismiss_help unless POKE_BYTES.include?(key)
         true
       end
 
@@ -316,7 +316,7 @@ module Switchboard
         when "\t"   then cycle_link
         when "\e[C" then resize(WIDTH_STEP)
         when "\e[D" then resize(-WIDTH_STEP)
-        when *HELP_IGNORED_BYTES then return poke(key)
+        when *POKE_BYTES then return poke(key)
         else @link_view = nil
         end
         true

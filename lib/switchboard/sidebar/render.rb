@@ -299,8 +299,8 @@ module Switchboard
       QR_DARK  = 0     # the theme's own black and bright white (design review D3), so
       QR_LIGHT = 15    # the code matches the theme; dark stays darker in any sane palette
 
-      # [body lines, bottom hint] for a rows×cols pane. Pure given @link_view/@links/
-      # @nodes, so layout and fallbacks are testable without raw I/O.
+      # [body lines, bottom hint] for a rows×cols pane. Reads @link_view/@links/@nodes and
+      # only writes the matrix memo, so layout and fallbacks are testable without raw I/O.
       def link_view_lines(rows, cols)
         link = view_link
         return [[], "any key closes"] unless link

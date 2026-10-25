@@ -1254,7 +1254,7 @@ it's live query state, not key-teaching.
 key to `help_key` while `@help` is set. A genuine keystroke (even `q`) only closes
 the overlay — no passthrough into an action. But the non-keystroke bytes the loop
 also receives — the `C-l` switch/background-refresh poke, the `C-r` config poke,
-focus in/out (`HELP_IGNORED_BYTES`) — must NOT dismiss it, or a background PR
+focus in/out (`POKE_BYTES`) — must NOT dismiss it, or a background PR
 refresh would close it out from under the reader (the same robustness `filter_key`
 has against non-printables). Dropping their side effects is safe: `C-l`'s
 reload/visibility self-heals via the `tick` backstop within `REFRESH` (tick runs

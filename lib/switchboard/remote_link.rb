@@ -165,7 +165,11 @@ module Switchboard
     end
 
     def linked_records
-      Dir.glob(File.join(sessions_dir, "*.json")).filter_map { |f| record(read_json(f)) }
+      Dir.glob(File.join(sessions_dir, "*.json")).filter_map do |f|
+        record(read_json(f))
+      rescue StandardError
+        nil # one odd file loses only its own link
+      end
     end
 
     # The fields we use from one session file, or nil when it isn't a linked session
@@ -184,9 +188,21 @@ module Switchboard
     # UTF-8 whatever the locale: under tmux's C locale a default read is US-ASCII,
     # and a session named with a smart quote would fail to parse and lose its link.
     def read_json(file)
-      JSON.parse(File.read(file, encoding: "UTF-8").scrub)
+      scrub_strings(JSON.parse(File.read(file, encoding: "UTF-8").scrub))
     rescue StandardError
       nil
+    end
+
+    # A \u escape decodes AFTER the scrub above, so a lone surrogate still parses to an
+    # invalid string, and the first strip/gsub/match on it raises. Scrub every parsed
+    # string: a bad field then reads as unrecognized (no link), never as a crash.
+    def scrub_strings(value)
+      case value
+      when String then value.scrub
+      when Array then value.map { |v| scrub_strings(v) }
+      when Hash then value.to_h { |k, v| [scrub_strings(k), scrub_strings(v)] }
+      else value
+      end
     end
 
     # The one "background job" rule (Link#bg? and stale? both ask it).

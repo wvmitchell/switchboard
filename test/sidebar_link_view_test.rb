@@ -266,12 +266,13 @@ module Switchboard
     end
 
     # Value: protects=every poke byte keeps doing its job under the p overlay; fails_when=a byte
-    # is added to HELP_IGNORED_BYTES without an arm in poke (it would silently do nothing there);
+    # is added to POKE_BYTES without an arm in poke (it would silently do nothing there);
     # why_new=maintainability review, ship of v0.54.0; seam=none; no_claim=what each handler does
     def test_every_poke_byte_has_a_handler
       handlers = %i[reload_and_refresh warm_poke reload_config_and_rebuild focus_in]
-      Sidebar::HELP_IGNORED_BYTES.each do |byte|
+      Sidebar::POKE_BYTES.each do |byte|
         sb = sidebar
+        sb.instance_variable_set(:@focused, true) # so focus-out must clear it
         ran = []
         handlers.each { |m| sb.define_singleton_method(m) { ran << m; false } }
         sb.send(:poke, byte)
@@ -331,6 +332,32 @@ module Switchboard
       refute_nil view(sb), "the overlay really opened on beta"
       sb.send(:dispatch, "x")
       assert_equal "/wt/b", sb.send(:current)&.path, "still on beta, where p was pressed"
+    end
+
+    # Value: protects=Tab that arrives before the next scan re-checks a vanished link still lands
+    # on a live one; fails_when=cycle_link's fallback for a missing id goes (Tab then raises in the
+    # input loop); why_new=testing review, ship of v0.54.0; seam=none; no_claim=none beyond protects
+    def test_tab_after_the_shown_link_vanished_lands_on_the_first_live_one
+      sb = open(linked([link(ID_A), link(ID_B)]))
+      other = "session_01CcCcCcCcCcCcCcCcCcCcCcCc"
+      sb.instance_variable_set(:@links, { "/wt/a" => [link(ID_B), link(other)] })
+      sb.send(:dispatch, "\t")
+      assert_equal ID_B, view(sb)[:bridge_id]
+    end
+
+    # Value: protects=a sidebar being torn down by a signal doesn't fork the link scan on its way
+    # out; fails_when=the ensure runs remote_links while an Interrupt/SignalException propagates;
+    # why_new=red team, ship of v0.54.0; seam=none; no_claim=real SIGTERM delivery
+    def test_a_propagating_signal_skips_the_link_refresh
+      sb = open(linked)
+      as = Struct.new(:last_hook_states).new({})
+      as.define_singleton_method(:scan) { |*, **| raise Interrupt }
+      sb.instance_variable_set(:@agent_state, as)
+      scans = 0
+      stub_method(RemoteLink, :scan, ->(*, **) { scans += 1; {} }) do
+        assert_raises(Interrupt) { sb.send(:refresh_agents, refresh_prs: false) }
+      end
+      assert_equal 0, scans, "no link scan during teardown"
     end
   end
 end
