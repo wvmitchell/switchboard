@@ -11,7 +11,13 @@ module Switchboard
 
     # All worktrees registered against a repo, parsed from porcelain output.
     def worktrees(repo)
-      capture(repo, "worktree", "list", "--porcelain").split("\n\n").filter_map do |block|
+      # Split as bytes, then skip a worktree whose path isn't valid UTF-8 (Linux only;
+      # macOS can't hold one): passed on as binary it would raise in every compare
+      # against a UTF-8 path, so it's left out rather than crash the tree.
+      capture(repo, "worktree", "list", "--porcelain").b.split("\n\n").filter_map do |block|
+        block.force_encoding(Encoding::UTF_8)
+        next unless block.valid_encoding?
+
         h = {}
         block.each_line do |line|
           key, _, val = line.strip.partition(" ")
@@ -371,9 +377,11 @@ module Switchboard
       str.nil? || str.empty?
     end
 
+    # Tagged UTF-8 whatever the locale: under tmux's C locale a backtick hands back
+    # US-ASCII holding git's raw path bytes, and the first split on a `café` path raises.
     def capture(repo, *args)
       cmd = ["git", "-C", repo, *args].map { |a| Shellwords.escape(a) }.join(" ")
-      `#{cmd} 2>/dev/null`
+      `#{cmd} 2>/dev/null`.force_encoding(Encoding::UTF_8)
     end
   end
 end

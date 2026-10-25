@@ -18,6 +18,34 @@ module Switchboard
       refute(wts.any? { |w| w[:bare] })
     end
 
+    # Value: protects=a non-ASCII worktree listing under tmux's C locale; fails_when=capture
+    # keeps the locale's US-ASCII tag (split raises "invalid byte sequence"); why_new=no
+    # encoding test on Git.worktrees (reproduced at the v0.53.0 ship); seam=none
+    def test_worktrees_lists_a_non_ascii_path_under_a_c_locale
+      repo = temp_git_repo("app")
+      cafe = path("café")
+      git(repo, "worktree", "add", "-q", cafe, "-b", "cafe")
+      saved = Encoding.default_external
+      Encoding.default_external = Encoding::US_ASCII # what backticks tag output with under LC_ALL=C
+      found = Git.worktrees(repo).find { |w| w[:branch] == "cafe" }
+      refute_nil found
+      assert_equal Encoding::UTF_8, found[:path].encoding
+      assert found[:path].valid_encoding?
+      assert File.identical?(cafe, found[:path])
+    ensure
+      Encoding.default_external = saved if saved
+    end
+
+    # Value: protects=one undecodable worktree (a Latin-1 path on Linux) not taking the whole
+    # project's tree down; fails_when=worktrees splits invalid UTF-8 text (raises) or passes a
+    # binary path on (raises in later compares); why_new=R1 (D2); seam=Git.capture
+    def test_worktrees_skips_an_entry_whose_path_isnt_utf8
+      porcelain = "worktree /ok\nHEAD abc\nbranch refs/heads/main\n\n" \
+                  "worktree /caf\xE9\nHEAD def\nbranch refs/heads/latin\n".dup.force_encoding(Encoding::UTF_8)
+      wts = stub_method(Git, :capture, ->(*) { porcelain }) { Git.worktrees("/repo") }
+      assert_equal ["/ok"], wts.map { |w| w[:path] }
+    end
+
     def test_worktrees_flags_a_bare_repo
       repo = temp_git_repo("app", origin: true)
       assert(Git.worktrees("#{repo}.git").any? { |w| w[:bare] }, "bare clone reports bare: true")
