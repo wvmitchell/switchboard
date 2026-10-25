@@ -384,6 +384,7 @@ module Switchboard
     # new crash path here (Will, ship D4); seam=none (stubs one method to raise); no_claim=write errors
     def test_a_raise_while_building_the_overlay_closes_it_and_repaints_the_tree
       sb = open(linked)
+      sb.instance_variable_set(:@visible, true)
       repainted = []
       said = []
       stub_method(sb, :winsize, ->(*) { [40, 40] }) do
@@ -415,7 +416,7 @@ module Switchboard
     def test_the_frame_seats_a_truncated_hint_on_the_bottom_row
       sb = open(linked)
       frame = stub_method(sb, :winsize, ->(*) { [30, 20] }) { sb.send(:link_view_frame) }
-      refute_nil view(sb), "the frame built without hitting the backstop"
+      refute_nil frame, "the frame built without hitting the backstop"
       hint = frame[/\e\[30;1H\e\[K(.*)\z/m, 1]
       refute_nil hint, "the hint is addressed to row 30"
       assert_operator strip_ansi(hint).length, :<=, 20
@@ -428,6 +429,7 @@ module Switchboard
     def test_a_short_pane_frame_stays_inside_the_pane
       sb = open(linked)
       frame = stub_method(sb, :winsize, ->(*) { [6, 20] }) { sb.send(:link_view_frame) }
+      refute_nil frame, "the frame built without hitting the backstop"
       rows = frame.scan(/\e\[(\d+);1H/).flatten.map(&:to_i)
       assert_operator rows.max, :<=, 6
     end
@@ -449,6 +451,24 @@ module Switchboard
         end
       end
       assert_equal 1, scans
+    end
+
+    # Value: protects=a hidden pane's warm repaint that trips the backstop closes its QR without
+    # flashing a message in whatever session you're in; fails_when=the notify loses its @visible
+    # gate; why_new=red team, ship of v0.54.0; seam=none; no_claim=tmux's client choice
+    def test_an_off_screen_backstop_closes_quietly
+      sb = open(linked)
+      sb.instance_variable_set(:@visible, false)
+      said = []
+      stub_method(sb, :winsize, ->(*) { [40, 40] }) do
+        stub_method(sb, :link_view_lines, ->(*) { raise ArgumentError, "unforeseen" }) do
+          stub_method(Tmux, :notify, ->(msg) { said << msg }) do
+            stub_method(sb, :render, ->(*) {}) { sb.send(:render_link_view) }
+          end
+        end
+      end
+      assert_nil view(sb)
+      assert_empty said
     end
 
     def sidebar_with_links = open(linked)

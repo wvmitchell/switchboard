@@ -293,7 +293,9 @@ module Switchboard
         return $stdout.write(frame) if frame
 
         @link_view = nil # close BEFORE repainting, or render would route straight back here
-        Tmux.notify("switchboard: couldn't draw this link's QR (#{@link_view_error})") # say why, non-blocking
+        # Say why, non-blocking, but only on screen: a hidden pane's warm repaint can land
+        # here too, and an untargeted display-message would flash in whatever session you're in.
+        Tmux.notify("switchboard: couldn't draw this link's QR (#{@link_view_error})") if @visible
         render
       end
 

@@ -57,7 +57,7 @@ module Switchboard
 
     # Resolve config into [bindings, collisions]:
     #   bindings:   { action => key | nil }  (nil when the action's key was claimed
-    #               by an earlier action — left unbound, its aliases still fire)
+    #               by an earlier action — left unbound, any aliases it has still fire)
     #   collisions: [{ action:, key:, winner: }, ...]  for doctor to report
     # An override wins only when it validates AND its key is still free; otherwise
     # the action falls back to its default, and a default that's also taken drops
