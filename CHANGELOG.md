@@ -10,6 +10,13 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
+## [0.55.2] — the QR overlay keeps the switchboard header (2026-10-24)
+
+### Changed
+- The `p` QR overlay now leads with the same header as the tree (the full one at home or
+  with `H`), then the workspace's name. The session's own name is gone: Claude defaults it
+  to the workspace's first name, which goes stale once the workspace is renamed.
+
 ## [0.55.1] — the QR overlay's edge cases (2026-10-24)
 
 ### Fixed

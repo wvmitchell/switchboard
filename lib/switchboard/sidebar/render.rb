@@ -318,9 +318,10 @@ module Switchboard
         help_sections(cols).flatten
       end
 
-      # The p overlay (layout picked by eye, design review D2): where you are, which
-      # session, the code, the URL as a readable backup, and the way out on the bottom
-      # row. Painted like render_help (cursor-addressed, no full clear).
+      # The p overlay (layout picked by eye, design review D2): the tree's own header, which
+      # workspace, the code, the URL as a readable backup, and the way out on the bottom
+      # row. No session name: Claude's default is the workspace's first name, stale once
+      # it's renamed. Painted like render_help (cursor-addressed, no full clear).
       # The overlay draws text from Claude's undocumented session file and git, and this runs
       # in the unrescued run loop: input nobody foresaw closes the QR and repaints the tree
       # rather than killing the pane. Only building the frame is rescued; a write error to a
@@ -362,7 +363,7 @@ module Switchboard
         return [[], "any key closes"] unless link
 
         links = view_links
-        head = [link_view_header(links, link, cols), "#{NOTE_FG}#{fit_columns(session_label(link), cols)}\e[0m", ""]
+        head = header(cols) + [link_view_header(links, link, cols), ""] # the tree's own header above it
         url = link.url.scan(/.{1,#{[cols, 1].max}}/).map { |l| "#{NOTE_FG}#{l}\e[0m" }
         keys = links.size > 1 ? "tab next · any key closes" : "any key closes"
         matrix = (@link_view[:qr][link.url] ||= QR.matrix(link.url))
@@ -394,20 +395,6 @@ module Switchboard
         shown = fit_columns(name, [room, 1].max)
         pad = " " * [cols - columns(shown) - count.size, 0].max
         "#{BRAND}#{shown}\e[0m#{pad}#{NOTE_FG}#{count}\e[0m"
-      end
-
-      # The session's name, else when it started, else its pid. Free text from Claude's
-      # file, so it loses invisible characters like the task note, and it's cut first: this
-      # runs on every repaint, and no pane shows more than LABEL_MAX of it. A start time of 0
-      # means RemoteLink couldn't read one.
-      LABEL_MAX = 200
-
-      def session_label(link)
-        name = link.name.to_s[0, LABEL_MAX].gsub(/\s+/, " ").gsub(NOTE_INVISIBLE, "").strip
-        return name unless name.empty?
-        return "started #{Time.at(link.started_at / 1000).strftime('%H:%M')}" if link.started_at.to_i.positive?
-
-        "pid #{link.pid}"
       end
 
       # Two modules per text row: `▀` paints the top module in the foreground color and

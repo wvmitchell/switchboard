@@ -1019,7 +1019,9 @@ bytes, so there are no version-information blocks), pinned module for module by
 `qrencode -8` fixtures with each mask forced. Which mask it picks is pinned by
 hand-worked penalty cases, not by another encoder's choice: encoders legitimately differ
 on rule 3 (libqrencode#220), and segno pads differently (an extra `0x00` before the
-`0xEC/0x11` run), so neither is a bit-exact reference for that. The code is drawn in half blocks
+`0xEC/0x11` run), so neither is a bit-exact reference for that. The overlay leads with the tree's own `header`
+(full at home or with `H`), then the workspace name; no session name, since Claude defaults it to
+the workspace's FIRST name, stale after a rename. The code is drawn in half blocks
 in the theme's ANSI 0/15 (picked by eye and scanned; the fixed 256-color 16/231 pair
 looked wrong in a themed terminal), with a quiet zone as wide as fits up to 4 and never
 under 2, centered in a wider pane; a pane that can't fit it shows the URL instead. The
