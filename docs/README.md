@@ -26,6 +26,9 @@ depth behind it.
   `doctor`.
 - [Cut a release & enable the Homebrew tap](howto-release.md) — maintainers: the
   version bump, what the pipeline does after merge, and the one-time tap setup.
+- [Run the security monitor](howto-security-monitor.md) — maintainers: the
+  agent-driven 6-hourly check of toolchain advisories, agent-contract drift, and
+  release health. It's also the playbook the monitor follows.
 
 ### 📖 Reference — the precise facts
 - [Reading the sidebar](reference-sidebar.md) — every dot, badge, diff count, and
