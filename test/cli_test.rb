@@ -1325,6 +1325,17 @@ module Switchboard
       assert_includes out, "left unbound"
     end
 
+    # Value: protects=doctor tells the truth when a NEW action's default lost to an existing
+    # remap; fails_when=it says the user's phone_link "clashes" or claims aliases phone_link
+    # doesn't have; why_new=red team, ship of v0.54.0; seam=none; no_claim=none beyond protects
+    def test_doctor_explains_a_new_default_taken_by_an_existing_remap
+      File.write(Config.path, YAML.dump("sidebar_keys" => { "open_pr" => "p" }))
+      out = capture { CLI.send(:doctor_sidebar_keys) }
+      assert_includes out, "sidebar_keys.phone_link its default \"p\" is taken by open_pr"
+      assert_includes out, "set sidebar_keys.phone_link to reach it"
+      refute_includes out, "aliases still work", "phone_link has no arrow/ctrl alias"
+    end
+
     # --- switchboard rename (issue #42) -------------------------------------
 
     # Config registering proj -> repo, plus a linked worktree at wts/proj/<leaf>.

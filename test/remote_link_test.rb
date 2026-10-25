@@ -161,6 +161,20 @@ module Switchboard
                    "startedAt orders; a missing one falls back to procStart (epoch 0 here) and is kept, not dropped"
     end
 
+    # Value: protects=a non-finite startedAt fails closed to the procStart fallback; fails_when=
+    # start_ms trusts any Numeric again (1e400 parses to Infinity, and the p overlay's session
+    # label then raises FloatDomainError and kills the pane); why_new=red team, ship of v0.54.0;
+    # seam=none; no_claim=other malformed fields (covered above)
+    def test_a_non_finite_started_at_falls_back_to_proc_start
+      w = wt("alpha")
+      write_session("inf", cwd: w, startedAt: "MARK", bridgeSessionId: "session_inf")
+      file = File.join(RemoteLink.sessions_dir, "inf.json")
+      File.write(file, File.read(file).sub('"startedAt":"MARK"', '"startedAt":1e400'))
+      link = stub_method(ProcessIdentity, :same?, ->(*) { true }) { scan([w])[w] }.first
+      assert link.started_at.finite?, "falls back to the parsed procStart"
+      assert_match(/\A(started \d\d:\d\d|a-name)\z/, Sidebar.allocate.send(:session_label, link))
+    end
+
     def test_an_interactive_link_idle_past_the_threshold_is_stale
       w = wt("alpha")
       now = Time.now

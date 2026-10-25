@@ -812,7 +812,14 @@ module Switchboard
       end
       Keymap.collisions(config).each do |c|
         ok = false
-        puts "  \e[33m–\e[0m sidebar_keys.#{c[:action]} (#{c[:key].inspect}) clashes with #{c[:winner]} — left unbound; its arrow/ctrl aliases still work"
+        action = Keymap::ACTIONS.find { |a| a.name == c[:action] }
+        what = if config.raw_sidebar_key(c[:action]).nil?
+                 "its default #{c[:key].inspect} is taken by #{c[:winner]} — left unbound; set sidebar_keys.#{c[:action]} to reach it"
+               else
+                 "(#{c[:key].inspect}) clashes with #{c[:winner]} — left unbound"
+               end
+        what += "; its arrow/ctrl aliases still work" if action && !action.aliases.empty?
+        puts "  \e[33m–\e[0m sidebar_keys.#{c[:action]} #{what}"
       end
       puts row(true, "sidebar_keys: #{overridden.size} remapped, no clashes") if ok
     end

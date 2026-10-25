@@ -209,7 +209,7 @@ module Switchboard
     # startedAt (epoch ms), else procStart parsed as UTC, else 0 — a bad ordering field
     # only demotes a link, never drops it.
     def start_ms(rec)
-      return rec[:started_at] if rec[:started_at].is_a?(Numeric)
+      return rec[:started_at] if rec[:started_at].is_a?(Numeric) && rec[:started_at].finite? # 1e400 parses to Infinity
 
       (Time.strptime("#{rec[:proc_start].squeeze(' ')} UTC", "%a %b %d %H:%M:%S %Y %Z").to_f * 1000).to_i
     rescue StandardError

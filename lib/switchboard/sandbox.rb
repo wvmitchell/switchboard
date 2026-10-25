@@ -226,15 +226,15 @@ module Switchboard
       nil # a marker that fails to seed just doesn't render the ∞ — never abort the sandbox
     end
 
+    # Production-length (session_ + 24), so `p` draws the real 33-module code you'd scan.
+    SEED_LINK_ID = "session_01SandboxLinkNotRealXyzA"
+
     # Mark a worktree reachable from the phone (the ⇅ glyph). RemoteLink only trusts a
     # LIVE process whose start time matches and places it by its KERNEL cwd, so a fake
     # file alone would never render: park a `sleep` in the worktree, in a detached
     # non-sb/ session of THIS server (prune/reconcile only touch sb/), so it dies with
     # the sandbox, and point a session file at it. A real `claude /rc` inside the
     # sandbox writes the real ~/.claude (HOME is kept), so it deliberately doesn't show.
-    # Production-length (session_ + 24), so `p` draws the real 33-module code you'd scan.
-    SEED_LINK_ID = "session_01SandboxLinkNotRealXyzA"
-
     def seed_link(worktree)
       out = IO.popen(["tmux", "new-session", "-d", "-s", "_sandbox-link", "-c", worktree,
                       "-P", "-F", '#{pane_pid}', "exec sleep 2147483647"], err: File::NULL, &:read)

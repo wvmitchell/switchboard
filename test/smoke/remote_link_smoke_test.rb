@@ -76,13 +76,13 @@ module Switchboard
       wait_until("the ⇅ appears") { row(pane).include?("⇅") }
 
       tmux!("send-keys", "-t", pane, "G", "p") # phone-ws is the last row
-      wait_until("the QR paints") { capture(pane).include?("▀") }
-      screen = capture(pane)
+      url = "https://claude.ai/code/#{LINK_ID}"
+      screen = nil
+      wait_until("the code and the URL under it paint") { (screen = capture(pane)).delete("\n").include?(url) }
       width = tmux("display-message", "-p", "-t", pane, fmt("pane_width")).strip.to_i
       side = ((width - 33) / 2).clamp(2, 4)
       code = screen.lines.select { |l| l.include?("▀") }
       assert_equal [33 + (2 * side)], code.map { |l| l.count("▀") }.uniq, "a 33-module code with its margin"
-      assert_includes screen.delete("\n"), "https://claude.ai/code/#{LINK_ID}", "the URL under the code"
 
       write_session("bridgeSessionId" => nil)
       wait_until("the overlay closes back to the tree") { !capture(pane).include?("▀") && row(pane).include?("phone-ws") }

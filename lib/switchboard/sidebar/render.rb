@@ -30,6 +30,7 @@ module Switchboard
       FAILED   = "\e[1;31m✘\e[0m" # a dispatch whose build/setup/launch failed: the heavy ✘ keeps its shape in reverse video (DR5)
       LINK_GLYPH    = "⇅"        # a live /remote-control link: this workspace is reachable from your phone (picked by eye)
       LINK_LIVE_FG  = "\e[32m"    # ...green while live: the resting dots' green, normal weight (default fg read too close to the grey)
+      LINK_LIVE_LABEL = "on phone" # the legend entry the p hint attaches to
       LINK_STALE_FG = "\e[90m"    # ...and grey when idle past remote_link_stale_after (bold read identical; the theme-relative dim branch rows use)
       WS_PREFIX_COLS = 4          # a ws row's "<pointer> <dot> " before its name: fit_plain and colored must agree on it
       NOTE_FG  = "\e[2m"          # the dim task label / failure reason in the right region (DR3/DR8)
@@ -89,7 +90,7 @@ module Switchboard
       # the help wordmark so help_body's height cap never drops it.
       LEGEND = [[SPIN_COLORED.first, "⠋", "working"], [WANTS_ON, "◆", "input"], [DONE, "●", "done"],
                 [MONITORING, "∞", "watching"], [BUILDING, "◌", "building"], [FAILED, "✘", "failed"],
-                ["#{LINK_LIVE_FG}#{LINK_GLYPH}\e[0m", "⇅", "on phone"], ["#{LINK_STALE_FG}#{LINK_GLYPH}\e[0m", "⇅", "idle link"]].freeze
+                ["#{LINK_LIVE_FG}#{LINK_GLYPH}\e[0m", "⇅", LINK_LIVE_LABEL], ["#{LINK_STALE_FG}#{LINK_GLYPH}\e[0m", "⇅", "idle link"]].freeze
 
       private
 
@@ -392,7 +393,7 @@ module Switchboard
         width = 0
         qr_key = @bindings && @bindings[:phone_link]
         LEGEND.each do |colored, glyph, label|
-          label = "#{label} · #{qr_key} shows a QR" if label == "on phone" && qr_key # the live key, or no hint
+          label = "#{label} · #{qr_key} shows a QR" if label == LINK_LIVE_LABEL && qr_key # the live key, or no hint
           item_w = "#{glyph} #{label}".length
           if width.positive? && width + 2 + item_w > cols
             lines << []

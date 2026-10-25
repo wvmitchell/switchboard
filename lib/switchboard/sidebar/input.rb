@@ -35,6 +35,8 @@ module Switchboard
       # can't open the editor while help is up — `e` dismisses it first — and C-r isn't
       # broadcast, it targets the just-focused pane); focus is cosmetic under the overlay.
       # If C-r ever becomes broadcast, revisit this (it'd then need honoring). (issue #62)
+      # The p overlay is different: there these bytes run their handlers (`poke`, which
+      # must have an arm for every one), so a switch-in reload re-checks its link.
       HELP_IGNORED_BYTES = ["\f", RELOAD_CONFIG_BYTE, WARM_POKE_BYTE, "\e[I", "\e[O"].freeze
 
       # Pure terminal-input tokenizer: returns [complete tokens, trailing incomplete
@@ -207,7 +209,9 @@ module Switchboard
         reappeared = !@visible
         set_visible(true)
         reload(announce_sounds: false) if reappeared
-        cursor_to_current # going back to the sidebar selects the workspace you're in
+        # Going back to the sidebar selects the workspace you're in; under the p overlay,
+        # keep the row p was pressed on, so closing the QR lands where you left.
+        cursor_to_current unless @link_view
         # #64 fast reap: we may have just gained focus BECAUSE our work sibling closed and
         # we became the lone (active) pane. Check now so the wedge is caught within a frame
         # instead of up to one REFRESH tick. Returns true (=> dispatch exits the loop) only

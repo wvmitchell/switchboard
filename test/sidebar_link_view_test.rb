@@ -45,7 +45,7 @@ module Switchboard
     def test_p_on_an_unlinked_row_or_a_header_does_nothing
       sb = linked
       stub_method(sb, :flash, ->(*) { flunk "no flash on a row without a link" }) do
-        sb.instance_variable_set(:@cursor, 2) # beta, no link
+        sb.instance_variable_set(:@cursor, 1) # beta, no link
         sb.send(:dispatch, "p")
         assert_nil view(sb)
         tree = sidebar(nodes: [Tree::Node.new(kind: "proj", project: "app")])
@@ -110,6 +110,16 @@ module Switchboard
       end
       assert_equal %i[reload warm], ran, "a switch-in poke still reloads (and so re-checks the link)"
       refute_nil view(sb)
+    end
+
+    # Value: protects=the #64 lone-pane fast reap still exits the loop while the p overlay is
+    # open; fails_when=link_view_key calls poke but returns true (focus-in's false is dropped);
+    # why_new=only focus-out was dispatched under the overlay; seam=none; no_claim=real pane death
+    def test_a_lone_pane_focus_in_still_exits_the_loop_under_the_overlay
+      sb = open(linked)
+      stub_method(sb, :focus_in, ->(*) { true }) do
+        refute sb.send(:dispatch, "\e[I"), "focus-in's exit signal passes through the overlay"
+      end
     end
 
     # --- re-checking the link on every scan --------------------------------------
@@ -190,6 +200,30 @@ module Switchboard
       assert_equal "pane too short · any key closes", hint
     end
 
+    # Value: protects=a link QR can't encode degrades to the readable URL, never a raise in the
+    # render loop; fails_when=the nil-matrix guard goes (nil.size) or BRIDGE_ID's bound widens
+    # unguarded; why_new=no test hit the nil branch; seam=none; no_claim=what RemoteLink accepts
+    def test_a_link_too_long_to_encode_shows_the_url_instead
+      long = link("session_#{'x' * 100}")
+      text, hint, raw = lines(open(linked([long])))
+      assert_includes text, "no QR for this link"
+      assert_empty qr_lines(raw)
+      assert_equal long.url, text.last(4).join, "the whole URL, wrapped at the pane width"
+      assert_equal "any key closes", hint
+    end
+
+    # Value: protects=with several links the 1/2 count stays visible and the header fits the pane;
+    # fails_when=a long name pushes the count off or the header overflows cols; why_new=tab test
+    # uses a short name only; seam=none; no_claim=wide-char names
+    def test_a_long_name_gives_way_so_the_count_stays_in_the_header
+      nodes = [ws("a-very-long-workspace-name-that-will-not-fit", path: "/wt/a")]
+      sb = open(linked([link(ID_A), link(ID_B)], nodes: nodes))
+      header = lines(sb)[0][0]
+      assert_equal 40, header.length, "fills the pane exactly"
+      assert header.start_with?("app/a-very"), header
+      assert header.end_with?(" 1/2"), header
+    end
+
     def test_too_narrow_shows_the_url_and_says_widen
       text, hint = lines(open(linked), cols: 30)
       assert_includes text, "too narrow for the QR"
@@ -229,6 +263,74 @@ module Switchboard
       File.write(Config.path, YAML.dump("sidebar_keys" => { "rename" => "p" }))
       legend = strip_ansi(sidebar.send(:legend_lines, 80).join(" "))
       refute_includes legend, "shows a QR", "an unbound key gets no hint"
+    end
+
+    # Value: protects=every poke byte keeps doing its job under the p overlay; fails_when=a byte
+    # is added to HELP_IGNORED_BYTES without an arm in poke (it would silently do nothing there);
+    # why_new=maintainability review, ship of v0.54.0; seam=none; no_claim=what each handler does
+    def test_every_poke_byte_has_a_handler
+      handlers = %i[reload_and_refresh warm_poke reload_config_and_rebuild focus_in]
+      Sidebar::HELP_IGNORED_BYTES.each do |byte|
+        sb = sidebar
+        ran = []
+        handlers.each { |m| sb.define_singleton_method(m) { ran << m; false } }
+        sb.send(:poke, byte)
+        assert(ran.any? || byte == "\e[O" && sb.instance_variable_get(:@focused) == false,
+               "poke has no arm for #{byte.inspect}")
+      end
+    end
+
+    # Value: protects=the header still names the workspace when no ws row matches (a branch row
+    # whose ws row is filtered away); fails_when=the fallback raises on a nil node or shows a
+    # wrong label; why_new=the branch-row test checked only the path; seam=none; no_claim=none
+    def test_the_header_falls_back_to_the_folder_name_without_a_ws_row
+      branch = Tree::Node.new(kind: "br", project: "app", path: "/wt/a", branch: "feat", active: true)
+      sb = open(linked(nodes: [branch]))
+      assert_equal "a", lines(sb)[0][0].strip
+    end
+
+    # Value: protects=at the fit boundary (cols = n+4) the code still draws, with the 2-module
+    # floor (eng D5); fails_when=the floor or the fit check moves by one; why_new=only 40 and 60
+    # cols were asserted; seam=none; no_claim=how it looks (Will, sandbox)
+    def test_the_margin_drops_to_two_at_the_fit_boundary
+      raw = lines(open(linked), cols: 37)[2]
+      assert(qr_lines(raw).all? { |l| strip_ansi(l).length == 37 }, "33 modules + 2 each side")
+      assert_includes lines(open(linked), cols: 36)[0], "too narrow for the QR"
+    end
+
+    # Value: protects=switching back to a session re-checks its link at once (eng D9): the C-l poke
+    # runs the reload, and a link that ended closes the overlay; fails_when=pokes are swallowed
+    # under the overlay again or the reload stops reaching refresh_agents' ensure; why_new=the
+    # poke test stubbed the reload; seam=none (stubs reload's heavy rebuild); no_claim=real tmux
+    def test_a_switch_back_poke_closes_the_overlay_when_its_link_ended
+      sb = open(linked)
+      as = Struct.new(:last_hook_states).new({})
+      as.define_singleton_method(:scan) { |*, **| {} }
+      sb.instance_variable_set(:@agent_state, as)
+      stub_method(Tmux, :visible?, ->(*) { true }) do
+        stub_method(sb, :reload_due?, ->(*) { true }) do
+          stub_method(sb, :reload, ->(**) { sb.send(:refresh_agents, refresh_prs: false) }) do
+            stub_method(RemoteLink, :scan, ->(*, **) { {} }) { sb.send(:dispatch, "\f") }
+          end
+        end
+      end
+      assert_nil view(sb)
+    end
+
+    # Value: protects=closing the QR returns you to the row you pressed p on, even if focus moved
+    # meanwhile (review D2); fails_when=focus_in jumps the cursor to the current workspace under
+    # the overlay; why_new=red team, ship of v0.54.0; seam=none; no_claim=real focus events (smoke)
+    def test_focus_in_under_the_overlay_keeps_the_p_row
+      sb = linked
+      sb.instance_variable_set(:@cursor, 1) # beta
+      sb.instance_variable_set(:@links, { "/wt/b" => [link] })
+      sb.instance_variable_set(:@current_path, "/wt/a")
+      sb.instance_variable_set(:@visible, true)
+      open(sb)
+      stub_method(sb, :lone_pane_handled, ->(*) { false }) { sb.send(:dispatch, "\e[I") }
+      refute_nil view(sb), "the overlay really opened on beta"
+      sb.send(:dispatch, "x")
+      assert_equal "/wt/b", sb.send(:current)&.path, "still on beta, where p was pressed"
     end
   end
 end
