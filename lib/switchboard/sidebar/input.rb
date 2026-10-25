@@ -309,7 +309,7 @@ module Switchboard
         if step
           @help_page = (@help_page + step).clamp(0, count - 1)
         else
-          dismiss_help
+          close_overlay { dismiss_help }
         end
         true
       end
@@ -335,7 +335,8 @@ module Switchboard
         links = @links[node.path]
         return if links.nil? || links.empty?
 
-        @link_view = { path: node.path, bridge_id: links.first.bridge_id, qr: {} }
+        @link_view = { path: node.path, qr: {} }
+        hold_link(links.first)
       end
 
       def link_view_key(key)
@@ -344,7 +345,7 @@ module Switchboard
         when "\e[C" then resize(WIDTH_STEP)
         when "\e[D" then resize(-WIDTH_STEP)
         when *POKE_BYTES then return poke(key)
-        else @link_view = nil
+        else close_overlay { @link_view = nil }
         end
         true
       end
@@ -353,22 +354,46 @@ module Switchboard
         links = view_links
         return if links.size < 2
 
-        at = links.index { |l| l.bridge_id == @link_view[:bridge_id] } || -1
-        @link_view[:bridge_id] = links[(at + 1) % links.size].bridge_id
+        at = links.index { |l| held?(l) } || -1
+        hold_link(links[(at + 1) % links.size])
       end
 
-      # After every scan: keep the same session if it's still linked, else show the
-      # newest remaining one; with none left, close back to the tree. Never a flash —
-      # this runs inside the scan, and a flash would block it on a keypress.
+      # After every scan: keep the same session if it's still linked, following it if its
+      # workspace was renamed (another workspace renamed onto the old path must not take
+      # over the QR), else show the newest remaining one; with none left, close back to the
+      # tree. Never a flash — this runs inside the scan, and a flash would block it on a
+      # keypress.
       def revalidate_link_view
         return unless @link_view
 
+        moved = @links.find { |_, ls| ls.any? { |l| held?(l) } }&.first
+        @link_view[:path] = moved if moved
         links = view_links
         if links.empty?
           @link_view = nil
-        elsif links.none? { |l| l.bridge_id == @link_view[:bridge_id] }
-          @link_view[:bridge_id] = links.first.bridge_id
+        else
+          hold_link(links.first) unless links.any? { |l| held?(l) }
+          urls = links.map(&:url)
+          @link_view[:qr].select! { |url, _| urls.include?(url) } # reconnects mint new URLs
         end
+      end
+
+      # A link is its session (pid) AND its bridge: a crash leftover beside its resumed
+      # session can carry the same bridge id, and Tab must still reach every link.
+      def hold_link(link)
+        @link_view[:pid] = link.pid
+        @link_view[:bridge_id] = link.bridge_id
+      end
+
+      def held?(link)
+        link.pid == @link_view[:pid] && link.bridge_id == @link_view[:bridge_id]
+      end
+
+      # A key that closes an overlay ends its batch: keys typed in the same instant were
+      # aimed at the overlay, not at whatever row the tree is on.
+      def close_overlay
+        yield
+        @typeahead&.clear
       end
 
       def view_links
@@ -377,7 +402,7 @@ module Switchboard
 
       # The link the overlay is showing (nil only mid-revalidate).
       def view_link
-        view_links.find { |l| l.bridge_id == @link_view[:bridge_id] }
+        view_links.find { |l| held?(l) }
       end
 
       # --- / filter mode (issue #60) -------------------------------------------

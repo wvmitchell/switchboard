@@ -388,6 +388,7 @@ module Switchboard
       def link_view_header(links, link, cols)
         node = @nodes.find { |n| n.kind == "ws" && n.path == @link_view[:path] }
         name = node ? "#{node.project}/#{node.name}" : File.basename(@link_view[:path].to_s)
+        name = name.dup.force_encoding(Encoding::UTF_8).scrub.gsub(NOTE_INVISIBLE, "") # a folder name can carry escape bytes
         count = links.size > 1 ? "#{links.index(link) + 1}/#{links.size}" : ""
         room = count.empty? ? cols : cols - count.size - 1
         shown = fit_columns(name, [room, 1].max)
@@ -396,10 +397,13 @@ module Switchboard
       end
 
       # The session's name, else when it started, else its pid. Free text from Claude's
-      # file, so it loses invisible characters like the task note. A start time of 0
+      # file, so it loses invisible characters like the task note, and it's cut first: this
+      # runs on every repaint, and no pane shows more than LABEL_MAX of it. A start time of 0
       # means RemoteLink couldn't read one.
+      LABEL_MAX = 200
+
       def session_label(link)
-        name = link.name.to_s.gsub(/\s+/, " ").gsub(NOTE_INVISIBLE, "").strip
+        name = link.name.to_s[0, LABEL_MAX].gsub(/\s+/, " ").gsub(NOTE_INVISIBLE, "").strip
         return name unless name.empty?
         return "started #{Time.at(link.started_at / 1000).strftime('%H:%M')}" if link.started_at.to_i.positive?
 
