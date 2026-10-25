@@ -292,6 +292,43 @@ module Switchboard
 
     # --- apply_keybindings: ties config + recorded options + the seam together --
 
+    # Value: protects=swapping toggle and home keys leaves both bound (neither role unbinds a
+    # key the other now wants); fails_when=rebind unbinds its recorded key unconditionally
+    # (the toggle loses its new key); why_new=ship 2 Codex adversarial; seam=run_tmux
+    def test_apply_keybindings_survives_a_toggle_home_swap
+      File.write(Config.path, YAML.dump("tmux_keys" => { "toggle" => "H", "home" => "s" }))
+      recorded = { "@switchboard-toggle-key" => "s", "@switchboard-home-key" => "H" }
+      cmds = []
+      stub_method(Installer, :list_prefix_keys, -> { "" }) do
+        stub_method(Installer, :tmux_option, ->(name) { recorded[name] }) do
+          stub_method(Installer, :run_tmux, ->(*argv) { cmds << argv; true }) do
+            Installer.apply_keybindings(config: Config.new)
+          end
+        end
+      end
+      assert_includes cmds, ["bind-key", "H", "run-shell", "'#{Installer.bin_path}' toggle-sidebar"]
+      assert_includes cmds, ["bind-key", "s", "run-shell", "'#{Installer.bin_path}' home"]
+      refute_includes cmds, ["unbind-key", "H"], "home must not unbind the toggle's new key"
+      refute_includes cmds, ["unbind-key", "s"], "toggle must not unbind home's new key"
+      assert_includes cmds, ["set-option", "-g", "@switchboard-config-path", File.expand_path(Config.path)],
+                      "records which config these keys came from"
+    end
+
+    # Value: protects=drift is judged only against the config tmux actually bound from, so a
+    # shell/server config mismatch (or a failed tmux read) can't make upgrade loop; fails_when=
+    # key_drift? ignores @switchboard-config-path; why_new=ship 2 Claude adversarial; seam=tmux_option
+    def test_key_drift_needs_the_config_tmux_bound_from
+      File.write(Config.path, YAML.dump("tmux_keys" => { "toggle" => "t" }))
+      base = { "@switchboard-toggle-key" => "s" }
+      stub_method(Installer, :tmux_server?, -> { true }) do
+        { nil => nil, "/elsewhere/config.yml" => nil, File.expand_path(Config.path) => true }.each do |bound_from, verdict|
+          opts = base.merge("@switchboard-config-path" => bound_from)
+          got = stub_method(Installer, :tmux_option, ->(name) { opts[name] }) { Installer.key_drift?("toggle", config: Config.new) }
+          verdict.nil? ? assert_nil(got, bound_from.inspect) : assert_equal(verdict, got, bound_from.inspect)
+        end
+      end
+    end
+
     def test_apply_keybindings_binds_configured_toggle_and_home
       File.write(Config.path, YAML.dump("tmux_keys" => { "toggle" => "b", "home" => "H" }))
       cmds = []
@@ -819,6 +856,27 @@ module Switchboard
       assert ok, out
       refute_includes out, "Done, except the codex hooks"
       refute_includes out, "still there"
+    end
+
+    # Value: protects=uninstall never says "Done" when the codex config became unreadable (the
+    # block may still be there); fails_when=step_codex_unhooks trusts installed? == false on an
+    # unreadable file; why_new=ship 2 Claude adversarial; seam=CodexHook.remove_global/installed?
+    def test_uninstall_fails_when_the_codex_config_turned_unreadable
+      codex_home!
+      with_codex { CodexHook.install_global }
+      conf = path("tmux.conf")
+      File.write(conf, "# mine\n")
+      ok = nil
+      gone = [true, false] # installed? true at entry, then "false" because the file can't be read
+      out = stub_method(CodexHook, :installed?, -> { gone.shift || false }) do
+        stub_method(CodexHook, :remove_global, -> { File.chmod(0o000, CodexHook.config_path); false }) do
+          silently { ok = Installer.uninstall(conf: conf) }
+        end
+      end
+      refute ok, out
+      assert_includes out, "Done, except the codex hooks"
+    ensure
+      File.chmod(0o600, CodexHook.config_path) if CodexHook.config_path && File.exist?(CodexHook.config_path)
     end
 
     # Value: protects=install blaming the config, not the hooks, when config.yml won't parse;

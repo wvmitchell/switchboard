@@ -9,12 +9,21 @@ module Switchboard
   module Git
     module_function
 
-    # All worktrees registered against a repo, parsed from porcelain output.
-    def worktrees(repo)
+    # All worktrees registered against a repo, parsed from porcelain output. `strict:` is for
+    # callers deciding what's safe to destroy: nil when git couldn't list them (a failed run
+    # reads as an empty list, which would make every branch look free).
+    def worktrees(repo, strict: false)
+      out = capture(repo, "worktree", "list", "--porcelain")
+      return nil if strict && !$?&.success?
+
+      parse_worktrees(out)
+    end
+
+    def parse_worktrees(out)
       # Split as bytes, then skip a worktree whose path isn't valid UTF-8 (Linux only;
       # macOS can't hold one): passed on as binary it would raise in every compare
       # against a UTF-8 path, so it's left out rather than crash the tree.
-      capture(repo, "worktree", "list", "--porcelain").b.split("\n\n").filter_map do |block|
+      out.b.split("\n\n").filter_map do |block|
         block.force_encoding(Encoding::UTF_8)
         next unless block.valid_encoding?
 
@@ -207,7 +216,9 @@ module Switchboard
     def delete_branch_at(repo, branch, sha)
       return false if blank?(branch) || blank?(sha)
 
-      system("git", "-C", repo, "update-ref", "-d", "refs/heads/#{branch}", sha, out: File::NULL, err: File::NULL)
+      # --no-deref: delete this exact ref, never the branch a symref (a hook's doing) points at.
+      system("git", "-C", repo, "update-ref", "--no-deref", "-d", "refs/heads/#{branch}", sha,
+             out: File::NULL, err: File::NULL)
     end
 
     # A local branch by this name already exists. Used to pre-check a rename target

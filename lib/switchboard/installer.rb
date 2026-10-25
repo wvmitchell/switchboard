@@ -421,8 +421,11 @@ module Switchboard
         bad "#{CodexHook.config_path} changed while uninstalling (codex wrote to it) — re-run uninstall"
         false
       else
-        # remove_global's false also means "nothing to remove" (the block went meanwhile).
-        return true unless CodexHook.installed?
+        # remove_global's false also means "nothing to remove" (the block went meanwhile) —
+        # but installed? reads false for an unreadable file too, so check that it IS readable.
+        path = CodexHook.config_path
+        still_there = File.exist?(path) && (!File.readable?(path) || CodexHook.installed?)
+        return true unless still_there
 
         # A write that FAILED (read-only/symlinked config) would fail again on a re-run, so
         # stopping here would wedge uninstall forever: report it and let the rest proceed.
@@ -487,6 +490,7 @@ module Switchboard
         run_tmux("set-option", "-gu", "@switchboard-#{role}-clobbered")
         run_tmux("set-option", "-gu", "@switchboard-#{role}-rejected")
       end
+      run_tmux("set-option", "-gu", "@switchboard-config-path")
       run_tmux("unbind-key", "s") # legacy default — covers installs predating the @option record
       HOOK_SLOTS.each { |slot| run_tmux("set-hook", "-gu", slot) }
     end
@@ -509,29 +513,36 @@ module Switchboard
     def apply_keybindings(announce: false, config: Config.new)
       raw = list_prefix_keys
       legacy = tmux_option("@switchboard-toggle-key").nil? && toggle_key_live_from?(raw, "s")
+      wanted = ROLE_SUBCOMMANDS.keys.to_h { |role| [role, config.tmux_key(role)] }
       bound = ROLE_SUBCOMMANDS.keys.to_h do |role|
-        desired = config.tmux_key(role)
+        desired = wanted[role]
         recorded = tmux_option("@switchboard-#{role}-key")
         clobbered = desired && desired != recorded ? foreign_binding(raw, desired, ROLE_SUBCOMMANDS[role]) : nil
-        [role, run_rebind(role, desired, recorded: recorded, legacy_toggle: legacy, clobbered: clobbered)]
+        # A key another role now wants stays bound (toggle and home swapped): unbinding it
+        # here would delete the binding that role just made, or is about to make.
+        taken = wanted.reject { |r, _| r == role }.values.compact
+        [role, run_rebind(role, desired, recorded: recorded, legacy_toggle: legacy, clobbered: clobbered, taken: taken)]
       end
+      # Which config file these keys came from: key_drift? only judges against the same one
+      # (a shell and a tmux server can resolve config.yml differently).
+      run_tmux("set-option", "-g", "@switchboard-config-path", File.expand_path(config.file))
       announce_bindings(bound) if announce
     end
 
     # Pure: the ordered tmux ops to converge `role` onto `desired`. Symbolic tuples
     # (translated by tmux_argv), bind FIRST so a failed bind never strands the user.
     # nil desired ⇒ clean the role up (unbind what we recorded, forget it).
-    def rebind_ops(role, desired, recorded:, legacy_toggle: false, clobbered: nil)
+    def rebind_ops(role, desired, recorded:, legacy_toggle: false, clobbered: nil, taken: [])
       ops = []
       if desired.nil?
-        ops << [:unbind, recorded] if recorded
+        ops << [:unbind, recorded] if recorded && !taken.include?(recorded)
         ops << [:clear_key, role]
         ops << [:clear_clobber, role]
         return ops
       end
       ops << [:bind, role, desired]
-      ops << [:unbind, recorded] if recorded && recorded != desired
-      ops << [:unbind, "s"] if role == "toggle" && legacy_toggle && desired != "s" && recorded != "s"
+      ops << [:unbind, recorded] if recorded && recorded != desired && !taken.include?(recorded)
+      ops << [:unbind, "s"] if role == "toggle" && legacy_toggle && desired != "s" && recorded != "s" && !taken.include?("s")
       ops << [:set_key, role, desired]
       ops << (clobbered ? [:set_clobber, role, clobbered] : [:clear_clobber, role])
       ops
@@ -555,8 +566,8 @@ module Switchboard
     # through but it's not a real key), keep a working toggle by binding the default
     # and bail WITHOUT cleaning or recording; leave home unbound. Returns the key
     # actually bound to our command, or nil.
-    def run_rebind(role, desired, recorded:, legacy_toggle:, clobbered:)
-      ops = rebind_ops(role, desired, recorded: recorded, legacy_toggle: legacy_toggle, clobbered: clobbered)
+    def run_rebind(role, desired, recorded:, legacy_toggle:, clobbered:, taken: [])
+      ops = rebind_ops(role, desired, recorded: recorded, legacy_toggle: legacy_toggle, clobbered: clobbered, taken: taken)
       if desired.nil?
         ops.each { |op| run_tmux(*tmux_argv(op)) }
         run_tmux("set-option", "-gu", "@switchboard-#{role}-rejected")
@@ -574,7 +585,7 @@ module Switchboard
         recovery = role == "toggle" ? Config::TMUX_KEY_DEFAULTS["toggle"] : nil
         return nil if recovery == desired
 
-        bound = run_rebind(role, recovery, recorded: recorded, legacy_toggle: legacy_toggle, clobbered: nil)
+        bound = run_rebind(role, recovery, recorded: recorded, legacy_toggle: legacy_toggle, clobbered: nil, taken: taken)
         # After the recovery (which clears it): remember the key tmux refused, so a config
         # still naming it doesn't read as an unapplied edit (key_drift?).
         run_tmux("set-option", "-g", "@switchboard-#{role}-rejected", desired)
@@ -666,6 +677,10 @@ module Switchboard
     def key_drift?(role, config: Config.new)
       return nil if config.load_error # its keys read as defaults, not what the user wrote
       return nil unless tmux_server?
+      # Bound from a different config.yml (the server's environment resolved another one), or
+      # bound by a switchboard that didn't record it, or a tmux read failed: no verdict.
+      bound_from = tmux_option("@switchboard-config-path")
+      return nil unless bound_from && bound_from == File.expand_path(config.file)
 
       key_drift_from?(config.tmux_key(role), tmux_option("@switchboard-#{role}-key"),
                       tmux_option("@switchboard-#{role}-rejected"))

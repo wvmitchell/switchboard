@@ -670,7 +670,7 @@ module Switchboard
     def test_leftovers_include_a_hand_edited_tmux_key
       HookFile.ensure_script
       File.write(Config.path, YAML.dump("tmux_keys" => { "toggle" => "s", "home" => "H" }))
-      opts = { "@switchboard-toggle-key" => "s", "@switchboard-home-key" => "S" }
+      opts = { "@switchboard-toggle-key" => "s", "@switchboard-home-key" => "S", "@switchboard-config-path" => File.expand_path(Config.path) }
       stub_method(Installer, :installed_bin?, -> { false }) do
         stub_method(Installer, :wired_fragment, ->(*) { Installer.fragment_path }) do
           stub_method(Installer, :live_hooks, -> { Installer::HOOK_SLOTS.to_h { |s| [s, true] } }) do

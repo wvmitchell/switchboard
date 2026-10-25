@@ -978,16 +978,17 @@ module Switchboard
       unless live.nil?
         puts row(live, live ? "prefix-#{toggle} bound (toggle-sidebar)" : "prefix-#{toggle} NOT bound — running tmux is stale; run `switchboard upgrade` (or reload tmux)")
       end
-      doctor_key_drift
+      doctor_key_drift(skip_toggle: live == false) # the NOT-bound row above already covers it
       doctor_clobber
     end
 
     # A tmux_keys edit made in config.yml by hand (not via `e` / `switchboard config`, which
     # rebind at once) stays unapplied until tmux reloads; the bound key still works, so the
     # row above reads green.
-    def doctor_key_drift
+    def doctor_key_drift(skip_toggle: false)
       return unless Installer.tmux_wired? # unwired (--no-tmux): switchboard manages no keys to drift
       %w[toggle home].each do |role|
+        next if role == "toggle" && skip_toggle
         next unless Installer.key_drift?(role, config: config)
 
         bound = Installer.tmux_option("@switchboard-#{role}-key")

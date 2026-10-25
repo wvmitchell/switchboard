@@ -100,11 +100,12 @@ module Switchboard
       Git.fetch_base(project["path"], project["base_ref"], timeout: FETCH_DEADLINE) # best-effort: offline builds off the last fetch
       return unless Creation.find(id)&.dig("state") == "building" # canceled during a slow fetch
 
-      name, dest, err = add_reserved(config, project, rec)
+      name, dest, err, foreign = add_reserved(config, project, rec)
       unless dest
-        # A tree the rollback couldn't remove is still an un-set-up tree on disk.
+        # A tree the rollback couldn't remove is still an un-set-up tree on disk — unless git
+        # said the path was already there: that tree is someone else's, not this build's.
         cur = Creation.find(id)
-        Creation.update(id, worktree_added: true) if cur && File.exist?(cur["path"].to_s)
+        Creation.update(id, worktree_added: true) if cur && !foreign && File.exist?(cur["path"].to_s)
         return Creation.mark_failed(id, "worktree_add", err)
       end
 
@@ -154,8 +155,8 @@ module Switchboard
 
         unless clash
           kept = undo_add(project, dest, branch, base_sha, err)
-          err = [err, kept].compact.join("; ") # a leftover the rollback refused to touch is said, not silent
-          break
+          foreign = err.to_s.match?(PATH_PREEXISTED) || err.to_s.match?(BRANCH_PREEXISTED)
+          return [nil, nil, [err, kept].compact.join("; "), foreign] # a refused leftover is said, not silent
         end
 
         # Under the same reservation lock as `n`: the new name must dodge other in-flight
@@ -223,7 +224,11 @@ module Switchboard
       # A worktree Git.worktrees skipped (an unreadable path) could have it checked out.
       return "a worktree's path couldn't be read" if Git.undecodable_worktrees?(repo)
 
-      holder = Git.worktrees(repo).find { |w| w[:branch] == branch }
+      listed = Git.worktrees(repo, strict: true)
+      # A repo always lists its main worktree: none means git couldn't say who holds it.
+      return "couldn't list worktrees" if listed.nil? || listed.empty?
+
+      holder = listed.find { |w| w[:branch] == branch }
       return File.identical?(holder[:path], dest) ? "its tree was kept" : "it's checked out" if holder
       return nil if Git.delete_branch_at(repo, branch, base_sha)
 

@@ -190,7 +190,7 @@ module Switchboard
     # config.yml would otherwise crash every consumer (the sidebar, `doctor`, and
     # now the `tmux-bind` keybinding path). Degrade to an empty config and remember
     # the parse error so `doctor` can report it; a valid file is unaffected.
-    attr_reader :load_error
+    attr_reader :load_error, :file
 
     # The one wording doctor, install and upgrade use for it.
     def load_error_message = load_error && "config failed to parse (#{load_error})"
@@ -198,7 +198,8 @@ module Switchboard
     def load_data(file)
       return {} unless File.exist?(file)
 
-      data = YAML.safe_load_file(file) || {}
+      data = YAML.safe_load_file(file)
+      data = {} if data.nil? # an empty file; `false` (or any other scalar) is not a config
       # Valid YAML can still be no config: a dropped colon reads the file as one string, a
       # leading dash as a list. Either lists no projects (or raises on lookup), so it's broken.
       raise "the top level isn't a map of settings" unless data.is_a?(Hash)

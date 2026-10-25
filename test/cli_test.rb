@@ -1263,6 +1263,29 @@ module Switchboard
       end
     end
 
+    # Value: protects=a config.yml that is literally `false` reads as broken, not as an empty
+    # healthy config; fails_when=load_data falls back to {} for any falsy value; why_new=ship 2
+    # Codex adversarial; seam=none
+    def test_a_config_that_is_just_false_is_broken
+      File.write(Config.path, "false\n")
+      assert_equal "the top level isn't a map of settings", Config.new.load_error
+    end
+
+    # Value: protects=one doctor row per cause: when the toggle key isn't live at all, its
+    # NOT-bound row stands alone (no duplicate drift line); fails_when=doctor_key_drift ignores
+    # liveness; why_new=ship 2 Claude adversarial; seam=tmux_wired?/tmux_server?
+    def test_doctor_shows_no_toggle_drift_row_when_the_key_is_not_live
+      File.write(Config.path, YAML.dump("tmux_keys" => { "toggle" => "t" }))
+      opts = { "@switchboard-toggle-key" => "s", "@switchboard-config-path" => File.expand_path(Config.path) }
+      out = stub_method(Installer, :tmux_wired?, ->(*) { true }) do
+        stub_method(Installer, :tmux_server?, -> { true }) do
+          with_key_stubs(live: false, options: opts) { capture { CLI.send(:doctor_binding_live) } }
+        end
+      end
+      assert_includes out, "NOT bound"
+      refute_includes out, "tmux_keys.toggle is"
+    end
+
     def test_doctor_reports_a_config_parse_error
       File.write(Config.path, "}{ not yaml")
       out = with_key_stubs(live: true) { capture { CLI.send(:doctor_binding_live) } }
@@ -1296,20 +1319,20 @@ module Switchboard
       drift = "tmux_keys.toggle is t in config, but tmux has prefix-s bound"
       unwired = stub_method(Installer, :tmux_wired?, ->(*) { false }) do # --no-tmux: no keys of ours to drift
         stub_method(Installer, :tmux_server?, -> { true }) do
-          with_key_stubs(live: true, options: { "@switchboard-toggle-key" => "s" }) { capture { CLI.send(:doctor_binding_live) } }
+          with_key_stubs(live: true, options: { "@switchboard-toggle-key" => "s", "@switchboard-config-path" => File.expand_path(Config.path) }) { capture { CLI.send(:doctor_binding_live) } }
         end
       end
       refute_includes unwired, "in config, but tmux has", "no drift row when tmux isn't wired to switchboard"
       out = stub_method(Installer, :tmux_wired?, ->(*) { true }) do
         stub_method(Installer, :tmux_server?, -> { true }) do
-          with_key_stubs(live: true, options: { "@switchboard-toggle-key" => "s" }) { capture { CLI.send(:doctor_binding_live) } }
+          with_key_stubs(live: true, options: { "@switchboard-toggle-key" => "s", "@switchboard-config-path" => File.expand_path(Config.path) }) { capture { CLI.send(:doctor_binding_live) } }
         end
       end
       assert_includes out, drift
       assert_includes out, "tmux_keys.home is H in config, but tmux has nothing bound"
       out = stub_method(Installer, :tmux_wired?, ->(*) { true }) do
         stub_method(Installer, :tmux_server?, -> { true }) do
-          options = { "@switchboard-toggle-key" => "s", "@switchboard-toggle-rejected" => "t", "@switchboard-home-key" => "H" }
+          options = { "@switchboard-config-path" => File.expand_path(Config.path), "@switchboard-toggle-key" => "s", "@switchboard-toggle-rejected" => "t", "@switchboard-home-key" => "H" }
           with_key_stubs(live: true, options: options) { capture { CLI.send(:doctor_binding_live) } }
         end
       end
@@ -1318,7 +1341,7 @@ module Switchboard
       CLI.instance_variable_set(:@config, nil) # CLI memoizes config
       out = stub_method(Installer, :tmux_wired?, ->(*) { true }) do
         stub_method(Installer, :tmux_server?, -> { true }) do
-          options = { "@switchboard-toggle-key" => "s", "@switchboard-home-key" => "S" }
+          options = { "@switchboard-config-path" => File.expand_path(Config.path), "@switchboard-toggle-key" => "s", "@switchboard-home-key" => "S" }
           with_key_stubs(live: true, options: options) { capture { CLI.send(:doctor_binding_live) } }
         end
       end

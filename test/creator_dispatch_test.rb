@@ -972,6 +972,39 @@ module Switchboard
       assert Git.branch_exists?(repo, "half-reg")
     end
 
+    # Value: protects=a failed worktree listing keeps the branch (it can't prove nobody holds
+    # it); fails_when=keep_branch treats a failed/empty listing as "free"; why_new=ship 2 (D7,
+    # three reviewers); seam=Git.worktrees
+    def test_undo_add_keeps_the_branch_when_worktrees_cant_be_listed
+      repo = temp_git_repo("proj", origin: true)
+      config = config_for(repo)
+      git(repo, "branch", "unlisted", "main")
+      note = stub_method(Git, :worktrees, ->(_repo, strict: false) { strict ? nil : [] }) do
+        Creator.undo_add(config.project("proj"), path("wts", "never"), "unlisted", Git.rev_parse(repo, "main"))
+      end
+      assert_equal "kept branch unlisted (couldn't list worktrees)", note
+      assert Git.branch_exists?(repo, "unlisted")
+    end
+
+    # Value: protects=a failed build never claims a racer's tree as its own unfinished tree;
+    # fails_when=work stamps worktree_added when git said the path was already there; why_new=
+    # ship 2 Claude adversarial (D9); seam=add_worktree
+    def test_a_racers_tree_is_not_recorded_as_this_builds
+      repo = temp_git_repo("proj", origin: true)
+      config = config_for(repo)
+      rec = dispatch(config)
+      racer = lambda do |_c, _p, _n, dest, _base, **|
+        FileUtils.mkdir_p(dest)
+        File.write(File.join(dest, "theirs.txt"), "x")
+        [false, "'#{dest}' already exists"]
+      end
+      with_fake_tmux { stub_method(Creator, :add_worktree, racer) { Creator.work(config, rec["id"]) } }
+      found = Creation.find(rec["id"])
+      assert_equal "failed", found["state"]
+      refute found["worktree_added"], "the tree at that path is someone else's"
+      assert_path_exists File.join(rec["path"], "theirs.txt")
+    end
+
     # Value: protects=the branch check and the delete being one step; fails_when=delete_branch_at
     # loses update-ref's old-value guard (a tip that moved after the check gets deleted);
     # why_new=outside voice O1: check-then-`-D` still raced; seam=none

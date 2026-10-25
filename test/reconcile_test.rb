@@ -149,6 +149,19 @@ module Switchboard
       assert_empty killed, "a project we can't fully read is unverifiable: hands off"
     end
 
+    # Value: protects=a skipped (unreadable) project's sessions survive even when another
+    # project's name sanitizes to the same prefix (a.b / a-b); fails_when=prune keeps a prefix a
+    # skipped project contributes; why_new=ship 2 Codex structured; seam=Git.undecodable_worktrees?
+    def test_prune_protects_a_prefix_a_skipped_project_shares
+      dot = temp_git_repo("dot")
+      dash = temp_git_repo("dash")
+      File.write(Config.path, YAML.dump("projects" => [{ "name" => "a.b", "path" => dot }, { "name" => "a-b", "path" => dash }]))
+      skipped = File.realpath(dot)
+      live = [sess("sb/a-b/dot"), sess("sb/a-b/dash"), sess("sb/a-b/feat")]
+      killed = stub_method(Git, :undecodable_worktrees?, ->(repo) { File.realpath(repo) == skipped }) { run_prune(live) }
+      assert_empty killed, "the shared sb/a-b/ prefix is hands-off while a.b can't be read"
+    end
+
     def test_prune_reports_unreachable_when_no_tmux_server
       setup_app_project
       killed = []

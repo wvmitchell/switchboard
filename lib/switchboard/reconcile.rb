@@ -60,13 +60,18 @@ module Switchboard
       return Report.new(reachable: false, sb_count: 0, orphans: []) if live.nil?
 
       prefixes = []
+      skipped = []
       valid = []
       parents = []
       Model.new(config, with_dirty: false).projects.each do |project|
         names = project.worktrees.map { |w| Tmux.session_name(w) }
         # A worktree git listed but we couldn't read (non-UTF-8 path) would make its live
-        # session look orphaned: leave the whole project alone, like an unverifiable one.
-        next if names.empty? || Git.undecodable_worktrees?(project.path)
+        # session look orphaned: leave the whole project alone, like an unverifiable one —
+        # and its prefix too, which another project's name may sanitize to (app.dev/app-dev).
+        if names.empty? || Git.undecodable_worktrees?(project.path)
+          skipped << Tmux.session_prefix(project.name)
+          next
+        end
 
         prefixes << Tmux.session_prefix(project.name)
         valid.concat(names)
@@ -86,7 +91,7 @@ module Switchboard
         ClaudeHistory.reap_bridges # GC the rename bridges migrate leaves in ~/.claude/projects
       end
 
-      orphaned = orphans(live, valid, prefixes, current: Tmux.session_of, now: now)
+      orphaned = orphans(live, valid, prefixes - skipped, current: Tmux.session_of, now: now)
       orphaned.each { |name| Tmux.kill_session(name) } unless dry_run
       Report.new(reachable: true, sb_count: live.size, orphans: orphaned)
     end

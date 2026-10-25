@@ -70,6 +70,24 @@ module Switchboard
       refute Git.undecodable_worktrees?(temp_git_repo("app"))
     end
 
+    # Value: protects=a symref branch is deleted as itself, never its target (main); fails_when=
+    # delete_branch_at drops --no-deref; why_new=ship 2 Codex adversarial; seam=none
+    def test_delete_branch_at_never_follows_a_symref
+      repo = temp_git_repo("app")
+      main = Git.rev_parse(repo, "main")
+      git(repo, "symbolic-ref", "refs/heads/alias", "refs/heads/main")
+      assert Git.delete_branch_at(repo, "alias", main)
+      assert Git.branch_exists?(repo, "main"), "main survives"
+      refute Git.branch_exists?(repo, "alias")
+    end
+
+    # Value: protects=destructive callers can tell a failed listing from an empty one; fails_when=
+    # worktrees(strict: true) returns [] on a git failure; why_new=ship 2 (D7); seam=none
+    def test_strict_worktrees_is_nil_when_git_fails
+      assert_nil Git.worktrees(path("not-a-repo"), strict: true)
+      assert_equal [], Git.worktrees(path("not-a-repo"))
+    end
+
     def test_worktrees_flags_a_bare_repo
       repo = temp_git_repo("app", origin: true)
       assert(Git.worktrees("#{repo}.git").any? { |w| w[:bare] }, "bare clone reports bare: true")
