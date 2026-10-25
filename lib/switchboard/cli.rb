@@ -963,7 +963,21 @@ module Switchboard
       unless live.nil?
         puts row(live, live ? "prefix-#{toggle} bound (toggle-sidebar)" : "prefix-#{toggle} NOT bound — running tmux is stale; run `switchboard upgrade` (or reload tmux)")
       end
+      doctor_key_drift
       doctor_clobber
+    end
+
+    # A tmux_keys edit made in config.yml by hand (not via `e` / `switchboard config`, which
+    # rebind at once) stays unapplied until tmux reloads; the bound key still works, so the
+    # row above reads green.
+    def doctor_key_drift
+      %w[toggle home].each do |role|
+        next unless Installer.key_drift?(role, config: config)
+
+        bound = Installer.tmux_option("@switchboard-#{role}-key")
+        puts "  \e[33m–\e[0m tmux_keys.#{role} is #{config.tmux_key(role) || 'unbound'} in config, but tmux has " \
+             "#{bound ? "prefix-#{bound}" : 'nothing'} bound — run `switchboard upgrade` (or reload tmux) to apply it"
+      end
     end
 
     # Surface a bad `tmux_keys` config so it isn't silently ignored: a config that

@@ -192,6 +192,41 @@ module Switchboard
       refute(cmds.any? { |c| c == ["bind-key", "s", "run-shell", "'#{Installer.bin_path}' home"] }, "no default fallback for home")
     end
 
+    # Value: protects=a key tmux refused staying remembered, so its fallback doesn't read as
+    # an unapplied edit, and a later good bind forgetting it; fails_when=the rejected option is
+    # set before the recovery (which clears it) or never cleared; why_new=new (R4); seam=run_tmux
+    def test_run_rebind_remembers_a_refused_key_and_forgets_it_on_a_good_bind
+      cmds = []
+      bad = ["bind-key", "Frobnicate", "run-shell", "'#{Installer.bin_path}' toggle-sidebar"]
+      stub_method(Installer, :run_tmux, ->(*argv) { cmds << argv; argv != bad }) do
+        Installer.run_rebind("toggle", "Frobnicate", recorded: "g", legacy_toggle: false, clobbered: nil)
+      end
+      assert_equal ["set-option", "-g", "@switchboard-toggle-rejected", "Frobnicate"], cmds.last,
+                   "recorded after the recovery bind, which clears it"
+      cmds.clear
+      stub_method(Installer, :run_tmux, ->(*argv) { cmds << argv; true }) do
+        Installer.run_rebind("toggle", "b", recorded: "s", legacy_toggle: false, clobbered: nil)
+      end
+      assert_includes cmds, ["set-option", "-gu", "@switchboard-toggle-rejected"]
+    end
+
+    # Value: protects=doctor/upgrade telling a hand-edited tmux_keys apart from a key tmux
+    # refused; fails_when=key_drift_from? ignores the recorded or the rejected key; why_new=
+    # new (R4: doctor and upgrade read only the bound key); seam=none
+    def test_key_drift_is_an_unapplied_edit_never_a_refused_key
+      {
+        ["s", "s", nil] => false,   # applied
+        ["F13", "s", "F13"] => false, # tmux refused F13, s is the deliberate fallback
+        ["t", "s", nil] => true,    # edited by hand, never re-applied
+        ["u", "s", "t"] => true,    # edited again after a refusal
+        [nil, nil, nil] => false,   # home unbound on both sides
+        [nil, "S", nil] => true,    # home removed from config, still bound
+        ["H", nil, nil] => true     # home added to config, never bound
+      }.each do |(configured, recorded, rejected), drift|
+        assert_equal drift, Installer.key_drift_from?(configured, recorded, rejected), [configured, recorded, rejected].inspect
+      end
+    end
+
     # --- apply_keybindings: ties config + recorded options + the seam together --
 
     def test_apply_keybindings_binds_configured_toggle_and_home

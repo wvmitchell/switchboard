@@ -638,15 +638,42 @@ module Switchboard
       stub_method(Installer, :installed_bin?, -> { false }) do
         stub_method(Installer, :wired_fragment, ->(*) { Installer.fragment_path }) do
           stub_method(Installer, :live_hooks, -> { Installer::HOOK_SLOTS.to_h { |s| [s, true] } }) do
-            stub_method(Installer, :tmux_option, ->(name) { name == "@switchboard-toggle-key" ? "s" : nil }) do
-              stub_method(Installer, :toggle_key_live?, ->(key = nil) { asked << key; key == "s" }) do
-                refute Upgrade.leftovers?
+            opts = { "@switchboard-toggle-key" => "s", "@switchboard-toggle-rejected" => "F13" }
+            stub_method(Installer, :tmux_option, ->(name) { opts[name] }) do
+              stub_method(Installer, :tmux_server?, -> { true }) do # so key_drift? really runs
+                stub_method(Installer, :toggle_key_live?, ->(key = nil) { asked << key; key == "s" }) do
+                  refute Upgrade.leftovers?
+                end
               end
             end
           end
         end
       end
       assert_equal ["s"], asked
+    end
+
+    # Value: protects=an up-to-date upgrade applying a tmux_keys edited by hand (toggle or
+    # home); fails_when=tmux_stale? checks only the bound toggle key; why_new=new (R4: the
+    # bound key still worked, so upgrade said current); seam=tmux_option/tmux_server?
+    def test_leftovers_include_a_hand_edited_tmux_key
+      HookFile.ensure_script
+      File.write(Config.path, YAML.dump("tmux_keys" => { "toggle" => "s", "home" => "H" }))
+      opts = { "@switchboard-toggle-key" => "s", "@switchboard-home-key" => "S" }
+      stub_method(Installer, :installed_bin?, -> { false }) do
+        stub_method(Installer, :wired_fragment, ->(*) { Installer.fragment_path }) do
+          stub_method(Installer, :live_hooks, -> { Installer::HOOK_SLOTS.to_h { |s| [s, true] } }) do
+            stub_method(Installer, :toggle_key_live?, ->(*) { true }) do
+              stub_method(Installer, :tmux_server?, -> { true }) do
+                stub_method(Installer, :tmux_option, ->(name) { opts[name] }) do
+                  assert Upgrade.leftovers?, "home edited from S to H by hand"
+                  opts["@switchboard-home-key"] = "H"
+                  refute Upgrade.leftovers?, "applied"
+                end
+              end
+            end
+          end
+        end
+      end
     end
 
     # --- cycle-2 findings (D5) ------------------------------------------------

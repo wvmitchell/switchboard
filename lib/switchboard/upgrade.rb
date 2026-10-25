@@ -272,7 +272,8 @@ module Switchboard
 
       # tmux < 3.0 can't hold the indexed hook slots at all, so only the key can be stale there.
       slots_stale = Installer.tmux_version.to_f >= 3.0 && Installer.live_hooks&.value?(false)
-      slots_stale || Installer.toggle_key_live?(Installer.bound_toggle_key) == false
+      slots_stale || Installer.toggle_key_live?(Installer.bound_toggle_key) == false ||
+        %w[toggle home].any? { |role| Installer.key_drift?(role) } # a hand-edited tmux_keys
     end
 
     def git_out(root, *args)

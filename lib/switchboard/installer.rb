@@ -480,6 +480,7 @@ module Switchboard
         run_tmux("unbind-key", recorded) if recorded
         run_tmux("set-option", "-gu", "@switchboard-#{role}-key")
         run_tmux("set-option", "-gu", "@switchboard-#{role}-clobbered")
+        run_tmux("set-option", "-gu", "@switchboard-#{role}-rejected")
       end
       run_tmux("unbind-key", "s") # legacy default — covers installs predating the @option record
       HOOK_SLOTS.each { |slot| run_tmux("set-hook", "-gu", slot) }
@@ -553,6 +554,7 @@ module Switchboard
       ops = rebind_ops(role, desired, recorded: recorded, legacy_toggle: legacy_toggle, clobbered: clobbered)
       if desired.nil?
         ops.each { |op| run_tmux(*tmux_argv(op)) }
+        run_tmux("set-option", "-gu", "@switchboard-#{role}-rejected")
         return nil
       end
 
@@ -567,9 +569,14 @@ module Switchboard
         recovery = role == "toggle" ? Config::TMUX_KEY_DEFAULTS["toggle"] : nil
         return nil if recovery == desired
 
-        return run_rebind(role, recovery, recorded: recorded, legacy_toggle: legacy_toggle, clobbered: nil)
+        bound = run_rebind(role, recovery, recorded: recorded, legacy_toggle: legacy_toggle, clobbered: nil)
+        # After the recovery (which clears it): remember the key tmux refused, so a config
+        # still naming it doesn't read as an unapplied edit (key_drift?).
+        run_tmux("set-option", "-g", "@switchboard-#{role}-rejected", desired)
+        return bound
       end
       rest.each { |op| run_tmux(*tmux_argv(op)) }
+      run_tmux("set-option", "-gu", "@switchboard-#{role}-rejected")
       desired
     end
 
@@ -645,6 +652,21 @@ module Switchboard
       # Unbound, or a tmux too old to take a key here: read the whole table.
       all = `tmux list-keys -T prefix 2>/dev/null`
       $?.success? ? toggle_key_live_from?(all, key) : nil # a failed read says nothing either way
+    end
+
+    # Does config.yml name a different key for `role` than tmux-bind last applied? Checked
+    # against what was bound AND what tmux refused (that one fell back on purpose), so only a
+    # hand edit nobody re-applied reads as drift. nil = no server to ask.
+    def key_drift?(role, config: Config.new)
+      return nil unless tmux_server?
+
+      key_drift_from?(config.tmux_key(role), tmux_option("@switchboard-#{role}-key"),
+                      tmux_option("@switchboard-#{role}-rejected"))
+    end
+
+    # Pure core of key_drift? (nil = unbound on each side).
+    def key_drift_from?(configured, recorded, rejected)
+      configured != recorded && (rejected.nil? || configured != rejected)
     end
 
     # The toggle key switchboard last bound — its fallback when tmux rejected the configured

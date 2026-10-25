@@ -1243,6 +1243,23 @@ module Switchboard
       assert_includes out, "config failed to parse"
     end
 
+    # Value: protects=doctor flagging a tmux_keys edit nobody applied, and staying quiet
+    # about a key tmux refused; fails_when=doctor_key_drift is dropped or ignores the rejected
+    # key; why_new=the bound key still works, so every other row read green; seam=tmux_server?
+    def test_doctor_flags_a_tmux_key_edited_by_hand_but_not_a_refused_one
+      File.write(Config.path, YAML.dump("tmux_keys" => { "toggle" => "t" }))
+      drift = "tmux_keys.toggle is t in config, but tmux has prefix-s bound"
+      out = stub_method(Installer, :tmux_server?, -> { true }) do
+        with_key_stubs(live: true, options: { "@switchboard-toggle-key" => "s" }) { capture { CLI.send(:doctor_binding_live) } }
+      end
+      assert_includes out, drift
+      out = stub_method(Installer, :tmux_server?, -> { true }) do
+        options = { "@switchboard-toggle-key" => "s", "@switchboard-toggle-rejected" => "t" }
+        with_key_stubs(live: true, options: options) { capture { CLI.send(:doctor_binding_live) } }
+      end
+      refute_includes out, "in config, but tmux has"
+    end
+
     def test_doctor_warns_about_a_clobbered_binding
       File.write(Config.path, YAML.dump("tmux_keys" => { "toggle" => "b" }))
       out = with_key_stubs(live: true, options: { "@switchboard-toggle-clobbered" => "send-keys hi" }) do
