@@ -12,6 +12,9 @@ module Switchboard
     module_function
 
     PLACEHOLDER_TRIES = 5 # bounded retries past a generated name already taken
+    # git's English failure text for a path or branch that existed before its `worktree add`
+    # (a localized git falls back to the commit-only proof).
+    PREEXISTING = /already exists|already checked out|is already used by worktree|is a missing but (?:locked|already registered)/
 
     # Wire the per-worktree agent hooks (agent-state reporter + the #92 self-naming nudge
     # + the background-presence monitoring nudge/clears), scoped to this worktree, never
@@ -141,11 +144,13 @@ module Switchboard
         branch = branch_for(config, name)
         clash = File.exist?(dest) || File.symlink?(dest) || Git.branch_exists?(project["path"], branch)
         base_sha = Git.rev_parse(project["path"], project["base_ref"]) unless clash
-        ok, err = add_worktree(config, project, name, dest, project["base_ref"]) unless clash
+        # At that commit, not the ref: a fetch moving origin/main mid-add would otherwise
+        # make a clean failed add look like someone's work to the rollback.
+        ok, err = add_worktree(config, project, name, dest, base_sha || project["base_ref"]) unless clash
         return [name, dest, nil] if ok
 
         unless clash
-          kept = undo_add(project, dest, branch, base_sha)
+          kept = undo_add(project, dest, branch, base_sha, err)
           err = [err, kept].compact.join("; ") # a leftover the rollback refused to touch is said, not silent
           break
         end
@@ -172,24 +177,36 @@ module Switchboard
     #     (the record fails as a guarded ✘).
     #   - the branch: only while it still points at base, atomically, and never while a
     #     worktree has it checked out.
-    # No base commit, no proof: delete nothing. Returns what it kept (for the ✘ detail),
-    # or nil when nothing of ours was left behind.
-    def undo_add(project, dest, branch, base_sha)
+    # No base commit, no proof: delete nothing. And when git's failure says the path or
+    # branch was already there, a racing writer made them between the clash check and the
+    # add: nothing is ours, so a dirty tree there may be its uncommitted work. Returns what
+    # it kept (for the ✘ detail), or nil when nothing of ours was left behind.
+    def undo_add(project, dest, branch, base_sha, git_error = nil)
       repo = project["path"]
       kept = []
+      if git_error.to_s.match?(PREEXISTING)
+        kept << "#{dest} (it was there before)" if File.exist?(dest)
+        kept << "branch #{branch} (it was there before)" if Git.branch_exists?(repo, branch)
+        return kept.empty? ? nil : "kept #{kept.join(' and ')}"
+      end
       if File.exist?(dest) && Git.current_branch(dest) == branch
-        if base_sha && Git.commits_since(dest, base_sha)&.zero?
-          Git.remove_worktree(repo, dest, force: true, locked: true)
-          kept << dest if File.exist?(dest) # the remove itself failed
+        if !base_sha
+          kept << "#{dest} (base commit unknown)"
+        elsif !Git.commits_since(dest, base_sha)&.zero?
+          kept << "#{dest} (it has commits)"
         else
-          kept << dest
+          Git.remove_worktree(repo, dest, force: true, locked: true)
+          kept << "#{dest} (couldn't remove it)" if File.exist?(dest)
         end
       end
       if Git.branch_exists?(repo, branch)
         free = kept.empty? && Git.worktrees(repo).none? { |w| w[:branch] == branch }
-        kept << "branch #{branch}" unless base_sha && free && Git.delete_branch_at(repo, branch, base_sha)
+        unless base_sha && free && Git.delete_branch_at(repo, branch, base_sha)
+          why = !base_sha ? "base commit unknown" : (free ? "it moved off the base" : "it's checked out")
+          kept << "branch #{branch} (#{why})"
+        end
       end
-      "kept #{kept.join(' and ')}: it may hold work that isn't this create's" unless kept.empty?
+      "kept #{kept.join(' and ')}" unless kept.empty?
     end
 
     # `--no-track` so a branch cut from a remote-tracking base (origin/main) does NOT

@@ -925,6 +925,19 @@ module Switchboard
       refute_includes out, "claude hooks", "no per-worktree row without a worktree"
     end
 
+    # Value: protects=doctor from a home shell not nagging users who declined codex hooks;
+    # fails_when=the "not installed" hint prints outside a worktree; why_new=ship red team (moving
+    # the worktree guard into the Claude loop exposed it); seam=none
+    def test_doctor_hooks_skips_the_codex_install_hint_outside_a_worktree
+      ENV["CODEX_HOME"] = path("codexhome")
+      FileUtils.mkdir_p(ENV["CODEX_HOME"])
+      elsewhere = path("not-a-repo")
+      FileUtils.mkdir_p(elsewhere)
+      refute_includes Dir.chdir(elsewhere) { capture { CLI.doctor_hooks } }, "codex hooks (global) not installed"
+      repo = temp_git_repo
+      assert_includes Dir.chdir(repo) { capture { CLI.doctor_hooks } }, "codex hooks (global) not installed"
+    end
+
     # Value: protects=doctor telling the user codex hooks are unapproved (dead dots) and
     # going quiet once they're all approved; fails_when=the row ignores trust_status or the
     # warning shows at N == M; why_new=doctor printed the same caveat regardless; seam=stub
@@ -1240,7 +1253,23 @@ module Switchboard
     def test_doctor_reports_a_config_parse_error
       File.write(Config.path, "}{ not yaml")
       out = with_key_stubs(live: true) { capture { CLI.send(:doctor_binding_live) } }
-      assert_includes out, "config failed to parse"
+      assert_includes out, "tmux_keys: using the default keys", "the key section says what the parse error means for it"
+    end
+
+    # Value: protects=#14: doctor never vouches for a config.yml that won't parse; fails_when=the
+    # config row checks only existence (green ✓ on a broken file); why_new=QA probe 001 found the
+    # green row still printed above the parse error; seam=none
+    def test_doctor_config_row_fails_on_a_config_that_will_not_parse
+      File.write(Config.path, "--\nprojects:\n  - name: app\n")
+      out = capture { CLI.send(:doctor_config) }
+      assert_includes out, "✗"
+      assert_includes out, "config: #{Config.path} — config failed to parse ("
+      refute_includes out, "✓"
+      File.write(Config.path, YAML.dump("projects" => []))
+      CLI.instance_variable_set(:@config, nil) if CLI.instance_variable_defined?(:@config)
+      assert_includes capture { CLI.send(:doctor_config) }, "✓"
+      File.delete(Config.path)
+      assert_includes capture { CLI.send(:doctor_config) }, "no config — run `switchboard install`"
     end
 
     # Value: protects=doctor flagging a tmux_keys edit nobody applied, and staying quiet
@@ -1252,14 +1281,22 @@ module Switchboard
     def test_doctor_flags_a_tmux_key_edited_by_hand_but_not_a_refused_one
       File.write(Config.path, YAML.dump("tmux_keys" => { "toggle" => "t", "home" => "H" }))
       drift = "tmux_keys.toggle is t in config, but tmux has prefix-s bound"
-      out = stub_method(Installer, :tmux_server?, -> { true }) do
+      unwired = stub_method(Installer, :tmux_server?, -> { true }) do # --no-tmux: no keys of ours to drift
         with_key_stubs(live: true, options: { "@switchboard-toggle-key" => "s" }) { capture { CLI.send(:doctor_binding_live) } }
+      end
+      refute_includes unwired, "in config, but tmux has", "no drift row when tmux isn't wired to switchboard"
+      out = stub_method(Installer, :tmux_wired?, ->(*) { true }) do
+        stub_method(Installer, :tmux_server?, -> { true }) do
+          with_key_stubs(live: true, options: { "@switchboard-toggle-key" => "s" }) { capture { CLI.send(:doctor_binding_live) } }
+        end
       end
       assert_includes out, drift
       assert_includes out, "tmux_keys.home is H in config, but tmux has nothing bound"
-      out = stub_method(Installer, :tmux_server?, -> { true }) do
-        options = { "@switchboard-toggle-key" => "s", "@switchboard-toggle-rejected" => "t", "@switchboard-home-key" => "H" }
-        with_key_stubs(live: true, options: options) { capture { CLI.send(:doctor_binding_live) } }
+      out = stub_method(Installer, :tmux_wired?, ->(*) { true }) do
+        stub_method(Installer, :tmux_server?, -> { true }) do
+          options = { "@switchboard-toggle-key" => "s", "@switchboard-toggle-rejected" => "t", "@switchboard-home-key" => "H" }
+          with_key_stubs(live: true, options: options) { capture { CLI.send(:doctor_binding_live) } }
+        end
       end
       refute_includes out, "in config, but tmux has"
     end

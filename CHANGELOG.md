@@ -22,8 +22,10 @@ refer to the project's earlier, private repository; the public tracker starts at
   used to force-delete it. Now the cleanup removes the branch only while it still points
   at the commit the create started from, and keeps any tree that has a commit in it, and the
   failed row now names what it kept. A create that timed out halfway still cleans up fully.
-- A workspace whose path has a non-ASCII character (`café`) now shows up when tmux runs
-  in a C locale. Listing that project's worktrees used to fail.
+- Reading git's output no longer depends on the locale: switchboard's own binary already
+  read it as UTF-8 (since 0.52.0), and now every caller does. A worktree whose path isn't
+  valid UTF-8 (possible only on Linux) is now skipped instead of breaking its whole project's
+  list.
 - `doctor` and `upgrade` now notice a `tmux_keys` change made by editing `config.yml`
   by hand, for both the toggle and the home key. The key tmux still had bound worked, so
   `doctor` showed green and `upgrade` never applied the change; `doctor` now names the

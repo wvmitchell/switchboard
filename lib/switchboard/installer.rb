@@ -400,9 +400,9 @@ module Switchboard
     end
 
     # Remove the global codex [hooks] block (the one place codex delivery is global). The
-    # per-worktree disable-hooks deliberately leaves it; full teardown removes it. False only on
-    # a refusal the user can fix and re-run (:unsafe/:conflict) — the caller stops there;
-    # :failed for a write that failed, which the caller reports but doesn't stop on.
+    # per-worktree disable-hooks deliberately leaves it; full teardown removes it. Returns
+    # true (removed or none), false (a refusal the user can fix and re-run: :unsafe/:conflict
+    # — the caller stops there) or :failed (a write that failed — reported, not stopped on).
     def step_codex_unhooks
       return true unless CodexHook.installed?
 
@@ -656,8 +656,9 @@ module Switchboard
 
     # Does config.yml name a different key for `role` than tmux-bind last applied? Checked
     # against what was bound AND what tmux refused (that one fell back on purpose), so only a
-    # hand edit nobody re-applied reads as drift. nil = no server to ask.
+    # hand edit nobody re-applied reads as drift. nil = can't tell (no server, or no config).
     def key_drift?(role, config: Config.new)
+      return nil if config.load_error # its keys read as defaults, not what the user wrote
       return nil unless tmux_server?
 
       key_drift_from?(config.tmux_key(role), tmux_option("@switchboard-#{role}-key"),

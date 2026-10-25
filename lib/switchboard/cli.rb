@@ -693,13 +693,21 @@ module Switchboard
       end
     end
 
+    # Present AND parseable (#14): a broken file reads as no projects, so a green row here
+    # would vouch for the very thing that emptied the tree.
+    def doctor_config
+      return puts(row(false, "no config — run `switchboard install`")) unless Config.exist?
+
+      err = config.load_error_message
+      puts row(err.nil?, err ? "config: #{Config.path} — #{err}" : "config: #{Config.path}")
+    end
+
     def doctor
       %w[tmux git gh].each do |tool|
         puts row(!`command -v #{tool} 2>/dev/null`.strip.empty?, tool)
       end
       doctor_version
-      exists = Config.exist?
-      puts row(exists, exists ? "config: #{Config.path}" : "no config — run `switchboard install`")
+      doctor_config
       doctor_unknown_keys
       doctor_install
       doctor_sidebar_keys
@@ -971,6 +979,7 @@ module Switchboard
     # rebind at once) stays unapplied until tmux reloads; the bound key still works, so the
     # row above reads green.
     def doctor_key_drift
+      return unless Installer.tmux_wired? # unwired (--no-tmux): switchboard manages no keys to drift
       %w[toggle home].each do |role|
         next unless Installer.key_drift?(role, config: config)
 
@@ -984,7 +993,7 @@ module Switchboard
     # failed to parse (fell back to defaults), a value that isn't a usable key, and a
     # home key that collides with the toggle (so home was left unbound).
     def doctor_key_config
-      puts row(false, "#{config.load_error_message} — using defaults; fix #{Config.path}") if config.load_error
+      puts "  \e[33m–\e[0m tmux_keys: using the default keys (config.yml didn't parse — see above)" if config.load_error
       %w[toggle home].each do |role|
         raw = config.raw_tmux_key(role)
         next if raw.nil? || config.valid_tmux_key?(raw)
@@ -1183,7 +1192,8 @@ module Switchboard
                "the switchboard hooks (or start codex with --dangerously-bypass-hook-trust)"
         end
       else
-        puts "  \e[33m–\e[0m codex hooks (global) not installed — `switchboard install --codex-hooks`"
+        # From a home shell this would nag everyone who declined it at install.
+        puts "  \e[33m–\e[0m codex hooks (global) not installed — `switchboard install --codex-hooks`" if here
       end
     end
 

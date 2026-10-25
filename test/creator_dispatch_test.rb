@@ -698,7 +698,7 @@ module Switchboard
       git(dest, "commit", "-q", "--allow-empty", "-m", "real work")
       note = Creator.undo_add(config.project("proj"), dest, "worked", base)
       assert_path_exists dest, "a tree with a commit stays"
-      assert_includes note, "kept #{dest}", "and the ✘ detail says so"
+      assert_equal "kept #{dest} (it has commits) and branch worked (it's checked out)", note, "and the ✘ detail says why"
       assert Git.branch_exists?(repo, "worked")
 
       # A racing writer's same-name branch with its own commit, no tree at our path.
@@ -708,7 +708,7 @@ module Switchboard
       git(repo, "worktree", "remove", other)
       note = Creator.undo_add(config.project("proj"), path("wts", "never-made"), "racer", base)
       assert Git.branch_exists?(repo, "racer"), "a branch past base is someone's work"
-      assert_includes note, "kept branch racer"
+      assert_equal "kept branch racer (it moved off the base)", note
     end
 
     # Value: protects=a branch the rollback refused to delete being named on the ✘ row, not
@@ -733,6 +733,51 @@ module Switchboard
       assert_equal "failed", found["state"]
       assert_includes found["detail"], "kept branch #{branch}"
       assert Git.branch_exists?(repo, branch)
+    end
+
+    # Value: protects=a tree the rollback failed to remove is reported and keeps its branch;
+    # fails_when=undo_add drops the post-remove File.exist? check (returns nil and deletes the
+    # branch under a surviving tree); why_new=ship review T1/S1; seam=Git.remove_worktree
+    def test_undo_add_names_a_tree_it_could_not_remove_and_keeps_its_branch
+      repo = temp_git_repo("proj", origin: true)
+      config = config_for(repo)
+      dest = path("wts", "stuck")
+      git(repo, "worktree", "add", "-q", "-b", "stuck", dest, "main")
+      note = stub_method(Git, :remove_worktree, ->(*, **) { false }) do
+        Creator.undo_add(config.project("proj"), dest, "stuck", Git.rev_parse(repo, "main"))
+      end
+      assert_equal "kept #{dest} (couldn't remove it) and branch stuck (it's checked out)", note
+      assert_path_exists dest
+      assert Git.branch_exists?(repo, "stuck"), "never delete the branch under a surviving tree"
+    end
+
+    # Value: protects=the timeout shape (git cut the branch, no tree yet) still cleans up;
+    # fails_when=undo_add only deletes a branch alongside a tree; why_new=ship review S2; seam=none
+    def test_undo_add_deletes_a_branch_left_without_a_tree
+      repo = temp_git_repo("proj", origin: true)
+      config = config_for(repo)
+      git(repo, "branch", "orphan", "main")
+      assert_nil Creator.undo_add(config.project("proj"), path("wts", "never-made"), "orphan", Git.rev_parse(repo, "main"))
+      refute Git.branch_exists?(repo, "orphan")
+    end
+
+    # Value: protects=a racing writer's tree and branch (git says they already existed) are
+    # never force-removed, even dirty and commitless; fails_when=undo_add ignores git's
+    # failure text; why_new=ship red team, D8 reopening D4; seam=none
+    def test_undo_add_keeps_what_git_says_was_already_there
+      repo = temp_git_repo("proj", origin: true)
+      config = config_for(repo)
+      dest = path("wts", "raced")
+      git(repo, "worktree", "add", "-q", "-b", "raced", dest, "main")
+      File.write(File.join(dest, "their-edit.txt"), "uncommitted work")
+      note = Creator.undo_add(config.project("proj"), dest, "raced", Git.rev_parse(repo, "main"),
+                              "fatal: a branch named 'raced' already exists")
+      assert_equal "kept #{dest} (it was there before) and branch raced (it was there before)", note
+      assert_path_exists File.join(dest, "their-edit.txt")
+      assert Git.branch_exists?(repo, "raced")
+      # a timeout (ours) still cleans up the same dirty tree, as approved in D4
+      assert_nil Creator.undo_add(config.project("proj"), dest, "raced", Git.rev_parse(repo, "main"), "timed out after 120s")
+      refute_path_exists dest
     end
 
     # Value: protects=the branch check and the delete being one step; fails_when=delete_branch_at
@@ -761,7 +806,7 @@ module Switchboard
       dest = path("wts", "nobase")
       git(repo, "worktree", "add", "-q", "-b", "nobase", dest, "main")
       note = Creator.undo_add(config.project("proj"), dest, "nobase", nil)
-      assert_includes note, "kept #{dest} and branch nobase"
+      assert_equal "kept #{dest} (base commit unknown) and branch nobase (base commit unknown)", note
       assert_path_exists dest
       assert Git.branch_exists?(repo, "nobase")
 

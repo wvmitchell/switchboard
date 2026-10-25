@@ -234,6 +234,32 @@ module Switchboard
       Installer::HOOK_SLOTS.each { |slot| assert_includes cmds, ["set-hook", "-gu", slot] }
     end
 
+    # Value: protects=the home role's -rejected record too (set after its nil recovery, cleared
+    # on a later good bind); fails_when=the set is skipped or precedes the recovery for home;
+    # why_new=ship review S3/S4: only toggle was asserted; seam=run_tmux
+    def test_run_rebind_tracks_a_refused_home_key_like_toggle
+      cmds = []
+      bad = ["bind-key", "Bogus", "run-shell", "'#{Installer.bin_path}' home"]
+      stub_method(Installer, :run_tmux, ->(*argv) { cmds << argv; argv != bad }) do
+        Installer.run_rebind("home", "Bogus", recorded: "H", legacy_toggle: false, clobbered: nil)
+      end
+      assert_equal ["set-option", "-g", "@switchboard-home-rejected", "Bogus"], cmds.last
+      cmds.clear
+      stub_method(Installer, :run_tmux, ->(*argv) { cmds << argv; true }) do
+        Installer.run_rebind("home", "H", recorded: nil, legacy_toggle: false, clobbered: nil)
+      end
+      assert_includes cmds, ["set-option", "-gu", "@switchboard-home-rejected"]
+    end
+
+    # Value: protects=no false drift verdict from a config.yml that didn't parse (its keys read
+    # as defaults); fails_when=key_drift? ignores load_error; why_new=ship review M1/S6; seam=tmux_server?
+    def test_key_drift_has_no_verdict_on_a_config_that_did_not_parse
+      File.write(Config.path, "--\ntmux_keys:\n  toggle: t\n")
+      stub_method(Installer, :tmux_server?, -> { flunk "never asks tmux about a broken config" }) do
+        assert_nil Installer.key_drift?("toggle", config: Config.new)
+      end
+    end
+
     # Value: protects=doctor/upgrade telling a hand-edited tmux_keys apart from a key tmux
     # refused; fails_when=key_drift_from? ignores the recorded or the rejected key; why_new=
     # new (R4: doctor and upgrade read only the bound key); seam=none

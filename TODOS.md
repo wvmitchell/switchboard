@@ -498,13 +498,13 @@ safe today; each is narrow).
 ## Agent CLI hooks (Claude 2.1.301 / Codex 0.163 compat review) follow-ups
 
 - **Remote-link glyph: rare edges deferred at ship review (v0.53.0).** *What, in priority
-  order:* (2) `Sidebar#refresh_agents`' outer rescue leaves the previous `@links` standing, so an
+  order:* (1) `Sidebar#refresh_agents`' outer rescue leaves the previous `@links` standing, so an
   ended link can keep its `⇅` until a scan succeeds — reset or compute links first;
-  (3) the doctor canary misses a format change while one old-format leftover file sits
-  beside the new ones (shaped > 0, alive 0 reads healthy); (4) `claude_pids` misses a
-  Claude whose process shows as `node …/cli.js`; (5) an empty workspace name shifts that
+  (2) the doctor canary misses a format change while one old-format leftover file sits
+  beside the new ones (shaped > 0, alive 0 reads healthy); (3) `claude_pids` misses a
+  Claude whose process shows as `node …/cli.js`; (4) an empty workspace name shifts that
   row's columns — let `fit_plain` report whether the cues were kept and share it with
-  `colored` (the cursor-bar grey half of this went away in v0.53.1); (6) a stale comment:
+  `colored` (the cursor-bar grey half of this went away in v0.53.1); (5) a stale comment:
   `Agents.lsof_path`'s encoding rationale predates the byte compares.
   *Why:* none hits a normal setup (the one verified user-visible item, the glob, shipped in v0.53.2). *Pros:*
   small, testable changes. *Cons:* each touches a reviewed path, so give it its own short
