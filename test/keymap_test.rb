@@ -110,5 +110,18 @@ module Switchboard
       assert_nil b[:bottom], "the later entry is dropped"
       assert_equal [{ action: :bottom, key: "x", winner: :top }], Keymap.collisions(c)
     end
+
+    # Value: protects=existing sidebar_keys configs across an upgrade that adds an action;
+    # fails_when=:phone_link moves before a remappable action (its default p would beat a
+    # user's `rename: p` and leave rename unbound); why_new=no test pinned new-action order;
+    # seam=none; no_claim=none beyond protects
+    def test_a_remap_to_p_keeps_working_and_the_new_qr_key_steps_aside
+      c = cfg("sidebar_keys" => { "rename" => "p" })
+      b = Keymap.bindings(c)
+      assert_equal "p", b[:rename], "the user's remap still owns p"
+      assert_nil b[:phone_link], "the newer action goes unbound instead"
+      assert_equal [{ action: :phone_link, key: "p", winner: :rename }], Keymap.collisions(c)
+      assert_equal "p", Keymap.bindings(cfg)[:phone_link], "p by default"
+    end
   end
 end

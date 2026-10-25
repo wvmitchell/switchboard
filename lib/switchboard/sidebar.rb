@@ -107,6 +107,9 @@ module Switchboard
       @help = false        # ? help overlay: when set, render paints the full key map
                            # over the tree and the next real keystroke dismisses it
                            # (issue #62). Per-process + transient, like @filter.
+      @link_view = nil     # p: the phone-link QR overlay, { path:, bridge_id:, qr: { url => matrix } }
+                           # while open. Transient like @help; the link is held by id, not
+                           # index, so a re-sorted scan keeps showing the same session.
       @full_header = false # H: seat the full home-style header on EVERY session.
                            # Hydrated from the shared on-disk store (FullHeader) on
                            # every rebuild, so all windows agree and a respawn keeps it
@@ -214,7 +217,7 @@ module Switchboard
     # and never pulses — except for the brief twinkle right after it lands (sparkling?).
     def pulsing?
       return false unless @visible
-      return false if @help # the static overlay has no animation — don't ride the PULSE cadence (#62)
+      return false if @help || @link_view # static overlays have no animation — don't ride the PULSE cadence (#62)
 
       @visible_rows.any? { |n| %i[thinking waiting].include?(@agents[n.path]) || sparkling?(n.path) }
     end
@@ -440,11 +443,18 @@ module Switchboard
       ring_creations if announce_sounds
       refresh_diffs if edges.any? # a finished turn likely just committed — repaint its count
       @attention = Attention.marked(ws_paths)          # load for render, after the marks land
-      @links = remote_links(ws_paths, cheap: !@visible) # LAST and self-rescued: can add a ⇅, never touch a dot
       true
     rescue StandardError
       @agents = {}
       false
+    ensure
+      # LAST, and in the ensure: links refresh even when the dot scan above raised, so
+      # an open QR overlay never keeps showing a link that ended. remote_links is
+      # self-rescued, so it can add a ⇅ but never blank a dot.
+      if ws_paths
+        @links = remote_links(ws_paths, cheap: !@visible)
+        revalidate_link_view
+      end
     end
 
     # Live /remote-control links per worktree. Its own rescue (RemoteLink.scan is
