@@ -24,6 +24,8 @@ refer to the project's earlier, private repository; the public tracker starts at
 ### Fixed
 - A remote link now refreshes even when a scan of the agent dots fails, so an ended
   link can't keep its `⇅`.
+- A malformed Claude session file (an odd escape in any field, an out-of-range start
+  time) now loses only its own link instead of hiding every `⇅`.
 
 ## [0.53.1] — a live `⇅` reads green (2026-10-24)
 
