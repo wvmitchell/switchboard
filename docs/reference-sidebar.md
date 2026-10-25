@@ -130,7 +130,7 @@ The workspace name, with two color states layered on top:
 
 A normal, looked-at workspace with no running agent is plain text.
 
-**`⇅` after the name** — the workspace is reachable **from your phone**: a Claude
+**Green `⇅` after the name** — the workspace is reachable **from your phone**: a Claude
 session there has `/remote-control` (`/rc`) on. `⇅2` means several linked sessions.
 It sits right after the name and before any `▸N` fold cue, on workspace rows only
 (never a branch row), and clears when the link ends. A **grey `⇅`** is a link idle
