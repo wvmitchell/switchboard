@@ -45,7 +45,8 @@ A workspace you can reach **from your phone** right now — a Claude session wit
 your links. Nothing to set up: switchboard reads the session file Claude already
 writes. A link left idle past `remote_link_stale_after` (default 120 minutes) turns
 its `⇅` grey and is counted as an **idle link**, so a door you opened and forgot
-doesn't stay open unnoticed.
+doesn't stay open unnoticed. Press `p` on a `⇅` row to show its link as a QR code,
+and your phone's camera opens that exact session.
 
 ## Why
 

@@ -541,8 +541,7 @@ safe today; each is narrow).
   read `[`/`{`/`*`/`?` in the dir path as pattern syntax, so a `CLAUDE_CONFIG_DIR` like
   `~/cfg [work]` finds no session files: no `⇅` anywhere, and doctor wrongly says Claude
   moved them (verified) — one `session_files` helper using `Dir.glob("*.json", base:)`;
-  (2) `Sidebar#refresh_agents`' outer rescue leaves the previous `@links` standing, so an
-  ended link can keep its `⇅` until a scan succeeds — reset or compute links first;
+  (2) ~~`@links` survives refresh_agents' outer rescue~~ (done in v0.54.0: hydrated in its ensure);
   (3) the doctor canary misses a format change while one old-format leftover file sits
   beside the new ones (shaped > 0, alive 0 reads healthy); (4) `claude_pids` misses a
   Claude whose process shows as `node …/cli.js`; (5) a workspace name ending in ` ⇅` on
