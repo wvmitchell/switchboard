@@ -243,8 +243,12 @@ module Switchboard
           kept << "#{dest} (couldn't check its commits)"
         elsif !count.zero?
           kept << "#{dest} (it has commits)"
+        elsif (lock = Git.lock_reason(dest)) && lock != "initializing"
+          # Only git's own lock from a killed add (English: add_worktree sets LANGUAGE) is
+          # ours to force past; anyone else's lock means someone claimed the tree.
+          kept << "#{dest} (it's locked)"
         else
-          Git.remove_worktree(repo, dest, force: true, locked: true)
+          Git.remove_worktree(repo, dest, force: true, locked: !lock.nil?)
           kept << "#{dest} (couldn't remove it)" if File.exist?(dest)
         end
       end

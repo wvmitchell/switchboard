@@ -28,7 +28,8 @@ refer to the project's earlier, private repository; the public tracker starts at
   branch it points to), and keeps it when it can't list the repo's worktrees to prove no
   one has it checked out. The failed row now names what it kept and why, and a tree that
   was someone else's isn't claimed by the failed build. A create that timed out halfway
-  still cleans up.
+  still cleans up, but a tree someone else locked is kept, and a deleted branch takes its
+  config (an upstream a hook set) with it.
 - Reading git's output no longer depends on the locale: switchboard's own binary already
   read it as UTF-8 (since 0.52.0), and now every `Git` helper does, whoever loads it. A
   worktree whose path isn't valid UTF-8 (possible only on Linux) is now skipped in the

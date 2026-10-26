@@ -84,6 +84,21 @@ module Switchboard
       refute Git.branch_exists?(repo, "alias")
     end
 
+    # Value: protects=a rolled-back branch takes its config with it, so an upstream a hook set
+    # can't ride along to the next branch cut under the same name (a plain push to it);
+    # fails_when=delete_branch_at drops the ref but not branch.<name>.*; why_new=ship 5 Codex
+    # adversarial rerun (branch -D did this; update-ref doesn't); seam=none
+    def test_delete_branch_at_drops_the_branchs_config
+      repo = temp_git_repo("app")
+      main = Git.rev_parse(repo, "main")
+      git(repo, "branch", "wv/x", "main")
+      git(repo, "config", "branch.wv/x.remote", "origin")
+      git(repo, "config", "branch.wv/x.merge", "refs/heads/main")
+      assert Git.delete_branch_at(repo, "wv/x", main)
+      refute Git.branch_exists?(repo, "wv/x")
+      assert_empty `git -C #{Shellwords.escape(repo)} config --get-regexp '^branch\\.wv/x\\.' 2>/dev/null`
+    end
+
     # Value: protects=destructive callers can tell a failed listing from an empty one; fails_when=
     # worktrees(strict: true) returns [] on a git failure; why_new=ship 2 (D7); seam=none
     def test_strict_worktrees_is_nil_when_git_fails

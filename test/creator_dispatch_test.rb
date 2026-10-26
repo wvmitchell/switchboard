@@ -686,6 +686,31 @@ module Switchboard
       refute Git.branch_exists?(repo, "half")
     end
 
+    # Value: protects=the rollback forces past only git's own lock from a killed add
+    # ("initializing"), never a lock someone else put on the tree; fails_when=undo_add
+    # double-forces any locked tree (it once did unconditionally); why_new=ship 5 Codex
+    # adversarial rerun; seam=none
+    def test_undo_add_forces_past_only_gits_own_initializing_lock
+      repo = temp_git_repo("proj", origin: true)
+      config = config_for(repo)
+      base = Git.rev_parse(repo, "main")
+      { "initializing" => false, "someone's work" => true }.each_with_index do |(reason, kept), i|
+        dest = path("wts", "locked#{i}")
+        git(repo, "worktree", "add", "-q", "-b", "locked#{i}", dest, "main")
+        File.write(File.join(dest, "edit.txt"), "uncommitted") # dirty, nothing committed
+        git(repo, "worktree", "lock", "--reason", reason, dest)
+        note = Creator.undo_add(config.project("proj"), dest, "locked#{i}", base)
+        if kept
+          assert_path_exists dest, reason
+          assert_includes note.to_s, "#{dest} (it's locked)"
+          assert Git.branch_exists?(repo, "locked#{i}"), "its branch stays with the kept tree"
+        else
+          refute_path_exists dest, reason
+          refute Git.branch_exists?(repo, "locked#{i}")
+        end
+      end
+    end
+
     # Value: protects=commits are never force-deleted by a rollback; fails_when=undo_add
     # removes a tree or deletes a branch past base (the old existence-only -D); why_new=R2
     # (D4): a same-name branch can appear between the clash check and the add; seam=none

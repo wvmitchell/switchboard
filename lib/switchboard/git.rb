@@ -215,8 +215,22 @@ module Switchboard
       return false if blank?(branch) || blank?(sha)
 
       # --no-deref: delete this exact ref, never the branch a symref (a hook's doing) points at.
-      system("git", "-C", repo, "update-ref", "--no-deref", "-d", "refs/heads/#{branch}", sha,
-             out: File::NULL, err: File::NULL)
+      ok = system("git", "-C", repo, "update-ref", "--no-deref", "-d", "refs/heads/#{branch}", sha,
+                  out: File::NULL, err: File::NULL)
+      # `branch -D` drops the branch's config too; update-ref doesn't. An upstream a hook set
+      # would otherwise ride along to the next branch cut under this name (--no-track keeps it).
+      system("git", "-C", repo, "config", "--remove-section", "branch.#{branch}", out: File::NULL, err: File::NULL) if ok
+      ok
+    end
+
+    # Why git has `worktree` locked ("" when no reason was given), or nil when it isn't (or
+    # its admin dir can't be read).
+    def lock_reason(worktree)
+      gitdir = capture(worktree, "rev-parse", "--absolute-git-dir").strip
+      return nil unless $?&.success? && !gitdir.empty?
+
+      lock = File.join(gitdir, "locked")
+      File.file?(lock) ? File.read(lock, encoding: Encoding::UTF_8).strip : nil
     end
 
     # A local branch by this name already exists. Used to pre-check a rename target
