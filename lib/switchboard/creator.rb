@@ -156,10 +156,16 @@ module Switchboard
         return [name, dest, nil] if ok
 
         unless clash
-          # Judged by what git did, not its last line (a failing hook can print git's words):
-          # a tree at dest on our branch is git's own work, so it's rolled back as ours.
-          theirs = preexisted?(err.to_s) && !(File.exist?(dest) && Git.current_branch(dest) == branch)
-          kept = undo_add(project, dest, branch, base_sha, theirs ? err : nil)
+          theirs = preexisted?(err.to_s)
+          # git's "already exists" means it made nothing there. A tree on our branch at dest
+          # anyway is either someone's (a workspace renamed onto this placeholder) or ours under
+          # a failing hook that printed git's words; they can't be told apart, so nothing is
+          # removed, nothing retried, and this record stays to guard it.
+          if theirs && File.exist?(dest) && Git.current_branch(dest) == branch
+            return [nil, nil, "#{err}; kept #{dest} and branch #{branch} (can't tell whose they are)"]
+          end
+
+          kept = undo_add(project, dest, branch, base_sha, err)
           # Retry only when nothing of ours stayed behind: past a path clash, a branch git cut
           # for us that the rollback had to keep is ours, and the ✘ must name it.
           collided = theirs && !(err.match?(PATH_PREEXISTED) && Git.branch_exists?(project["path"], branch))
@@ -194,9 +200,10 @@ module Switchboard
       end
     end
 
-    # A path beside `dest` that can't exist (a dotted name reserve never generates).
+    # A path beside `dest` that can't exist (a dotted name reserve never generates), under a
+    # name that can't be mistaken for the workspace whose folder it left.
     def park(id, dest)
-      Creation.update(id, path: File.join(File.dirname(dest), ".unbuilt-#{id}"))
+      Creation.update(id, name: "unbuilt-#{id}", path: File.join(File.dirname(dest), ".unbuilt-#{id}"))
     end
 
     # Roll back a failed add that we started from a clean slate: an un-set-up tree left
