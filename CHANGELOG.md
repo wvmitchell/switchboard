@@ -41,7 +41,8 @@ refer to the project's earlier, private repository; the public tracker starts at
   mismatch and an up-to-date `upgrade` re-applies the keys. A key tmux refused, and the
   default it fell back to, still reads as applied, and nothing is judged against a different
   `config.yml` than the one tmux bound from. Swapping the toggle and home keys now leaves
-  both bound (applying the swap used to unbind the new toggle key).
+  both bound (applying the swap used to unbind the new toggle key). A key ending in `;`
+  (like `C-;`) now binds: tmux read the `;` as the end of the command, so it never did.
 - The `⇅` glyph and `doctor`'s remote-link check now find Claude's session files when
   `CLAUDE_CONFIG_DIR` contains glob characters, like `~/cfg [work]`.
 - `doctor` run outside a worktree now shows the global codex hooks rows (the trust count

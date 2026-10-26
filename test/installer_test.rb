@@ -146,6 +146,23 @@ module Switchboard
       assert_equal ["set-option", "-g", "@switchboard-toggle-clobbered", "x"], Installer.tmux_argv([:set_clobber, "toggle", "x"])
     end
 
+    # Value: protects=a tmux key ending in `;` (C-;) reaches tmux escaped, so it binds and
+    # every @option records it verbatim; fails_when=run_tmux passes a trailing `;` raw (tmux
+    # reads it as a command separator: binds "C-", stores "C-", and key_drift? then reads an
+    # unapplied edit on every upgrade); why_new=ship 4 red team, confirmed on tmux 3.8;
+    # seam=system; no_claim=tmux's own parsing (verified by hand on an isolated server)
+    def test_run_tmux_escapes_a_trailing_semicolon
+      seen = []
+      stub_method(Installer, :system, ->(*argv, **) { seen << argv; true }) do
+        Installer.run_tmux("bind-key", "C-;", "run-shell", "x")
+        Installer.run_tmux("set-option", "-g", "@switchboard-toggle-rejected", ";")
+        Installer.run_tmux("unbind-key", "\\;")
+      end
+      assert_equal ["tmux", "bind-key", "C-\\;", "run-shell", "x"], seen[0]
+      assert_equal ["tmux", "set-option", "-g", "@switchboard-toggle-rejected", "\\;"], seen[1]
+      assert_equal ["tmux", "unbind-key", "\\;"], seen[2], "already escaped: left alone"
+    end
+
     # --- run_rebind: bind-first + bind-failure fallback (via the run_tmux seam) -
 
     def test_run_rebind_executes_full_sequence_on_success

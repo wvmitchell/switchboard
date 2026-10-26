@@ -118,8 +118,9 @@ Each worktree maps to exactly one tmux session named `sb/<project>/<leaf>`.
 The house rule, enforced everywhere: every shell-out escapes its args with
 `Shellwords` and swallows stderr, and every failure returns `[]`/`{}`/`nil`
 rather than raising into the UI. A lapsed `gh` token freezes the badges (it
-doesn't blank them — see `Pr.refresh`); a malformed config degrades to empty and
-is reported by `doctor` (`Config#load_data`); a missing audio player just stays
+doesn't blank them — see `Pr.refresh`); a malformed config degrades to empty, is
+reported by `doctor` (`Config#load_data`), and makes `install`/`upgrade` print the
+parse error and exit 1 (`Installer.config_readable?`); a missing audio player just stays
 silent. The TUI is a long-lived loop with a person watching it, so a crash is the
 worst outcome — worse than briefly-stale data. `doctor` exists precisely because
 the UI degrades *quietly*: it's the honest surface where silent degradation

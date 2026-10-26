@@ -569,9 +569,10 @@ module Switchboard
     end
 
     # Execute one role's ops, bind-first. If tmux rejects the key (denylist let it
-    # through but it's not a real key), keep a working toggle by binding the default
-    # and bail WITHOUT cleaning or recording; leave home unbound. Returns the key
-    # actually bound to our command, or nil.
+    # through but it's not a real key), recover through a rebind (toggle to the default,
+    # home to unbound) and remember the refused key in @switchboard-<role>-rejected, so a
+    # config still naming it doesn't read as an unapplied edit. Returns the key actually
+    # bound to our command, or nil.
     def run_rebind(role, desired, recorded:, legacy_toggle:, clobbered:, taken: [])
       ops = rebind_ops(role, desired, recorded: recorded, legacy_toggle: legacy_toggle, clobbered: clobbered, taken: taken)
       if desired.nil?
@@ -606,6 +607,9 @@ module Switchboard
     # seam every binding side-effect goes through, so tests assert the exact command
     # sequence without a tmux server.
     def run_tmux(*argv)
+      # tmux reads an argument ending in `;` as the end of a command: `bind-key C-;` binds
+      # "C-" (and fails), `set-option … C-;` stores "C-". Escaped, tmux takes the `;` literally.
+      argv = argv.map { |a| a.is_a?(String) && a.end_with?(";") && !a.end_with?("\\;") ? "#{a.chop}\\;" : a }
       system("tmux", *argv, out: File::NULL, err: File::NULL)
     end
 

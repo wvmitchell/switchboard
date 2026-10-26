@@ -188,7 +188,7 @@ module Switchboard
           return [nil, nil, "no free workspace name"]
         end
       end
-      # Racers took every name we tried: say what git said, not that names ran out.
+      # Racers took every name we tried: say the last thing git said, not that names ran out.
       [nil, nil, err ? "#{err}; gave up after #{PLACEHOLDER_TRIES} tries" : "no free workspace name"]
     end
 

@@ -390,8 +390,9 @@ is this create's — the tree only when it's on our branch with no commits past 
 base commit the add started from (`Git.rev_parse`, captured before; dirty is fine,
 nobody worked in it), the branch only atomically at that commit (`Git.delete_branch_at`
 = `update-ref --no-deref -d <ref> <sha>`, never a symref's target) and only when one
-strict worktree read (`Git.worktrees(strict: true)`: nil on a failed run, an empty
-list, or a path it can't decode) proves no worktree holds it. Whatever it keeps is
+strict worktree read (`Git.worktrees(strict: true)`: nil on a failed run or a path it
+can't decode; `keep_branch` also treats an empty list as a failure) proves no worktree
+holds it. Whatever it keeps is
 named, with why, in the ✘ detail. git runs with `LANGUAGE=en` so those messages stay
 matchable. Cancels come from `quit`/remove-project
 (`cancel_all`, scoped to THIS tmux server via the record's `server` = `$TMUX` socket),

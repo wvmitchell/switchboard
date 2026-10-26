@@ -553,7 +553,9 @@ safe today; each is narrow).
 - **`ours?` misses a bin path containing `$`, `"` or `\`.** *What:* `tmux list-keys`
   prints the run-shell argument double-quoted and backslash-escapes those characters, so the
   raw `bin_path` never matches and switchboard's own binding is recorded as a clobber
-  (doctor then warns about itself). Unescape the binding before matching. *Why:* a false
+  (doctor then warns about itself). Unescape the binding before matching. The key column has
+  the same problem: `list-keys` prints a `;` key as `\;`, so `foreign_binding` can't find a
+  user's own binding on `;` (tmux's default last-pane) and the clobber goes unrecorded. *Why:* a false
   warning, not a lost key; pre-existing. *Context:* v0.55.3 pass-3 red team. **Priority:** P4.
 
 - **`uninstall` says Done over a codex config it can't read from the start.**

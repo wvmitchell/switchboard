@@ -189,7 +189,8 @@ module Switchboard
     # Why this exists rather than the old inline read raising: a malformed
     # config.yml would otherwise crash every consumer (the sidebar, `doctor`, and
     # now the `tmux-bind` keybinding path). Degrade to an empty config and remember
-    # the parse error so `doctor` can report it; a valid file is unaffected.
+    # the parse error: `doctor` reports it and `install`/`upgrade` exit 1 on it. Valid
+    # YAML whose top level isn't a map counts too; a valid file is unaffected.
     attr_reader :load_error, :file
 
     # The one wording doctor, install and upgrade use for it.

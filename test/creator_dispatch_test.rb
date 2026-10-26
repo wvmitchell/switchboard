@@ -1164,15 +1164,18 @@ module Switchboard
       repo = temp_git_repo("proj", origin: true)
       config = config_for(repo)
       rec = dispatch(config)
+      last = nil
       racer = lambda do |_c, _p, _n, dest, _base, **|
         FileUtils.mkdir_p(dest)
+        last = dest
         [false, "'#{dest}' already exists"]
       end
       with_fake_tmux { stub_method(Creator, :add_worktree, racer) { Creator.work(config, rec["id"]) } }
       found = Creation.find(rec["id"])
       assert_equal "failed", found["state"]
-      assert_includes found["detail"], "already exists"
+      assert_includes found["detail"], "'#{last}' already exists", "the last try's error, not the first"
       assert_includes found["detail"], "gave up after #{Creator::PLACEHOLDER_TRIES} tries"
+      refute_includes found["detail"], "no free workspace name"
       refute found["worktree_added"]
       refute_path_exists found["path"], "left on a fresh name nobody made"
     end
