@@ -89,8 +89,9 @@ module Switchboard
       # appended from config (tmux_help_rows), resolved, not static.
       HELP_KEY_COLS = 6 # key column width; longer combos (move/prefix rows) overflow it
 
-      # What the row glyphs mean (DR9) — nothing else teaches them. Seated right under
-      # the help wordmark, so it's always on page 1.
+      # What the row glyphs mean (DR9) — nothing else teaches them. The first section
+      # under the help wordmark, so it's on page 1.
+      LEGEND_HEADING = "icons"
       LEGEND = [[SPIN_COLORED.first, "⠋", "working"], [WANTS_ON, "◆", "input"], [DONE, "●", "done"],
                 [MONITORING, "∞", "watching"], [OFFSTAGE, "◷", "background"], [BUILDING, "◌", "building"], [FAILED, "✘", "failed"],
                 ["#{LINK_LIVE_FG}#{LINK_GLYPH}\e[0m", "⇅", LINK_LIVE_LABEL], ["#{LINK_STALE_FG}#{LINK_GLYPH}\e[0m", "⇅", "idle link"]].freeze
@@ -438,13 +439,13 @@ module Switchboard
 
       # Format the key map (Keymap.help_rows, built from the live @bindings so the
       # shown keys never drift — issue #108) plus the resolved tmux rows into
-      # sections: the head (wordmark + legend), then one per heading row — a blank
+      # sections: the head (wordmark), the icon legend, then one per heading row — a blank
       # separator, the bold heading, and each key row as `key.ljust(HELP_KEY_COLS)
       # desc`. Grouped from the rows themselves (a blank key starts a section), so
       # paging never has to re-split drawn text. trunc runs on the PLAIN string BEFORE
       # the ANSI is wrapped on, so truncation can never cut an escape (line()).
       def help_sections(cols)
-        sections = [["#{BRAND}#{trunc(WORDMARK, cols)}\e[0m", *legend_lines(cols)]]
+        sections = [["#{BRAND}#{trunc(WORDMARK, cols)}\e[0m"], ["", "#{BRAND}#{trunc(LEGEND_HEADING, cols)}\e[0m", *legend_lines(cols)]]
         (Keymap.help_rows(@bindings) + tmux_help_rows).each do |key, desc|
           if key.empty?
             sections << ["", "#{BRAND}#{trunc(desc, cols)}\e[0m"] # blank separator, then the heading
@@ -455,23 +456,15 @@ module Switchboard
         sections
       end
 
-      # Help's glyph legend: the row glyphs, wrapped to the pane, each in its row color.
+      # Help's glyph legend: one row per glyph, laid out like the key rows (glyph in the
+      # key column, in its row color), under its own heading.
       def legend_lines(cols)
-        lines = [[]]
-        width = 0
         qr_key = @bindings && @bindings[:phone_link]
-        LEGEND.each do |colored, glyph, label|
+        width = [cols - HELP_KEY_COLS - 2, 1].max
+        LEGEND.map do |colored, glyph, label|
           label = "#{label} · #{qr_key} shows a QR" if label == LINK_LIVE_LABEL && qr_key # the live key, or no hint
-          label = trunc(label, [cols - 2, 1].max) # one item never runs past a narrow pane
-          item_w = "#{glyph} #{label}".length
-          if width.positive? && width + 2 + item_w > cols
-            lines << []
-            width = 0
-          end
-          width += (width.positive? ? 2 : 0) + item_w
-          lines.last << "#{colored} \e[2m#{label}\e[0m"
+          "#{colored}#{" " * (HELP_KEY_COLS - glyph.length)}  #{trunc(label, width)}"
         end
-        lines.map { |items| items.join("  ") }
       end
 
       # The tmux-layer keys that operate the sidebar itself, resolved at render time
