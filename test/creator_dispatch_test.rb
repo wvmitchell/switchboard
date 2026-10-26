@@ -721,6 +721,20 @@ module Switchboard
       note = Creator.undo_add(config.project("proj"), dest, "latin", base)
       assert_path_exists dest
       assert_includes note.to_s, "#{dest} (it's locked)"
+
+      # Extended (ship 6 pass 2): a lock file we can't read is still someone's lock, never
+      # read as unlocked or raised out of the rollback.
+      skip "root reads any file" if Process.uid.zero?
+      dest = path("wts", "unreadable")
+      git(repo, "worktree", "add", "-q", "-b", "unreadable", dest, "main")
+      git(repo, "worktree", "lock", "--reason", "mine", dest)
+      lockf = File.join(git(dest, "rev-parse", "--absolute-git-dir").strip, "locked")
+      File.chmod(0o000, lockf)
+      note = Creator.undo_add(config.project("proj"), dest, "unreadable", base)
+      assert_path_exists dest
+      assert_includes note.to_s, "#{dest} (it's locked)"
+    ensure
+      File.chmod(0o644, lockf) if lockf && File.exist?(lockf)
     end
 
     # Value: protects=commits are never force-deleted by a rollback; fails_when=undo_add

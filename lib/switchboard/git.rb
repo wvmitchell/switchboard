@@ -233,7 +233,7 @@ module Switchboard
       return nil unless File.file?(lock)
 
       # The reason is free text (any bytes, any length); a lock we can't read is still a lock.
-      File.binread(lock, 4096).to_s.b.force_encoding(Encoding::UTF_8).scrub.strip # nil when empty
+      File.binread(lock, 4096).to_s.b.force_encoding(Encoding::UTF_8).scrub.strip # an empty file reads ""
     rescue SystemCallError
       ""
     end
