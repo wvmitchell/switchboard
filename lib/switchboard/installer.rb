@@ -629,14 +629,15 @@ module Switchboard
       binding
     end
 
-    # DX2: after an interactive rebind, show what's bound so the user sees it took
-    # effect instead of having to test the key. `bound` is role => bound-key-or-nil.
-    # Our own binding of EITHER role: a toggle/home swap finds each key still bound to the
-    # other role, which is no clobber.
+    # Our own binding of EITHER role (a toggle/home swap finds each key still bound to the
+    # other role, which is no clobber): our bin path followed by a role's exact subcommand.
     def ours?(binding)
-      binding.include?("'#{bin_path}'") && ROLE_SUBCOMMANDS.values.any? { |sub| binding.include?(sub) }
+      subs = ROLE_SUBCOMMANDS.values.map { |sub| Regexp.escape(sub) }.join("|")
+      binding.match?(/'#{Regexp.escape(bin_path)}' (?:#{subs})(?=["\s]|\z)/)
     end
 
+    # DX2: after an interactive rebind, show what's bound so the user sees it took
+    # effect instead of having to test the key. `bound` is role => bound-key-or-nil.
     def announce_bindings(bound)
       desc = { "toggle" => "toggles the sidebar", "home" => "jumps home" }
       parts = bound.filter_map { |role, key| "prefix-#{key} #{desc[role]}" if key }

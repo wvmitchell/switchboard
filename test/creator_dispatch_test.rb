@@ -1066,6 +1066,93 @@ module Switchboard
       assert Git.branch_exists?(repo, branch), "their branch stays"
     end
 
+    # Value: protects=a failure after a real racer never leaves the record on their folder,
+    # even when our just-cut branch had to be kept (no retry); fails_when=the non-retry exit
+    # skips move_off; why_new=ship 3 pass 2 testing + state machines (path_preexisted_branch_kept
+    # x work), D5; seam=add_worktree, Git.undecodable?; no_claim=a real concurrent writer
+    def test_a_racers_path_with_our_branch_kept_still_moves_the_record_off
+      repo = temp_git_repo("proj", origin: true)
+      config = config_for(repo)
+      rec = dispatch(config)
+      theirs = rec["path"]
+      branch = Creator.branch_for(config, rec["name"])
+      run_git = method(:git)
+      racer = lambda do |_c, p, _n, dest, base, **|
+        FileUtils.mkdir_p(dest)
+        File.write(File.join(dest, "theirs.txt"), "x")
+        run_git.call(p["path"], "branch", branch, base) # git cut ours before it found the path
+        [false, "'#{dest}' already exists"]
+      end
+      with_fake_tmux do
+        stub_method(Git, :undecodable?, ->(_out) { true }) do # keep_branch can't prove it free
+          stub_method(Creator, :add_worktree, racer) { Creator.work(config, rec["id"]) }
+        end
+      end
+      found = Creation.find(rec["id"])
+      assert_equal "failed", found["state"]
+      assert_includes found["detail"], "branch #{branch} (couldn't list worktrees)"
+      refute_equal theirs, found["path"], "the record moved off their folder"
+      refute found["worktree_added"]
+      assert_path_exists File.join(theirs, "theirs.txt")
+      Creation.gc
+      refute Creation.unfinished_at?(theirs)
+    end
+
+    # Value: protects=a racer collision with no fresh name left parks the record on a path that
+    # can't exist instead of leaving it on their folder; fails_when=the break skips park;
+    # why_new=ship 3 pass 2 state machines (git_collision_then_no_name x work), D5;
+    # seam=add_worktree, Creator.reserve; no_claim=a real concurrent writer
+    def test_a_racer_collision_with_no_free_name_parks_the_record
+      repo = temp_git_repo("proj", origin: true)
+      config = config_for(repo)
+      rec = dispatch(config)
+      theirs = rec["path"]
+      racer = lambda do |_c, _p, _n, dest, _base, **|
+        FileUtils.mkdir_p(dest)
+        File.write(File.join(dest, "theirs.txt"), "x")
+        [false, "'#{dest}' already exists"]
+      end
+      with_fake_tmux do
+        stub_method(Creator, :reserve, ->(*) { nil }) do
+          stub_method(Creator, :add_worktree, racer) { Creator.work(config, rec["id"]) }
+        end
+      end
+      found = Creation.find(rec["id"])
+      assert_equal "failed", found["state"]
+      assert_includes found["detail"], "no free workspace name"
+      refute_equal theirs, found["path"]
+      refute_path_exists found["path"], "parked on a path that doesn't exist"
+      refute found["worktree_added"]
+      Creation.gc
+      refute Creation.unfinished_at?(theirs)
+    end
+
+    # Value: protects=git's message never outranks what git did: a failing hook that prints
+    # "a branch named ... already exists" after git checked out OUR tree gets the normal rollback
+    # (tree and branch removed, record kept on that path), never a retry that strands an
+    # un-set-up tree with no record; fails_when=the collision check trusts the message alone;
+    # why_new=ship 3 pass 2 red team + security, D5; seam=add_worktree; no_claim=a real hook
+    def test_a_hook_printing_gits_words_is_rolled_back_as_ours
+      repo = temp_git_repo("proj", origin: true)
+      config = config_for(repo)
+      rec = dispatch(config)
+      branch = Creator.branch_for(config, rec["name"])
+      run_git = method(:git)
+      calls = 0
+      spoof = lambda do |_c, p, _n, dest, base, **|
+        next [false, "a retry ran"] if (calls += 1) > 1
+
+        run_git.call(p["path"], "worktree", "add", "-q", "-b", branch, dest, base)
+        [false, "a branch named '#{branch}' already exists"]
+      end
+      with_fake_tmux { stub_method(Creator, :add_worktree, spoof) { Creator.work(config, rec["id"]) } }
+      found = Creation.find(rec["id"])
+      assert_equal "failed", found["state"]
+      assert_equal rec["path"], found["path"], "no retry: the record stays on its own path"
+      refute_path_exists rec["path"], "our un-set-up tree was rolled back"
+      refute Git.branch_exists?(repo, branch)
+    end
+
     # Value: protects=the branch check and the delete being one step; fails_when=delete_branch_at
     # loses update-ref's old-value guard (a tip that moved after the check gets deleted);
     # why_new=outside voice O1: check-then-`-D` still raced; seam=none

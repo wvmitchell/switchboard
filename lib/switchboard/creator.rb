@@ -156,25 +156,47 @@ module Switchboard
         return [name, dest, nil] if ok
 
         unless clash
-          kept = undo_add(project, dest, branch, base_sha, err)
+          # Judged by what git did, not its last line (a failing hook can print git's words):
+          # a tree at dest on our branch is git's own work, so it's rolled back as ours.
+          theirs = preexisted?(err.to_s) && !(File.exist?(dest) && Git.current_branch(dest) == branch)
+          kept = undo_add(project, dest, branch, base_sha, theirs ? err : nil)
           # Retry only when nothing of ours stayed behind: past a path clash, a branch git cut
           # for us that the rollback had to keep is ours, and the ✘ must name it.
-          collided = preexisted?(err.to_s) &&
-                     !(err.to_s.match?(PATH_PREEXISTED) && Git.branch_exists?(project["path"], branch))
-          err = [err, kept].compact.join("; ") # a refused leftover is said, not silent
-          return [nil, nil, err] unless collided
+          collided = theirs && !(err.match?(PATH_PREEXISTED) && Git.branch_exists?(project["path"], branch))
+          unless collided
+            move_off(config, rec, dest) if theirs
+            return [nil, nil, [err, kept].compact.join("; ")] # a refused leftover is said, not silent
+          end
         end
 
         # Under the same reservation lock as `n`: the new name must dodge other in-flight
         # dispatches too, or two records would share a path and the launcher claim the
         # wrong one.
+        taken = dest
         name, dest = Creation.with_project_lock(rec["project"]) do
           picked = reserve(config, rec["project"])
           picked && Creation.update(rec["id"], name: picked[0], path: picked[1]) ? picked : nil
         end
-        break unless dest
+        unless dest
+          park(rec["id"], taken) # nothing free: still never left on someone's folder
+          break
+        end
       end
-      [nil, nil, err || "no free workspace name"]
+      [nil, nil, "no free workspace name"]
+    end
+
+    # A failed build must never name a folder that's someone else's: their row would wear our
+    # ✘ and GC would guard their tree as ours. Move it to a fresh unused name, or park it.
+    def move_off(config, rec, dest)
+      Creation.with_project_lock(rec["project"]) do
+        picked = reserve(config, rec["project"])
+        picked ? Creation.update(rec["id"], name: picked[0], path: picked[1]) : park(rec["id"], dest)
+      end
+    end
+
+    # A path beside `dest` that can't exist (a dotted name reserve never generates).
+    def park(id, dest)
+      Creation.update(id, path: File.join(File.dirname(dest), ".unbuilt-#{id}"))
     end
 
     # Roll back a failed add that we started from a clean slate: an un-set-up tree left

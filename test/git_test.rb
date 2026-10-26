@@ -62,12 +62,15 @@ module Switchboard
       assert_equal ["/ok"], wts.map { |w| w[:path] }
     end
 
-    # Value: protects=destructive callers can tell a skipped worktree happened; fails_when=
-    # undecodable_worktrees? misses an invalid block or flags a valid repo; why_new=D10; seam=Git.capture
-    def test_undecodable_worktrees_reports_a_skipped_entry
+    # Value: protects=destructive callers can tell a skipped worktree happened (strict: is nil),
+    # while display still lists the readable ones; fails_when=worktrees(strict: true) ignores an
+    # invalid block, or flags a readable repo; why_new=D10, ship 3 D4/D6; seam=Git.capture
+    def test_strict_worktrees_is_nil_when_an_entry_cant_be_read
       bad = "worktree /ok\nHEAD abc\n\nworktree /caf\xE9\nHEAD def\n".dup.force_encoding(Encoding::UTF_8)
-      assert(stub_method(Git, :capture, ->(*) { bad }) { Git.undecodable_worktrees?("/repo") })
-      refute Git.undecodable_worktrees?(temp_git_repo("app"))
+      `true` # a successful $? for the stubbed capture
+      assert_nil(stub_method(Git, :capture, ->(*) { bad }) { Git.worktrees("/repo", strict: true) })
+      assert_equal ["/ok"], (stub_method(Git, :capture, ->(*) { bad }) { Git.worktrees("/repo") }).map { |w| w[:path] }
+      refute_nil Git.worktrees(temp_git_repo("app"), strict: true)
     end
 
     # Value: protects=a symref branch is deleted as itself, never its target (main); fails_when=

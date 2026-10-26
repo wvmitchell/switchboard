@@ -377,6 +377,38 @@ module Switchboard
       refute Installer.key_drift_from?("s", nil, "s"), "the yielded home key reads as applied"
     end
 
+    # Value: protects=home's cleanup never unbinds the key the toggle just fell back onto
+    # (home was recorded on `s`, the toggle's configured key is refused); fails_when=taken
+    # omits keys earlier roles actually bound; why_new=ship 3 pass 2 testing; seam=run_tmux
+    def test_a_yielding_home_never_unbinds_the_toggles_fallback
+      File.write(Config.path, YAML.dump("tmux_keys" => { "toggle" => "F13", "home" => "s" }))
+      recorded = { "@switchboard-home-key" => "s" }
+      cmds = []
+      tmux = ->(*argv) { cmds << argv; !(argv[0] == "bind-key" && argv[1] == "F13") }
+      stub_method(Installer, :list_prefix_keys, -> { "" }) do
+        stub_method(Installer, :tmux_option, ->(name) { recorded[name] }) do
+          stub_method(Installer, :run_tmux, tmux) { Installer.apply_keybindings(config: Config.new) }
+        end
+      end
+      assert_includes cmds, ["bind-key", "s", "run-shell", "'#{Installer.bin_path}' toggle-sidebar"]
+      refute_includes cmds, ["unbind-key", "s"], "home's cleanup must not unbind the toggle's fallback"
+    end
+
+    # Value: protects=only our bin path followed by a role's exact subcommand counts as ours
+    # (a Linux bin under /home/ must not make every binding of ours look like a role's);
+    # fails_when=ours? matches subcommand substrings anywhere; why_new=ship 3 pass 2 red team;
+    # seam=bin_path
+    def test_ours_needs_a_roles_exact_subcommand
+      bin = "/home/me/switchboard/bin/switchboard"
+      stub_method(Installer, :bin_path, -> { bin }) do
+        assert Installer.ours?(%(run-shell "'#{bin}' home"))
+        assert Installer.ours?(%(run-shell "'#{bin}' toggle-sidebar"))
+        refute Installer.ours?(%(run-shell "'#{bin}' quit")), "a path containing /home/ isn't the home role"
+        refute Installer.ours?(%(run-shell "'#{bin}' rename home-page"))
+        refute Installer.ours?(%(run-shell "'#{bin}' homework"))
+      end
+    end
+
     # Value: protects=a toggle/home swap records no clobber of switchboard's own binding (doctor
     # stays quiet); fails_when=foreign_binding treats the other role's binding as foreign;
     # why_new=ship 3 red team + state machines; seam=list_prefix_keys

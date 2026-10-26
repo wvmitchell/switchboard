@@ -42,12 +42,8 @@ module Switchboard
       end
     end
 
-    # Did worktrees skip an entry (its path isn't valid UTF-8)? Display can live without it;
-    # anything deciding what's safe to destroy must treat the repo as not fully known.
-    def undecodable_worktrees?(repo)
-      undecodable?(capture(repo, "worktree", "list", "--porcelain"))
-    end
-
+    # Does this porcelain listing hold an entry worktrees skips (its path isn't valid UTF-8)?
+    # Display can live without it; deciding what's safe to destroy can't (strict: is nil).
     def undecodable?(porcelain)
       porcelain.b.split("\n\n").any? { |block| !block.force_encoding(Encoding::UTF_8).valid_encoding? }
     end
