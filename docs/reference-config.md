@@ -10,9 +10,13 @@ says which repos to scan.
 sidebar and `switchboard add` grow it. Edit it any time with `switchboard config`
 or `e` in the sidebar — both reload on save.
 
-> A malformed config never crashes switchboard. It degrades to an empty config,
-> keeps the last-good values in a running sidebar, and `switchboard doctor`
-> reports the parse error. See [Explanation: architecture](explanation-architecture.md).
+> A malformed config never crashes switchboard, and it's never silent. It degrades to
+> an empty config and a running sidebar keeps its last-good values, while
+> `switchboard doctor` shows a red config row with the parse error, and `install` and
+> `upgrade` print it and exit 1. A file that parses but isn't a map of settings (a
+> dropped colon turns it into one string; a bare `false`; a list) counts as malformed;
+> an empty or comment-only file doesn't. See
+> [Explanation: architecture](explanation-architecture.md).
 
 ---
 

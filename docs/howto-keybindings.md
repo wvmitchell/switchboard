@@ -95,6 +95,11 @@ In both, reload tmux:
 tmux source-file ~/.tmux.conf    # or wherever your conf lives
 ```
 
+You don't have to remember case 2: `switchboard doctor` names a `tmux_keys` value
+that differs from what tmux has bound (`tmux_keys.toggle is t in config, but tmux has
+prefix-s bound`), and `switchboard upgrade` re-applies it even when there's nothing
+newer to fetch.
+
 `switchboard doctor` flags a binding that's wired in config but not yet **live**
 in the running server — the "prefix-s stopped working after a `git pull`" case.
 
@@ -109,8 +114,16 @@ in the running server — the "prefix-s stopped working after a `git pull`" case
 - **`doctor` says a binding "replaced a prior binding".** Your chosen key was
   already bound to something else (yours or a plugin's); switchboard took it and
   recorded what it displaced. Choose another key if you want the old one back.
+- **`doctor` says a key "isn't bound (tmux refused it)".** tmux didn't accept that
+  key name, so switchboard kept (or fell back to) a working toggle. For `home` the
+  reason can also be "the toggle fell back onto it": your toggle key was refused, its
+  fallback is the default `s`, and that's your home key too, so the toggle keeps it.
+  Pick another key.
+- **Swapping keys.** Setting `toggle` and `home` to each other's old keys works in one
+  step; neither unbinds the key the other now wants.
 - **A malformed config.** switchboard falls back to default keys and keeps
-  running; `doctor` reports the parse error and the file to fix.
+  running; `doctor` reports the parse error and the file to fix, and `install` and
+  `upgrade` exit 1 until it's fixed.
 - **A sidebar key didn't change.** Run `switchboard doctor`. If it says the value
   "isn't a single printable key", you used more than one character (or a named
   key) — `sidebar_keys` takes exactly one printable char. If it says the key

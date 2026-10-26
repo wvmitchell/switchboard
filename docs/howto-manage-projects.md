@@ -146,7 +146,11 @@ cleaned by `switchboard prune` — see [How-to: housekeeping](howto-housekeeping
   couldn't read the project's config, or its `worktree_creation_command` isn't a
   string or list of strings, so setup couldn't run), `worktree add`, `no session`,
   `interrupted` or `didn't start`. `↵` shows the full message; fix the cause, then
-  `d` the row and press `n` again.
+  `d` the row and press `n` again. When a `worktree add` fails, switchboard removes
+  only what it can prove that build made (a tree on its branch with no commits, and
+  that branch); anything else is kept and named in the message ("kept … (it has
+  commits)"), so nothing of yours is deleted. If someone else made the same folder or
+  branch mid-build, the build just retries under a new name.
 - **PR badge missing for a worktree.** Badges come from `gh` and are cached. Press
   `R` to force a refresh; run `switchboard doctor` to check `gh` auth and cache
   age. A PR merged/closed *on GitHub* needs an explicit `R` (no local signal

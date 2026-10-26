@@ -85,7 +85,12 @@ safe today; each is narrow).
   attach to an unrelated tree later renamed (or clash-relabeled) onto its path, and then
   `unfinished_at?` lets a confirmed `d` force past that tree's lock. *Start in:*
   `Creation.renamable?` (refuse an `unfinished?` record) and `Rename.perform` (refuse a
-  destination a record claims). **Priority:** P2.
+  destination a record claims). The same check closes a newer case (v0.55.3 review): a
+  workspace renamed onto the exact placeholder an in-flight build reserved makes that
+  build's `worktree add` fail with "already exists" over a tree on its branch, so the
+  build fails and keeps it (nothing is lost, but the renamed workspace wears the build's
+  ✘ until dismissed). Check under `Creation.with_project_lock`, as `reserve` does.
+  **Priority:** P2.
 - **Respawn sidebars when switchboard is upgraded.** *Why:* every window's sidebar is a
   long-lived process; after `brew upgrade` / `git pull` an old one keeps running the old
   `switch`, which starts the agent without checking the dispatch record (so it can start
@@ -506,6 +511,45 @@ safe today; each is narrow).
   paint paths are already the leaf of the call graph. If none of the triggers
   ever fire, this entry is correctly ignored forever.
 
+
+## Silent failures (v0.55.3) follow-ups
+
+- **State-dir globs break on a path with glob characters.** *What:* nine `Dir.glob` calls
+  build their pattern from a state dir (`creation.rb` `all`, `agent_state.rb`, `notify.rb`,
+  `monitoring.rb`, `pending_delete.rb`, `keyed_marker_store.rb`,
+  `Sidebar#dir_fingerprint`); switch each to `Dir.glob(pattern, base: dir)` the way
+  `RemoteLink.session_files` now does. *Why:* an `XDG_STATE_HOME` containing `[`, `{`, `*`
+  or `?` makes them match nothing; worst is `Creation.all` coming back empty, which drops a
+  failed build's guard (`certified?(nil)` lets re-entry start the agent un-set-up).
+  *Pros:* mechanical, one test per store. *Cons:* touches every store. *Context:* found in
+  the TODO triage that produced v0.55.3. **Priority:** P2.
+
+- **A C-locale tmux client mangles `-F` output.** *What:* with `LC_ALL=C`, tmux replaces
+  the tab and any non-ASCII byte in `-F` formats with `_`, so `Tmux.sessions` misparses and
+  `quit`/`kill_all` can't match names (prune is saved only because `created` reads as 0,
+  inside the grace window). Use a printable ASCII separator (or one field per call) in the
+  formats switchboard parses. *Why:* teardown silently does nothing under a C-locale client.
+  *Pros:* small. *Cons:* every `-F` parser changes at once. *Context:* v0.55.3 triage.
+  **Priority:** P2.
+
+- **The rest of `Git`'s readers on a non-UTF-8 path.** *What:* v0.55.3 made
+  `Git.worktrees` skip an undecodable entry; `current_branch`, `commits_since` and the diff
+  readers (with `core.quotePath=false`) can still raise on one. Audit each caller and either
+  scrub or compare as bytes. *Why:* a Linux-only crash path in the sidebar's helpers.
+  *Context:* v0.55.3 item 3 caller audit. **Priority:** P3.
+
+- **`keep_branch`'s listing and its delete aren't one step.** *What:* between
+  `Git.worktrees(strict: true)` and `update-ref --no-deref -d`, another process could check
+  the branch out. *Why:* at worst a worktree is left on a deleted branch at base (no commits
+  lost, the old-value guard holds). *Pros:* closes the last race on the rollback. *Cons:*
+  git offers no atomic "delete unless checked out"; it needs a lock switchboard doesn't
+  have. *Context:* v0.55.3 review, accepted as theoretical. **Priority:** P4.
+
+- **`ours?` misses a bin path containing `$`, `"` or `\`.** *What:* `tmux list-keys`
+  prints the run-shell argument double-quoted and backslash-escapes those characters, so the
+  raw `bin_path` never matches and switchboard's own binding is recorded as a clobber
+  (doctor then warns about itself). Unescape the binding before matching. *Why:* a false
+  warning, not a lost key; pre-existing. *Context:* v0.55.3 pass-3 red team. **Priority:** P4.
 
 ## Agent CLI hooks (Claude 2.1.301 / Codex 0.163 compat review) follow-ups
 
