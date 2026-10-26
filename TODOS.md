@@ -516,7 +516,7 @@ safe today; each is narrow).
   row's columns — let `fit_plain` report whether the cues were kept and share it with
   `colored` (the cursor-bar grey half of this went away in v0.53.1); (4) a stale comment:
   `Agents.lsof_path`'s encoding rationale predates the byte compares.
-  *Why:* none hits a normal setup (the one verified user-visible item, the glob, shipped in v0.54.1). *Pros:*
+  *Why:* none hits a normal setup (the one verified user-visible item, the glob, shipped in v0.55.3). *Pros:*
   small, testable changes. *Cons:* each touches a reviewed path, so give it its own short
   review. *Context:* ship review of v0.53.0 (D2/D3 — deferred to keep the release from
   reopening its review loop). *Depends on:* v0.53.0.

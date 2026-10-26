@@ -100,12 +100,11 @@ module Switchboard
       Git.fetch_base(project["path"], project["base_ref"], timeout: FETCH_DEADLINE) # best-effort: offline builds off the last fetch
       return unless Creation.find(id)&.dig("state") == "building" # canceled during a slow fetch
 
-      name, dest, err, foreign = add_reserved(config, project, rec)
+      name, dest, err = add_reserved(config, project, rec)
       unless dest
-        # A tree the rollback couldn't remove is still an un-set-up tree on disk — unless git
-        # said the path was already there: that tree is someone else's, not this build's.
+        # A tree the rollback couldn't remove is still an un-set-up tree on disk.
         cur = Creation.find(id)
-        Creation.update(id, worktree_added: true) if cur && !foreign && File.exist?(cur["path"].to_s)
+        Creation.update(id, worktree_added: true) if cur && File.exist?(cur["path"].to_s)
         return Creation.mark_failed(id, "worktree_add", err)
       end
 
@@ -134,12 +133,15 @@ module Switchboard
     end
 
     # git worktree add for the reserved name, retrying past a dir/branch collision with
-    # a fresh placeholder (the row re-labels itself). [name, dest, nil] or [nil, nil, msg].
+    # a fresh placeholder (the row re-labels itself). [name, dest, nil] or [nil, nil, msg],
+    # msg naming anything the rollback kept.
     #
-    # A collision is what existed BEFORE the add. git cuts the branch before checkout, and
-    # a failing post-checkout hook still leaves a full tree, so "it exists now" would read
-    # every other failure as a collision and leak a branch (or a whole un-set-up tree)
-    # per retry. Anything else is undone and fails with git's message.
+    # A collision is what existed BEFORE the add — our check, or git's own "already exists"
+    # when someone made it in between (then the record moves off their path, never pointing
+    # a ✘ at their workspace). git cuts the branch before checkout, and a failing
+    # post-checkout hook still leaves a full tree, so "it exists now" would read every other
+    # failure as a collision and leak a branch (or a whole un-set-up tree) per retry.
+    # Anything else is undone and fails with git's message.
     def add_reserved(config, project, rec)
       name = rec["name"]
       dest = rec["path"]
@@ -155,8 +157,12 @@ module Switchboard
 
         unless clash
           kept = undo_add(project, dest, branch, base_sha, err)
-          foreign = err.to_s.match?(PATH_PREEXISTED) || err.to_s.match?(BRANCH_PREEXISTED)
-          return [nil, nil, [err, kept].compact.join("; "), foreign] # a refused leftover is said, not silent
+          # Retry only when nothing of ours stayed behind: past a path clash, a branch git cut
+          # for us that the rollback had to keep is ours, and the ✘ must name it.
+          collided = preexisted?(err.to_s) &&
+                     !(err.to_s.match?(PATH_PREEXISTED) && Git.branch_exists?(project["path"], branch))
+          err = [err, kept].compact.join("; ") # a refused leftover is said, not silent
+          return [nil, nil, err] unless collided
         end
 
         # Under the same reservation lock as `n`: the new name must dodge other in-flight
@@ -218,14 +224,19 @@ module Switchboard
       "kept #{kept.join(' and ')}" unless kept.empty?
     end
 
+    # git's failure says the path or branch was already there (someone made it after our check).
+    def preexisted?(git_error)
+      git_error.match?(PATH_PREEXISTED) || git_error.match?(BRANCH_PREEXISTED)
+    end
+
     # Delete our branch when it's provably free at base (nil); otherwise why it stays.
     def keep_branch(repo, dest, branch, base_sha)
       return "base commit unknown" unless base_sha
-      # A worktree Git.worktrees skipped (an unreadable path) could have it checked out.
-      return "a worktree's path couldn't be read" if Git.undecodable_worktrees?(repo)
 
+      # One strict read decides it: a failed listing, or a path it couldn't decode, could hide
+      # the worktree that has it checked out. A repo always lists its main worktree, so an
+      # empty list is a failure too.
       listed = Git.worktrees(repo, strict: true)
-      # A repo always lists its main worktree: none means git couldn't say who holds it.
       return "couldn't list worktrees" if listed.nil? || listed.empty?
 
       holder = listed.find { |w| w[:branch] == branch }

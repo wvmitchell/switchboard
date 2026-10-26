@@ -10,11 +10,11 @@ module Switchboard
     module_function
 
     # All worktrees registered against a repo, parsed from porcelain output. `strict:` is for
-    # callers deciding what's safe to destroy: nil when git couldn't list them (a failed run
-    # reads as an empty list, which would make every branch look free).
+    # callers deciding what's safe to destroy: nil unless git listed them all readably (a
+    # failed run reads as an empty list, and a skipped path could hold any branch).
     def worktrees(repo, strict: false)
       out = capture(repo, "worktree", "list", "--porcelain")
-      return nil if strict && !$?&.success?
+      return nil if strict && (!$?&.success? || undecodable?(out))
 
       parse_worktrees(out)
     end
@@ -45,9 +45,11 @@ module Switchboard
     # Did worktrees skip an entry (its path isn't valid UTF-8)? Display can live without it;
     # anything deciding what's safe to destroy must treat the repo as not fully known.
     def undecodable_worktrees?(repo)
-      capture(repo, "worktree", "list", "--porcelain").b.split("\n\n").any? do |block|
-        !block.force_encoding(Encoding::UTF_8).valid_encoding?
-      end
+      undecodable?(capture(repo, "worktree", "list", "--porcelain"))
+    end
+
+    def undecodable?(porcelain)
+      porcelain.b.split("\n\n").any? { |block| !block.force_encoding(Encoding::UTF_8).valid_encoding? }
     end
 
     def dirty?(worktree)

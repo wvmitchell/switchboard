@@ -722,16 +722,17 @@ module Switchboard
       tmp = path("wts", "racer-tmp")
       run_git = method(:git) # the stub runs with Creator as self
       racer = lambda do |_config, project, _name, _dest, base, **|
-        # A racing writer cuts the same branch with its own commit, then the add fails.
+        # The add cut our branch, a racing writer committed on it, then the add failed for
+        # some other reason (not "already exists", which would retry under a new name).
         run_git.call(project["path"], "worktree", "add", "-q", "-b", branch, tmp, base)
         run_git.call(tmp, "commit", "-q", "--allow-empty", "-m", "theirs")
         run_git.call(project["path"], "worktree", "remove", tmp)
-        [false, "a branch named '#{branch}' already exists"]
+        [false, "post-checkout hook failed"]
       end
       with_fake_tmux { stub_method(Creator, :add_worktree, racer) { Creator.work(config, rec["id"]) } }
       found = Creation.find(rec["id"])
       assert_equal "failed", found["state"]
-      assert_includes found["detail"], "kept branch #{branch}"
+      assert_includes found["detail"], "kept branch #{branch} (it moved off the base)"
       assert Git.branch_exists?(repo, branch)
     end
 
@@ -868,16 +869,16 @@ module Switchboard
     end
 
     # Value: protects=a branch a hidden (unreadable-path) worktree may have checked out is
-    # kept; fails_when=undo_add's free check ignores undecodable_worktrees?; why_new=D10;
-    # seam=Git.undecodable_worktrees?
+    # kept; fails_when=keep_branch's strict listing ignores an undecodable entry; why_new=D10;
+    # seam=Git.undecodable?
     def test_undo_add_keeps_a_branch_a_hidden_worktree_may_hold
       repo = temp_git_repo("proj", origin: true)
       config = config_for(repo)
       git(repo, "branch", "maybe", "main")
-      note = stub_method(Git, :undecodable_worktrees?, ->(_repo) { true }) do
+      note = stub_method(Git, :undecodable?, ->(_out) { true }) do
         Creator.undo_add(config.project("proj"), path("wts", "never"), "maybe", Git.rev_parse(repo, "main"))
       end
-      assert_equal "kept branch maybe (a worktree's path couldn't be read)", note
+      assert_equal "kept branch maybe (couldn't list worktrees)", note
       assert Git.branch_exists?(repo, "maybe")
     end
 
@@ -934,13 +935,13 @@ module Switchboard
       git(repo, "branch", "hid", "main")
       dest = path("wts", "plain-hid")
       FileUtils.mkdir_p(dest)
-      note = stub_method(Git, :undecodable_worktrees?, ->(_repo) { true }) { Creator.undo_add(project, dest, "hid", base) }
-      assert_includes note, "branch hid (a worktree's path couldn't be read)"
+      note = stub_method(Git, :undecodable?, ->(_out) { true }) { Creator.undo_add(project, dest, "hid", base) }
+      assert_includes note, "branch hid (couldn't list worktrees)"
     end
 
     # Value: protects=the branch git just cut on a path clash is kept, not deleted, when a
     # worktree the repo lists couldn't be read; fails_when=the path-clash branch skips keep_branch's
-    # undecodable guard; why_new=ship 2 state-machines (cell: path clash x undecodable); seam=Git.undecodable_worktrees?
+    # undecodable guard; why_new=ship 2 state-machines (cell: path clash x undecodable); seam=Git.undecodable?
     def test_a_path_clash_keeps_our_branch_when_a_worktree_is_unreadable
       repo = temp_git_repo("proj", origin: true)
       config = config_for(repo)
@@ -951,8 +952,8 @@ module Switchboard
       File.write(File.join(dest, "theirs.txt"), "x")
       ok, err = Creator.add_worktree(config, project, "clash", dest, base) # real git: cuts the branch, refuses the path
       refute ok
-      note = stub_method(Git, :undecodable_worktrees?, ->(_repo) { true }) { Creator.undo_add(project, dest, "clash", base, err) }
-      assert_equal "kept #{dest} (it was there before) and branch clash (a worktree's path couldn't be read)", note
+      note = stub_method(Git, :undecodable?, ->(_out) { true }) { Creator.undo_add(project, dest, "clash", base, err) }
+      assert_equal "kept #{dest} (it was there before) and branch clash (couldn't list worktrees)", note
       assert Git.branch_exists?(repo, "clash")
     end
 
@@ -986,23 +987,83 @@ module Switchboard
       assert Git.branch_exists?(repo, "unlisted")
     end
 
-    # Value: protects=a failed build never claims a racer's tree as its own unfinished tree;
-    # fails_when=work stamps worktree_added when git said the path was already there; why_new=
-    # ship 2 Claude adversarial (D9); seam=add_worktree
-    def test_a_racers_tree_is_not_recorded_as_this_builds
+    # Value: protects=a timed-out add that leaves a tree with a commit is kept, named, and
+    # recorded as this build's unfinished tree (re-entry stays a plain shell); fails_when=work
+    # skips worktree_added for a tree the rollback kept; why_new=ship 3 state machines
+    # (timeout_tree_kept x work); seam=add_worktree; no_claim=a real git timeout (simulated)
+    def test_a_timed_out_add_that_left_work_is_kept_and_guarded
       repo = temp_git_repo("proj", origin: true)
       config = config_for(repo)
       rec = dispatch(config)
-      racer = lambda do |_c, _p, _n, dest, _base, **|
+      run_git = method(:git)
+      slow = lambda do |c, p, n, dest, base, **|
+        run_git.call(p["path"], "worktree", "add", "-q", "-b", Creator.branch_for(c, n), dest, base)
+        run_git.call(dest, "commit", "-q", "--allow-empty", "-m", "work")
+        [false, "timed out after 120s"]
+      end
+      with_fake_tmux { stub_method(Creator, :add_worktree, slow) { Creator.work(config, rec["id"]) } }
+      found = Creation.find(rec["id"])
+      assert_equal "failed", found["state"]
+      assert found["worktree_added"], "the kept tree is guarded"
+      assert_includes found["detail"], "kept #{rec['path']} (it has commits)"
+      assert Creation.unfinished_at?(rec["path"])
+    end
+
+    # Value: protects=git's own "already exists" (someone made the path or branch after our
+    # check) is a collision: the build retries under a fresh name and the record never points at
+    # their workspace (no ✘ on their row, no GC claim on their tree); fails_when=add_reserved
+    # fails on a preexisted error instead of relabeling; why_new=ship 3 red team + state
+    # machines (path_preexisted x gc_scan), D2; seam=add_worktree; no_claim=a real concurrent
+    # writer (the racer is simulated inside the stubbed first add)
+    def test_a_racer_making_the_path_first_is_a_collision_not_a_failure
+      repo = temp_git_repo("proj", origin: true)
+      config = config_for(repo)
+      rec = dispatch(config)
+      theirs = rec["path"]
+      real = Creator.method(:add_worktree)
+      calls = 0
+      racer = lambda do |c, p, n, dest, base, **kw|
+        calls += 1
+        next real.call(c, p, n, dest, base, **kw) if calls > 1
+
         FileUtils.mkdir_p(dest)
         File.write(File.join(dest, "theirs.txt"), "x")
         [false, "'#{dest}' already exists"]
       end
       with_fake_tmux { stub_method(Creator, :add_worktree, racer) { Creator.work(config, rec["id"]) } }
       found = Creation.find(rec["id"])
-      assert_equal "failed", found["state"]
-      refute found["worktree_added"], "the tree at that path is someone else's"
-      assert_path_exists File.join(rec["path"], "theirs.txt")
+      refute_equal theirs, found["path"], "the record moved off their path"
+      assert found["worktree_added"]
+      assert_path_exists File.join(found["path"], ".git")
+      assert_path_exists File.join(theirs, "theirs.txt"), "their folder is untouched"
+      Creation.gc
+      refute Creation.unfinished_at?(theirs), "GC never claims their tree as our build"
+    end
+
+    # Value: protects=a branch someone cut after our check sends the build to a fresh name
+    # and leaves their branch alone; fails_when=a BRANCH_PREEXISTED failure fails the build
+    # (or deletes their branch); why_new=ship 3 state machines (branch_preexisted x work), D2;
+    # seam=add_worktree; no_claim=a real concurrent writer (simulated in the first add)
+    def test_a_racer_cutting_the_branch_first_is_a_collision_not_a_failure
+      repo = temp_git_repo("proj", origin: true)
+      config = config_for(repo)
+      rec = dispatch(config)
+      branch = Creator.branch_for(config, rec["name"])
+      real = Creator.method(:add_worktree)
+      run_git = method(:git)
+      calls = 0
+      racer = lambda do |c, p, n, dest, base, **kw|
+        calls += 1
+        next real.call(c, p, n, dest, base, **kw) if calls > 1
+
+        run_git.call(p["path"], "branch", branch, base)
+        [false, "a branch named '#{branch}' already exists"]
+      end
+      with_fake_tmux { stub_method(Creator, :add_worktree, racer) { Creator.work(config, rec["id"]) } }
+      found = Creation.find(rec["id"])
+      refute_equal rec["name"], found["name"]
+      assert found["worktree_added"]
+      assert Git.branch_exists?(repo, branch), "their branch stays"
     end
 
     # Value: protects=the branch check and the delete being one step; fails_when=delete_branch_at

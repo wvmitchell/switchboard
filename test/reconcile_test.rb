@@ -149,6 +149,28 @@ module Switchboard
       assert_empty killed, "a project we can't fully read is unverifiable: hands off"
     end
 
+    # Value: protects=a configured project whose folder is missing (an unmounted drive) keeps
+    # its sessions even when another project sanitizes to the same prefix; fails_when=skipped is
+    # built from Model's projects (which drop a missing folder) instead of config; why_new=ship 3
+    # red team, D1; seam=none; no_claim=a real tmux server (sessions are stubbed)
+    def test_prune_protects_the_prefix_of_a_project_whose_folder_is_missing
+      dash = temp_git_repo("dash")
+      File.write(Config.path, YAML.dump("projects" => [{ "name" => "a.b", "path" => path("unmounted") },
+                                                         { "name" => "a-b", "path" => dash }]))
+      killed = run_prune([sess("sb/a-b/dash"), sess("sb/a-b/feat")])
+      assert_empty killed, "sb/a-b/ is hands-off while a.b's folder is missing"
+    end
+
+    # Value: protects=prune still reaps an orphan when every project is verified (the skip list
+    # isn't over-broad); fails_when=skipped includes verified projects; why_new=ship 3 D1;
+    # seam=none; no_claim=a real tmux server
+    def test_prune_still_reaps_when_every_project_is_verified
+      dash = temp_git_repo("dash")
+      File.write(Config.path, YAML.dump("projects" => [{ "name" => "a-b", "path" => dash }]))
+      killed = run_prune([sess("sb/a-b/dash"), sess("sb/a-b/gone")])
+      assert_equal ["sb/a-b/gone"], killed
+    end
+
     # Value: protects=a skipped (unreadable) project's sessions survive even when another
     # project's name sanitizes to the same prefix (a.b / a-b); fails_when=prune keeps a prefix a
     # skipped project contributes; why_new=ship 2 Codex structured; seam=Git.undecodable_worktrees?

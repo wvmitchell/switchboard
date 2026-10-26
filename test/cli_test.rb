@@ -1266,6 +1266,16 @@ module Switchboard
     # Value: protects=a config.yml that is literally `false` reads as broken, not as an empty
     # healthy config; fails_when=load_data falls back to {} for any falsy value; why_new=ship 2
     # Codex adversarial; seam=none
+    # Value: protects=an empty or comment-only config.yml still loads clean (doctor, install and
+    # upgrade don't fail on it); fails_when=load_data drops the nil-only {} fallback; why_new=ship
+    # 3 testing specialist; seam=none; no_claim=none beyond protects
+    def test_an_empty_or_comment_only_config_is_not_broken
+      ["", "# only a comment\n"].each do |body|
+        File.write(Config.path, body)
+        assert_nil Config.new.load_error, body.inspect
+      end
+    end
+
     def test_a_config_that_is_just_false_is_broken
       File.write(Config.path, "false\n")
       assert_equal "the top level isn't a map of settings", Config.new.load_error
@@ -1284,6 +1294,39 @@ module Switchboard
       end
       assert_includes out, "NOT bound"
       refute_includes out, "tmux_keys.toggle is"
+    end
+
+    # Value: protects=hiding the toggle drift row (its NOT-bound row covers it) never hides a
+    # home key edited by hand; fails_when=skip_toggle returns from the whole check; why_new=ship
+    # 3 testing specialist; seam=tmux_wired?/tmux_server?; no_claim=a live tmux server
+    def test_doctor_still_shows_home_drift_when_the_toggle_row_is_hidden
+      File.write(Config.path, YAML.dump("tmux_keys" => { "toggle" => "t", "home" => "H" }))
+      opts = { "@switchboard-toggle-key" => "s", "@switchboard-config-path" => File.expand_path(Config.path) }
+      out = stub_method(Installer, :tmux_wired?, ->(*) { true }) do
+        stub_method(Installer, :tmux_server?, -> { true }) do
+          with_key_stubs(live: false, options: opts) { capture { CLI.send(:doctor_key_drift, skip_toggle: true) } }
+        end
+      end
+      refute_includes out, "tmux_keys.toggle is"
+      assert_includes out, "tmux_keys.home is H in config, but tmux has nothing bound"
+    end
+
+    # Value: protects=a configured key that isn't bound (tmux refused it, or the toggle fell
+    # back onto it) is said in doctor, not silent; fails_when=doctor_key_drift ignores the
+    # recorded -rejected key; why_new=ship 3 D3; seam=tmux_wired?/tmux_server?; no_claim=a live
+    # tmux server
+    def test_doctor_names_a_configured_key_that_isnt_bound
+      File.write(Config.path, YAML.dump("tmux_keys" => { "toggle" => "F13", "home" => "s" }))
+      opts = { "@switchboard-toggle-key" => "s", "@switchboard-toggle-rejected" => "F13",
+               "@switchboard-home-rejected" => "s", "@switchboard-config-path" => File.expand_path(Config.path) }
+      out = stub_method(Installer, :tmux_wired?, ->(*) { true }) do
+        stub_method(Installer, :tmux_server?, -> { true }) do
+          with_key_stubs(live: true, options: opts) { capture { CLI.send(:doctor_key_drift) } }
+        end
+      end
+      assert_includes out, "tmux_keys.toggle is F13 in config, but it isn't bound (tmux refused it)"
+      assert_includes out, "tmux_keys.home is s in config, but it isn't bound (tmux refused it, or the toggle fell back onto it)"
+      refute_includes out, "but tmux has", "a refused key is never drift"
     end
 
     def test_doctor_reports_a_config_parse_error

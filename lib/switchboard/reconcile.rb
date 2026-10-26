@@ -60,19 +60,16 @@ module Switchboard
       return Report.new(reachable: false, sb_count: 0, orphans: []) if live.nil?
 
       prefixes = []
-      skipped = []
       valid = []
       parents = []
+      verified = []
       Model.new(config, with_dirty: false).projects.each do |project|
         names = project.worktrees.map { |w| Tmux.session_name(w) }
         # A worktree git listed but we couldn't read (non-UTF-8 path) would make its live
-        # session look orphaned: leave the whole project alone, like an unverifiable one —
-        # and its prefix too, which another project's name may sanitize to (app.dev/app-dev).
-        if names.empty? || Git.undecodable_worktrees?(project.path)
-          skipped << Tmux.session_prefix(project.name)
-          next
-        end
+        # session look orphaned: leave the whole project alone, like an unverifiable one.
+        next if names.empty? || Git.undecodable_worktrees?(project.path)
 
+        verified << project.name
         prefixes << Tmux.session_prefix(project.name)
         valid.concat(names)
         # Collect parent dirs of DEDICATED worktrees only. The primary checkout's
@@ -85,6 +82,12 @@ module Switchboard
           parents << File.dirname(wt) unless wt == repo
         end
       end
+
+      # Any configured project we couldn't verify (unreadable, empty, or a missing folder Model
+      # drops) keeps its prefix out of reach too: another project's name may sanitize to it
+      # (app.dev / app-dev).
+      skipped = config.projects.filter_map { |p| p["name"] }.reject { |n| verified.include?(n) }
+                      .map { |n| Tmux.session_prefix(n) }
 
       unless dry_run
         reap_bridges(parents)

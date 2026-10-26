@@ -650,7 +650,8 @@ module Switchboard
       stub_method(Installer, :installed_bin?, -> { false }) do
         stub_method(Installer, :wired_fragment, ->(*) { Installer.fragment_path }) do
           stub_method(Installer, :live_hooks, -> { Installer::HOOK_SLOTS.to_h { |s| [s, true] } }) do
-            opts = { "@switchboard-toggle-key" => "s", "@switchboard-toggle-rejected" => "F13" }
+            opts = { "@switchboard-toggle-key" => "s", "@switchboard-toggle-rejected" => "F13",
+                     "@switchboard-config-path" => File.expand_path(Config.path) }
             stub_method(Installer, :tmux_option, ->(name) { opts[name] }) do
               stub_method(Installer, :tmux_server?, -> { true }) do # so key_drift? really runs
                 stub_method(Installer, :toggle_key_live?, ->(key = nil) { asked << key; key == "s" }) do

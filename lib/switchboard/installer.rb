@@ -514,14 +514,20 @@ module Switchboard
       raw = list_prefix_keys
       legacy = tmux_option("@switchboard-toggle-key").nil? && toggle_key_live_from?(raw, "s")
       wanted = ROLE_SUBCOMMANDS.keys.to_h { |role| [role, config.tmux_key(role)] }
-      bound = ROLE_SUBCOMMANDS.keys.to_h do |role|
+      bound = {}
+      ROLE_SUBCOMMANDS.each_key do |role|
         desired = wanted[role]
         recorded = tmux_option("@switchboard-#{role}-key")
-        clobbered = desired && desired != recorded ? foreign_binding(raw, desired, ROLE_SUBCOMMANDS[role]) : nil
-        # A key another role now wants stays bound (toggle and home swapped): unbinding it
-        # here would delete the binding that role just made, or is about to make.
-        taken = wanted.reject { |r, _| r == role }.values.compact
-        [role, run_rebind(role, desired, recorded: recorded, legacy_toggle: legacy, clobbered: clobbered, taken: taken)]
+        # A key another role wants or now holds stays bound (toggle and home swapped):
+        # unbinding it here would delete the binding that role just made, or is about to make.
+        taken = (wanted.reject { |r, _| r == role }.values + bound.values).compact.uniq
+        # The toggle fell back onto this key (tmux refused the configured one): the toggle
+        # keeps it, and this role reads as refused instead of silently taking it away.
+        yielded = desired && bound.any? { |r, key| key == desired && key != wanted[r] }
+        desired = nil if yielded
+        clobbered = desired && desired != recorded ? foreign_binding(raw, desired) : nil
+        bound[role] = run_rebind(role, desired, recorded: recorded, legacy_toggle: legacy, clobbered: clobbered, taken: taken)
+        run_tmux("set-option", "-g", "@switchboard-#{role}-rejected", wanted[role]) if yielded
       end
       # Which config file these keys came from: key_drift? only judges against the same one
       # (a shell and a tmux server can resolve config.yml differently).
@@ -615,17 +621,22 @@ module Switchboard
     end
 
     # The foreign command `key` is currently bound to (NOT one of ours), or nil — so
-    # doctor can warn before tmux-bind clobbers it. Ours = a switchboard run-shell
-    # for this role.
-    def foreign_binding(raw, key, subcommand)
+    # doctor can warn before tmux-bind clobbers it.
+    def foreign_binding(raw, key)
       binding = prefix_binding_from(raw, key)
-      return nil if binding.nil? || (binding.include?("'#{bin_path}'") && binding.include?(subcommand))
+      return nil if binding.nil? || ours?(binding)
 
       binding
     end
 
     # DX2: after an interactive rebind, show what's bound so the user sees it took
     # effect instead of having to test the key. `bound` is role => bound-key-or-nil.
+    # Our own binding of EITHER role: a toggle/home swap finds each key still bound to the
+    # other role, which is no clobber.
+    def ours?(binding)
+      binding.include?("'#{bin_path}'") && ROLE_SUBCOMMANDS.values.any? { |sub| binding.include?(sub) }
+    end
+
     def announce_bindings(bound)
       desc = { "toggle" => "toggles the sidebar", "home" => "jumps home" }
       parts = bound.filter_map { |role, key| "prefix-#{key} #{desc[role]}" if key }
@@ -675,15 +686,29 @@ module Switchboard
     # hand edit nobody re-applied reads as drift. nil = can't tell (no tmux server, or config.yml
     # didn't parse).
     def key_drift?(role, config: Config.new)
-      return nil if config.load_error # its keys read as defaults, not what the user wrote
-      return nil unless tmux_server?
-      # Bound from a different config.yml (the server's environment resolved another one), or
-      # bound by a switchboard that didn't record it, or a tmux read failed: no verdict.
-      bound_from = tmux_option("@switchboard-config-path")
-      return nil unless bound_from && bound_from == File.expand_path(config.file)
+      return nil unless bound_from?(config)
 
       key_drift_from?(config.tmux_key(role), tmux_option("@switchboard-#{role}-key"),
                       tmux_option("@switchboard-#{role}-rejected"))
+    end
+
+    # The configured key for `role` that isn't bound because tmux refused it (or, for home,
+    # the toggle fell back onto it); nil otherwise or when there's no verdict.
+    def refused_key(role, config: Config.new)
+      return nil unless bound_from?(config)
+
+      refused = tmux_option("@switchboard-#{role}-rejected")
+      refused if refused && refused == config.tmux_key(role)
+    end
+
+    # Did tmux bind its keys from THIS config? Otherwise its options say nothing about it:
+    # a config that won't parse reads as defaults, a shell and the tmux server can resolve
+    # config.yml differently, an older switchboard didn't record it, or a tmux read failed.
+    def bound_from?(config)
+      return false if config.load_error || !tmux_server?
+
+      bound_from = tmux_option("@switchboard-config-path")
+      !bound_from.nil? && bound_from == File.expand_path(config.file)
     end
 
     # Pure core of key_drift? (nil = unbound on each side).

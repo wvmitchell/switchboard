@@ -314,6 +314,30 @@ module Switchboard
                       "records which config these keys came from"
     end
 
+    # Value: protects=moving the toggle onto home's old key while unsetting home leaves the toggle
+    # bound, and a legacy `s` cleanup never unbinds the key home now wants; fails_when=the
+    # desired-nil cleanup or the legacy-`s` unbind ignores `taken:`; why_new=the swap test only
+    # reaches the bind branch (both roles desired), never the cleanup or legacy branches;
+    # seam=none; no_claim=the live tmux server's key table
+    def test_a_key_another_role_takes_is_never_unbound_by_cleanup
+      File.write(Config.path, YAML.dump("tmux_keys" => { "toggle" => "H" })) # home unset
+      recorded = { "@switchboard-toggle-key" => "s", "@switchboard-home-key" => "H" }
+      cmds = []
+      stub_method(Installer, :list_prefix_keys, -> { "" }) do
+        stub_method(Installer, :tmux_option, ->(name) { recorded[name] }) do
+          stub_method(Installer, :run_tmux, ->(*argv) { cmds << argv; true }) do
+            Installer.apply_keybindings(config: Config.new)
+          end
+        end
+      end
+      assert_includes cmds, ["bind-key", "H", "run-shell", "'#{Installer.bin_path}' toggle-sidebar"]
+      refute_includes cmds, ["unbind-key", "H"], "home's cleanup must not unbind the toggle's new key"
+      assert_includes cmds, ["unbind-key", "s"], "the toggle's old key is still cleaned up"
+
+      ops = Installer.rebind_ops("toggle", "b", recorded: nil, legacy_toggle: true, taken: ["s"])
+      refute_includes ops, [:unbind, "s"], "legacy cleanup leaves `s` to the home role that wants it"
+    end
+
     # Value: protects=drift is judged only against the config tmux actually bound from, so a
     # shell/server config mismatch (or a failed tmux read) can't make upgrade loop; fails_when=
     # key_drift? ignores @switchboard-config-path; why_new=ship 2 Claude adversarial; seam=tmux_option
@@ -327,6 +351,42 @@ module Switchboard
           verdict.nil? ? assert_nil(got, bound_from.inspect) : assert_equal(verdict, got, bound_from.inspect)
         end
       end
+    end
+
+    # Value: protects=a refused toggle key whose fallback `s` is home's key keeps the toggle on
+    # `s` (home yields and is recorded as refused, so upgrade's drift check converges); fails_when=
+    # home binds over the toggle's fallback; why_new=ship 3 red team + state machines, D3;
+    # seam=run_tmux; no_claim=tmux's real key parser (the refusal is simulated)
+    def test_a_refused_toggle_keeps_its_fallback_over_home
+      File.write(Config.path, YAML.dump("tmux_keys" => { "toggle" => "F13", "home" => "s" }))
+      cmds = []
+      tmux = lambda do |*argv|
+        cmds << argv
+        !(argv[0] == "bind-key" && argv[1] == "F13")
+      end
+      stub_method(Installer, :list_prefix_keys, -> { "" }) do
+        stub_method(Installer, :tmux_option, ->(_name) { nil }) do
+          stub_method(Installer, :run_tmux, tmux) { Installer.apply_keybindings(config: Config.new) }
+        end
+      end
+      assert_includes cmds, ["bind-key", "s", "run-shell", "'#{Installer.bin_path}' toggle-sidebar"]
+      refute_includes cmds, ["bind-key", "s", "run-shell", "'#{Installer.bin_path}' home"], "home never steals the fallback"
+      refute_includes cmds, ["unbind-key", "s"]
+      assert_includes cmds, ["set-option", "-g", "@switchboard-home-rejected", "s"]
+      assert_includes cmds, ["set-option", "-g", "@switchboard-toggle-rejected", "F13"]
+      refute Installer.key_drift_from?("s", nil, "s"), "the yielded home key reads as applied"
+    end
+
+    # Value: protects=a toggle/home swap records no clobber of switchboard's own binding (doctor
+    # stays quiet); fails_when=foreign_binding treats the other role's binding as foreign;
+    # why_new=ship 3 red team + state machines; seam=list_prefix_keys
+    def test_a_key_swap_records_no_clobber_of_our_own_binding
+      bin = Installer.bin_path
+      raw = "bind-key -T prefix s run-shell \"'#{bin}' toggle-sidebar\"\n" \
+            "bind-key -T prefix H run-shell \"'#{bin}' home\"\n"
+      assert_nil Installer.foreign_binding(raw, "H"), "home's binding is ours"
+      assert_nil Installer.foreign_binding(raw, "s"), "the toggle's binding is ours"
+      assert_equal "send-keys x", Installer.foreign_binding("bind-key -T prefix q send-keys x\n", "q")
     end
 
     def test_apply_keybindings_binds_configured_toggle_and_home
@@ -373,16 +433,16 @@ module Switchboard
 
     def test_foreign_binding_flags_a_non_switchboard_binding
       raw = %(bind-key  -T prefix b  send-keys hello\n)
-      assert_equal "send-keys hello", Installer.foreign_binding(raw, "b", "toggle-sidebar")
+      assert_equal "send-keys hello", Installer.foreign_binding(raw, "b")
     end
 
     def test_foreign_binding_ignores_our_own_binding
       raw = %(bind-key  -T prefix b  run-shell "'#{Installer.bin_path}' toggle-sidebar"\n)
-      assert_nil Installer.foreign_binding(raw, "b", "toggle-sidebar"), "our own binding isn't a clobber"
+      assert_nil Installer.foreign_binding(raw, "b"), "our own binding isn't a clobber"
     end
 
     def test_foreign_binding_nil_when_key_unbound
-      assert_nil Installer.foreign_binding("", "b", "toggle-sidebar")
+      assert_nil Installer.foreign_binding("", "b")
     end
 
     # Value: protects=doctor reading back exactly the fragment install wired; fails_when=

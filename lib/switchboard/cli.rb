@@ -989,6 +989,11 @@ module Switchboard
       return unless Installer.tmux_wired? # unwired (--no-tmux): switchboard manages no keys to drift
       %w[toggle home].each do |role|
         next if role == "toggle" && skip_toggle
+        if (refused = Installer.refused_key(role, config: config))
+          why = role == "home" ? "tmux refused it, or the toggle fell back onto it" : "tmux refused it"
+          puts "  \e[33m–\e[0m tmux_keys.#{role} is #{refused} in config, but it isn't bound (#{why}) — pick another key"
+          next
+        end
         next unless Installer.key_drift?(role, config: config)
 
         bound = Installer.tmux_option("@switchboard-#{role}-key")
