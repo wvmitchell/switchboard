@@ -83,8 +83,8 @@ module Switchboard
       # finds it after a restart — the cwd just changed out from under it (#42).
       ClaudeHistory.migrate(old_path, dest)
 
-      # Carry the shared per-worktree markers (bold, monitoring) to the new realpath, so a
-      # rename doesn't drop them — both are keyed by realpath, which just changed. Notify is
+      # Carry the shared per-worktree markers (bold, monitoring, a held ◷ chime) to the new realpath, so a
+      # rename doesn't drop them — all are keyed by realpath, which just changed. Notify is
       # CLEARED, not carried: its marker can't distinguish a pending alert from a consumed one
       # (consumption is a per-process mtime cursor, not on disk), so carrying it would replay
       # a false "come look" chime under the new path. The bold (Attention) is the durable
@@ -93,6 +93,7 @@ module Switchboard
       new_real = canonical(dest)
       Attention.carry(old_real, new_real)
       Monitoring.carry(old_real, new_real)
+      OffstageHold.carry(old_real, new_real)
       Notify.clear(old_real)
       Creation.repath(old_path, old_real, dest) # a dispatch the agent renamed on turn one still pings
 

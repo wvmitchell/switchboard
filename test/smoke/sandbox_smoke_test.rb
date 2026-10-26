@@ -60,6 +60,10 @@ module Switchboard
       wait_until("the seeded ⇅ link renders on quiet-cleanup") do
         capture(pane).lines.any? { |l| l.include?("quiet-cleanup") && l.include?("⇅") }
       end
+      refute_nil Sandbox.seed_offstage(File.join(@seed, "worktrees", "sandbox", "fan-out-review")), "seed_offstage starts its sleeper"
+      wait_until("the seeded ◷ renders on fan-out-review") do
+        capture(pane).lines.any? { |l| l.include?("fan-out-review") && l.include?("◷") }
+      end
 
       # 2. isolation proof: two GLOBAL view-state toggles (branch-fold `z`, full-header
       #    `H`) must write their markers into the THROWAWAY state tree, never real state.

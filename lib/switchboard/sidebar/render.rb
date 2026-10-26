@@ -26,6 +26,7 @@ module Switchboard
       WANTS_OFF = "\e[1;35m◇\e[0m"  # ...and hollow, the blink's off-beat
       DONE      = "\e[1;32m●\e[0m"  # green: replied, ready for you (not blocked)
       MONITORING = "\e[1;32m∞\e[0m" # a background monitor/loop runs continuously here. Shares DONE's green ON PURPOSE — the ∞ glyph (not a new color) distinguishes it from ●, so the palette stays tight. Steady, so it stays off the pulse cadence — dormancy preserved.
+      OFFSTAGE = "\e[1;34m◷\e[0m" # the turn ended but work it started still runs (a background agent, shell or monitor): the spinner's exact blue says "work is happening", the steady clock says "not by the main agent". Steady (dormancy), picked by eye
       BUILDING = "\e[33m◌\e[0m"   # a dispatched workspace being built / set up: a hollow "not yet" slot. Steady (dormancy), yellow at normal weight so it reads on light themes too (DR4/DR10)
       FAILED   = "\e[1;31m✘\e[0m" # a dispatch whose build/setup/launch failed: the heavy ✘ keeps its shape in reverse video (DR5)
       LINK_GLYPH    = "⇅"        # a live /remote-control link: this workspace is reachable from your phone (picked by eye)
@@ -91,7 +92,7 @@ module Switchboard
       # What the row glyphs mean (DR9) — nothing else teaches them. Seated right under
       # the help wordmark, so it's always on page 1.
       LEGEND = [[SPIN_COLORED.first, "⠋", "working"], [WANTS_ON, "◆", "input"], [DONE, "●", "done"],
-                [MONITORING, "∞", "watching"], [BUILDING, "◌", "building"], [FAILED, "✘", "failed"],
+                [MONITORING, "∞", "watching"], [OFFSTAGE, "◷", "background"], [BUILDING, "◌", "building"], [FAILED, "✘", "failed"],
                 ["#{LINK_LIVE_FG}#{LINK_GLYPH}\e[0m", "⇅", LINK_LIVE_LABEL], ["#{LINK_STALE_FG}#{LINK_GLYPH}\e[0m", "⇅", "idle link"]].freeze
 
       private
@@ -805,6 +806,7 @@ module Switchboard
         when :thinking   then SPIN_FRAMES[@pulse % SPIN_FRAMES.size]
         when :waiting    then (@pulse / BLINK_PERIOD).even? ? "◆" : "◇"
         when :monitoring then "∞"
+        when :offstage   then "◷"
         when :done       then "●"
         when :building   then "◌"
         when :failed     then "✘"
@@ -820,6 +822,7 @@ module Switchboard
         when :thinking   then SPIN_COLORED[@pulse % SPIN_COLORED.size]
         when :waiting    then (@pulse / BLINK_PERIOD).even? ? WANTS_ON : WANTS_OFF
         when :monitoring then MONITORING
+        when :offstage   then OFFSTAGE
         when :done       then DONE
         when :building   then BUILDING
         when :failed     then FAILED
@@ -839,6 +842,10 @@ module Switchboard
       # while it's queued / building / running setup (DR6: one pending state). Once
       # you've seen a ✘, live work and input requests show over it — a tree you fixed by
       # hand keeps its ✘ at rest but never hides a ◆.
+      #
+      # Below ∞, a resting row whose session still runs work it started shows :offstage
+      # (◷; settled_offstage decides which rows qualify — hooked ones only) — the declared monitor is the more specific cue, and
+      # a monitor always reads as background work.
       def render_state(path)
         state = @agents[path]
         if (rec = @creation_for[path])
@@ -847,8 +854,9 @@ module Switchboard
           return :building if Creation::PRE_READY.include?(rec["state"])
         end
         return state if %i[thinking waiting].include?(state)
+        return :monitoring if @monitoring.include?(path)
 
-        @monitoring.include?(path) ? :monitoring : state
+        @offstage.include?(path) ? :offstage : state
       end
 
       # A git or folder name as drawn: UTF-8 whatever the locale, with no bytes that could

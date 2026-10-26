@@ -331,17 +331,27 @@ module Switchboard
     # at once leaves their last hook states stale, and a lingering :thinking would
     # otherwise read as a live, working agent on the next launch. An unconfirmed q
     # touches nothing.
+    #
+    # Value: protects=the sidebar q drops held ◷ chimes too (twin of CLI quit); fails_when=
+    # Sidebar#quit stops calling OffstageHold.clear_all; why_new=the hold store is new and q's
+    # wiring was unasserted; seam=none; no_claim=the real tmux teardown
     def test_q_clears_agent_state_before_teardown_only_when_confirmed
       sb = sidebar(nodes: [proj("app")])
       cleared = false
+      held = real_dir("held")
+      OffstageHold.hold(held, pid: 1)
       stub_method(AgentState, :clear_all, -> { cleared = true }) do
         stub_method(Tmux, :kill_all, ->(*) { [] }) do
           stub_method(sb, :confirm, ->(*) { true }) { sb.send(:dispatch, "q") }
           assert cleared, "a confirmed q clears stale agent state"
 
           cleared = false
+          assert_empty OffstageHold.held([held]), "...and every held ◷ chime"
+
+          OffstageHold.hold(held, pid: 1)
           stub_method(sb, :confirm, ->(*) { false }) { sb.send(:dispatch, "q") }
           refute cleared, "an unconfirmed q clears nothing"
+          assert_equal [held], OffstageHold.held([held]).keys, "...holds included"
         end
       end
     end

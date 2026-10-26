@@ -244,6 +244,7 @@ module Switchboard
       AgentState.clear_all  # killing every agent makes their last hook state stale — drop it now
       Monitoring.clear_all  # ...and every monitoring declaration is now stale too
       Notify.clear_all      # ...and any pending "come look" alert is moot once the agents are gone
+      OffstageHold.clear_all # ...and any held ◷ chime: the background work it waited on died with them
       PendingDelete.clear_all # ...and any in-flight delete's row-hide (the daemon still finishes the removal)
       killed = Tmux.kill_all
       puts(killed.empty? ? "no switchboard sessions to close" : "closed #{killed.size} switchboard session(s)")
@@ -616,7 +617,7 @@ module Switchboard
     # matches the file the other events write — no Ruby-side key reproduction, and its
     # stdout is suppressed so only our block JSON (if any) reaches the agent.
     def report_stop_state(state)
-      system(HookFile.script_path, state, out: File::NULL, err: File::NULL)
+      system(HookFile.script_path, state, in: File::NULL, out: File::NULL, err: File::NULL)
     rescue StandardError
       nil
     end
