@@ -115,11 +115,6 @@ safe today; each is narrow).
   `upgrade`; a sidebar replacing ITSELF on a version change is this item). *Start in:*
   compare `VERSION` (or the bin's mtime) with the value at startup in
   `tick`, then exit and let `reconcile_sidebars` respawn. **Priority:** P2.
-- **"Update available" cue in the home header.** *Why:* `doctor` and `upgrade` say when
-  a release is out, but nothing tells you unprompted. *Start in:* `LatestRelease.latest`
-  (bounded, 5s) run off the paint loop and cached on disk like the PR badges, read in
-  `Sidebar#header`; add the cache file to `warm_fingerprint`. Deferred from the 0.52.0
-  upgrade-command review (D6). **Priority:** P3.
 - **Input edges in the task prompt and modals.** *Why:* an unpaired paste-start marker
   wedges the task prompt in paste mode (Esc/^C/↵ all become text; `prefix-s` escapes); a
   literal paste-end inside pasted text ends the paste early; a 1 KB read split on a
@@ -447,6 +442,15 @@ safe today; each is narrow).
   `client-attached[99]` poke in `switchboard.tmux` + clear it in
   `Installer.teardown_live`. Low priority — measure whether either is felt in practice
   first.
+- **The warm fingerprint can record a file rebuild never drew.** `reload` runs `rebuild`
+  (which reads config, collapse, full header, branch fold, width) BEFORE it samples
+  `warm_fingerprint`, so a peer's write landing between the two is baselined as drawn,
+  and a hidden pane then skips the warm that would show it until that file moves again
+  or you switch in. *Why deferred:* nobody has seen it (the window is milliseconds and a
+  switch-in reload heals it); #47 fixed it only for its own two entries (the update cache
+  and the installed `version.rb`). *Start in:* `Sidebar#reload` / `#warm_fingerprint` —
+  #47's rule (fingerprint each rebuild-read file by the mtime `rebuild` captured when it
+  read it, one look per file) is the template. Depends on #47 landing. **Priority:** P3.
 
 ## Sidebar `O` open-repo (issue #63) follow-ups
 

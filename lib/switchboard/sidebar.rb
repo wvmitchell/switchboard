@@ -56,6 +56,7 @@ module Switchboard
     # only the navigation trigger's gate stays here — reload_and_refresh (T2) is
     # the poke handler, and it doesn't move.
     NAV_TTL = 45             # refresh-on-switch only if the cache is older than this
+    UPDATE_SPAWN_TTL = 60    # min seconds between this pane's own update due? checks (#47; the attempt file gates the rest)
 
     def self.run
       new.run
@@ -162,6 +163,12 @@ module Switchboard
       @pane_switch_keys = nil # the user's tmux select-pane keys, shown in the ? overlay;
                            # resolved once lazily on first help open (a tmux shell-out),
                            # then memoized so the paint loop never re-queries (issue #62)
+      @update_cue = nil    # the newer release to announce under the wordmark, or nil (#47)
+      @update_seen = nil   # [cache, version.rb] mtimes the last rebuild read: reload's warm baseline
+      @update_applies = nil # Homebrew + installed binary? (UpdateCheck.applies?, memoized)
+      @installed_version = nil # the installed version.rb's VERSION, re-read when its mtime moves
+      @installed_version_mtime = nil
+      @update_spawned = nil # monotonic of this pane's last update due? check
       @pending = +""       # an incomplete escape sequence split across reads, carried
                            # to the next one and reassembled by tokenize (see handle) —
                            # so a sequence's final byte is never read alone as a key
@@ -580,10 +587,14 @@ module Switchboard
       # outrun what this reload actually rendered (the same stale-stuck race
       # warm_reload guards against): a change landing mid-reload leaves fp behind, so
       # the next off-screen warm re-fires instead of suppressing forever.
-      fp = warm_fingerprint
+      # The update entry is the mtimes rebuild READ, not a fresh stat: a cache write
+      # landing between rebuild and here would otherwise be baselined as drawn, and a
+      # hidden pane would then skip the warm that shows it (#47).
+      fp = warm_fingerprint(update: @update_seen)
       refresh_agents(announce_sounds: announce_sounds, hooks_only: hooks_only)
       refresh_diffs # branch-vs-base counts, gated on each worktree's reflog mtime
       @edges.refresh_stale_prs(@config) # T3 idle backstop (the cadence lives with the spawn logic)
+      maybe_check_update
       # Stamp BOTH clocks: @last_reload throttles the next switch poke (reload_due?),
       # and @last_scan stops the next loop timeout from firing a redundant agent scan
       # right after this reload already scanned — the poke path runs outside scan_due?.
@@ -605,7 +616,7 @@ module Switchboard
     # a WORKTREE added/removed in another session, and shared view-state
     # (collapse/full-header/branch-fold/width). Fully rescued — a stat fault yields
     # a value that just triggers one harmless warm, never crashes the loop.
-    def warm_fingerprint
+    def warm_fingerprint(update: update_fingerprint)
       reflogs = @branch_cache.values.filter_map do |gitdir,|
         head = File.join(gitdir.to_s, "logs", "HEAD")
         [head, File.mtime(head).to_f] if gitdir && File.exist?(head)
@@ -625,8 +636,64 @@ module Switchboard
                               stale_after: @config.remote_link_stale_after), # rewrites every session's file on each busy/idle flip
        ClaudeSessions.fingerprint(@session_fp_cache, # ◷: a tracked session starting/stopping
                                   @nodes.select { |n| n.kind == "ws" }.map(&:path)), # background work
+       update,                                 # update line: its cache + the installed version.rb (#47)
        reflogs.sort]                           # diff counts (commits)
     rescue StandardError
+      nil
+    end
+
+    # --- the update line (#47) ----------------------------------------------
+
+    # Shown on a Homebrew install's own sidebars, or in the sandbox (seeded, #126) so a
+    # checkout can show it; `update_check: false` hides it everywhere.
+    def show_update_line?
+      return false unless @config.update_check?
+      return true if UpdateCheck.sandbox?
+
+      @update_applies = UpdateCheck.applies? if @update_applies.nil? # one `command -v`, memoized
+      @update_applies
+    end
+
+    # [cache mtime, version.rb mtime] as they are now, nil when the line is off — the
+    # warm gate's change signal. Stats only.
+    def update_fingerprint
+      return nil unless show_update_line?
+
+      [file_fingerprint(UpdateCheck.cache_path), file_fingerprint(UpdateCheck.version_file)]
+    rescue StandardError
+      nil
+    end
+
+    # Called by rebuild. Stats BEFORE reading, so @update_seen can only lag what was
+    # drawn (one spare warm), never lead it (a missed one). version.rb is re-read only
+    # when its mtime moves.
+    def refresh_update_cue
+      @update_cue = nil
+      @update_seen = update_fingerprint
+      return unless @update_seen
+
+      version_mtime = @update_seen[1]
+      if version_mtime != @installed_version_mtime
+        @installed_version_mtime = version_mtime
+        @installed_version = UpdateCheck.installed_version || VERSION
+      end
+      @update_cue = UpdateCheck.cue(UpdateCheck.read, @installed_version)
+    end
+
+    # Detaches `switchboard check-update` when the cache is stale. The attempt file is
+    # touched first (UpdateCheck.claim), so the next pane to ask reads "not due" at once.
+    def maybe_check_update
+      bin = ENV["SWITCHBOARD_BIN"]
+      return unless bin && !UpdateCheck.sandbox? && !UpdateCheck.disabled_by_env? && show_update_line?
+
+      now = monotonic
+      return unless elapsed?(@update_spawned, UPDATE_SPAWN_TTL)
+
+      @update_spawned = now
+      return unless UpdateCheck.due? && UpdateCheck.claim
+
+      Process.detach(Process.spawn(bin, "check-update", in: File::NULL, out: File::NULL, err: File::NULL))
+    rescue SystemCallError
       nil
     end
 

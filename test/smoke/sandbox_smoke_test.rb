@@ -52,6 +52,12 @@ module Switchboard
       assert_includes screen, "sidebar-polish", "the multi-branch worktree row"
       assert_includes screen, "watch-ci", "the background-monitor worktree row"
       assert_includes screen, "∞", "the monitored workspace renders the ∞ dot (resting -> ∞, not ●)"
+      # the seeded update line (#47), right under the wordmark: the sandbox draws it
+      # without the Homebrew match, and never fetches
+      wordmark = screen.lines.index { |l| l.include?(Sidebar::WORDMARK) }
+      refute_nil wordmark, "the wordmark renders"
+      assert_match(/↑ \d+\.\d+\.0 available · switchboard upgrade/, screen.lines[wordmark + 1].to_s,
+                   "the update line sits right under the wordmark")
 
       # 1b. the seeded phone link: a live process parked in quiet-cleanup plus its
       #     session file renders the ⇅ on that row (seeded after boot: the pid lives in

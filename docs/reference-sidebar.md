@@ -42,6 +42,12 @@ so the numbers stack instead of staircasing.
 | **Wordmark** | every non-home session | just `◖═◗ Switchboard` (bold cyan) |
 | **Full header** | the home session always; every session when toggled with `H` | wordmark + a time-of-day greeting (`good evening, will`) + a one-line console (`4 worktrees · 1 idle link · 2 active · 3 PRs open · 2 linked`, zero clauses dropped; on a narrow pane whole clauses drop, `linked` then `PRs` then `active`, instead of cutting the line, so the worktree count and idle links always show) + a rule |
 
+When a newer release is out (Homebrew installs, [`update_check`](reference-config.md)), a line sits
+right under the wordmark on **every** session: `↑ 0.58.0 available · switchboard upgrade`
+(the message yellow, the command dim). It clears as soon as the upgrade lands, even
+before the sidebars restart. A narrow pane drops the command half first. There's no
+dismiss: it shows until you upgrade, or until you set `update_check: false`.
+
 `H` toggles the full header onto **all** sessions at once. It's a shared on-disk
 view preference, so every window follows and it survives a restart. See
 [`H` in the keybindings](reference-keybindings.md) and

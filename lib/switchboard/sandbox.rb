@@ -94,6 +94,7 @@ module Switchboard
           "SWITCHBOARD_CACHE_DIR"           => File.join(state_dir, "cache"),
           "SWITCHBOARD_CLAUDE_PROJECTS_DIR" => File.join(state_dir, "claude-projects"),
           "SWITCHBOARD_CLAUDE_SESSIONS_DIR" => File.join(state_dir, "claude-sessions"),
+          "SWITCHBOARD_UPDATE_CACHE"        => File.join(state_dir, "update", "latest.json"),
           "XDG_STATE_HOME"                  => File.join(state_dir, "xdg-state"),
           "XDG_DATA_HOME"                   => File.join(state_dir, "xdg-data"),
           "XDG_CONFIG_HOME"                 => File.join(state_dir, "xdg-config"),
@@ -111,7 +112,10 @@ module Switchboard
           # automatic path — the one that bit us — is what DISABLE_AUTOUPDATER names).
           # Recovery: ln -sf ~/.local/share/claude/versions/<latest> ~/.local/bin/claude
           "DISABLE_AUTOUPDATER"             => "1",
-          "DISABLE_UPDATES"                 => "1"
+          "DISABLE_UPDATES"                 => "1",
+          # ...and switchboard's own update check: the seeded line (seed_update) shows,
+          # nothing is ever fetched (#47).
+          UpdateCheck::DISABLE_ENV          => "1"
         },
         # gh authenticates from GH_TOKEN OR GITHUB_TOKEN (and the *_ENTERPRISE_* twins),
         # so all four must go or a manual `o`/PR action could use real credentials even
@@ -174,6 +178,17 @@ module Switchboard
       seed_dot(File.join(wt_root, "watch-ci"), "done")     # a resting agent...
       seed_monitor(File.join(wt_root, "watch-ci"))         # ...flagged monitoring -> renders ∞, not ●
       seed_dot(File.join(wt_root, "fan-out-review"), "done") # a resting agent whose session stays busy -> ◷ (seed_offstage)
+      seed_update
+    end
+
+    # A cached release one minor above this checkout's version, so the update line
+    # (#47) shows under the wordmark. The sandbox draws it without the Homebrew /
+    # installed-binary match, and SWITCHBOARD_NO_UPDATE_CHECK keeps a real check off.
+    def seed_update
+      major, minor, = LatestRelease.parts(VERSION)
+      UpdateCheck.write("latest" => "#{major}.#{minor + 1}.0", "checked_at" => Time.now.to_i)
+    rescue StandardError
+      nil # a line that fails to seed just doesn't render — never abort the sandbox
     end
 
     def add_worktree(repo, wt_root, leaf, branch)

@@ -154,7 +154,9 @@ Useful env overrides when running locally without disturbing real state:
 `SWITCHBOARD_CONFIG` (config path), `SWITCHBOARD_STATE_DIR` (agent-state files),
 `SWITCHBOARD_ATTENTION_DIR` (bold "needs attention" markers),
 `SWITCHBOARD_RELEASES_URL` (where `LatestRelease` reads release tags — the suite points
-it at a dead path so nothing reaches GitHub),
+it at a dead path so nothing reaches GitHub), `SWITCHBOARD_UPDATE_CACHE` (the update
+line's cache file) and `SWITCHBOARD_NO_UPDATE_CHECK` (no background update check — the
+suite, smoke runs and the sandbox set it),
 `XDG_DATA_HOME`/`XDG_STATE_HOME` (reporter script + state dirs), `CODEX_HOME` (the
 global codex `config.toml` the codex hooks block is written into — sandboxed in tests).
 
@@ -523,6 +525,30 @@ under multiple clients of different sizes until the switch-in poke re-renders
 reporter writes atomically (temp+rename, `hook_file.rb`; the reporter script itself too, since sh
 reads a running script as it goes) so the warm fingerprint
 can never catch — and stamp-as-clean — a torn state file.
+
+### The update line (#47 — Homebrew only)
+
+A Homebrew install's sidebars show `↑ 0.58.0 available · switchboard upgrade` right
+under the wordmark, on every session, while a newer release is out (`UpdateCheck`,
+`update_check.rb`). A visible sidebar's `reload` spawns `switchboard check-update`
+when the cache (`latest.json`, `$XDG_CACHE_HOME/switchboard`) is older than 4h and the
+last attempt older than 1h; the sidebar touches the attempt file itself before
+spawning, so twenty panes start one child, and the child's non-blocking flock keeps one
+lookup at a time. The child daemonizes FIRST (no controlling terminal, so nothing it
+runs can prompt into a pane), reads the newest tag through `LatestRelease` (bounded,
+config-stripped) and writes only a real answer, so offline keeps the last one.
+`rebuild` compares the cached tag against the INSTALLED `version.rb`
+(`Installer.repo_root` follows the opt link to the new keg), never the `VERSION` this
+process loaded: after `switchboard upgrade` a running sidebar still has the old code,
+and comparing against that would keep the line up after you upgraded. Both files ride
+`warm_fingerprint`, and `reload` baselines them with the mtimes `rebuild` READ
+(`@update_seen`), not a fresh stat — a write between the two would otherwise be
+marked drawn and a hidden pane would skip the warm that shows it. Gates: only the
+installed Homebrew binary checks or draws (`applies?`: clone and `--HEAD` installs
+don't; a dogfood checkout would compare against its own branch); `update_check:
+false` stops both; `SWITCHBOARD_NO_UPDATE_CHECK` stops the check. The sandbox draws a
+seeded line (`Sandbox.seed_update`) without the Homebrew match and never fetches.
+There's no dismiss: the line shows until you upgrade.
 
 ### Upgrading (`switchboard upgrade`, #10)
 

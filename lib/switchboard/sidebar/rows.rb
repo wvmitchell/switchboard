@@ -34,6 +34,7 @@ module Switchboard
         inject_creations(Creation.gc(projects: @config.projects.map { |p| p["name"] }, owners: !@warming))
         @full_header = FullHeader.enabled? # shared toggle: full header on every session
         @fold_branches = BranchFold.folded? # shared toggle: fold every workspace's branches (#107)
+        refresh_update_cue # the "newer release" line under the wordmark (#47)
         # Shared pane width: a ←/→ resize in any window lands here. Skip the hydrate
         # while a local resize is pending uncommitted (@resized): a rebuild triggered
         # mid-burst (a C-l/C-r token following a ←/→ in the same read) would otherwise

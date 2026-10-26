@@ -10,6 +10,16 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
+## [0.57.0] — the sidebar says when a new release is out (2026-10-26)
+
+### Added
+- On a Homebrew install, a line under the wordmark reads `↑ 0.58.0 available ·
+  switchboard upgrade` on every session while a newer release is out. It clears as soon
+  as the upgrade lands, even before the sidebars restart. To find out, a sidebar runs
+  one `git ls-remote` of switchboard's public release tags every 4 hours, in the
+  background; nothing else is sent, and offline it just keeps the last answer. Turn it
+  off with `update_check: false`. Clone and `--HEAD` installs don't check (#47).
+
 ## [0.56.2] — the `?` icons read like the keys (2026-10-26)
 
 ### Changed
