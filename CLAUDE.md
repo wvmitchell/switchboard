@@ -602,7 +602,9 @@ marks — an unreadable or foreign file is never touched. `install` runs the sam
 
 Hook contract last verified live against **Claude Code 2.1.301–2.1.303** and **codex-cli
 0.163.0** (v0.51.1): payload fields, linked-worktree delivery, the nesting-guard env, and a
-silent PermissionRequest hook leaving the prompt to the user.
+silent PermissionRequest hook leaving the prompt to the user. **codex-cli 0.164.0** (v0.55.2)
+re-passed the real-Codex smoke only: linked-worktree delivery, hook ordering, untrusted-block
+silence.
 
 The dot beside each workspace shows whether an agent (Claude/Codex/Aider) is
 thinking / done / waiting. `AgentState.scan` (`agent_state.rb`) merges **two
@@ -633,7 +635,7 @@ opposite sides of it — the subtle, hard-won part:
   on top of your settings, adding the file to the worktree's git excludes so it never
   dirties `git status`; global `~/.claude` is untouched. This is the only entry in
   `AgentHooks::ADAPTERS`, so `enable`/`disable` and the dispatch worker fan out over it.
-- **Codex is global.** Codex (verified 0.142 through 0.163) deliberately does NOT load a
+- **Codex is global.** Codex (verified 0.142 through 0.164) deliberately does NOT load a
   *linked* git worktree's own `<worktree>/.codex/hooks.json`: it redirects a linked
   worktree's project hooks to the MAIN checkout's `.codex/` (and only when the worktree
   has a `.codex/` dir and is trusted — `config/src/loader/mod.rs`). Switchboard is nothing

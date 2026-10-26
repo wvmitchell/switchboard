@@ -7,7 +7,7 @@ require "strscan"
 module Switchboard
   # The Codex adapter — GLOBAL delivery.
   #
-  # Codex (verified 0.142 through 0.163) deliberately does NOT load a linked git
+  # Codex (verified 0.142 through 0.164) deliberately does NOT load a linked git
   # worktree's own `<worktree>/.codex/hooks.json`: it redirects a linked worktree's project
   # hooks to the MAIN checkout's `.codex/`. Switchboard is nothing but linked worktrees, so
   # the per-worktree file is dead on arrival. A CONFIG-level hook is not project-discovered,
