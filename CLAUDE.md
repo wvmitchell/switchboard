@@ -1078,7 +1078,7 @@ sessions into `:offstage` (any busy/shell), `:idle` (every one idle for ≥ `SET
   thinking/waiting, never on a hook-less row (its session reads `busy` through every
   foreground turn too, so with no `done` there's no hand-off); ∞ outranks it (a monitor always reads `shell`). The
   internal name is `offstage`, not "background": `Link#bg?` already means a session that IS
-  a background job. The legend says `◷ background`.
+  a background job. The legend says `◷ waiting on background work`.
 - **The settle window.** Claude writes `done` 13–29ms BEFORE `idle` on a normal turn end, and
   a finished background agent reads `idle` ~15ms before its follow-up turn's `busy`. A 3s scan
   lands in those ~1% of the time, so: ◷ draws only when the hook's report is ≥ `SETTLE` (2s)

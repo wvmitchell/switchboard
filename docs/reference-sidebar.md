@@ -107,7 +107,7 @@ until you delete the workspace and re-entering it opens a plain shell, not the a
 cancel — `d` on its `◌` row, or quitting while it's setting up — never starts its agent
 either: `d` stops it and removes what it had made if nothing was written there yet (else it keeps the tree and says so — `d` on its row deletes it, asking first), and a quit leaves the worktree to re-enter as a
 plain shell (with a note) until you delete it. The `?`
-overlay opens with a one-line legend of every glyph.
+overlay opens with an `icons` section: every glyph on its own row, like the keys.
 
 Exact `thinking`/`waiting`/`done` needs hooks: Claude's are per worktree
 (automatic on switchboard-created worktrees, or `switchboard enable-hooks`), and

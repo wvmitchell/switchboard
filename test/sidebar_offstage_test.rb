@@ -289,7 +289,7 @@ module Switchboard
       assert_equal "◷", sb.send(:glyph_for, :offstage)
       assert_equal "\e[1;34m◷\e[0m", sb.send(:dot_for, :offstage)
       assert_equal "\e[1;34m", Sidebar::SPIN_COLORED.first[0, 7], "the spinner's exact blue"
-      assert(Sidebar::LEGEND.any? { |_c, glyph, label| glyph == "◷" && label == "background" })
+      assert(Sidebar::LEGEND.any? { |_c, glyph, label| glyph == "◷" && label == "waiting on background work" })
     end
 
     # --- refresh_agents: the evidence -------------------------------------------

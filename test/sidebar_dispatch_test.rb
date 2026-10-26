@@ -662,9 +662,11 @@ module Switchboard
     def test_help_opens_with_the_glyph_legend
       sb = sidebar
       sb.instance_variable_set(:@pane_switch_keys, [])
-      body = sb.send(:help_pages, 8, 40).first.map { |l| strip_ansi(l) }
-      legend = body[1..2].join(" ")
-      %w[working input done watching building failed].each { |w| assert_includes legend, w }
+      body = sb.send(:help_pages, 14, 40).first.map { |l| strip_ansi(l) }
+      assert_equal "icons", body[2], "the legend is the first section, on page 1"
+      Sidebar::LEGEND.each_with_index do |(_c, glyph, label), i|
+        assert body[3 + i].start_with?("#{glyph.ljust(Sidebar::HELP_KEY_COLS)}  #{label}"), "one glyph per row, like a key row"
+      end
       body.each { |l| assert_operator l.length, :<=, 40 }
     end
   end

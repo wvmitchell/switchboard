@@ -31,7 +31,7 @@ module Switchboard
       FAILED   = "\e[1;31m✘\e[0m" # a dispatch whose build/setup/launch failed: the heavy ✘ keeps its shape in reverse video (DR5)
       LINK_GLYPH    = "⇅"        # a live /remote-control link: this workspace is reachable from your phone (picked by eye)
       LINK_LIVE_FG  = "\e[32m"    # ...green while live: the resting dots' green, normal weight (default fg read too close to the grey)
-      LINK_LIVE_LABEL = "on phone" # the legend entry the p hint attaches to
+      LINK_LIVE_LABEL = "phone link on" # the legend entry the p hint attaches to
       LINK_STALE_FG = "\e[90m"    # ...and grey when idle past remote_link_stale_after (bold read identical; the theme-relative dim branch rows use)
       WS_PREFIX_COLS = 4          # a ws row's "<pointer> <dot> " before its name: fit_plain and colored must agree on it
       NOTE_FG  = "\e[2m"          # the dim task label / failure reason in the right region (DR3/DR8)
@@ -89,11 +89,16 @@ module Switchboard
       # appended from config (tmux_help_rows), resolved, not static.
       HELP_KEY_COLS = 6 # key column width; longer combos (move/prefix rows) overflow it
 
-      # What the row glyphs mean (DR9) — nothing else teaches them. Seated right under
-      # the help wordmark, so it's always on page 1.
-      LEGEND = [[SPIN_COLORED.first, "⠋", "working"], [WANTS_ON, "◆", "input"], [DONE, "●", "done"],
-                [MONITORING, "∞", "watching"], [OFFSTAGE, "◷", "background"], [BUILDING, "◌", "building"], [FAILED, "✘", "failed"],
-                ["#{LINK_LIVE_FG}#{LINK_GLYPH}\e[0m", "⇅", LINK_LIVE_LABEL], ["#{LINK_STALE_FG}#{LINK_GLYPH}\e[0m", "⇅", "idle link"]].freeze
+      # What the row glyphs mean (DR9) — nothing else teaches them. The first section
+      # under the help wordmark, so it's on page 1.
+      LEGEND_HEADING = "icons"
+      # Labels fit the 40-col default beside the key column (32 cols; the live link's
+      # carries the ` · p shows a QR` hint too).
+      LEGEND = [[SPIN_COLORED.first, "⠋", "agent is working"], [WANTS_ON, "◆", "agent needs your input"],
+                [DONE, "●", "agent is done"], [MONITORING, "∞", "agent running a monitor/loop"],
+                [OFFSTAGE, "◷", "waiting on background work"], [BUILDING, "◌", "workspace being set up"],
+                [FAILED, "✘", "workspace setup failed"], ["#{LINK_LIVE_FG}#{LINK_GLYPH}\e[0m", "⇅", LINK_LIVE_LABEL],
+                ["#{LINK_STALE_FG}#{LINK_GLYPH}\e[0m", "⇅", "phone link, idle a while"]].freeze
 
       private
 
@@ -438,13 +443,13 @@ module Switchboard
 
       # Format the key map (Keymap.help_rows, built from the live @bindings so the
       # shown keys never drift — issue #108) plus the resolved tmux rows into
-      # sections: the head (wordmark + legend), then one per heading row — a blank
+      # sections: the head (wordmark), the icon legend, then one per heading row — a blank
       # separator, the bold heading, and each key row as `key.ljust(HELP_KEY_COLS)
       # desc`. Grouped from the rows themselves (a blank key starts a section), so
       # paging never has to re-split drawn text. trunc runs on the PLAIN string BEFORE
       # the ANSI is wrapped on, so truncation can never cut an escape (line()).
       def help_sections(cols)
-        sections = [["#{BRAND}#{trunc(WORDMARK, cols)}\e[0m", *legend_lines(cols)]]
+        sections = [["#{BRAND}#{trunc(WORDMARK, cols)}\e[0m"], ["", "#{BRAND}#{trunc(LEGEND_HEADING, cols)}\e[0m", *legend_lines(cols)]]
         (Keymap.help_rows(@bindings) + tmux_help_rows).each do |key, desc|
           if key.empty?
             sections << ["", "#{BRAND}#{trunc(desc, cols)}\e[0m"] # blank separator, then the heading
@@ -455,23 +460,15 @@ module Switchboard
         sections
       end
 
-      # Help's glyph legend: the row glyphs, wrapped to the pane, each in its row color.
+      # Help's glyph legend: one row per glyph, laid out like the key rows (glyph in the
+      # key column, in its row color), under its own heading.
       def legend_lines(cols)
-        lines = [[]]
-        width = 0
         qr_key = @bindings && @bindings[:phone_link]
-        LEGEND.each do |colored, glyph, label|
+        width = [cols - HELP_KEY_COLS - 2, 1].max
+        LEGEND.map do |colored, glyph, label|
           label = "#{label} · #{qr_key} shows a QR" if label == LINK_LIVE_LABEL && qr_key # the live key, or no hint
-          label = trunc(label, [cols - 2, 1].max) # one item never runs past a narrow pane
-          item_w = "#{glyph} #{label}".length
-          if width.positive? && width + 2 + item_w > cols
-            lines << []
-            width = 0
-          end
-          width += (width.positive? ? 2 : 0) + item_w
-          lines.last << "#{colored} \e[2m#{label}\e[0m"
+          "#{colored}#{" " * (HELP_KEY_COLS - glyph.length)}  #{trunc(label, width)}"
         end
-        lines.map { |items| items.join("  ") }
       end
 
       # The tmux-layer keys that operate the sidebar itself, resolved at render time
