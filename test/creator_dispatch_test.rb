@@ -722,6 +722,19 @@ module Switchboard
       assert_path_exists dest
       assert_includes note.to_s, "#{dest} (it's locked)"
 
+      # Extended (ship 6 Codex adversarial): git's marker padded past what's read, or with
+      # whitespace around it, is someone's lock; only the exact marker is git's own.
+      ["initializing#{' ' * 4096}claimed by user", " initializing ", "initializing\n\n"].each_with_index do |text, j|
+        dest = path("wts", "padded#{j}")
+        git(repo, "worktree", "add", "-q", "-b", "padded#{j}", dest, "main")
+        File.write(File.join(dest, "edit.txt"), "uncommitted")
+        git(repo, "worktree", "lock", dest)
+        File.binwrite(File.join(git(dest, "rev-parse", "--absolute-git-dir").strip, "locked"), text)
+        note = Creator.undo_add(config.project("proj"), dest, "padded#{j}", base)
+        assert_path_exists dest, text[0, 20].inspect
+        assert_includes note.to_s, "#{dest} (it's locked)"
+      end
+
       # Extended (ship 6 pass 2): a lock file we can't read is still someone's lock, never
       # read as unlocked or raised out of the rollback.
       skip "root reads any file" if Process.uid.zero?

@@ -597,9 +597,22 @@ safe today; each is narrow).
   `%w[toggle home]` instead of `Installer::ROLE_SUBCOMMANDS.keys`; the
   `@switchboard-<role>-rejected` name is hand-built at 7 sites (route it through
   `tmux_argv` ops like `-key`/`-clobbered`); `install` re-parses config.yml to pick its
-  "Done, except …" label instead of asking `refresh_wiring` which part failed. *Why:* no
-  behavior change today; each is a place a later edit can drift. *Context:* ship 5
-  maintainability review, deferred by the user. **Priority:** P4.
+  "Done, except …" label instead of asking `refresh_wiring` which part failed; the
+  `key_drift?` comment lists only two of the reasons it returns nil (`bound_from?` has them
+  all); a dead `if p["name"]` guard in `Reconcile.prune` (`Config#projects` drops nameless
+  entries); `docs/howto-manage-projects.md` hard-codes "5 tries" where the code uses
+  `PLACEHOLDER_TRIES`. *Why:* no behavior change today; each is a place a later edit can
+  drift. *Context:* ship 5 and 6 maintainability reviews, deferred by the user. **Priority:** P4.
+
+- **Rollback edges from the v0.55.3 lock and config fixes.** *What:* (a) `delete_branch_at`
+  ignores a failed `git config --remove-section` (a held `config.lock`), so a hook-set
+  upstream can survive onto the next branch cut under that name; (b) `d` on a ✘ row whose
+  tree the rollback kept "(it's locked)" still double-forces after the confirm, and the prompt
+  doesn't say the tree is locked; (c) a failed `git` spawn in `Git.lock_reason` also reads as
+  "(it's locked)" (fails safe, wrong reason); (d) `LANGUAGE=en` from `add_worktree` reaches
+  the user's own checkout hooks; (e) a config.yml of literal `null`/`~` reads as empty (YAML's
+  meaning) rather than broken. *Why:* all fail safe or only mislabel; none loses work.
+  *Context:* ship 6 Claude + Codex adversarial reviews, deferred. **Priority:** P4.
 
 ## Agent CLI hooks (Claude 2.1.301 / Codex 0.163 compat review) follow-ups
 

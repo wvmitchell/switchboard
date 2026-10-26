@@ -223,18 +223,22 @@ module Switchboard
       ok
     end
 
-    # Why git has `worktree` locked ("" when no reason was given), or nil when it isn't (or
-    # its admin dir can't be read).
+    # Why git has `worktree` locked: the reason as written ("" when none was given, or when it
+    # couldn't be read whole), or nil when it isn't locked (or its admin dir can't be found).
     def lock_reason(worktree)
-      gitdir = capture(worktree, "rev-parse", "--absolute-git-dir").strip
+      gitdir = capture(worktree, "rev-parse", "--absolute-git-dir").b.strip # a path, any bytes
       return nil unless $?&.success? && !gitdir.empty?
 
       lock = File.join(gitdir, "locked")
       return nil unless File.file?(lock)
 
-      # The reason is free text (any bytes, any length); a lock we can't read is still a lock.
-      File.binread(lock, 4096).to_s.b.force_encoding(Encoding::UTF_8).scrub.strip # an empty file reads ""
-    rescue SystemCallError
+      # Free text, any bytes, any length: only a whole read can match git's own marker, so one
+      # cut short (or unreadable) is someone's lock. Only git's own trailing newline is dropped.
+      raw = File.binread(lock, 4097).to_s
+      return "" if raw.bytesize > 4096
+
+      raw.b.force_encoding(Encoding::UTF_8).scrub.chomp
+    rescue StandardError
       ""
     end
 
