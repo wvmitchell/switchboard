@@ -567,6 +567,40 @@ safe today; each is narrow).
   whose unreadable `config.toml` never held our block; a fix needs a way to say "couldn't
   check" without failing. *Context:* ship 4 red team, deferred by the user. **Priority:** P4.
 
+- **Two narrow paths that can still act on someone's work.** *What:* (a) `prune` takes
+  its valid session names from Model's `Git.worktrees` and verifies the project with a
+  second, strict listing; if the first comes back partial and the second full, a live
+  session older than `SESSION_GRACE` reads as orphaned. Build `names` from the strict
+  listing itself. (b) A post-checkout hook that starts a rebase or bisect and then fails
+  leaves a worktree git lists as detached, so `keep_branch` finds no holder and
+  `delete_branch_at` deletes a branch the rebase still needs (the old `branch -D` refused
+  it). Check rebase/bisect state before deleting. *Why:* each can kill a session or delete
+  a branch; neither trigger was reproducible in normal use. *Context:* v0.55.3 ship 5
+  adversarial review (Claude + Codex structured P2), deferred by the user. **Priority:** P3.
+
+- **Rollback and key-tracking design notes.** *What:* (a) `undo_add` assumes git cuts the
+  `-b` branch before it checks the path (true in current `builtin/worktree.c`, no version
+  pinned); (b) an older switchboard install whose fragment tmux also sources rewrites
+  `@switchboard-*-key` but not `-rejected`/`-config-path`, so doctor can show a stale row
+  (upgrade is gated on `fragment_wired_here?`, doctor isn't); (c) a config value spelled
+  `\\;` resolves to `\;` while tmux records `;` (drift row never clears); (d) a branch kept
+  after `move_off` (named in the ✘) is never collected later; (e) a project with a
+  non-UTF-8 worktree path keeps every failed create's branch and is never pruned, and
+  doctor doesn't name why; (f) on a tmux too old for `list-keys -- KEY`, the whole-table
+  fallback reads a bound `C-;` as unbound (its regex allows a backslash only before the
+  whole key). *Why:* all fail safe or say so in the ✘ text; worth a pass once (a)-(b) of
+  the entry above land. *Context:* v0.55.3 ship 5 adversarial + state-machine reviews.
+  **Priority:** P4.
+
+- **Small cleanups from the v0.55.3 review.** *What:* the `rebind_ops` header doesn't
+  mention `taken:`; `Upgrade.tmux_stale?` and `CLI#doctor_key_drift` hard-code
+  `%w[toggle home]` instead of `Installer::ROLE_SUBCOMMANDS.keys`; the
+  `@switchboard-<role>-rejected` name is hand-built at 7 sites (route it through
+  `tmux_argv` ops like `-key`/`-clobbered`); `install` re-parses config.yml to pick its
+  "Done, except …" label instead of asking `refresh_wiring` which part failed. *Why:* no
+  behavior change today; each is a place a later edit can drift. *Context:* ship 5
+  maintainability review, deferred by the user. **Priority:** P4.
+
 ## Agent CLI hooks (Claude 2.1.301 / Codex 0.163 compat review) follow-ups
 
 - **Remote-link glyph: rare edges deferred at ship review (v0.53.0).** *What, in priority

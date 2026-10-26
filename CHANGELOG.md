@@ -10,7 +10,7 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
-## [0.55.3] — failures that used to stay silent now say so (2026-10-25)
+## [0.55.3] — failures that used to stay silent now say so (2026-10-26)
 
 ### Fixed
 - A `config.yml` that won't parse no longer lets `install` and `upgrade` look successful.
