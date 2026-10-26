@@ -124,6 +124,11 @@ fallback lands on home's key, the **toggle wins** — home yields, is recorded a
 refused, and `doctor` names it (`Installer.refused_key`). The decision is the pure
 `Installer.rebind_ops` (unit-tested via the `run_tmux` seam); validation is a
 **minimal denylist** (`Config#valid_tmux_key?`) — tmux is the authority on real keys.
+A key ending in `;` (`C-;`) needs care: tmux reads ANY argv element ending in an
+unescaped `;` as a command separator, even via `system` with no shell, so
+`Installer.run_tmux` escapes it to `\;`; tmux records the bound key as the bare `;`,
+so `Config#tmux_key` reads the tmux.conf spelling (`C-\;`) as `C-;`, or drift would
+never clear.
 Editing `tmux_keys` via `e`/`switchboard config` re-applies immediately
 (`reload_config_poke` / `edit_config` call `apply_keybindings`, `announce: true`
 flashing the result); a from-scratch `install` still needs a tmux reload. A hand edit
@@ -379,8 +384,9 @@ a session on a dead server (the record's `server` socket gone: a `kill-server` m
 would otherwise start a headless server and run the agent there), and it discards a tree
 canceled before the launcher claimed it. A failed `worktree add` is a collision when
 the dir or branch existed BEFORE it, or when git itself says "already exists"
-(someone made it in between): the build retries under a fresh placeholder, and any
-give-up afterwards moves the record to a fresh name or parks it (`move_off`/`park`,
+(someone made it in between): the build retries under a fresh placeholder (up to
+`PLACEHOLDER_TRIES`; racers taking every one fail it with git's last error plus "gave
+up after N tries", not "no free workspace name"), and any give-up afterwards moves the record to a fresh name or parks it (`move_off`/`park`,
 `.unbuilt-<id>`), so a ✘ never sits on someone else's folder. git's "already exists"
 means it made nothing, so if a tree on OUR branch sits at the destination anyway (a
 workspace renamed onto the placeholder, or a failing hook printing git's words) the

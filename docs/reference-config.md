@@ -228,7 +228,8 @@ A **key token** is a single char (`s`), a named key (`Space`, `F1`, `BSpace`),
 or a modifier combo (`C-s`, `M-x`). A usable token is a non-empty string with no
 whitespace, quotes, or control chars; anything else falls back to the role
 default and `doctor` flags it. tmux is the final authority on whether a token is
-a real key — an unusable one is caught at bind time.
+a real key — an unusable one is caught at bind time. A key ending in `;` works
+(`C-;`); the tmux.conf spelling `C-\;` means the same key.
 
 If `home` resolves to the same key as `toggle`, `home` is dropped (one key can't
 carry two actions; the toggle wins) and `doctor` reports the collision.
