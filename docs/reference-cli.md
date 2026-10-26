@@ -272,11 +272,12 @@ present + parseable, unrecognized top-level config keys (the misindented-nested-
 trap), PATH symlinks (under Homebrew: that `switchboard` and `sb` on PATH are this install, not
 missing or shadowed by an old clone's link, a clone's `bin/` directory, or another program), which install tmux.conf is wired to (this
 one ✓, another that still exists –, or one that's gone ✗), tmux wiring (bound keys +
-hooks, and whether they're *live* in the running server vs only in config), a bad or clashing `sidebar_keys` remap,
+hooks, and whether they're *live* in the running server vs only in config; a `tmux_keys` key
+edited by hand that tmux hasn't applied, or one tmux refused), a bad or clashing `sidebar_keys` remap,
 whether a newer release is out (Homebrew installs: a `git ls-remote` to GitHub, bounded
 to 5s, and it says so when it can't check; a clone or `--HEAD` install says which branch
 it follows instead), the Claude hooks in the worktree you're standing in (missing,
-unreadable, out of date because an older release wrote them, or unparseable, naming why), the global codex block (how many
+unreadable, out of date because an older release wrote them, or unparseable, naming why), the global codex block from any shell (how many
 of its hooks codex has approved, `N/M trusted`, or a fix when the block is stale, can't
 be rewritten safely, or collides with your own `[hooks]`), `gh`
 auth + per-project badge staleness, audio player +

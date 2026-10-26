@@ -92,13 +92,14 @@ off. It checks, with the fix inline for anything red:
 - tmux wiring: the fragment is sourced, the keys are bound, and the hooks are
   **live in the running server** — not just present in config. These diverge
   after a `git pull` until tmux reloads; `doctor` tells you when a reload is
-  needed.
+  needed. It also names a `tmux_keys` key you edited in `config.yml` that tmux
+  hasn't applied yet (`switchboard upgrade` applies it), and a key tmux refused.
 - Whether a newer release is out (Homebrew installs check GitHub's release tags,
   bounded to 5s, and say so when offline); a clone or `--HEAD` install says which
   branch it follows. `switchboard upgrade` fetches it.
 - Agent hooks: whether the worktree you're standing in has switchboard's Claude
-  hooks, and whether they're out of date or unparseable (with the reason), and the
-  global codex block: how many of its hooks codex has approved
+  hooks, and whether they're out of date or unparseable (with the reason). From any
+  shell, the global codex block: how many of its hooks codex has approved
   (`N/M trusted`), or the fix when the block is stale, can't be rewritten safely,
   or collides with your own `[hooks]`. See
   [How-to: agent state & sounds](howto-agent-state-and-sounds.md).

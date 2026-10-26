@@ -358,6 +358,38 @@ module Switchboard
     # Value: protects=drift is judged only against the config tmux actually bound from, so a
     # shell/server config mismatch (or a failed tmux read) can't make upgrade loop; fails_when=
     # key_drift? ignores @switchboard-config-path; why_new=ship 2 Claude adversarial; seam=tmux_option
+    # Value: protects=a `;` key settles: configured C-; (or the tmux.conf spelling C-\;, which
+    # tmux records as C-;) against a recorded C-; is no drift, and the truncated C- an
+    # unescaped bind recorded still is; fails_when=tmux_key keeps the backslash, or the escape
+    # leaves the recorded key unequal to the configured one (doctor's row never clears and
+    # every upgrade "finishes" again); why_new=ship 4 pass 3 state machines; seam=tmux_option;
+    # no_claim=tmux's own recording (checked by hand on an isolated tmux 3.8 server)
+    def test_a_semicolon_key_bound_as_configured_is_not_drift
+      stub_method(Installer, :tmux_server?, -> { true }) do
+        { "C-;" => "C-;", "C-\\;" => "C-;", "\\;" => ";" }.each do |written, key|
+          File.write(Config.path, YAML.dump("tmux_keys" => { "toggle" => written }))
+          config = Config.new
+          assert_equal key, config.tmux_key("toggle"), written
+          opts = { "@switchboard-toggle-key" => key, "@switchboard-config-path" => File.expand_path(Config.path) }
+          refute stub_method(Installer, :tmux_option, ->(name) { opts[name] }) { Installer.key_drift?("toggle", config: config) }, written
+        end
+        opts = { "@switchboard-toggle-key" => "C-", "@switchboard-config-path" => File.expand_path(Config.path) }
+        File.write(Config.path, YAML.dump("tmux_keys" => { "toggle" => "C-;" }))
+        assert stub_method(Installer, :tmux_option, ->(name) { opts[name] }) { Installer.key_drift?("toggle", config: Config.new) }
+      end
+    end
+
+    # Value: protects=uninstall unbinding a recorded `;` key for real (escaped at the run_tmux
+    # seam, not only in the op list); fails_when=teardown stops going through run_tmux, leaving
+    # prefix-C-; bound to a removed binary; why_new=ship 4 pass 3 state machines; seam=system
+    def test_teardown_unbinds_a_recorded_semicolon_key
+      seen = []
+      stub_method(Installer, :tmux_option, ->(name) { name == "@switchboard-toggle-key" ? "C-;" : nil }) do
+        stub_method(Installer, :system, ->(*argv, **) { seen << argv; true }) { Installer.teardown_live }
+      end
+      assert_includes seen, ["tmux", "unbind-key", "C-\\;"]
+    end
+
     def test_key_drift_needs_the_config_tmux_bound_from
       File.write(Config.path, YAML.dump("tmux_keys" => { "toggle" => "t" }))
       base = { "@switchboard-toggle-key" => "s" }
@@ -1090,6 +1122,18 @@ module Switchboard
       end
       assert_equal true, result
       assert_includes cmds.first, "-- F13", "probed the bound key, not the configured one"
+    end
+
+    # Value: protects=the live check naming a `;` key escaped (bare, tmux reads the `;` as
+    # the end of `list-keys -T prefix --`, lists the whole table, and any toggle line reads
+    # as live); fails_when=toggle_key_live? drops its escape; why_new=ship 4 pass 3 state
+    # machines; seam=none
+    def test_toggle_key_live_escapes_a_semicolon_key
+      cmds = []
+      fake = ->(cmd) { cmds << cmd; Kernel.send(:`, "true"); %(bind-key -T prefix C-\\; run-shell "'/x/switchboard' toggle-sidebar"\n) }
+      live = stub_method(Installer, :tmux_server?, -> { true }) { stub_method(Installer, :`, fake) { Installer.toggle_key_live?("C-;") } }
+      assert_equal true, live
+      assert cmds.first.end_with?("-- #{Shellwords.escape('C-\\;')} 2>/dev/null"), cmds.first
     end
 
     # Value: protects=doctor and upgrade reading "no tmux server" as unknown, not "key

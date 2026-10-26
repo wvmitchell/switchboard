@@ -389,10 +389,12 @@ module Switchboard
     # a usable key token, else the role default (toggle ⇒ "s", home ⇒ nil/unbound).
     # A `home` that resolves equal to the toggle is dropped — one key can't carry two
     # actions, and the toggle wins (doctor surfaces the collision). nil ⇒ leave the
-    # role unbound. What `tmux-bind` binds.
+    # role unbound. What `tmux-bind` binds. A `;` written the tmux.conf way (`\;`, `C-\;`)
+    # reads as the key itself: tmux records it as `;`, so the escaped spelling would never
+    # match what was bound (a drift row that never clears). Installer.run_tmux re-escapes it.
     def tmux_key(role)
       raw = raw_tmux_key(role)
-      key = valid_tmux_key?(raw) ? raw.strip : TMUX_KEY_DEFAULTS[role]
+      key = valid_tmux_key?(raw) ? raw.strip.sub(/\\;\z/, ";") : TMUX_KEY_DEFAULTS[role]
       return nil if role == "home" && key == tmux_key("toggle")
 
       key

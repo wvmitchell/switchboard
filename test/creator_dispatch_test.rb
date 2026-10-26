@@ -1157,6 +1157,32 @@ module Switchboard
       refute Creation.unfinished_at?(theirs)
     end
 
+    # Value: protects=a branch racer with no fresh name left: their branch is kept and the
+    # record is parked, never left on the name whose branch is theirs; fails_when=the
+    # BRANCH_PREEXISTED collision skips park or deletes their branch; why_new=ship 4 pass 3
+    # state machines (only the path racer had a park test); seam=add_worktree, Creator.reserve
+    def test_a_branch_racer_with_no_free_name_parks_the_record
+      repo = temp_git_repo("proj", origin: true)
+      config = config_for(repo)
+      rec = dispatch(config)
+      branch = Creator.branch_for(config, rec["name"])
+      run_git = method(:git)
+      racer = lambda do |_c, p, _n, _dest, base, **|
+        run_git.call(p["path"], "branch", branch, base)
+        [false, "a branch named '#{branch}' already exists"]
+      end
+      with_fake_tmux do
+        stub_method(Creator, :reserve, ->(*) { nil }) do
+          stub_method(Creator, :add_worktree, racer) { Creator.work(config, rec["id"]) }
+        end
+      end
+      found = Creation.find(rec["id"])
+      assert_equal "failed", found["state"]
+      assert_equal "no free workspace name", found["detail"]
+      assert_equal "unbuilt-#{rec['id']}", found["name"]
+      assert Git.branch_exists?(repo, branch), "their branch stays"
+    end
+
     # Value: protects=a build that lost every try to a racer names git's error, not "no free
     # workspace name"; fails_when=the exhausted loop drops err; why_new=ship 4 state machines
     # (retries_exhausted_by_racers x work); seam=add_worktree; no_claim=a real concurrent writer
