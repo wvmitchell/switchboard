@@ -1059,6 +1059,10 @@ later one's remap: added mid-list, `p` would have taken the key from anyone who 
 
 ### Waiting on background work (the ◷ — observed, not declared)
 
+Sessions-file `status` contract last verified live against **Claude Code 2.1.308–2.1.310**
+(v0.56.0) — tracked apart from the hook contract and the ⇅ link; the security monitor
+(`docs/howto-security-monitor.md`) watches it.
+
 Claude hands work to a background agent / background Bash / the Monitor tool and ends its
 turn: the Stop writes `done`, a green `●` and a chime — for work still running. No hook
 EVENT says so (the Stop payload does carry a `background_tasks` key, seen on 2.1.310 but

@@ -127,7 +127,14 @@ Alert on high or critical advisories that reach a version a user could run.
 
 The highest-value check. Switchboard's subtle parts sit on agent behavior that is
 lightly documented or not documented at all. CLAUDE.md records the exact version each
-contract was last verified against; the baselines track those lines.
+contract was last verified against; the baselines track those lines, one per contract:
+
+- the Claude and Codex **hook contract** ("Agent-state dots"),
+- the sessions-file **⇅ remote link** (`bridgeSessionId`, `procStart`; "Remote-link
+  glyph"),
+- the sessions-file **◷ `status`** field ("Waiting on background work").
+
+Re-verifying one doesn't advance the others.
 
 - **Claude Code**: the installed version (`claude --version`) and the changelog head:
 
@@ -136,13 +143,37 @@ contract was last verified against; the baselines track those lines.
   ```
 
   For every version past the reviewed baseline, grep its entries for:
-  `hook|SessionStart|SessionEnd|Stop|stop_hook_active|PermissionRequest|Notification|additionalContext|settings.local.json|sessions/|bridgeSessionId|procStart|remote.control|CLAUDECODE|CLAUDE_CODE_SESSION_ID|worktree`.
+  `hook|SessionStart|SessionEnd|Stop|stop_hook_active|PermissionRequest|Notification|additionalContext|settings.local.json|sessions/|bridgeSessionId|procStart|remote.control|CLAUDECODE|CLAUDE_CODE_SESSION_ID|worktree|status|busy|background agent|background task`.
   Skip `[VSCode]`, `[Cloud sessions]`, `[Claude Tag]`, `[Code Review]`, Windows,
   PowerShell, self-hosted runner and mod-only entries. Then advance the baseline.
 
-  When the **installed** version moves, check the remote-link reader live:
-  `switchboard doctor`'s "remote links (⇅)" line must still show `N linked` with no
-  warning while a `/rc` session is open (`RemoteLink.health` is the canary).
+  The last four terms cover the sessions-file `status` contract the ◷ reads (CLAUDE.md,
+  "Waiting on background work"). It's undocumented, and a changelog entry about it may
+  not name the file ("background agents now report their status"). What switchboard
+  relies on, in `~/.claude/sessions/<pid>.json`:
+
+  - `status` stays `busy` after a turn that started a background agent ends (Claude
+    doesn't rewrite it at the Stop), and reads `shell` while a background shell runs.
+  - It reads `idle` once that work is done. A held chime matures only on an `idle`
+    that has settled (`ClaudeSessions::SETTLE`).
+  - On a normal turn end Claude writes `done` 13–29 ms before `idle`, and a finished
+    background agent reads `idle` for about 15 ms before its follow-up turn reads
+    `busy`. The settle logic depends on those windows staying short.
+
+  An entry that touches any of these is a drift finding even when the grep terms only
+  half match.
+
+  When the **installed** version moves, check both sessions-file readers live:
+
+  - **⇅ remote link**: `switchboard doctor`'s "remote links (⇅)" line must still show
+    `N linked` with no warning while a `/rc` session is open (`RemoteLink.health` is
+    the canary).
+  - **◷ background work**: in a hooked workspace, start a background agent (or a
+    `run_in_background` shell) and end the turn. The row must show `◷` once the turn
+    settles, then a resting dot (and one chime, for an agent) once the work ends. A
+    `●` and a chime at the hand-off means the `status` contract moved. There's no
+    `doctor` canary for this yet; if one is added (a `status` health line like
+    `RemoteLink.health`), check that instead of the manual run.
 - **Codex**: the installed version (`codex --version`) and
   `gh release list -R openai/codex -L 3 --exclude-pre-releases`. Grep release notes for
   `hook|trust|config.toml|worktree|linked|PermissionRequest|SessionStart|toml_edit|env snapshot`.
