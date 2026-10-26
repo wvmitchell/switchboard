@@ -535,8 +535,13 @@ safe today; each is narrow).
 - **The rest of `Git`'s readers on a non-UTF-8 path.** *What:* v0.55.3 made
   `Git.worktrees` skip an undecodable entry; `current_branch`, `commits_since` and the diff
   readers (with `core.quotePath=false`) can still raise on one. Audit each caller and either
-  scrub or compare as bytes. *Why:* a Linux-only crash path in the sidebar's helpers.
-  *Context:* v0.55.3 item 3 caller audit. **Priority:** P3.
+  scrub or compare as bytes. Also `parse_worktrees` itself: it drops a whole entry when ANY
+  line is undecodable, so a worktree on a branch whose name isn't valid UTF-8 (git prints
+  `branch <ref>` raw) vanishes from the tree, and `strict: true` returns nil for the whole
+  listing (rollback then keeps everything, prune skips the project: safe, but silent).
+  Validate only the `worktree` line and drop or scrub just the bad field. *Why:* a
+  Linux-only crash path in the sidebar's helpers, and an invisible row.
+  *Context:* v0.55.3 item 3 caller audit; ship 4 red team. **Priority:** P3.
 
 - **`keep_branch`'s listing and its delete aren't one step.** *What:* between
   `Git.worktrees(strict: true)` and `update-ref --no-deref -d`, another process could check
@@ -550,6 +555,15 @@ safe today; each is narrow).
   raw `bin_path` never matches and switchboard's own binding is recorded as a clobber
   (doctor then warns about itself). Unescape the binding before matching. *Why:* a false
   warning, not a lost key; pre-existing. *Context:* v0.55.3 pass-3 red team. **Priority:** P4.
+
+- **`uninstall` says Done over a codex config it can't read from the start.**
+  *What:* `step_codex_unhooks` returns early when `CodexHook.installed?` is false, and that
+  reads false for an unreadable `config.toml`, so uninstall exits 0 with our block still in
+  the file. Only a file that turns unreadable mid-uninstall is reported. *Why:* a silent
+  success, though an inert one (codex can't read the file either). *Cons of the obvious
+  fix:* treating "unreadable" as a failure would fail uninstall on every run for someone
+  whose unreadable `config.toml` never held our block; a fix needs a way to say "couldn't
+  check" without failing. *Context:* ship 4 red team, deferred by the user. **Priority:** P4.
 
 ## Agent CLI hooks (Claude 2.1.301 / Codex 0.163 compat review) follow-ups
 

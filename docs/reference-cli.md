@@ -125,7 +125,7 @@ codex wrote inside it, and `/hooks` approvals for other hook files, stay (moved 
 just above where the block was). If the block can't be removed safely, or codex
 rewrites the file mid-run, `uninstall` stops before removing anything else and
 exits 1; fix what the ✗ line names, then re-run it. If the removal itself fails to
-write (or the codex config can't be read), the rest of the uninstall still runs, the
+write (or the codex config turns unreadable mid-run), the rest of the uninstall still runs, the
 closing line reads `Done, except the codex hooks (✗ above)`, and it exits 1.
 
 ### `switchboard init`

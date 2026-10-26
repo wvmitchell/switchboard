@@ -150,7 +150,8 @@ cleaned by `switchboard prune` — see [How-to: housekeeping](howto-housekeeping
   only what it can prove that build made (a tree on its branch with no commits, and
   that branch); anything else is kept and named in the message ("kept … (it has
   commits)"), so nothing of yours is deleted. If someone else made the same folder or
-  branch mid-build, the build just retries under a new name.
+  branch mid-build, the build usually retries under a new name; when it can't tell
+  whose the leftovers are, it fails instead, and the ✘ names what it kept.
 - **PR badge missing for a worktree.** Badges come from `gh` and are cached. Press
   `R` to force a refresh; run `switchboard doctor` to check `gh` auth and cache
   age. A PR merged/closed *on GitHub* needs an explicit `R` (no local signal

@@ -47,8 +47,9 @@ refer to the project's earlier, private repository; the public tracker starts at
 - `doctor` run outside a worktree now shows the global codex hooks rows (the trust count
   and any advice) when the block is installed. They used to appear only inside a worktree.
 - `uninstall` now exits 1 when it can't remove the codex hooks block, and says "Done,
-  except the codex hooks", like `install` does for the same failure (an unreadable codex
-  config counts too). It still finishes the rest of the uninstall.
+  except the codex hooks", like `install` does for the same failure (a codex config that
+  turns unreadable mid-uninstall counts too). It still finishes the rest of the uninstall.
+
 ## [0.55.2] — the QR overlay keeps the switchboard header (2026-10-24)
 
 ### Changed

@@ -185,10 +185,11 @@ module Switchboard
         end
         unless dest
           park(rec["id"], taken) # nothing free: still never left on someone's folder
-          break
+          return [nil, nil, "no free workspace name"]
         end
       end
-      [nil, nil, "no free workspace name"]
+      # Racers took every name we tried: say what git said, not that names ran out.
+      [nil, nil, err ? "#{err}; gave up after #{PLACEHOLDER_TRIES} tries" : "no free workspace name"]
     end
 
     # A failed build must never name a folder that's someone else's: their row would wear our

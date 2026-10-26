@@ -1157,6 +1157,26 @@ module Switchboard
       refute Creation.unfinished_at?(theirs)
     end
 
+    # Value: protects=a build that lost every try to a racer names git's error, not "no free
+    # workspace name"; fails_when=the exhausted loop drops err; why_new=ship 4 state machines
+    # (retries_exhausted_by_racers x work); seam=add_worktree; no_claim=a real concurrent writer
+    def test_racer_collisions_on_every_try_name_the_last_git_error
+      repo = temp_git_repo("proj", origin: true)
+      config = config_for(repo)
+      rec = dispatch(config)
+      racer = lambda do |_c, _p, _n, dest, _base, **|
+        FileUtils.mkdir_p(dest)
+        [false, "'#{dest}' already exists"]
+      end
+      with_fake_tmux { stub_method(Creator, :add_worktree, racer) { Creator.work(config, rec["id"]) } }
+      found = Creation.find(rec["id"])
+      assert_equal "failed", found["state"]
+      assert_includes found["detail"], "already exists"
+      assert_includes found["detail"], "gave up after #{Creator::PLACEHOLDER_TRIES} tries"
+      refute found["worktree_added"]
+      refute_path_exists found["path"], "left on a fresh name nobody made"
+    end
+
     # Value: protects=when git says "already exists" but a tree on our branch sits at dest
     # (a failing hook printing git's words after a real checkout, or a workspace renamed onto
     # the placeholder), nothing is removed or retried and the record stays to guard it: no
