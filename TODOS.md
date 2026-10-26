@@ -514,10 +514,10 @@ safe today; each is narrow).
 
 ## Silent failures (v0.56.3) follow-ups
 
-- **State-dir globs break on a path with glob characters.** *What:* nine `Dir.glob` calls
+- **State-dir globs break on a path with glob characters.** *What:* ten `Dir.glob` calls
   build their pattern from a state dir (`creation.rb` `all`, `agent_state.rb`, `notify.rb`,
-  `monitoring.rb`, `pending_delete.rb`, `keyed_marker_store.rb`,
-  `Sidebar#dir_fingerprint`); switch each to `Dir.glob(pattern, base: dir)` the way
+  `monitoring.rb`, `pending_delete.rb`, `keyed_marker_store.rb`, `offstage_hold.rb`,
+  `Sidebar#dir_fingerprint`; grep `Dir.glob(File.join` for the rest); switch each to `Dir.glob(pattern, base: dir)` the way
   `ClaudeSessions.session_files` now does. *Why:* an `XDG_STATE_HOME` containing `[`, `{`, `*`
   or `?` makes them match nothing; worst is `Creation.all` coming back empty, which drops a
   failed build's guard (`certified?(nil)` lets re-entry start the agent un-set-up).
@@ -631,6 +631,21 @@ safe today; each is narrow).
   "A branch named 'x' already exists." differently, so the clash checks miss it there.
   *Why:* each fails safe, mislabels, or predates the branch. *Context:* ship 7 Claude
   adversarial and red-team reviews, deferred by the user. **Priority:** P3 for (a) and (c),
+  P4 for the rest.
+
+- **Ship 8 edges.** *What:* (a) a placeholder landing on a folder someone `rm -rf`'d without
+  `git worktree prune` fails the create with git's last line ("use 'add -f' to override, or
+  'prune' or 'remove' to clear"), which drops the path, and isn't retried under a fresh name;
+  read git's `fatal:` line and treat "is a missing but already registered worktree" as a
+  collision; (b) a relative `SWITCHBOARD_CONFIG` expands against a different directory in the
+  tmux server than in the shell, so `bound_from?` never matches and key drift is never
+  flagged, and a `~nosuchuser/...` value raises out of `tmux-bind` after the binds ran;
+  (c) widens ship 7 (a): `Config.add_project` reads a top-level `false` as `{}` and rewrites
+  the file with only the new project, dropping `worktree_root` and every comment (check
+  `load_error` before writing); (d) on a tmux too old for `list-keys -- KEY`, the whole-table
+  fallback can't match a quoted `"C-;"` (tmux 3.8 prints it quoted), so `upgrade` would loop
+  on a `C-;` toggle there (design note (f) above). *Why:* each fails safe or is pre-existing.
+  *Context:* ship 8 Claude adversarial review, deferred by the user. **Priority:** P3 for (c),
   P4 for the rest.
 
 ## Agent CLI hooks (Claude 2.1.301 / Codex 0.163 compat review) follow-ups

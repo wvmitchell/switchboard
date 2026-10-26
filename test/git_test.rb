@@ -213,6 +213,16 @@ module Switchboard
     # The point of the fail-closed twin: an undeterminable status (not a repo / git
     # errored) is NOT clean, so the destructive delete prompts to force rather than
     # silently skipping the guard — unlike dirty?, which reads a git error as "clean".
+    # Value: protects=a new untracked file counts as a change even when the user's git config
+    # hides untracked files from status; fails_when=clean? runs a bare `status --porcelain`;
+    # why_new=ship 8 Codex adversarial (a failed create force-removed such a draft); seam=none
+    def test_clean_sees_untracked_files_even_when_status_hides_them
+      repo = temp_git_repo
+      git(repo, "config", "status.showUntrackedFiles", "no")
+      File.write(File.join(repo, "draft.txt"), "x")
+      refute Git.clean?(repo)
+    end
+
     def test_clean_is_false_when_status_cannot_be_determined
       refute Git.clean?(path("notarepo")), "git error ⇒ not clean (fail-closed)"
       assert Git.dirty?(path("notarepo")) == false, "dirty? stays fail-open (reads as clean)"

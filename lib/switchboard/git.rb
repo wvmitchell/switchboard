@@ -60,8 +60,10 @@ module Switchboard
     # status failed") would read as clean and skip the "you have uncommitted changes"
     # prompt. So here a non-zero exit ⇒ not clean ⇒ the caller prompts to force. Still
     # fast: porcelain skips fully-ignored dirs, so a huge node_modules doesn't stall.
+    # The flags override a user's status.showUntrackedFiles=no / submodule ignores, which
+    # would read a tree holding new files as clean.
     def clean?(worktree)
-      out = capture(worktree, "status", "--porcelain")
+      out = capture(worktree, "status", "--porcelain", "--untracked-files=normal", "--ignore-submodules=none")
       ok = $?&.success? # set by capture's backtick; grab before anything else runs
       !!ok && out.b.strip.empty?
     end
@@ -171,7 +173,9 @@ module Switchboard
     # `locked:` adds the second --force git needs for a locked tree (an add killed
     # mid-checkout leaves its "initializing" lock behind).
     def remove_worktree(repo, path, force: false, locked: false)
-      args = ["git", "-C", repo, "worktree", "remove"]
+      # Unforced, git refuses a tree with changes; untracked files count even when the user's
+      # status.showUntrackedFiles=no would hide them (git then deletes them without a word).
+      args = ["git", "-c", "status.showUntrackedFiles=all", "-C", repo, "worktree", "remove"]
       args << "--force" if force
       args << "--force" if force && locked
       args << path

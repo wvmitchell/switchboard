@@ -717,6 +717,27 @@ module Switchboard
       end
       assert_includes note.to_s, "#{dest} (it has changes)"
       assert_path_exists dest
+
+      # Extended (ship 8 Codex adversarial): a git config that hides untracked files from status
+      # can't make a hook's or editor's new file read as clean, and a file that appears after
+      # the clean check makes git itself refuse the (unforced) removal.
+      git(repo, "config", "status.showUntrackedFiles", "no")
+      dest = path("wts", "hidden")
+      git(repo, "worktree", "add", "-q", "-b", "hidden", dest, "main")
+      File.write(File.join(dest, "draft.txt"), "a hook's output, or yours")
+      note = Creator.undo_add(config.project("proj"), dest, "hidden", Git.rev_parse(repo, "main"))
+      assert_includes note.to_s, "#{dest} (it has changes)"
+      assert_path_exists File.join(dest, "draft.txt")
+
+      dest = path("wts", "late")
+      git(repo, "worktree", "add", "-q", "-b", "late", dest, "main")
+      File.write(File.join(dest, "draft.txt"), "written after the check")
+      note = stub_method(Git, :clean?, ->(_w) { true }) do # it was clean when checked
+        Creator.undo_add(config.project("proj"), dest, "late", Git.rev_parse(repo, "main"))
+      end
+      assert_includes note.to_s, "#{dest} (couldn't remove it)"
+      assert_path_exists File.join(dest, "draft.txt")
+      assert Git.branch_exists?(repo, "late"), "its branch stays with the kept tree"
     end
 
     # Value: protects=the rollback forces past only git's own lock from a killed add
@@ -1089,6 +1110,16 @@ module Switchboard
       end
       assert_equal "kept branch unlisted (couldn't list worktrees)", note
       assert Git.branch_exists?(repo, "unlisted")
+
+      # Extended (ship 7 coverage audit): an EMPTY strict listing is a failure too (a repo always
+      # lists its main worktree). Value: protects=an empty strict listing keeps the branch;
+      # fails_when=keep_branch checks only nil; why_new=only the nil listing was stubbed;
+      # seam=Git.worktrees
+      note = stub_method(Git, :worktrees, ->(_repo, strict: false) { [] }) do
+        Creator.undo_add(config.project("proj"), path("wts", "never"), "unlisted", Git.rev_parse(repo, "main"))
+      end
+      assert_equal "kept branch unlisted (couldn't list worktrees)", note
+      assert Git.branch_exists?(repo, "unlisted")
     end
 
     # Value: protects=a timed-out add that leaves a tree with a commit is kept, named, and
@@ -1316,29 +1347,67 @@ module Switchboard
     # un-set-up tree without a record, no one's work deleted; fails_when=the collision check
     # retries, or rolls the tree back as ours; why_new=ship 3 D5 then D7 (pass 3 data loss);
     # seam=add_worktree; no_claim=a real hook or rename race
+    # Extended (ship 7 coverage audit): git's PATH-worded line too, not only the branch one.
+    # Value: protects=a path-worded already-exists over our-branch tree keeps it all;
+    # fails_when=the guard reads only the branch wording (a path-worded spoof then moves
+    # the record off and leaves the tree unguarded); why_new=only the branch wording was
+    # faked; seam=add_worktree
     def test_an_already_exists_over_a_tree_on_our_branch_keeps_it_all
       repo = temp_git_repo("proj", origin: true)
       config = config_for(repo)
-      rec = dispatch(config)
-      branch = Creator.branch_for(config, rec["name"])
       run_git = method(:git)
-      calls = 0
-      spoof = lambda do |_c, p, _n, dest, base, **|
-        next [false, "a retry ran"] if (calls += 1) > 1
+      [->(b, _d) { "a branch named '#{b}' already exists" }, ->(_b, d) { "'#{d}' already exists" }].each_with_index do |words, i|
+        rec = dispatch(config)
+        branch = Creator.branch_for(config, rec["name"])
+        calls = 0
+        spoof = lambda do |_c, p, _n, dest, base, **|
+          next [false, "a retry ran"] if (calls += 1) > 1
 
-        run_git.call(p["path"], "worktree", "add", "-q", "-b", branch, dest, base)
-        File.write(File.join(dest, "wip.txt"), "uncommitted") # whoever's it is
-        [false, "a branch named '#{branch}' already exists"]
+          run_git.call(p["path"], "worktree", "add", "-q", "-b", branch, dest, base)
+          File.write(File.join(dest, "wip.txt"), "uncommitted") # whoever's it is
+          [false, words.call(branch, dest)]
+        end
+        with_fake_tmux { stub_method(Creator, :add_worktree, spoof) { Creator.work(config, rec["id"]) } }
+        found = Creation.find(rec["id"])
+        assert_equal "failed", found["state"], i
+        assert_equal rec["path"], found["path"], "#{i}: no retry: the record stays and guards it"
+        assert_includes found["detail"], "(can't tell whose they are)", i
+        assert_path_exists File.join(rec["path"], "wip.txt"), "#{i}: nothing removed"
+        assert Git.branch_exists?(repo, branch), i
+        assert found["worktree_added"], "#{i}: guarded: re-entry opens a plain shell"
+        assert Creation.unfinished_at?(rec["path"]), i
       end
-      with_fake_tmux { stub_method(Creator, :add_worktree, spoof) { Creator.work(config, rec["id"]) } }
-      found = Creation.find(rec["id"])
-      assert_equal "failed", found["state"]
-      assert_equal rec["path"], found["path"], "no retry: the record stays and guards it"
-      assert_includes found["detail"], "(can't tell whose they are)"
-      assert_path_exists File.join(rec["path"], "wip.txt"), "nothing removed"
-      assert Git.branch_exists?(repo, branch)
-      assert found["worktree_added"], "guarded: re-entry opens a plain shell"
-      assert Creation.unfinished_at?(rec["path"])
+    end
+
+    # Value: protects=a failing hook whose last line is git's "already exists" wording naming
+    # ANOTHER branch or path is the hook's failure, not a race: the build fails once with that
+    # line and its fresh tree is rolled back; fails_when=add_reserved reads "already exists"
+    # loosely (or passes the wrong name to preexisted?), so the hook's tree is kept as
+    # "can't tell whose" or the build retries; why_new=only undo_add saw these lines, never
+    # work's call site; seam=add_worktree; no_claim=a real post-checkout hook
+    def test_a_hook_line_naming_another_branch_or_path_fails_the_build_once
+      repo = temp_git_repo("proj", origin: true)
+      config = config_for(repo)
+      run_git = method(:git)
+      ["a branch named 'other' already exists", "'#{path('wts', 'elsewhere')}' already exists"].each do |line|
+        rec = dispatch(config)
+        branch = Creator.branch_for(config, rec["name"])
+        calls = 0
+        hook = lambda do |_c, p, _n, dest, base, **|
+          next [false, "a retry ran"] if (calls += 1) > 1
+
+          run_git.call(p["path"], "worktree", "add", "-q", "-b", branch, dest, base) # checkout done, hook failed
+          [false, line]
+        end
+        with_fake_tmux { stub_method(Creator, :add_worktree, hook) { Creator.work(config, rec["id"]) } }
+        found = Creation.find(rec["id"])
+        assert_equal 1, calls, "#{line}: no retry"
+        assert_equal "failed", found["state"], line
+        assert_equal rec["path"], found["path"], line
+        assert_equal line, found["detail"], "git's line alone: nothing kept"
+        refute_path_exists rec["path"], line
+        refute Git.branch_exists?(repo, branch), line
+      end
     end
 
     # Value: protects=the branch check and the delete being one step; fails_when=delete_branch_at

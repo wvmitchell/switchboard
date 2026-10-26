@@ -245,7 +245,9 @@ module Switchboard
         elsif lock.nil? && !Git.clean?(dest) # fail-closed: a status error keeps it too
           kept << "#{dest} (it has changes)"
         else
-          Git.remove_worktree(repo, dest, force: true, locked: !lock.nil?)
+          # Forced only past git's own lock (a half checkout); otherwise git itself refuses if
+          # anything appeared since the clean check.
+          Git.remove_worktree(repo, dest, force: !lock.nil?, locked: !lock.nil?)
           kept << "#{dest} (couldn't remove it)" if File.exist?(dest)
         end
       end

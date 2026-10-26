@@ -397,8 +397,10 @@ it. Anything else is rolled back by `undo_add`, which removes only what it can P
 is this create's — the tree only when it's on our branch with no commits past the
 base commit the add started from (`Git.rev_parse`, captured before), dirty only while
 git's own `initializing` lock says the checkout never finished (past checkout the row is
-enterable, so changes are kept like a commit, fail-closed `Git.clean?`), and a lock only
-when it's that `initializing` one from a killed add, never someone else's), the branch only atomically at that commit (`Git.delete_branch_at`
+enterable, so changes are kept like a commit, fail-closed `Git.clean?` counting untracked
+files whatever the user's status config, and the removal unforced so git refuses anything
+that appeared since), and a lock only when it's that `initializing` one from a killed add,
+never someone else's; the branch only atomically at that commit (`Git.delete_branch_at`
 = `update-ref --no-deref -d <ref> <sha>`, never a symref's target, then its
 `branch.<name>` config, as `branch -D` would) and only when one
 strict worktree read (`Git.worktrees(strict: true)`: nil on a failed run or a path it
