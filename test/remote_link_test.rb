@@ -448,6 +448,11 @@ module Switchboard
       assert_equal 1, scan([w])[w]&.size, "scan"
       refute_nil RemoteLink.fingerprint({}, stale_after: STALE).first, "fingerprint"
       assert_equal 1, as_claude { RemoteLink.health }[:linked], "health"
+      # Extended (ship 7 Codex structured): the sidebar's path, one shared ClaudeSessions read
+      # handed to RemoteLink (and the ◷ warm gate), not only RemoteLink's own read.
+      shared = stub_method(Agents, :cwds_of, ->(*) { {} }) { ClaudeSessions.scan([w]) }
+      assert_equal 1, scan([w], sessions: shared)[w]&.size, "shared scan"
+      refute_empty ClaudeSessions.fingerprint({}, [w]), "◷ fingerprint"
     end
 
     def test_health_counts_files_shape_links_and_start_time_drift

@@ -383,8 +383,9 @@ whose session died opens a plain shell with the reason instead. The worker never
 a session on a dead server (the record's `server` socket gone: a `kill-server` mid-build
 would otherwise start a headless server and run the agent there), and it discards a tree
 canceled before the launcher claimed it. A failed `worktree add` is a collision when
-the dir or branch existed BEFORE it, or when git itself says "already exists"
-(someone made it in between): the build retries under a fresh placeholder (up to
+the dir or branch existed BEFORE it, or when git itself says "already exists" about OUR
+branch or path, exactly (someone made it in between; a hook line naming anything else is
+not git's): the build retries under a fresh placeholder (up to
 `PLACEHOLDER_TRIES`; racers taking every one fail it with git's last error plus "gave
 up after N tries", not "no free workspace name"), and any give-up afterwards moves the record to a fresh name or parks it (`move_off`/`park`,
 `.unbuilt-<id>`), so a ✘ never sits on someone else's folder. git's "already exists"

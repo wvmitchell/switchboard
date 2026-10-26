@@ -723,8 +723,10 @@ module Switchboard
       assert_includes note.to_s, "#{dest} (it's locked)"
 
       # Extended (ship 6 Codex adversarial): git's marker padded past what's read, or with
-      # whitespace around it, is someone's lock; only the exact marker is git's own.
-      ["initializing#{' ' * 4096}claimed by user", " initializing ", "initializing\n\n"].each_with_index do |text, j|
+      # whitespace around it, is someone's lock; only the exact marker is git's own. Ship 7
+      # Codex: a carriage return too, which `chomp` would drop along with git's newline.
+      ["initializing#{' ' * 4096}claimed by user", " initializing ", "initializing\n\n",
+       "initializing\r\n", "initializing\r"].each_with_index do |text, j|
         dest = path("wts", "padded#{j}")
         git(repo, "worktree", "add", "-q", "-b", "padded#{j}", dest, "main")
         File.write(File.join(dest, "edit.txt"), "uncommitted")
@@ -881,7 +883,10 @@ module Switchboard
     def test_undo_add_still_cleans_up_after_a_timeout_or_a_noisy_hook
       repo = temp_git_repo("proj", origin: true)
       config = config_for(repo)
-      ["timed out after 120s", "post-checkout: 'node_modules' already exists, skipping"].each_with_index do |err, i|
+      # Extended (ship 7 Claude + Codex adversarial): a hook's last line in git's exact words, but
+      # naming another branch or path, is still the hook's, not git's.
+      ["timed out after 120s", "post-checkout: 'node_modules' already exists, skipping",
+       "a branch named 'other' already exists", "'#{path('wts', 'elsewhere')}' already exists"].each_with_index do |err, i|
         dest = path("wts", "ours-#{i}")
         git(repo, "worktree", "add", "-q", "-b", "ours-#{i}", dest, "main")
         File.write(File.join(dest, "partial.bin"), "half a checkout")

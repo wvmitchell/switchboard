@@ -40,11 +40,8 @@ module Switchboard
       ClaudeSessions.sessions_dir
     end
 
-    # Every session file. `base:` keeps the dir out of the pattern: a CLAUDE_CONFIG_DIR like
-    # `~/cfg [work]` would otherwise read its brackets as glob syntax and match nothing.
     def session_files
-      dir = sessions_dir
-      Dir.glob("*.json", base: dir).map { |f| File.join(dir, f) }
+      ClaudeSessions.session_files
     end
 
     # { ws_path => [Link, …] } for the tracked worktrees with a LIVE linked session,

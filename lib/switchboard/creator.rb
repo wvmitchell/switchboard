@@ -12,12 +12,6 @@ module Switchboard
     module_function
 
     PLACEHOLDER_TRIES = 5 # bounded retries past a generated name already taken
-    # git's own last line (English) when something existed before its `worktree add -b`;
-    # anchored, so a failing hook whose output merely mentions it can't match. The two mean
-    # different things: a branch clash stops git before it makes anything, but a path clash
-    # comes AFTER git cut our new branch.
-    BRANCH_PREEXISTED = /\Aa branch named '.+' already exists\z/
-    PATH_PREEXISTED = /\A'.+' already exists\z/
 
     # Wire the per-worktree agent hooks (agent-state reporter + the #92 self-naming nudge
     # + the background-presence monitoring nudge/clears), scoped to this worktree, never
@@ -156,7 +150,7 @@ module Switchboard
         return [name, dest, nil] if ok
 
         unless clash
-          theirs = preexisted?(err.to_s)
+          theirs = preexisted?(err.to_s, dest, branch)
           # git's "already exists" means it made nothing there. A tree on our branch at dest
           # anyway is either someone's (a workspace renamed onto this placeholder) or ours under
           # a failing hook that printed git's words; they can't be told apart, so nothing is
@@ -168,7 +162,7 @@ module Switchboard
           kept = undo_add(project, dest, branch, base_sha, err)
           # Retry only when nothing of ours stayed behind: past a path clash, a branch git cut
           # for us that the rollback had to keep is ours, and the ✘ must name it.
-          collided = theirs && !(err.match?(PATH_PREEXISTED) && Git.branch_exists?(project["path"], branch))
+          collided = theirs && !(path_preexisted?(err, dest) && Git.branch_exists?(project["path"], branch))
           unless collided
             move_off(config, rec, dest) if theirs
             return [nil, nil, [err, kept].compact.join("; ")] # a refused leftover is said, not silent
@@ -225,13 +219,13 @@ module Switchboard
       repo = project["path"]
       err = git_error.to_s
       kept = []
-      if err.match?(BRANCH_PREEXISTED) # git made nothing: the branch (and any tree) is someone's
+      if branch_preexisted?(err, branch) # git made nothing: the branch (and any tree) is someone's
         kept << "#{dest} (it was there before)" if File.exist?(dest)
         kept << "branch #{branch} (it was there before)" if Git.branch_exists?(repo, branch)
         return kept.empty? ? nil : "kept #{kept.join(' and ')}"
       end
 
-      if err.match?(PATH_PREEXISTED) # someone's path; the branch git just cut is ours
+      if path_preexisted?(err, dest) # someone's path; the branch git just cut is ours
         kept << "#{dest} (it was there before)" if File.exist?(dest)
       elsif File.exist?(dest) && Git.current_branch(dest) != branch
         kept << "#{dest} (not on this create's branch)" # a half-registered tree, or someone's: say so
@@ -259,8 +253,20 @@ module Switchboard
     end
 
     # git's failure says the path or branch was already there (someone made it after our check).
-    def preexisted?(git_error)
-      git_error.match?(PATH_PREEXISTED) || git_error.match?(BRANCH_PREEXISTED)
+    def preexisted?(git_error, dest, branch)
+      path_preexisted?(git_error, dest) || branch_preexisted?(git_error, branch)
+    end
+
+    # git's own last line (English) when what it was given existed before its `worktree add -b`.
+    # Exact, and naming OUR branch or path (git echoes its argument), so a failing hook whose
+    # last line looks like git's can't pass for it. The two mean different things: a branch
+    # clash stops git before it makes anything, but a path clash comes AFTER git cut our branch.
+    def branch_preexisted?(git_error, branch)
+      git_error.b == "a branch named '#{branch}' already exists".b
+    end
+
+    def path_preexisted?(git_error, dest)
+      git_error.b == "'#{dest}' already exists".b
     end
 
     # Delete our branch when it's provably free at base (nil); otherwise why it stays.
@@ -289,7 +295,7 @@ module Switchboard
     # not pin the row on ◌ with no way out but `d`.
     def add_worktree(config, project, name, dest, base, timeout: ADD_DEADLINE)
       Tempfile.create("sb-add") do |log|
-        # English messages whatever git's language, so the *_PREEXISTED checks can read the failure; only
+        # English messages whatever git's language, so the *_preexisted? checks can read the failure; only
         # the message catalog changes (LC_CTYPE, paths and checkout are untouched).
         pid = Process.spawn({ "GIT_TERMINAL_PROMPT" => "0", "LANGUAGE" => "en" },
                             "git", "-C", project["path"], "worktree", "add", "--no-track",

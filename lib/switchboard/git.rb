@@ -237,7 +237,7 @@ module Switchboard
       raw = File.binread(lock, 4097).to_s
       return "" if raw.bytesize > 4096
 
-      raw.b.force_encoding(Encoding::UTF_8).scrub.chomp
+      raw.b.force_encoding(Encoding::UTF_8).scrub.delete_suffix("\n") # chomp would eat a \r too
     rescue StandardError
       ""
     end

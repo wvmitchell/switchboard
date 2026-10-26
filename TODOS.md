@@ -518,7 +518,7 @@ safe today; each is narrow).
   build their pattern from a state dir (`creation.rb` `all`, `agent_state.rb`, `notify.rb`,
   `monitoring.rb`, `pending_delete.rb`, `keyed_marker_store.rb`,
   `Sidebar#dir_fingerprint`); switch each to `Dir.glob(pattern, base: dir)` the way
-  `RemoteLink.session_files` now does. *Why:* an `XDG_STATE_HOME` containing `[`, `{`, `*`
+  `ClaudeSessions.session_files` now does. *Why:* an `XDG_STATE_HOME` containing `[`, `{`, `*`
   or `?` makes them match nothing; worst is `Creation.all` coming back empty, which drops a
   failed build's guard (`certified?(nil)` lets re-entry start the agent un-set-up).
   *Pros:* mechanical, one test per store. *Cons:* touches every store. *Context:* found in
@@ -613,6 +613,25 @@ safe today; each is narrow).
   the user's own checkout hooks; (e) a config.yml of literal `null`/`~` reads as empty (YAML's
   meaning) rather than broken. *Why:* all fail safe or only mislabel; none loses work.
   *Context:* ship 6 Claude + Codex adversarial reviews, deferred. **Priority:** P4.
+
+- **More rollback and config edges (ship 7).** *What:* (a) `Config.add_project` /
+  `remove_project` read config.yml raw, so a top level that isn't a map (a list, or one
+  string after a dropped colon) raises a Ruby error out of `add` and sidebar `a` instead of
+  `load_error_message` (pre-existing; `load_data` now calls that file broken); (b) when a
+  clash leads `add_reserved` to retry under a new name, the `kept` text `undo_add` returned
+  is dropped, so anything it kept goes unnamed; (c) the "can't tell whose they are" return
+  skips `move_off`, so if the tree really is a workspace renamed onto the placeholder, its
+  row keeps our ✘ and `d` there can force-remove a clean live workspace; (d) `run_tmux`
+  escapes ANY argument ending in `;`, including the `@switchboard-config-path` value, so a
+  config path ending in `\;` never matches `bound_from?` (escape only key arguments);
+  (e) `upgrade` re-runs "finishing setup" forever when the fragment is wired here but its
+  bind fails, since `finish` never re-checks `key_drift?` after `reload_fragment`; (f) a
+  `locked` entry that isn't a regular file (a dir or FIFO) reads as unlocked, so the ✘ says
+  "(couldn't remove it)" instead of "(it's locked)"; (g) git older than about 2.17 words
+  "A branch named 'x' already exists." differently, so the clash checks miss it there.
+  *Why:* each fails safe, mislabels, or predates the branch. *Context:* ship 7 Claude
+  adversarial and red-team reviews, deferred by the user. **Priority:** P3 for (a) and (c),
+  P4 for the rest.
 
 ## Agent CLI hooks (Claude 2.1.301 / Codex 0.163 compat review) follow-ups
 

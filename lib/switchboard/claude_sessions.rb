@@ -46,6 +46,13 @@ module Switchboard
       File.join(ClaudeHistory.claude_root, "sessions")
     end
 
+    # Every session file. `base:` keeps the dir out of the pattern: a CLAUDE_CONFIG_DIR like
+    # `~/cfg [work]` would otherwise read its brackets as glob syntax and match nothing.
+    def session_files
+      dir = sessions_dir
+      Dir.glob("*.json", base: dir).map { |f| File.join(dir, f) }
+    end
+
     # { ws_path => [record, …] } for the tracked worktrees with a LIVE session, or nil
     # when the scan itself failed (callers must not read "failed" as "no sessions": a
     # held chime would ring). `cheap:` is any off-screen scan (the sidebar passes
@@ -102,7 +109,7 @@ module Switchboard
     # RemoteLink.fingerprint.
     def fingerprint(cache, ws_paths)
       roots = ws_paths.each_with_object({}) { |p, h| h[real(p).b] = p; h[p.to_s.b] ||= p }
-      files = Dir.glob(File.join(sessions_dir, "*.json"))
+      files = session_files
       cache.select! { |f, _| files.include?(f) }
       files.filter_map do |f|
         st = File.stat(f)
@@ -126,7 +133,7 @@ module Switchboard
 
     # Every shaped session file, parsed. One odd file loses only itself.
     def records
-      Dir.glob(File.join(sessions_dir, "*.json")).filter_map do |f|
+      session_files.filter_map do |f|
         record(read_json(f))
       rescue StandardError
         nil
