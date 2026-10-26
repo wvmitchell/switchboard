@@ -736,7 +736,9 @@ Two consequences of codex being global:
   outside the block (they head the next table); comments INSIDE the managed block are regenerated
   away (dec-3417a712). A refusal also fails the command (exit 1: `install` after
   its other steps, `uninstall` before any, `enable-hooks`). `uninstall` runs the codex step FIRST and stops on a refusal,
-  so its "re-run uninstall" advice can't point at a command it already unlinked. A begin
+  so its "re-run uninstall" advice can't point at a command it already unlinked. A write that
+  fails instead (a read-only config, or one that turns unreadable mid-run) is `:failed`: the rest
+  of uninstall still runs, it ends "Done, except the codex hooks" and exits 1. A begin
   marker without its end line is refused as `:unsafe` (checked before the collision guard,
   which would otherwise misread our own `[hooks]` as foreign).
 - **Nesting (#130).** A global hook fires for EVERY codex, including a nested `codex exec`

@@ -230,7 +230,12 @@ module Switchboard
       return nil unless $?&.success? && !gitdir.empty?
 
       lock = File.join(gitdir, "locked")
-      File.file?(lock) ? File.read(lock, encoding: Encoding::UTF_8).strip : nil
+      return nil unless File.file?(lock)
+
+      # The reason is free text (any bytes, any length); a lock we can't read is still a lock.
+      File.binread(lock, 4096).to_s.b.force_encoding(Encoding::UTF_8).scrub.strip # nil when empty
+    rescue SystemCallError
+      ""
     end
 
     # A local branch by this name already exists. Used to pre-check a rename target

@@ -87,7 +87,9 @@ module Switchboard
     # Value: protects=a rolled-back branch takes its config with it, so an upstream a hook set
     # can't ride along to the next branch cut under the same name (a plain push to it);
     # fails_when=delete_branch_at drops the ref but not branch.<name>.*; why_new=ship 5 Codex
-    # adversarial rerun (branch -D did this; update-ref doesn't); seam=none
+    # adversarial rerun (branch -D did this; update-ref doesn't); seam=none. Extended (ship 5
+    # coverage audit): a refused delete (the branch moved) keeps its config — that branch is
+    # someone's; fails_when=the config removal runs whether or not update-ref deleted the ref
     def test_delete_branch_at_drops_the_branchs_config
       repo = temp_git_repo("app")
       main = Git.rev_parse(repo, "main")
@@ -97,6 +99,12 @@ module Switchboard
       assert Git.delete_branch_at(repo, "wv/x", main)
       refute Git.branch_exists?(repo, "wv/x")
       assert_empty `git -C #{Shellwords.escape(repo)} config --get-regexp '^branch\\.wv/x\\.' 2>/dev/null`
+
+      git(repo, "commit", "-q", "--allow-empty", "-m", "moved")
+      git(repo, "branch", "wv/y", "main")
+      git(repo, "config", "branch.wv/y.remote", "origin")
+      refute Git.delete_branch_at(repo, "wv/y", main), "wv/y moved past the old sha"
+      assert_equal "origin", git(repo, "config", "branch.wv/y.remote").strip
     end
 
     # Value: protects=destructive callers can tell a failed listing from an empty one; fails_when=

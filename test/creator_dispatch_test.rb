@@ -689,16 +689,18 @@ module Switchboard
     # Value: protects=the rollback forces past only git's own lock from a killed add
     # ("initializing"), never a lock someone else put on the tree; fails_when=undo_add
     # double-forces any locked tree (it once did unconditionally); why_new=ship 5 Codex
-    # adversarial rerun; seam=none
+    # adversarial rerun; seam=none. Extended (ship 5 coverage audit): a plain `git worktree
+    # lock` (no reason, an empty lock file) is someone's lock too; fails_when=an empty reason
+    # reads as unlocked or as git's own
     def test_undo_add_forces_past_only_gits_own_initializing_lock
       repo = temp_git_repo("proj", origin: true)
       config = config_for(repo)
       base = Git.rev_parse(repo, "main")
-      { "initializing" => false, "someone's work" => true }.each_with_index do |(reason, kept), i|
+      { "initializing" => false, "someone's work" => true, nil => true }.each_with_index do |(reason, kept), i|
         dest = path("wts", "locked#{i}")
         git(repo, "worktree", "add", "-q", "-b", "locked#{i}", dest, "main")
         File.write(File.join(dest, "edit.txt"), "uncommitted") # dirty, nothing committed
-        git(repo, "worktree", "lock", "--reason", reason, dest)
+        git(repo, "worktree", "lock", *(reason ? ["--reason", reason] : []), dest)
         note = Creator.undo_add(config.project("proj"), dest, "locked#{i}", base)
         if kept
           assert_path_exists dest, reason
@@ -709,6 +711,16 @@ module Switchboard
           refute Git.branch_exists?(repo, "locked#{i}")
         end
       end
+
+      # Extended (ship 6 testing + security): a reason that isn't UTF-8 (`--reason` takes any
+      # bytes) used to raise out of the rollback, leaving no ✘; it's someone's lock, so kept.
+      dest = path("wts", "latin")
+      git(repo, "worktree", "add", "-q", "-b", "latin", dest, "main")
+      git(repo, "worktree", "lock", dest)
+      File.binwrite(File.join(git(dest, "rev-parse", "--absolute-git-dir").strip, "locked"), "verrou \xE9".b)
+      note = Creator.undo_add(config.project("proj"), dest, "latin", base)
+      assert_path_exists dest
+      assert_includes note.to_s, "#{dest} (it's locked)"
     end
 
     # Value: protects=commits are never force-deleted by a rollback; fails_when=undo_add
