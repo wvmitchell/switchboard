@@ -38,7 +38,7 @@ module Switchboard
     def write_session(**over)
       FileUtils.mkdir_p(RemoteLink.sessions_dir)
       data = { "pid" => @sleeper, "sessionId" => "smoke", "cwd" => File.realpath(@wt), "kind" => "interactive",
-               "procStart" => ProcessIdentity.start_of(@sleeper), "status" => "busy",
+               "procStart" => ProcessIdentity.start_of(@sleeper), "status" => "idle", # busy beside a resting dot is a hand-off (◷)
                "statusUpdatedAt" => (Time.now.to_f * 1000).to_i, "bridgeSessionId" => LINK_ID }.merge(over)
       data.delete_if { |_, v| v.nil? }
       File.write(File.join(RemoteLink.sessions_dir, "#{@sleeper}.json"), JSON.generate(data))

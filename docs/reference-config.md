@@ -177,7 +177,7 @@ sounds:
 | Sub-key | Type | Default | Effect |
 |---------|------|---------|--------|
 | `enabled` | bool | `true` | `false` mutes all sounds (globally or per-project). |
-| `done` | sound spec | `train` | Sound when a hooked agent reaches `:done`. |
+| `done` | sound spec | `train` | Sound when a hooked agent reaches `:done`. A Claude turn that handed work to a background agent (`◷`) plays it once that work finishes. |
 | `waiting` | sound spec | `chime` | Sound when a hooked agent reaches `:waiting`. |
 | `alert` | sound spec | `alert` | Sound for a declared `switchboard monitoring notify` — a monitored agent surfacing something. Distinct from `done` so a "come look" reads differently than a finish. |
 | `failed` | sound spec | `failed` | Sound when a workspace dispatched with `n` fails to build, set up, or launch its agent (`✘`) — a soft falling two-note, the opposite shape of the rising chimes. A dispatch becoming ready plays `done`. |
@@ -405,6 +405,10 @@ Everything switchboard writes, and how to redirect it. State dirs follow XDG.
 | Config | `~/.config/switchboard/config.yml` | `$SWITCHBOARD_CONFIG` |
 | Agent-state files | `$XDG_STATE_HOME/switchboard/agents` → `~/.local/state/switchboard/agents` | `$SWITCHBOARD_STATE_DIR` |
 | Attention markers (bold-until-viewed) | `$XDG_STATE_HOME/switchboard/attention` → `~/.local/state/switchboard/attention` | `$SWITCHBOARD_ATTENTION_DIR` |
+| Monitoring markers (the `∞` dot) | `$XDG_STATE_HOME/switchboard/monitoring` → `~/.local/state/switchboard/monitoring` | `$SWITCHBOARD_MONITORING_DIR` |
+| Notify markers (`monitoring notify`) | `$XDG_STATE_HOME/switchboard/notify` → `~/.local/state/switchboard/notify` | `$SWITCHBOARD_NOTIFY_DIR` |
+| Held `◷` chimes (waiting on a background agent) | `$XDG_STATE_HOME/switchboard/offstage_hold` → `~/.local/state/switchboard/offstage_hold` | `$SWITCHBOARD_OFFSTAGE_HOLD_DIR` |
+| In-flight delete markers | `$XDG_STATE_HOME/switchboard/pending-delete` → `~/.local/state/switchboard/pending-delete` | `$SWITCHBOARD_PENDING_DELETE_DIR` |
 | Project-collapse folds | `$XDG_STATE_HOME/switchboard/collapse` → `~/.local/state/switchboard/collapse` | `$SWITCHBOARD_COLLAPSE_DIR` |
 | Background-create records (`n` dispatches) | `$XDG_STATE_HOME/switchboard/creation` → `~/.local/state/switchboard/creation` | `$SWITCHBOARD_CREATION_DIR` |
 | PR-badge cache | `$XDG_CACHE_HOME/switchboard/prs` → `~/.cache/switchboard/prs` | `$SWITCHBOARD_CACHE_DIR` |

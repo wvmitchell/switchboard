@@ -230,6 +230,31 @@ module Switchboard
       end
     end
 
+    # Value: protects=a subagent's tool calls never claim the MAIN agent is working, and a
+    # subagent's approved permission prompt doesn't leave the dot magenta; fails_when=the
+    # agent_id filter is dropped, widened to PermissionRequest/Notification, or matches a
+    # substring; why_new=the filter is new (D11, probed live on 2.1.310); seam=none
+    def test_thinking_mode_ignores_a_subagent_s_tool_calls
+      script = HookFile.ensure_script
+      report = lambda do |mode, payload, before: nil|
+        FileUtils.rm_rf(Dir.glob(File.join(AgentState.state_dir, "*")))
+        IO.popen([script, before], "r+", chdir: worktree) { |io| io.close_write } if before
+        IO.popen([script, mode], "w", chdir: worktree) { |io| io.write(payload) }
+        Dir.glob(File.join(AgentState.state_dir, "*")).map { |f| File.read(f).split("\t").first }
+      end
+      sub = %("agent_id":"ab93e608633c21d3f","agent_type":"general-purpose")
+      assert_equal ["thinking"], report.call("thinking", %({"hook_event_name":"PreToolUse","tool_name":"Bash"}))
+      assert_empty report.call("thinking", %({"hook_event_name":"PreToolUse",#{sub}}))
+      assert_empty report.call("thinking", %({"hook_event_name":"PostToolUse",#{sub}}))
+      assert_empty report.call("thinking", %({"hook_event_name":"PreToolUse","agent_id":"a4aa777ec6d1df69d"})), "Claude's internal agents too"
+      assert_equal ["done"], report.call("thinking", %({"hook_event_name":"PostToolUse",#{sub}}), before: "waiting"),
+                   "the subagent's approved prompt: magenta must not stick"
+      assert_equal ["done"], report.call("thinking", %({"hook_event_name":"PostToolUseFailure",#{sub}}), before: "waiting")
+      assert_equal ["waiting"], report.call("waiting", %({"hook_event_name":"PermissionRequest",#{sub}})), "a subagent's prompt still wants you"
+      decoy = %({"hook_event_name":"PreToolUse","tool_input":{"command":"echo \\"agent_id\\":\\"x\\""}})
+      assert_equal ["thinking"], report.call("thinking", decoy), "an agent_id inside a string value isn't the key"
+    end
+
     # Value: protects=the state each Claude event records (the dot); fails_when=an EVENTS row
     # is edited or dropped and its reporter records the wrong state; why_new=only single
     # events were spot-checked; seam=none

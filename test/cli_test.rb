@@ -1127,14 +1127,22 @@ module Switchboard
 
     # `switchboard quit` clears stale agent state too (the CLI twin of the sidebar
     # `q`), so a torn-down agent doesn't relaunch showing as still "working".
+    # Value: protects=a held ◷ chime dies with the agents quit kills; fails_when=quit stops
+    # calling OffstageHold.clear_all, so a dead pid matures the hold and rings a phantom chime
+    # on the next launch; why_new=only OffstageHold.clear_all itself was tested, not quit's
+    # wiring; seam=none; no_claim=the real tmux teardown
     def test_quit_clears_agent_state
       cleared = false
+      w = path("worktrees", "held")
+      FileUtils.mkdir_p(w)
+      OffstageHold.hold(w, pid: 1)
       stub_method(AgentState, :clear_all, -> { cleared = true }) do
         stub_method(Tmux, :kill_all, -> { [] }) do
           capture { CLI.quit }
         end
       end
       assert cleared, "quit wipes the stale hook states before teardown"
+      assert_empty OffstageHold.held([w]), "...and every held ◷ chime"
     end
 
     # --- prune_summary: honest reporting (F5) + dry-run next step (DX-2) ------

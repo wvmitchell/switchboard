@@ -10,7 +10,7 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
-## [0.55.3] — failures that used to stay silent now say so (2026-10-26)
+## [0.56.1] — failures that used to stay silent now say so (2026-10-26)
 
 ### Fixed
 - A `config.yml` that won't parse no longer lets `install` and `upgrade` look successful.
@@ -52,6 +52,28 @@ refer to the project's earlier, private repository; the public tracker starts at
 - `uninstall` now exits 1 when it can't remove the codex hooks block, and says "Done,
   except the codex hooks", like `install` does for the same failure (a codex config that
   turns unreadable mid-uninstall counts too). It still finishes the rest of the uninstall.
+
+## [0.56.0] — ◷: a turn that handed work off isn't "done" (2026-10-26)
+
+### Added
+- A workspace whose agent ended its turn while work it started is still running (a
+  background agent, a background shell, the Monitor tool) now shows a steady blue `◷`
+  instead of the green `●`. Read from Claude's own session file, so there is nothing to
+  turn on; Claude Code only, in workspaces with switchboard's hooks (the default).
+- When the work is a background agent, the done chime and bold for that turn wait for it:
+  they arrive once, from the sidebar on screen, when the session goes idle (or when the
+  follow-up turn that reports the result ends). A dispatched task (`n`) that hands work to
+  a background agent on its first turn waits the same way. A background shell may never end
+  (a dev server), so its turn chimes as before while the `◷` shows it's still running.
+
+### Changed
+- A background subagent's tool calls no longer turn the main dot into a spinner as if the
+  main agent were working. A subagent's permission prompt still shows the magenta `◆`, and
+  approving it no longer leaves the dot magenta. (The reporter script is now v6; `switchboard
+  upgrade` rewrites it.)
+- The sidebar reads Claude's session files once per scan for both `⇅` and `◷`, and skips
+  sessions outside your tracked worktrees before checking whether they're alive, so Claudes
+  running elsewhere on the machine don't slow it down.
 
 ## [0.55.2] — the QR overlay keeps the switchboard header (2026-10-24)
 

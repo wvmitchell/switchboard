@@ -85,7 +85,7 @@ safe today; each is narrow).
   attach to an unrelated tree later renamed (or clash-relabeled) onto its path, and then
   `unfinished_at?` lets a confirmed `d` force past that tree's lock. *Start in:*
   `Creation.renamable?` (refuse an `unfinished?` record) and `Rename.perform` (refuse a
-  destination a record claims). The same check closes a newer case (v0.55.3 review): a
+  destination a record claims). The same check closes a newer case (v0.56.1 review): a
   workspace renamed onto the exact placeholder an in-flight build reserved makes that
   build's `worktree add` fail with "already exists" over a tree on its branch, so the
   build fails and keeps it (nothing is lost, but the renamed workspace wears the build's
@@ -512,7 +512,7 @@ safe today; each is narrow).
   ever fire, this entry is correctly ignored forever.
 
 
-## Silent failures (v0.55.3) follow-ups
+## Silent failures (v0.56.1) follow-ups
 
 - **State-dir globs break on a path with glob characters.** *What:* nine `Dir.glob` calls
   build their pattern from a state dir (`creation.rb` `all`, `agent_state.rb`, `notify.rb`,
@@ -522,17 +522,17 @@ safe today; each is narrow).
   or `?` makes them match nothing; worst is `Creation.all` coming back empty, which drops a
   failed build's guard (`certified?(nil)` lets re-entry start the agent un-set-up).
   *Pros:* mechanical, one test per store. *Cons:* touches every store. *Context:* found in
-  the TODO triage that produced v0.55.3. **Priority:** P2.
+  the TODO triage that produced v0.56.1. **Priority:** P2.
 
 - **A C-locale tmux client mangles `-F` output.** *What:* with `LC_ALL=C`, tmux replaces
   the tab and any non-ASCII byte in `-F` formats with `_`, so `Tmux.sessions` misparses and
   `quit`/`kill_all` can't match names (prune is saved only because `created` reads as 0,
   inside the grace window). Use a printable ASCII separator (or one field per call) in the
   formats switchboard parses. *Why:* teardown silently does nothing under a C-locale client.
-  *Pros:* small. *Cons:* every `-F` parser changes at once. *Context:* v0.55.3 triage.
+  *Pros:* small. *Cons:* every `-F` parser changes at once. *Context:* v0.56.1 triage.
   **Priority:** P2.
 
-- **The rest of `Git`'s readers on a non-UTF-8 path.** *What:* v0.55.3 made
+- **The rest of `Git`'s readers on a non-UTF-8 path.** *What:* v0.56.1 made
   `Git.worktrees` skip an undecodable entry; `current_branch`, `commits_since` and the diff
   readers (with `core.quotePath=false`) can still raise on one. Audit each caller and either
   scrub or compare as bytes. Also `parse_worktrees` itself: it drops a whole entry when ANY
@@ -541,14 +541,14 @@ safe today; each is narrow).
   listing (rollback then keeps everything, prune skips the project: safe, but silent).
   Validate only the `worktree` line and drop or scrub just the bad field. *Why:* a
   Linux-only crash path in the sidebar's helpers, and an invisible row.
-  *Context:* v0.55.3 item 3 caller audit; ship 4 red team. **Priority:** P3.
+  *Context:* v0.56.1 item 3 caller audit; ship 4 red team. **Priority:** P3.
 
 - **`keep_branch`'s listing and its delete aren't one step.** *What:* between
   `Git.worktrees(strict: true)` and `update-ref --no-deref -d`, another process could check
   the branch out. *Why:* at worst a worktree is left on a deleted branch at base (no commits
   lost, the old-value guard holds). *Pros:* closes the last race on the rollback. *Cons:*
   git offers no atomic "delete unless checked out"; it needs a lock switchboard doesn't
-  have. *Context:* v0.55.3 review, accepted as theoretical. **Priority:** P4.
+  have. *Context:* v0.56.1 review, accepted as theoretical. **Priority:** P4.
 
 - **`ours?` misses a bin path containing `$`, `"` or `\`.** *What:* `tmux list-keys`
   prints the run-shell argument double-quoted and backslash-escapes those characters, so the
@@ -556,7 +556,7 @@ safe today; each is narrow).
   (doctor then warns about itself). Unescape the binding before matching. The key column has
   the same problem: `list-keys` prints a `;` key as `\;`, so `foreign_binding` can't find a
   user's own binding on `;` (tmux's default last-pane) and the clobber goes unrecorded. *Why:* a false
-  warning, not a lost key; pre-existing. *Context:* v0.55.3 pass-3 red team. **Priority:** P4.
+  warning, not a lost key; pre-existing. *Context:* v0.56.1 pass-3 red team. **Priority:** P4.
 
 - **`uninstall` says Done over a codex config it can't read from the start.**
   *What:* `step_codex_unhooks` returns early when `CodexHook.installed?` is false, and that
@@ -575,7 +575,7 @@ safe today; each is narrow).
   leaves a worktree git lists as detached, so `keep_branch` finds no holder and
   `delete_branch_at` deletes a branch the rebase still needs (the old `branch -D` refused
   it). Check rebase/bisect state before deleting. *Why:* each can kill a session or delete
-  a branch; neither trigger was reproducible in normal use. *Context:* v0.55.3 ship 5
+  a branch; neither trigger was reproducible in normal use. *Context:* v0.56.1 ship 5
   adversarial review (Claude + Codex structured P2), deferred by the user. **Priority:** P3.
 
 - **Rollback and key-tracking design notes.** *What:* (a) `undo_add` assumes git cuts the
@@ -589,10 +589,10 @@ safe today; each is narrow).
   doctor doesn't name why; (f) on a tmux too old for `list-keys -- KEY`, the whole-table
   fallback reads a bound `C-;` as unbound (its regex allows a backslash only before the
   whole key). *Why:* all fail safe or say so in the ✘ text; worth a pass once (a)-(b) of
-  the entry above land. *Context:* v0.55.3 ship 5 adversarial + state-machine reviews.
+  the entry above land. *Context:* v0.56.1 ship 5 adversarial + state-machine reviews.
   **Priority:** P4.
 
-- **Small cleanups from the v0.55.3 review.** *What:* the `rebind_ops` header doesn't
+- **Small cleanups from the v0.56.1 review.** *What:* the `rebind_ops` header doesn't
   mention `taken:`; `Upgrade.tmux_stale?` and `CLI#doctor_key_drift` hard-code
   `%w[toggle home]` instead of `Installer::ROLE_SUBCOMMANDS.keys`; the
   `@switchboard-<role>-rejected` name is hand-built at 7 sites (route it through
@@ -604,7 +604,7 @@ safe today; each is narrow).
   `PLACEHOLDER_TRIES`. *Why:* no behavior change today; each is a place a later edit can
   drift. *Context:* ship 5 and 6 maintainability reviews, deferred by the user. **Priority:** P4.
 
-- **Rollback edges from the v0.55.3 lock and config fixes.** *What:* (a) `delete_branch_at`
+- **Rollback edges from the v0.56.1 lock and config fixes.** *What:* (a) `delete_branch_at`
   ignores a failed `git config --remove-section` (a held `config.lock`), so a hook-set
   upstream can survive onto the next branch cut under that name; (b) `d` on a ✘ row whose
   tree the rollback kept "(it's locked)" still double-forces after the confirm, and the prompt
@@ -623,7 +623,7 @@ safe today; each is narrow).
   row's columns — let `fit_plain` report whether the cues were kept and share it with
   `colored` (the cursor-bar grey half of this went away in v0.53.1); (4) a stale comment:
   `Agents.lsof_path`'s encoding rationale predates the byte compares.
-  *Why:* none hits a normal setup (the one verified user-visible item, the glob, shipped in v0.55.3). *Pros:*
+  *Why:* none hits a normal setup (the one verified user-visible item, the glob, shipped in v0.56.1). *Pros:*
   small, testable changes. *Cons:* each touches a reviewed path, so give it its own short
   review. *Context:* ship review of v0.53.0 (D2/D3 — deferred to keep the release from
   reopening its review loop). *Depends on:* v0.53.0.
@@ -766,6 +766,81 @@ safe today; each is narrow).
   no test exercises (bare `[hooks.state]` on reinstall, `--no-codex-hooks` over each block state,
   enable-hooks over codex tables or a missing end marker, …). *Start in:* the cell list in the
   ship review; `test/codex_hook_test.rb`, `test/installer_test.rb`. **Priority:** P4.
+
+## Background-wait `◷` (v0.56.0) follow-ups
+
+- **Probe the Stop payload's `background_tasks` field.** *What:* Claude 2.1.310's `Stop`
+  hook payload carries `background_tasks` (and `session_crons`) keys; the v0.56.0 probe
+  logged key names only. *Why:* if it lists the outstanding work, it's an exact, hook-side
+  hand-off signal — no session-file read, no settle window, and it would cover Codex if
+  Codex grows the same. *Context:* rerun the T0 probe harness (a throwaway tmux + real
+  claude, `DISABLE_UPDATES`) dumping the field's values for a background agent, a
+  background Bash and a Monitor. *Depends on:* nothing.
+- **Reporter v6 attribution gaps (both reproduced at ship QA).** (a) `field agent_id`
+  matches an `agent_id` key nested in a main-agent tool's `tool_input` (the sed match is
+  greedy, last wins), so that `thinking` refresh is dropped; fix by matching only
+  top-level keys once a probe confirms Claude's payload key order (does `agent_id` precede
+  `tool_input`?). (b) A background subagent's `PostToolUse` turns a MAIN agent's open
+  `waiting` into `done` (no owner on the state line); fix with a 4th `owner` field
+  (`main` or the agent_id) that `AgentState` tolerates, cleared only by its owner. Neither
+  is a regression: v5 wrote `thinking` over the main `◆` on every subagent tool call.
+- **A matured hold bolds only on an on-screen claim.** *What:* a hold that matures with no
+  follow-up turn (pid gone, settled idle) while no sidebar is on screen leaves no bold,
+  then chimes late on return. *Why kept:* an off-screen pane can't tell what you're
+  viewing, so bolding there could re-bold a workspace you just looked at (Build note 1).
+  *Fix idea:* stamp maturity time on the hold; any pane bolds; drop the sound when the
+  claim comes long after maturity.
+- **Pid-based maturity can't tell finished from abandoned.** A Claude killed or `/exit`ed
+  mid-background-work matures its hold (a "done" chime for abandoned work); a recycled
+  pid after a clean exit keeps a hold until the next settled idle there. Store
+  `procStart` in the hold and use `ProcessIdentity.same?` on visible scans; treat "gone
+  and file removed" as release.
+- **Holds of a removed project aren't GC'd** (GC is `Dir.exist?` only): re-adding the
+  project could ring a stale chime. Drop holds past an age ceiling in `held`.
+- **Late chime after an unwatched follow-up turn.** Only an announcing scan releases a hold
+  (a silent pane can't tell a late-seen hand-off from a finished follow-up), so a follow-up
+  turn that ends while no sidebar is on screen leaves the hold to mature — and chime — when
+  you return, on a workspace already bold. Fix with a completion identity on the hold (the
+  hook report's epoch), so a pane can tell "the turn after the hand-off ended" from "the
+  hand-off itself". The same identity closes the two rare double-chime races: a delayed
+  off-screen writer re-creating a hold an on-screen pane already rang (Codex review), and
+  the hold write vs release ordering at a follow-up turn's own race window.
+- **A per-file unreadable session reads as absent.** `ClaudeSessions.records` drops a file
+  it can't parse, so a sole garbled busy session lets a dispatch ping ring early, and a busy
+  one beside an idle sibling can mature a hold early. Count unreadable files per worktree
+  and treat them as "no evidence".
+- **The tracked-cwd pre-filter drops a session after an EXTERNAL `git worktree move`** (no
+  rename bridge): its recorded cwd matches nothing, so lsof never runs and its ⇅/◷ vanish
+  (D10's accepted trade). Fall back to an lsof pass when a live session matches no root.
+- **A held chime is lost beside a running background shell (verification review).** A turn
+  starts a background agent AND a dev server; the agent's follow-up turn finishes inside one
+  3s scan (no `:thinking` seen, no edge); the session then reads `shell`, so `activity` never
+  says `:idle`, the hold can't mature, and your next prompt releases it silently. Candidate
+  fix: mature when the path leaves the `busy` set with no fresh idle — but first probe what
+  `status` reads between an agent finishing and its follow-up turn (an early ring there,
+  then the follow-up's own Stop, would double-chime).
+- **Off-screen panes write holds from cheap-scan evidence.** A crashed Claude's leftover
+  `busy` file whose pid got recycled passes the kill(0)-only cheap scan, so a hidden pane
+  holds a normal turn the on-screen pane already rang — a double chime each turn while the
+  recycled process lives. Write holds only from full scans, or store `procStart` in the hold.
+- **Smaller ship-review notes (pass 3).** The tracked-cwd pre-filter `realpath`s every
+  session file's cwd (dead leftovers too) before `kill(0)` — a cwd on a hung mount could stall
+  a scan; `doctor`'s canary checks file shape, not `status` values (a renamed `idle` would
+  leave holds waiting on pid exit); `settled_offstage` trusts a negative hook age after a
+  backward clock step; a tab in a worktree path breaks `OffstageHold`'s tab-split content;
+  `quit` clears holds before `Tmux.kill_all`, so a sidebar can write one in between.
+- **A dispatched first turn bolds at the hand-off.** `Creation.stamp_first_turn` →
+  `advance` marks Attention at `turn_done` immediately; only the sound waits for the work.
+  Defer the bold with the ring.
+- **Tests worth adding:** pin `report_stop_state`'s `in: File::NULL` (a never-closing
+  stdin pipe + timeout); `ClaudeSessions.fingerprint`'s alive bit (kill a busy session's
+  pid, file unchanged); a hold maturing on the viewed workspace (sound yes, bold no); a
+  sidebar-level `ClaudeSessions.scan` raise keeping dots and links (plan T3).
+- **Simplification (advisory, ship review):** one stamp-gated record cache for both
+  `RemoteLink.fingerprint` and `ClaudeSessions.fingerprint` (each changed file is parsed
+  twice per warm check); `roots_for`/`tracked?` helpers in `ClaudeSessions`;
+  `RemoteLink.linked_records` = `ClaudeSessions.records.select { linked? }`; a shared
+  `KeyedMarkerStore.clear_all` for OffstageHold/Notify/Monitoring.
 
 ## Sidebar cursor bar follow-ups
 

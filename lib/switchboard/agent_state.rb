@@ -35,10 +35,12 @@ module Switchboard
     # coarse activity fallback. The sidebar's PR-refresh edge trigger reads this
     # so it only fires on the exact hook signal, never the 3s capture-hash guess.
     attr_reader :last_hook_states
+    attr_reader :last_hook_ages # worktree path => seconds since its hook state was written (hooked paths only)
 
     def initialize
       @seen = {} # pane_id => [last capture hash, monotonic when that content first appeared]
       @last_hook_states = {}
+      @last_hook_ages = {}
     end
 
     # Where the reporter drops <state>\t<cwd>\t<epoch> files. Resolved from ENV on
@@ -77,8 +79,10 @@ module Switchboard
       process = nil # Agents.active, fetched lazily (skipped entirely if all hooked / hooks_only)
       panes = nil
       hook_states = {} # the hook-only subset, stashed for last_hook_states
+      hook_ages = {}
       states = worktree_paths.each_with_object({}) do |wt, out|
-        state = fresh_hook(wt, hooks)
+        state, age = fresh_hook(wt, hooks)
+        hook_ages[wt] = age if state
         if state == :thinking && !hooks_only && pane_delta(wt, panes ||= Tmux.work_panes) == :static
           # A fresh :thinking whose work pane has gone STATIC is a stale report —
           # the agent was interrupted / walked away (no Stop fires on Esc/Ctrl-C).
@@ -94,6 +98,7 @@ module Switchboard
         end
       end
       @last_hook_states = hook_states
+      @last_hook_ages = hook_ages
       states
     end
 
@@ -145,7 +150,7 @@ module Switchboard
     end
 
     # Deepest hook cwd at or under the worktree wins (agent launched in a subdir),
-    # but only if its report is still fresh. Keys are already canonicalized
+    # but only if its report is still fresh: [state, age in seconds], or nil. Keys are already canonicalized
     # (read_hooks), so we only canonicalize the worktree — a symlinked worktree
     # root still matches the hook's physical `pwd -P`.
     def fresh_hook(worktree, hooks)
@@ -154,7 +159,7 @@ module Switchboard
       return nil unless cwd
 
       state, age = hooks[cwd]
-      state if age.abs <= PRESENCE_TTL # abs so a backward clock step (future epoch) still ages out
+      [state, age] if age.abs <= PRESENCE_TTL # abs so a backward clock step (future epoch) still ages out
     end
 
     # Did `worktree`'s agent WORK pane change since the last scan? The three-way

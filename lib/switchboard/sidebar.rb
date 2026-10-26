@@ -89,8 +89,13 @@ module Switchboard
       @agents = {}         # worktree path => :thinking | :done | :waiting
       @attention = Set.new # worktree paths with an unviewed completion (rendered bold)
       @monitoring = Set.new # worktree paths with a live background-monitor marker (∞)
+      @offstage = Set.new  # worktree paths whose session still runs work after its turn (◷), settled
+      @offstage_raw = {}   # paths whose session reads `busy` (a background agent), unsettled =>
+                           # its pid: what holds the chime and the dispatch ping
+      @session_fresh = Set.new # ...whose session reads an idle too fresh to trust (dispatch ping)
       @links = {}          # worktree path => [RemoteLink::Link] — live /remote-control links (⇅)
       @link_fp_cache = {}  # session file => [[mtime, size, ino], record]: the warm gate's stamp-gated parse
+      @session_fp_cache = {} # ...the same for ClaudeSessions.fingerprint (◷)
       @pending_delete = Set.new # worktree paths being deleted right now — hidden from the
                            # tree while a detached daemon runs `git worktree remove` off the
                            # input loop (shared PendingDelete marker, hydrated every rebuild)
@@ -433,6 +438,12 @@ module Switchboard
       finished = false # set on both normal exits; a signal or exit propagating leaves it false
       ws_paths = @nodes.select { |n| n.kind == "ws" }.map(&:path)
       @agents = @agent_state.scan(ws_paths, hooks_only: hooks_only)
+      # AFTER the hooks: Claude writes `done` 13-29ms before `idle`, so a session read
+      # that precedes the hook read (its ps/lsof take ~30-125ms) would widen that race.
+      sessions = claude_sessions(ws_paths)             # one read for the ◷ evidence AND the ⇅ links (ensure)
+      offstage, handoff, idle, @session_fresh = session_evidence(sessions)
+      @offstage_raw = handoff
+      @offstage = settled_offstage(offstage)           # what ◷ draws: the hook's done has settled
       @monitoring = Monitoring.monitored(ws_paths)     # BEFORE on_scan: gates the :done suppression
       notify_pending = Notify.pending(ws_paths)        # declared "come look" alerts (mtime per path)
       index_creations(Creation.all)                    # BEFORE on_scan: a dispatch owns its first turn (D16)
@@ -441,7 +452,7 @@ module Switchboard
       edges = @edges.on_scan(@agent_state.last_hook_states,
                              monitoring: @monitoring, nodes: @nodes, config: @config,
                              current_path: @current_path, notify_pending: notify_pending,
-                             first_turn: first_turn_paths,
+                             first_turn: first_turn_paths, offstage: handoff, idle: idle, sessions_ok: !sessions.nil?,
                              announce_sounds: announce_sounds, refresh_prs: refresh_prs)
       ring_creations if announce_sounds
       refresh_diffs if edges.any? # a finished turn likely just committed — repaint its count
@@ -458,7 +469,7 @@ module Switchboard
       # propagates (finished false): a sidebar being reaped shouldn't fork ps/lsof on its way
       # out. A local flag, not $!, which an enclosing caller's rescue would also set.
       if ws_paths && finished
-        @links = remote_links(ws_paths, cheap: !@visible)
+        @links = remote_links(ws_paths, cheap: !@visible, sessions: sessions)
         revalidate_link_view
       end
     end
@@ -467,11 +478,59 @@ module Switchboard
     # total already) because a raise reaching refresh_agents' would blank every dot.
     # `cheap` while off screen, so a hidden pane spawns no ps/lsof for links. Not
     # hooks_only: an ON-screen reload passes that too (after a delete), and a visible
-    # pane must place links by kernel cwd.
-    def remote_links(ws_paths, cheap: false)
-      RemoteLink.scan(ws_paths, stale_after: @config.remote_link_stale_after, cheap: cheap)
+    # pane must place links by kernel cwd. `sessions` is this scan's ClaudeSessions read;
+    # nil (it failed, or the scan raised before it) makes RemoteLink read for itself.
+    def remote_links(ws_paths, cheap: false, sessions: nil)
+      RemoteLink.scan(ws_paths, stale_after: @config.remote_link_stale_after, cheap: cheap, sessions: sessions)
     rescue StandardError
       {}
+    end
+
+    # This scan's live Claude sessions per worktree, or nil when the read failed (no
+    # evidence, which must not read as "finished"). Cheap off screen, like the links.
+    def claude_sessions(ws_paths)
+      ClaudeSessions.scan(ws_paths, cheap: !@visible)
+    rescue StandardError
+      nil
+    end
+
+    # The ◷ evidence: [{ path => pid } of sessions still running work after their turn
+    # (busy/shell: draws ◷), the same for `busy` alone (a background agent: holds the
+    # chime), Set of paths whose sessions read a settled idle, Set of paths with an idle
+    # too fresh to trust]. Empty on no evidence.
+    def session_evidence(sessions, now: Time.now)
+      offstage = {}
+      handoff = {}
+      idle = Set.new
+      fresh = Set.new
+      (sessions || {}).each do |path, recs|
+        case ClaudeSessions.activity(recs, now: now)
+        when :offstage
+          offstage[path] = recs.find { |r| ClaudeSessions::OFFSTAGE_STATUSES.include?(r[:status]) }[:pid]
+          agent = recs.find { |r| r[:status] == ClaudeSessions::HANDOFF_STATUS }
+          handoff[path] = agent[:pid] if agent
+        when :idle then idle << path
+        else fresh << path if recs.any? { |r| r[:status] == "idle" && !ClaudeSessions.settled_idle?(r, now) }
+        end
+      end
+      [offstage, handoff, idle, fresh]
+    rescue StandardError
+      [{}, {}, Set.new, Set.new]
+    end
+
+    # The paths ◷ may draw: busy/shell beside a hook report at least SETTLE old — Claude
+    # writes `done` 13-29ms before `idle`, so a fresh `done` beside `busy` is usually a
+    # normal turn end mid-race. A report past PRESENCE_TTL has no age (a background job
+    # outlasting it writes no main-agent hook), so the last-known :done stands in. A
+    # hook-less Claude never draws it: its session reads `busy` through every foreground
+    # turn too, and with no `done` there's no hand-off.
+    def settled_offstage(offstage)
+      ages = @agent_state.last_hook_ages
+      offstage.keys.select do |p|
+        (age = ages[p]) ? age >= ClaudeSessions::SETTLE : @edges.last_state(p) == :done
+      end.to_set
+    rescue StandardError
+      Set.new
     end
 
     # Rows whose dispatched task still owns its first-turn ping, so the normal :done
@@ -488,12 +547,22 @@ module Switchboard
       return unless @visible
 
       @creation_for.each do |path, rec|
+        next if rec["state"] == "turn_done" && dispatch_waiting?(path) # handed off on turn one: the ping waits for the work
         next unless Creation.ring_due?(rec) && (won = Creation.claim_ring(rec["id"]))
 
         @edges.announce(path, won["project"], won["state"] == "failed" ? :failed : :done, @config)
       end
     rescue StandardError
       nil
+    end
+
+    # Must a first-turn "done" ping wait? Only on POSITIVE evidence a background agent
+    # is still at work: its Claude session reads `busy`, or an idle too fresh to trust
+    # (the ~15ms before that agent's follow-up turn). Not `shell` — a dev server would
+    # hold it until it exits. Missing evidence (no session, a failed read, an unknown
+    # status) rings, as before the ◷: nobody saw this ping deferred.
+    def dispatch_waiting?(path)
+      @offstage_raw.key?(path) || @session_fresh.include?(path)
     end
 
     # announce_sounds: false on a catch-up scan (a sidebar waking from off-screen,
@@ -541,7 +610,7 @@ module Switchboard
         head = File.join(gitdir.to_s, "logs", "HEAD")
         [head, File.mtime(head).to_f] if gitdir && File.exist?(head)
       end
-      [dir_fingerprint(AgentState.state_dir),  # agent dots
+      [hook_fingerprint,                        # agent dots, + each report's settled bit (◷)
        dir_fingerprint(Attention.state_dir),   # bold markers
        dir_fingerprint(Monitoring.state_dir),  # background-monitor ∞ markers
        dir_fingerprint(PendingDelete.state_dir), # being-deleted row-hides (so off-screen panes hide too)
@@ -554,9 +623,20 @@ module Switchboard
        file_fingerprint(Config.path),          # project registry (add/remove project elsewhere)
        RemoteLink.fingerprint(@link_fp_cache,  # ⇅ links: the linked SET, not dir mtimes — Claude
                               stale_after: @config.remote_link_stale_after), # rewrites every session's file on each busy/idle flip
+       ClaudeSessions.fingerprint(@session_fp_cache, # ◷: a tracked session starting/stopping
+                                  @nodes.select { |n| n.kind == "ws" }.map(&:path)), # background work
        reflogs.sort]                           # diff counts (commits)
     rescue StandardError
       nil
+    end
+
+    # The agent-state dir as dir_fingerprint does, plus whether each report is SETTLE old.
+    # ◷ waits for a `done` to settle (ClaudeSessions::SETTLE), and nothing on disk changes
+    # when it does — without the bit a hidden pane would keep the ● it painted at the
+    # hand-off. One extra warm per hook write, ~2s after it.
+    def hook_fingerprint
+      now = Time.now.to_f
+      dir_fingerprint(AgentState.state_dir).map { |name, mtime| [name, mtime, now - mtime >= ClaudeSessions::SETTLE ? 1 : 0] }
     end
 
     # mtime of a single shared-state marker file (nil if absent) — captures both a
