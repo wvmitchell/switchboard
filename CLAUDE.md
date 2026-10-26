@@ -708,7 +708,17 @@ hook leaves the answer to the user). Claude also keeps `Notification` (`notify`)
 elicitation / `agent_needs_input` / idle; its accepted cost is a dot that stays magenta
 until an approved tool finishes (or, after an Esc rejection, until the next prompt). Codex
 has no `Notification` event, so `PermissionRequest` is its only `waiting` (best-effort —
-suppressed by a session command that bypasses *all* approval gates). New worktrees get the Claude hook automatically
+suppressed by a session command that bypasses *all* approval gates). A SUBAGENT's events
+fire the parent worktree's Claude hooks too, with an `agent_id` in the payload (Claude's
+internal agents too; probed live, 2.1.310), so the reporter (`sb-agent-hook v6`) drops a
+`thinking` whose payload carries one — the spinner would claim the MAIN agent is working,
+and stick after the subagent ends. `thinking` therefore reads stdin (`[ ! -t 0 ]`, so a
+manual run can't block); the key is value-extracted like `notification_type` (an
+`"agent_id"` inside a string value is escaped, so it never matches). Two exceptions: a
+subagent's `PermissionRequest` still reports `waiting` (it wants you), and its next
+`PostToolUse`/`PostToolUseFailure` writes `done` when the file reads `waiting`, so an
+approved subagent prompt can't leave the dot magenta (that `done` is a hand-off: ◷).
+`report_stop_state` passes `in: File::NULL` for the same reason. New worktrees get the Claude hook automatically
 (`Creator.work` → `enable_hooks` → `AgentHooks.enable`, gated on `agent_state_hooks?` **or**
 `auto_rename_for(project)` — so a project opting into `auto_rename` with the global off
 still gets the hook the runtime nudge needs); existing ones via `switchboard
@@ -951,8 +961,10 @@ already writes the truth. Every live Claude session has `<claude dir>/sessions/<
 (`ClaudeHistory.claude_root`, shared with the transcript reader; test seam
 `SWITCHBOARD_CLAUDE_SESSIONS_DIR`), and `/rc` adds a `bridgeSessionId` (removed on
 disconnect, a NEW id on reconnect; the link is `https://claude.ai/code/<id>`). Verified
-live on Claude Code 2.1.308; no hook or env exposes it. `RemoteLink` (`remote_link.rb`)
-reads it, and because the file is **undocumented**, everything fails closed — an
+live on Claude Code 2.1.308; no hook or env exposes it. `ClaudeSessions`
+(`claude_sessions.rb`) reads it — one read per scan, shared with the ◷ below — and
+`RemoteLink` (`remote_link.rb`) is the link layer on top (bridge id, staleness, ordering,
+URL, `health`). Because the file is **undocumented**, everything fails closed — an
 unrecognized shape is no link, never a wrong one, and `scan` is total (the sidebar
 hydrates `@links` LAST in `refresh_agents` behind its own rescue: a raise reaching
 `refresh_agents`' rescue would blank every agent dot). Files are read as UTF-8 whatever
@@ -1044,6 +1056,81 @@ sign-in page (checked 2026-10-24), so a QR on screen only helps someone already 
 `:phone_link` sits LAST in `Keymap::ACTIONS`, because an earlier action's default beats a
 later one's remap: added mid-list, `p` would have taken the key from anyone who had remapped
 `rename` (or any later action) to it.
+
+### Waiting on background work (the ◷ — observed, not declared)
+
+Claude hands work to a background agent / background Bash / the Monitor tool and ends its
+turn: the Stop writes `done`, a green `●` and a chime — for work still running. No hook
+EVENT says so (the Stop payload does carry a `background_tasks` key, seen on 2.1.310 but
+its values never probed — a TODOS.md item), but the sessions file the ⇅ reads can: after such a turn `status` STAYS `busy` (a background agent — Claude never rewrites
+it at the Stop, so `statusUpdatedAt` is the turn's start) or reads `shell` (Bash, Monitor);
+probed live on 2.1.310, design + review + probe logs in
+`thoughts/background-wait-glyph.md`. `ClaudeSessions.activity` turns one worktree's live
+sessions into `:offstage` (any busy/shell), `:idle` (every one idle for ≥ `SETTLE`) or nil
+(no evidence: missing/unknown status, `waiting`, a fresh idle). Exact strings only.
+
+- **Render.** `render_state` draws `:offstage` (◷, `OFFSTAGE` = `SPIN_COLORED`'s exact
+  `\e[1;34m`, steady — off the pulse cadence) over a resting, hooked `done`, never over
+  thinking/waiting, never on a hook-less row (its session reads `busy` through every
+  foreground turn too, so with no `done` there's no hand-off); ∞ outranks it (a monitor always reads `shell`). The
+  internal name is `offstage`, not "background": `Link#bg?` already means a session that IS
+  a background job. The legend says `◷ background`.
+- **The settle window.** Claude writes `done` 13–29ms BEFORE `idle` on a normal turn end, and
+  a finished background agent reads `idle` ~15ms before its follow-up turn's `busy`. A 3s scan
+  lands in those ~1% of the time, so: ◷ draws only when the hook's report is ≥ `SETTLE` (2s)
+  old (`AgentState#last_hook_ages`; past `PRESENCE_TTL` the report has no age — a background
+  job writes no main-agent hook — so `Edges#last_state`'s sticky `:done` stands in), and a hold
+  matures only on an idle that old. Nothing on disk changes when a `done` settles, so the warm
+  fingerprint's hook term carries a per-file settled bit (`hook_fingerprint`), and
+  `ClaudeSessions.fingerprint` moves when a TRACKED session crosses offstage↔not (never for a
+  Claude outside switchboard).
+- **The held chime** (`OffstageHold`, `offstage_hold.rb`, a `KeyedMarkerStore` twin of
+  Attention keyed by realpath, content `realpath\tepoch\tpid`). A `:done` edge whose path is
+  reading `busy` (unsettled — the edge scan usually lands inside the window) is a hand-off to
+  a background AGENT (`ClaudeSessions::HANDOFF_STATUS`; `@offstage_raw` holds only these).
+  `shell` draws ◷ but never holds: a background shell may never end (a dev server), and a
+  hold beside it would mute that turn — and, as review found, every heuristic for telling a
+  long-lived shell from a short job leaked (per-process memory, respawns, chained turns). An
+  agent always reports back with a follow-up turn, so its hold always resolves.
+  `Edges#on_scan` writes the hold instead of ringing/bolding, on EVERY scan (warm + catch-up
+  too). ON DISK because the pane on screen at the finish may never have seen the edge — its
+  baseline already read `done` (Codex review O1; a per-process hold lost it).
+  `Edges#settle_holds` resolves each hold every scan: the hook leaving `done` (the follow-up
+  turn — the usual end, since Claude runs a normal UserPromptSubmit → Stop turn when the result
+  arrives) releases it silently and that turn's Stop rings normally — but only from an
+  announcing scan: an off-screen pane can catch a short follow-up turn the on-screen pane's
+  3s scans miss, and left held it matures for the on-screen pane instead (late, if no pane
+  was on screen through the follow-up — a TODOS.md item). A normal `:done` an ANNOUNCING scan
+  rings also releases the path's hold (`release_rung_holds`): one another pane wrote inside
+  the done-before-idle race would ring that end twice. Never a silent pane: one that sees the
+  hand-off edge late, after the work ended, reads it as a plain completion and would take
+  the only ring with it (Codex adversarial review). Nothing releases on a failed session read
+  (`sessions_ok:`). A settled `idle` or the recorded pid gone
+  (kill(0)) matures it; ANYTHING else — a failed read, an unknown status, an out-of-range
+  pid — keeps holding (O2: absence of evidence is not "finished"). A hold that fails to land
+  rings at once instead (early beats never). Only an announcing (on-screen)
+  scan claims a mature hold, by unlink (exactly one wins), and only the claimer rings AND
+  bolds — an off-screen pane bolding could re-bold a workspace you just viewed, in the moment
+  before the on-screen pane claims. Monitored and first-turn paths never hold (already
+  suppressed). Carried on rename, wiped on quit (both quit paths).
+- **The dispatch ping.** `ring_creations` defers a `turn_done` record's ring (O3;
+  `dispatch_waiting?`) only on POSITIVE evidence a background agent is still at work: `busy`,
+  or an idle too fresh to trust (`@session_fresh`, the ~15ms before its follow-up turn) — not
+  `shell`, for the dev-server reason above. Missing evidence — no session, a failed read, a
+  drifted `status` — rings, as before the ◷: nobody saw this ping deferred, so the hold's
+  absence-isn't-finished rule doesn't apply, and failing closed would silence every dispatch
+  if the undocumented file changed. `ready` (a launch) and ✘ never wait. A
+  dispatched task that fans out on turn one would otherwise ping "done" at the hand-off; the
+  ring is durable, so it fires once the work ends.
+- **One read, no machine-wide forks.** `refresh_agents` runs `ClaudeSessions.scan` right after
+  the hook read (before it, its ps/lsof would widen the done-before-idle race) and before
+  `on_scan` (nil
+  on failure — not `{}`, which would read as "finished") and hands the same result to
+  `RemoteLink.scan(sessions:)` in the ensure. The scan pre-filters by recorded cwd (raw or
+  realpath) against the TRACKED ws paths before any kill(0)/ps/lsof: `same?` is one `ps` per
+  session (batching measured no faster) and 15 Claudes = ~125ms per 3s scan (D10 — config roots
+  would drop git-discovered worktrees outside `worktree_root`, Codex O4). Renames pass via the
+  bridge symlink.
 
 ### Shared project collapse (the same multi-process trick)
 

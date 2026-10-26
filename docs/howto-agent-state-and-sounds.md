@@ -80,7 +80,10 @@ two-note chime when it's **waiting**, and a distinct two-tap-then-leap `alert` w
 monitored agent declares `switchboard monitoring notify` ("come look — this cycle
 surfaced something"; see [agent presence](explanation-agent-presence.md)), and a soft
 falling two-note `failed` when a workspace you dispatched with `n` fails to build (`✘`).
-A dispatched workspace becoming ready plays your `done` sound. Configure globally:
+A dispatched workspace becoming ready plays your `done` sound. When a Claude turn ends
+while a background agent it started is still running, the row shows `◷` and the `done`
+sound waits until that work finishes (a background shell shows `◷` but chimes as usual).
+Configure globally:
 
 ```yaml
 sounds:

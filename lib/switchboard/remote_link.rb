@@ -13,15 +13,12 @@ module Switchboard
   # https://claude.ai/code/<bridgeSessionId>.
   #
   # That file is UNDOCUMENTED, so everything here fails closed: a shape we don't
-  # recognize is no link, never a wrong one, and nothing raises (a raise inside the
-  # sidebar's agent scan would blank every dot). `doctor` runs `health` as the canary
-  # for a format change. Two of the file's fields lie after a `switchboard rename`:
-  # `cwd` and `tmux` are startup stamps. So a live session is placed by its KERNEL cwd
-  # (one batched lsof), which follows the moved dir; the recorded `cwd` is only the
-  # fallback. Verified live against Claude Code 2.1.308.
+  # recognize is no link, never a wrong one, and nothing raises. Reading, liveness and
+  # kernel-cwd placement live in ClaudeSessions (shared with the ◷ dot); this module is
+  # the link layer on top: the bridge id, staleness, ordering, the URL, and `doctor`'s
+  # `health` canary for a format change. Verified live against Claude Code 2.1.308.
   module RemoteLink
     URL_BASE = "https://claude.ai/code/"
-    PID_MAX = 2**31 - 1 # pid_t: past it Process.kill raises RangeError, which would blank every link
     BRIDGE_ID = /\Asession_[A-Za-z0-9]{1,64}\z/ # bounded so a link URL always stays short
 
     # One linked session. `stale` = an interactive link idle past the configured
@@ -39,42 +36,23 @@ module Switchboard
 
     module_function
 
-    # A test/override seam first (keeps the suite off the real ~/.claude), then
-    # Claude's own dir — shared with ClaudeHistory so the two readers never disagree.
     def sessions_dir
-      override = ENV["SWITCHBOARD_CLAUDE_SESSIONS_DIR"]
-      return override unless override.nil? || override.empty?
-
-      File.join(ClaudeHistory.claude_root, "sessions")
+      ClaudeSessions.sessions_dir
     end
 
     # { ws_path => [Link, …] } for the tracked worktrees with a LIVE linked session,
     # newest first by startedAt (procStart when that's missing), then pid. `stale_after` is seconds or
-    # nil (off). Total: any failure is "no links". `cheap:` is any off-screen scan (the
-    # sidebar passes !@visible): kill(0) liveness and the recorded cwd, no `ps`/`lsof` —
-    # every hidden pane warms whenever ANYTHING in the warm fingerprint moves, so the
-    # full check there would spawn per pane. Its rare misses (a recycled pid, a rename
-    # onto an old name) last until the pane's next visible scan.
-    def scan(ws_paths, stale_after:, now: Time.now, cheap: false)
-      records = linked_records
-      return {} if records.empty?
+    # nil (off). Total: any failure is "no links". `sessions:` is a ClaudeSessions.scan the
+    # caller already ran (the sidebar shares one per scan with the ◷ dot); without it this
+    # scans the linked files itself. `cheap:` is as in ClaudeSessions.scan.
+    def scan(ws_paths, stale_after:, now: Time.now, cheap: false, sessions: nil)
+      sessions ||= ClaudeSessions.scan(ws_paths, cheap: cheap, records: linked_records)
+      return {} unless sessions
 
-      # kill(0) first in both modes: a dead leftover's file can sit there forever, and
-      # `same?` forks a `ps` per call — every scan, on every visible pane.
-      live = records.select do |r|
-        ProcessIdentity.alive?(r[:pid]) && (cheap || ProcessIdentity.same?(r[:pid], r[:proc_start]))
+      sessions.each_with_object({}) do |(ws, recs), out|
+        links = recs.select { |r| linked?(r) }.map { |r| link(r, stale_after, now) }
+        out[ws] = links.sort_by { |l| order_key(l) }.reverse unless links.empty?
       end
-      return {} if live.empty?
-
-      cwds = cheap ? {} : Agents.cwds_of(live.map { |r| r[:pid] })
-      # Bytes, not text: under tmux's C locale git hands us US-ASCII paths while the JSON
-      # cwd is UTF-8, and comparing a non-ASCII pair raises — which `scan`'s rescue turns
-      # into "no links anywhere".
-      roots = ws_paths.to_h { |p| [real(p).b, p] }
-      live.each_with_object(Hash.new { |h, k| h[k] = [] }) do |r, out|
-        ws = owner(real(cwds[r[:pid]] || r[:cwd]).b, roots) or next
-        out[ws] << link(r, stale_after, now)
-      end.transform_values { |links| links.sort_by { |l| order_key(l) }.reverse }
     rescue StandardError
       {}
     end
@@ -157,11 +135,9 @@ module Switchboard
       false
     end
 
-    # The fields every reader relies on — the scanner (record) and the canary (health)
-    # share it, so doctor can't count a file the glyph would ignore. A pid in 1..PID_MAX:
-    # kill(0, 0) / kill(0, -1) "succeed" (process group / every process), past pid_t kill raises.
+    # Shared with the scanner (ClaudeSessions), so doctor counts exactly what a cue reads.
     def shaped?(data)
-      data.is_a?(Hash) && data["pid"].is_a?(Integer) && data["pid"].between?(1, PID_MAX) && data["cwd"].is_a?(String)
+      ClaudeSessions.shaped?(data)
     end
 
     def linked_records
@@ -175,34 +151,16 @@ module Switchboard
     # The fields we use from one session file, or nil when it isn't a linked session
     # in a shape we recognize.
     def record(data)
-      return nil unless shaped?(data)
-
-      pid, cwd, bridge = data.values_at("pid", "cwd", "bridgeSessionId")
-      return nil unless bridge.is_a?(String) && bridge.match?(BRIDGE_ID)
-
-      { pid: pid, cwd: cwd, bridge_id: bridge, kind: data["kind"].to_s,
-        started_at: data["startedAt"], proc_start: data["procStart"].to_s,
-        status: data["status"].to_s, status_at: data["statusUpdatedAt"] }
+      rec = ClaudeSessions.record(data)
+      rec if rec && linked?(rec)
     end
 
-    # UTF-8 whatever the locale: under tmux's C locale a default read is US-ASCII,
-    # and a session named with a smart quote would fail to parse and lose its link.
+    def linked?(rec)
+      rec[:bridge_id].is_a?(String) && rec[:bridge_id].match?(BRIDGE_ID)
+    end
+
     def read_json(file)
-      scrub_strings(JSON.parse(File.read(file, encoding: "UTF-8").scrub))
-    rescue StandardError
-      nil
-    end
-
-    # A \u escape decodes AFTER the scrub above, so a lone surrogate still parses to an
-    # invalid string, and the first strip/gsub/match on it raises. Scrub every parsed
-    # string: a bad field then reads as unrecognized (no link), never as a crash.
-    def scrub_strings(value)
-      case value
-      when String then value.scrub
-      when Array then value.map { |v| scrub_strings(v) }
-      when Hash then value.to_h { |k, v| [scrub_strings(k), scrub_strings(v)] }
-      else value
-      end
+      ClaudeSessions.read_json(file)
     end
 
     # The one "background job" rule (Link#bg? and stale? both ask it).
@@ -234,19 +192,6 @@ module Switchboard
 
     def order_key(link)
       [link.started_at, link.pid]
-    end
-
-    # The deepest tracked worktree at or above `cwd` (an agent launched in a subdir
-    # still belongs to its worktree), as the caller's own path.
-    def owner(cwd, roots)
-      root = roots.keys.select { |r| cwd == r || cwd.start_with?("#{r}/") }.max_by(&:length)
-      root && roots[root]
-    end
-
-    def real(path)
-      File.realpath(path)
-    rescue StandardError
-      path
     end
   end
 end

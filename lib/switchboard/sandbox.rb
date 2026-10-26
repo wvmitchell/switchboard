@@ -54,6 +54,7 @@ module Switchboard
         write_config(state_dir)
         boot(sock_dir, checkout)
         seed_link(File.join(state_dir, "worktrees", PROJECT, "quiet-cleanup")) # needs the server: the pid lives in it
+        seed_offstage(File.join(state_dir, "worktrees", PROJECT, "fan-out-review")) # ...as does this one
         system("tmux", "attach", "-t", Tmux::HOME)       # BLOCKS until you detach; NOT exec, so teardown runs
       ensure
         teardown(sock_dir)
@@ -84,6 +85,7 @@ module Switchboard
           "SWITCHBOARD_ATTENTION_DIR"       => File.join(state_dir, "attention"),
           "SWITCHBOARD_MONITORING_DIR"      => File.join(state_dir, "monitoring"),
           "SWITCHBOARD_NOTIFY_DIR"          => File.join(state_dir, "notify"),
+          "SWITCHBOARD_OFFSTAGE_HOLD_DIR"   => File.join(state_dir, "offstage_hold"),
           "SWITCHBOARD_CREATION_DIR"        => File.join(state_dir, "creation"),
           "SWITCHBOARD_COLLAPSE_DIR"        => File.join(state_dir, "collapse"),
           "SWITCHBOARD_FULL_HEADER_FILE"    => File.join(state_dir, "full_header"),
@@ -145,7 +147,7 @@ module Switchboard
 
     # --- seeding (F2/F9 — varied visual state, correct fixtures) --------------
 
-    # Materialize one project + four worktrees exercising the render paths the
+    # Materialize one project + six worktrees exercising the render paths the
     # sidebar UI is dogfooded for. NOT pure (it writes repos, worktrees, caches,
     # dots) — the caller supplies the throwaway root.
     def seed_repo(state_dir)
@@ -164,12 +166,14 @@ module Switchboard
       add_worktree(repo, wt_root, "quiet-cleanup", "sandbox/quiet-cleanup")            # 3. no-PR row
       seed_branch_history(add_worktree(repo, wt_root, "sidebar-polish", "sandbox/sidebar-polish")) # 4. multi-branch
       add_worktree(repo, wt_root, "watch-ci", "sandbox/watch-ci")                     # 5. background monitor (∞)
+      add_worktree(repo, wt_root, "fan-out-review", "sandbox/fan-out-review")         # 6. waiting on background work (◷)
 
       seed_pr_cache("sandbox/auth-token-refresh")
       seed_dot(File.join(wt_root, "auth-token-refresh"), "thinking")
       seed_dot(File.join(wt_root, "quiet-cleanup"), "done")
       seed_dot(File.join(wt_root, "watch-ci"), "done")     # a resting agent...
       seed_monitor(File.join(wt_root, "watch-ci"))         # ...flagged monitoring -> renders ∞, not ●
+      seed_dot(File.join(wt_root, "fan-out-review"), "done") # a resting agent whose session stays busy -> ◷ (seed_offstage)
     end
 
     def add_worktree(repo, wt_root, leaf, branch)
@@ -229,28 +233,39 @@ module Switchboard
     # Production-length (session_ + 24), so `p` draws the real 33-module code you'd scan.
     SEED_LINK_ID = "session_01SandboxLinkNotRealXyzA"
 
-    # Mark a worktree reachable from the phone (the ⇅ glyph). RemoteLink only trusts a
-    # LIVE process whose start time matches and places it by its KERNEL cwd, so a fake
-    # file alone would never render: park a `sleep` in the worktree, in a detached
-    # non-sb/ session of THIS server (prune/reconcile only touch sb/), so it dies with
-    # the sandbox, and point a session file at it. A real `claude /rc` inside the
+    # Mark a worktree reachable from the phone (the ⇅ glyph). A real `claude /rc` inside the
     # sandbox writes the real ~/.claude (HOME is kept), so it deliberately doesn't show.
     def seed_link(worktree)
-      out = IO.popen(["tmux", "new-session", "-d", "-s", "_sandbox-link", "-c", worktree,
+      park_session(worktree, "_sandbox-link", "name" => "sandbox link", "status" => "idle",
+                                              "bridgeSessionId" => SEED_LINK_ID)
+    end
+
+    # Mark a worktree as waiting on background work (the ◷ dot): its resting agent's
+    # session still reads busy, as Claude's does while a background agent runs.
+    def seed_offstage(worktree)
+      park_session(worktree, "_sandbox-offstage", "name" => "sandbox fan-out", "status" => "busy")
+    end
+
+    # A Claude session file the sidebar will trust. ClaudeSessions only trusts a LIVE
+    # process whose start time matches and places it by its KERNEL cwd, so a fake file
+    # alone would never render: park a `sleep` in the worktree, in a detached non-sb/
+    # session of THIS server (prune/reconcile only touch sb/), so it dies with the
+    # sandbox, and point a session file at it. Returns the pid.
+    def park_session(worktree, tmux_session, fields)
+      out = IO.popen(["tmux", "new-session", "-d", "-s", tmux_session, "-c", worktree,
                       "-P", "-F", '#{pane_pid}', "exec sleep 2147483647"], err: File::NULL, &:read)
       pid = out.to_s.strip.to_i
       return unless pid.positive?
 
       now = (Time.now.to_f * 1000).to_i
-      FileUtils.mkdir_p(RemoteLink.sessions_dir)
-      File.write(File.join(RemoteLink.sessions_dir, "#{pid}.json"), JSON.generate(
-        "pid" => pid, "sessionId" => "sandbox-link", "cwd" => File.realpath(worktree), "kind" => "interactive",
-        "name" => "sandbox link", "startedAt" => now, "procStart" => ProcessIdentity.start_of(pid),
-        "status" => "idle", "statusUpdatedAt" => now, "bridgeSessionId" => SEED_LINK_ID
+      FileUtils.mkdir_p(ClaudeSessions.sessions_dir)
+      File.write(File.join(ClaudeSessions.sessions_dir, "#{pid}.json"), JSON.generate(
+        { "pid" => pid, "sessionId" => tmux_session, "cwd" => File.realpath(worktree), "kind" => "interactive",
+          "startedAt" => now, "procStart" => ProcessIdentity.start_of(pid), "statusUpdatedAt" => now }.merge(fields)
       ))
       pid
     rescue StandardError
-      nil # a link that fails to seed just doesn't render the ⇅ — never abort the sandbox
+      nil # a session that fails to seed just doesn't render its cue — never abort the sandbox
     end
 
     # base: main + projects: are load-bearing (F2): without base the no-origin repo

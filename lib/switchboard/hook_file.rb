@@ -51,7 +51,7 @@ module Switchboard
     # directly), so both adapters share it unchanged.
     SCRIPT = <<~'SH'
       #!/bin/sh
-      # sb-agent-hook v5 — switchboard agent-state reporter (managed file; edits
+      # sb-agent-hook v6 — switchboard agent-state reporter (managed file; edits
       # are overwritten). Usage: sb-agent-hook <thinking|done|waiting|notify>
       #
       # `notify` (Claude's Notification hook) reads the event JSON on stdin and
@@ -64,23 +64,44 @@ module Switchboard
       # name can't false-alarm. An unrecognized or missing type defaults to the
       # calm state. Any other <state> is written verbatim (Codex feeds `waiting`
       # straight in via its PermissionRequest event).
+      #
+      # `thinking` from a SUBAGENT's tool call (Claude puts an agent_id in that
+      # payload; its own internal agents too) is not the main agent working, so it
+      # writes nothing — except the PostToolUse that follows a subagent's approved
+      # permission prompt, which writes "done" so the prompt's magenta doesn't stick
+      # (its PermissionRequest still reports "waiting": that one wants you).
       state="$1"
       [ -n "$state" ] || exit 0
 
+      dir="${SWITCHBOARD_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/switchboard/agents}"
+      cwd=$(pwd -P)
+      key=$(printf '%s' "$cwd" | cksum | cut -d' ' -f1)
+
+      field() {
+        printf '%s' "$payload" | sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p"
+      }
+
       if [ "$state" = "notify" ]; then
-        type=$(sed -n 's/.*"notification_type"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
-        case "$type" in
+        payload=$(cat)
+        case "$(field notification_type)" in
           permission_prompt|elicitation_dialog|elicitation_url_dialog|agent_needs_input)
             state="waiting" ;;
           *) state="done" ;;
         esac
+      elif [ "$state" = "thinking" ] && [ ! -t 0 ]; then
+        payload=$(cat)
+        if [ -n "$(field agent_id)" ]; then
+          case "$(field hook_event_name)" in
+            PostToolUse|PostToolUseFailure)
+              [ "$(cut -f1 "$dir/$key" 2>/dev/null)" = "waiting" ] || exit 0
+              state="done" ;;
+            *) exit 0 ;;
+          esac
+        fi
       fi
 
-      dir="${SWITCHBOARD_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/switchboard/agents}"
       mkdir -p "$dir" 2>/dev/null || exit 0
 
-      cwd=$(pwd -P)
-      key=$(printf '%s' "$cwd" | cksum | cut -d' ' -f1)
       # Write atomically (temp + mv, same dir => same fs => atomic rename). A plain
       # `> file` is non-atomic: a reader (the sidebar's warm-render fingerprint, or
       # AgentState.scan) could catch a half-written line, skip the malformed state,

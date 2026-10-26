@@ -97,8 +97,16 @@ module Switchboard
       # return; refresh_prs_for is the one unrescued consumer, so a fault there
       # raises past us (the fault-path test pins exactly this) — and the ensure
       # still advances the baseline either way.
+      #
+      # `offstage` ({ path => pid }) and `idle` (Set) are the session evidence for the ◷
+      # hold (ClaudeSessions.activity): a :done edge on a path whose session still reads
+      # `busy` (a background agent — ClaudeSessions::HANDOFF_STATUS) is a hand-off, so it's HELD (OffstageHold) instead of ringing, and the
+      # hold rings later from settle_holds. Both default empty: no evidence, today's chime.
+      # `sessions_ok` false means the session read failed: no evidence either way, so
+      # nothing releases a hold on it.
       def on_scan(now, monitoring:, nodes:, config:, current_path:,
-                  notify_pending: {}, first_turn: Set.new, announce_sounds: true, refresh_prs: true)
+                  notify_pending: {}, first_turn: Set.new, announce_sounds: true, refresh_prs: true,
+                  offstage: {}, idle: Set.new, sessions_ok: true)
         edges = []
         if @prev_hook_states
           edges = self.class.completion_edges(@prev_hook_states, now)
@@ -107,6 +115,13 @@ module Switchboard
           # loop doesn't chime and bold every tick. :waiting still surfaces (it wants
           # input), and the PR/diff refresh rides EVERY edge (a tick may have committed).
           completions = edges.reject { |path| suppress_completion?(path, now[path], monitoring, first_turn) }
+          # A :done whose session still reads `busy` handed work to a background agent: hold
+          # its chime + bold (a background shell rings now — it may never end). Written by EVERY scan (warm and
+          # catch-up too), because whichever pane is on screen when the work finishes
+          # rings it, and that pane may not be this one. A hold that failed to land rings
+          # now instead: early beats never.
+          handoffs = completions.select { |path| now[path] == :done && offstage.key?(path) && hold(path, offstage[path]) }
+          completions -= handoffs
           # Bold rides the un-suppressed COMPLETIONS only. A declared alert's bold is written
           # directly into Attention by the CLI (so it persists even when no sidebar is on
           # screen), so it's NOT re-marked here — one source of truth, and no viewing?-skip drift.
@@ -130,7 +145,10 @@ module Switchboard
             play_sounds_for(alerted, states, nodes, config)
             sparkle_for(alerted, states)
           end
+          release_rung_holds(completions, now) if announce_sounds && sessions_ok
         end
+        settle_holds(now, nodes, offstage: offstage, idle: idle, current_path: current_path,
+                                 announce: announce_sounds, config: config)
         edges
       ensure
         # Merge, not replace: keep a STICKY baseline. A worktree whose hook report
@@ -146,6 +164,12 @@ module Switchboard
         # re-baselines a while-away alert silently instead of re-ringing it. Absent from
         # notify_pending => no marker => no entry, so it stays bounded by notified worktrees.
         @prev_notify.merge!(notify_pending)
+      end
+
+      # This pane's last-known hook state for `path` (sticky past PRESENCE_TTL, unlike
+      # AgentState's fresh view) — what keeps ◷ up through a long background job.
+      def last_state(path)
+        (@prev_hook_states || {})[path]
       end
 
       # One background-dispatch ping: the sound (your :done sound, or the soft falling
@@ -237,6 +261,55 @@ module Switchboard
       # ping has rung or you've viewed the workspace (D16).
       def suppress_completion?(path, state, monitoring, first_turn = Set.new)
         state == :done && (monitoring.include?(path) || first_turn.include?(path))
+      end
+
+      def hold(path, pid)
+        OffstageHold.hold(path, pid: pid)
+      rescue StandardError
+        nil
+      end
+
+      # A normal :done this (announcing) scan just rang is that worktree's turn ending,
+      # so a hold another pane wrote for it inside the done-before-idle race would ring
+      # the same end twice. Only the ringing pane drops it: a silent pane that sees the
+      # edge late (after the work finished) would take the only ring with it.
+      def release_rung_holds(completions, now)
+        completions.each { |path| OffstageHold.release(path) if now[path] == :done }
+      rescue StandardError
+        nil
+      end
+
+
+      # Resolve every held ◷ chime. A follow-up turn (the hook left :done) releases it
+      # silently: that turn's own Stop rings normally. Only an announcing scan releases —
+      # an off-screen pane can catch a short follow-up turn the on-screen pane's scans
+      # miss, and then nothing would ring; left held, it matures for the on-screen pane
+      # (late, if no pane was on screen through the follow-up — a TODOS.md item).
+      # Otherwise it matures only on EVIDENCE — the session reads a settled `idle`, or
+      # the busy session's process is gone — never on missing evidence (a failed scan,
+      # an unreadable file or pid keeps holding). A mature hold rings only from an
+      # on-screen announcing scan, which claims it first (one unlink wins across every
+      # pane); other scans leave it for that pane. The bold rides the claim too: an
+      # off-screen pane marking it could re-bold a workspace you just viewed, in the
+      # moment before the on-screen pane claims. Fully rescued.
+      def settle_holds(now, nodes, offstage:, idle:, current_path:, announce:, config:)
+        paths = nodes.select { |n| n.kind == "ws" }.map(&:path)
+        OffstageHold.held(paths).each do |path, held|
+          state = now.fetch(path) { (@prev_hook_states || {})[path] }
+          if state && state != :done
+            OffstageHold.release(path) if announce
+            next
+          end
+          next if offstage.key?(path)
+          next unless idle.include?(path) || (held[:pid] && !ProcessIdentity.alive?(held[:pid]))
+          next unless announce && OffstageHold.claim(path)
+
+          mark_attention_for([path], current_path)
+          play_sounds_for([path], { path => :done }, nodes, config)
+          sparkle_for([path], { path => :done })
+        end
+      rescue StandardError
+        nil
       end
 
       # Is the sidebar currently sitting in this worktree? Canonicalizes both sides —

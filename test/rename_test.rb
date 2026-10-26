@@ -68,6 +68,21 @@ module Switchboard
       assert_includes Monitoring.monitored([new]), new, "the ∞ marker followed the rename"
     end
 
+    # Value: protects=a ◷ chime held across a rename still rings for the renamed workspace;
+    # fails_when=Rename.perform stops calling OffstageHold.carry (the hold stays keyed by the
+    # old realpath and no lookup of the new path ever finds it — the chime is lost); why_new=
+    # only OffstageHold.carry itself was tested, not perform's wiring; seam=none
+    def test_perform_carries_a_held_offstage_chime_to_the_new_path
+      repo = temp_git_repo("proj")
+      old = add_worktree(repo, "old")
+      OffstageHold.hold(File.realpath(old), pid: 4242)
+
+      assert_equal :ok, Rename.perform(config_for(repo), "proj", old, "new").status
+
+      new = File.realpath(path("wts", "proj", "new"))
+      assert_equal({ new => 4242 }, OffstageHold.held([new]).transform_values { _1[:pid] }, "the hold followed the rename")
+    end
+
     # The same shared carry fixes Attention's latent bug: a rename used to silently drop
     # an unviewed completion's bold.
     def test_perform_carries_the_attention_bold_to_the_new_path

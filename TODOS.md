@@ -717,6 +717,81 @@ safe today; each is narrow).
   enable-hooks over codex tables or a missing end marker, …). *Start in:* the cell list in the
   ship review; `test/codex_hook_test.rb`, `test/installer_test.rb`. **Priority:** P4.
 
+## Background-wait `◷` (v0.56.0) follow-ups
+
+- **Probe the Stop payload's `background_tasks` field.** *What:* Claude 2.1.310's `Stop`
+  hook payload carries `background_tasks` (and `session_crons`) keys; the v0.56.0 probe
+  logged key names only. *Why:* if it lists the outstanding work, it's an exact, hook-side
+  hand-off signal — no session-file read, no settle window, and it would cover Codex if
+  Codex grows the same. *Context:* rerun the T0 probe harness (a throwaway tmux + real
+  claude, `DISABLE_UPDATES`) dumping the field's values for a background agent, a
+  background Bash and a Monitor. *Depends on:* nothing.
+- **Reporter v6 attribution gaps (both reproduced at ship QA).** (a) `field agent_id`
+  matches an `agent_id` key nested in a main-agent tool's `tool_input` (the sed match is
+  greedy, last wins), so that `thinking` refresh is dropped; fix by matching only
+  top-level keys once a probe confirms Claude's payload key order (does `agent_id` precede
+  `tool_input`?). (b) A background subagent's `PostToolUse` turns a MAIN agent's open
+  `waiting` into `done` (no owner on the state line); fix with a 4th `owner` field
+  (`main` or the agent_id) that `AgentState` tolerates, cleared only by its owner. Neither
+  is a regression: v5 wrote `thinking` over the main `◆` on every subagent tool call.
+- **A matured hold bolds only on an on-screen claim.** *What:* a hold that matures with no
+  follow-up turn (pid gone, settled idle) while no sidebar is on screen leaves no bold,
+  then chimes late on return. *Why kept:* an off-screen pane can't tell what you're
+  viewing, so bolding there could re-bold a workspace you just looked at (Build note 1).
+  *Fix idea:* stamp maturity time on the hold; any pane bolds; drop the sound when the
+  claim comes long after maturity.
+- **Pid-based maturity can't tell finished from abandoned.** A Claude killed or `/exit`ed
+  mid-background-work matures its hold (a "done" chime for abandoned work); a recycled
+  pid after a clean exit keeps a hold until the next settled idle there. Store
+  `procStart` in the hold and use `ProcessIdentity.same?` on visible scans; treat "gone
+  and file removed" as release.
+- **Holds of a removed project aren't GC'd** (GC is `Dir.exist?` only): re-adding the
+  project could ring a stale chime. Drop holds past an age ceiling in `held`.
+- **Late chime after an unwatched follow-up turn.** Only an announcing scan releases a hold
+  (a silent pane can't tell a late-seen hand-off from a finished follow-up), so a follow-up
+  turn that ends while no sidebar is on screen leaves the hold to mature — and chime — when
+  you return, on a workspace already bold. Fix with a completion identity on the hold (the
+  hook report's epoch), so a pane can tell "the turn after the hand-off ended" from "the
+  hand-off itself". The same identity closes the two rare double-chime races: a delayed
+  off-screen writer re-creating a hold an on-screen pane already rang (Codex review), and
+  the hold write vs release ordering at a follow-up turn's own race window.
+- **A per-file unreadable session reads as absent.** `ClaudeSessions.records` drops a file
+  it can't parse, so a sole garbled busy session lets a dispatch ping ring early, and a busy
+  one beside an idle sibling can mature a hold early. Count unreadable files per worktree
+  and treat them as "no evidence".
+- **The tracked-cwd pre-filter drops a session after an EXTERNAL `git worktree move`** (no
+  rename bridge): its recorded cwd matches nothing, so lsof never runs and its ⇅/◷ vanish
+  (D10's accepted trade). Fall back to an lsof pass when a live session matches no root.
+- **A held chime is lost beside a running background shell (verification review).** A turn
+  starts a background agent AND a dev server; the agent's follow-up turn finishes inside one
+  3s scan (no `:thinking` seen, no edge); the session then reads `shell`, so `activity` never
+  says `:idle`, the hold can't mature, and your next prompt releases it silently. Candidate
+  fix: mature when the path leaves the `busy` set with no fresh idle — but first probe what
+  `status` reads between an agent finishing and its follow-up turn (an early ring there,
+  then the follow-up's own Stop, would double-chime).
+- **Off-screen panes write holds from cheap-scan evidence.** A crashed Claude's leftover
+  `busy` file whose pid got recycled passes the kill(0)-only cheap scan, so a hidden pane
+  holds a normal turn the on-screen pane already rang — a double chime each turn while the
+  recycled process lives. Write holds only from full scans, or store `procStart` in the hold.
+- **Smaller ship-review notes (pass 3).** The tracked-cwd pre-filter `realpath`s every
+  session file's cwd (dead leftovers too) before `kill(0)` — a cwd on a hung mount could stall
+  a scan; `doctor`'s canary checks file shape, not `status` values (a renamed `idle` would
+  leave holds waiting on pid exit); `settled_offstage` trusts a negative hook age after a
+  backward clock step; a tab in a worktree path breaks `OffstageHold`'s tab-split content;
+  `quit` clears holds before `Tmux.kill_all`, so a sidebar can write one in between.
+- **A dispatched first turn bolds at the hand-off.** `Creation.stamp_first_turn` →
+  `advance` marks Attention at `turn_done` immediately; only the sound waits for the work.
+  Defer the bold with the ring.
+- **Tests worth adding:** pin `report_stop_state`'s `in: File::NULL` (a never-closing
+  stdin pipe + timeout); `ClaudeSessions.fingerprint`'s alive bit (kill a busy session's
+  pid, file unchanged); a hold maturing on the viewed workspace (sound yes, bold no); a
+  sidebar-level `ClaudeSessions.scan` raise keeping dots and links (plan T3).
+- **Simplification (advisory, ship review):** one stamp-gated record cache for both
+  `RemoteLink.fingerprint` and `ClaudeSessions.fingerprint` (each changed file is parsed
+  twice per warm check); `roots_for`/`tracked?` helpers in `ClaudeSessions`;
+  `RemoteLink.linked_records` = `ClaudeSessions.records.select { linked? }`; a shared
+  `KeyedMarkerStore.clear_all` for OffstageHold/Notify/Monitoring.
+
 ## Sidebar cursor bar follow-ups
 
 - **Keep row colors under the cursor bar.** *Why:* the focused cursor row is reverse video

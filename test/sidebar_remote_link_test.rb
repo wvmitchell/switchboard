@@ -276,10 +276,31 @@ module Switchboard
       sb = sidebar(nodes: [ws("a", path: a)])
       write.call
       base = sb.send(:warm_fingerprint)
+      write.call("status" => "shell")
+      assert_equal base, sb.send(:warm_fingerprint), "busy → shell stays offstage: no wake"
       write.call("status" => "idle")
-      assert_equal base, sb.send(:warm_fingerprint), "an unlinked session's busy/idle flip doesn't wake a hidden pane"
-      write.call("bridgeSessionId" => "session_on")
-      refute_equal base, sb.send(:warm_fingerprint), "/rc on does"
+      idle = sb.send(:warm_fingerprint)
+      refute_equal base, idle, "a tracked session leaving background work wakes a hidden pane (its ◷ ends)"
+      write.call("status" => "waiting")
+      assert_equal idle, sb.send(:warm_fingerprint), "idle → waiting stays on the same side: no wake"
+      write.call("status" => "waiting", "bridgeSessionId" => "session_on")
+      refute_equal idle, sb.send(:warm_fingerprint), "/rc on does"
+    end
+
+    # Value: protects=hidden panes never wake for a Claude outside switchboard; fails_when=the
+    # offstage term drops its tracked-worktree filter; why_new=the ◷ term is new; seam=none;
+    # no_claim=real Claude files
+    def test_an_untracked_session_s_busy_idle_flip_never_moves_the_warm_fingerprint
+      a = real_dir("a")
+      elsewhere = real_dir("elsewhere")
+      FileUtils.mkdir_p(RemoteLink.sessions_dir)
+      file = File.join(RemoteLink.sessions_dir, "1.json")
+      File.write(file, JSON.generate("pid" => 1, "cwd" => elsewhere, "sessionId" => "s", "status" => "busy"))
+      sb = sidebar(nodes: [ws("a", path: a)])
+      base = sb.send(:warm_fingerprint)
+      File.write(file, JSON.generate("pid" => 1, "cwd" => elsewhere, "sessionId" => "s", "status" => "idle"))
+      File.utime(Time.now + 5, Time.now + 5, file)
+      assert_equal base, sb.send(:warm_fingerprint)
     end
   end
 end

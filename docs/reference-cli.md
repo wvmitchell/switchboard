@@ -282,7 +282,8 @@ The first place to look when something's off.
 ### `switchboard sandbox`
 Dogfood **this checkout's** sidebar in a throwaway, fully-isolated tmux — a hermetic
 repo seeded with worktrees in varied visual states (an open-PR badge, a big `+/−` diff,
-a no-PR row, a multi-branch workspace, a monitored `∞` row, a phone-linked `⇅` row), on its own tmux server and
+a no-PR row, a multi-branch workspace, a monitored `∞` row, a phone-linked `⇅` row, a
+`◷` row waiting on background work), on its own tmux server and
 socket, torn down automatically on detach. The interactive twin of `bin/test-smoke`
 (#126); nothing it does touches your real sessions or state. It also disables Claude
 Code's self-updater inside the sandbox (`DISABLE_UPDATES` + `DISABLE_AUTOUPDATER`), so an
