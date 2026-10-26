@@ -218,6 +218,19 @@ module Switchboard
       assert Git.dirty?(path("notarepo")) == false, "dirty? stays fail-open (reads as clean)"
     end
 
+    # Value: protects=a status line naming a file whose name isn't UTF-8 (Linux, with
+    # core.quotePath=false) reads as dirty, never raises out of the rollback that relies on
+    # clean?; fails_when=either check strips the UTF-8-tagged text; why_new=ship 7 red team;
+    # seam=Git.capture (macOS won't create such a name)
+    def test_clean_and_dirty_read_a_non_utf8_status_as_changes
+      repo = temp_git_repo
+      status = ->(*) { `true`; "?? caf\xE9".dup.force_encoding(Encoding::UTF_8) }
+      stub_method(Git, :capture, status) do
+        refute Git.clean?(repo)
+        assert Git.dirty?(repo)
+      end
+    end
+
     # A fully-ignored heavy dir (node_modules) isn't dirty, so the check both matches
     # what `git worktree remove` allowed AND stays fast (porcelain skips ignored dirs).
     def test_clean_ignores_gitignored_dirs

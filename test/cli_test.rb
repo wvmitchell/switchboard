@@ -1341,6 +1341,11 @@ module Switchboard
       File.write(Config.path, "}{ not yaml")
       out = with_key_stubs(live: true) { capture { CLI.send(:doctor_binding_live) } }
       assert_includes out, "tmux_keys: using the default keys", "the key section says what the parse error means for it"
+      # Extended (ship 7 maintainability): with keys already bound, a broken config keeps
+      # them, and doctor says so instead of naming the defaults.
+      kept = with_key_stubs(live: true, options: { "@switchboard-home-key" => "H" }) { capture { CLI.send(:doctor_binding_live) } }
+      assert_includes kept, "tmux_keys: keeping the keys already bound (config.yml didn't parse"
+      refute_includes kept, "using the default keys"
     end
 
     # Value: protects=#14: doctor never vouches for a config.yml that won't parse; fails_when=the

@@ -49,7 +49,7 @@ module Switchboard
     end
 
     def dirty?(worktree)
-      !capture(worktree, "status", "--porcelain").strip.empty?
+      !capture(worktree, "status", "--porcelain").b.strip.empty? # bytes: a non-UTF-8 name can't raise
     end
 
     # Fail-CLOSED clean check for the destructive delete path: true ONLY when
@@ -63,7 +63,7 @@ module Switchboard
     def clean?(worktree)
       out = capture(worktree, "status", "--porcelain")
       ok = $?&.success? # set by capture's backtick; grab before anything else runs
-      !!ok && out.strip.empty?
+      !!ok && out.b.strip.empty?
     end
 
     # Best-effort refresh so a base ref like origin/main is current before we

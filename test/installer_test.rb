@@ -485,31 +485,45 @@ module Switchboard
       assert_includes cmds, ["set-option", "-g", "@switchboard-toggle-key", "b"]
     end
 
-    # Value: protects=a config.yml that won't parse leaves the bound tmux keys alone (upgrade,
-    # `e` and `switchboard config` all rebind), yet a first bind with nothing recorded still
-    # gets the defaults; fails_when=apply_keybindings binds defaults under load_error;
-    # why_new=ship 7 red team; seam=none
+    # Value: protects=a config.yml that won't parse keeps the last-good tmux keys (upgrade,
+    # `e` and `switchboard config` all rebind), re-bound in case a tmux.conf reload dropped
+    # them, yet a first bind with nothing recorded still gets the defaults; fails_when=
+    # apply_keybindings binds defaults, or only leaves the keys, under load_error;
+    # why_new=ship 7 red team + security; seam=none
     def test_apply_keybindings_keeps_bound_keys_while_the_config_wont_parse
       File.write(Config.path, "tmux_keys: [unclosed\n")
       config = Config.new
       assert config.load_error, "the fixture must not parse"
-      [[{ "@switchboard-toggle-key" => "b" }, false], [{}, true]].each do |options, binds|
+      bin = Installer.bin_path
+      note = ["display-message", "switchboard: config.yml won't parse — tmux keys left as they were"]
+      cases = [
+        [{ "@switchboard-toggle-key" => "b" }, true, [["bind-key", "b", "run-shell", "'#{bin}' toggle-sidebar"], note]],
+        [{ "@switchboard-home-key" => "H" }, false, [["bind-key", "H", "run-shell", "'#{bin}' home"]]],
+        [{ "@switchboard-toggle-key" => "b", "@switchboard-home-key" => "H" }, false,
+         [["bind-key", "b", "run-shell", "'#{bin}' toggle-sidebar"], ["bind-key", "H", "run-shell", "'#{bin}' home"]]]
+      ]
+      cases.each do |options, announce, expected|
         cmds = []
         stub_method(Installer, :list_prefix_keys, -> { "" }) do
           stub_method(Installer, :tmux_option, ->(name) { options[name] }) do
             stub_method(Installer, :run_tmux, ->(*argv) { cmds << argv; true }) do
-              Installer.apply_keybindings(announce: true, config: config)
+              Installer.apply_keybindings(announce: announce, config: config)
             end
           end
         end
-        binds_s = cmds.include?(["bind-key", "s", "run-shell", "'#{Installer.bin_path}' toggle-sidebar"])
-        assert_equal binds, binds_s, options.inspect
-        if binds
-          assert_includes cmds, ["set-option", "-g", "@switchboard-toggle-key", "s"]
-        else
-          assert_equal [["display-message", "switchboard: config.yml won't parse — tmux keys left as they were"]], cmds
+        assert_equal expected, cmds, options.inspect # re-bound in place, nothing unbound or re-recorded
+      end
+
+      cmds = []
+      stub_method(Installer, :list_prefix_keys, -> { "" }) do
+        stub_method(Installer, :tmux_option, ->(_name) { nil }) do
+          stub_method(Installer, :run_tmux, ->(*argv) { cmds << argv; true }) do
+            Installer.apply_keybindings(config: config)
+          end
         end
       end
+      assert_includes cmds, ["bind-key", "s", "run-shell", "'#{bin}' toggle-sidebar"], "nothing recorded: the defaults"
+      assert_includes cmds, ["set-option", "-g", "@switchboard-toggle-key", "s"]
     end
 
     def test_apply_keybindings_announces_only_when_asked
@@ -1051,10 +1065,18 @@ module Switchboard
     # fails_when=the summary always says "the agent-state hooks"; why_new=cycle-2 red team; seam=step_*
     def test_install_names_the_config_when_it_will_not_parse
       File.write(Config.path, "--\nprojects:\n")
-      out = %i[step_symlink wire_tmux step_init step_codex_hooks warn_path warn_tmux_version].reduce(-> { silently { Installer.install(no_tmux: true) } }) do |inner, m|
-        -> { stub_method(Installer, m, ->(*, **) { true }) { inner.call } }
-      end.call
+      run = lambda do |options|
+        stub_method(Installer, :tmux_option, ->(name) { options[name] }) do
+          %i[step_symlink wire_tmux step_init step_codex_hooks warn_path warn_tmux_version].reduce(-> { silently { Installer.install(no_tmux: true) } }) do |inner, m|
+            -> { stub_method(Installer, m, ->(*, **) { true }) { inner.call } }
+          end.call
+        end
+      end
+      out = run.call({})
       assert_includes out, "Done, except the config (✗ above)"
+      assert_includes out, "press prefix-s to toggle", "nothing bound yet: the default"
+      # Extended (ship 7 red team): a broken config keeps the bound key, so that's the one named.
+      assert_includes run.call("@switchboard-toggle-key" => "t"), "press prefix-t to toggle"
     end
 
     # Value: protects=a refused or raced uninstall never reads as success and never advises

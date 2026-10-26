@@ -121,9 +121,9 @@ in the running server — the "prefix-s stopped working after a `git pull`" case
   Pick another key.
 - **Swapping keys.** Setting `toggle` and `home` to each other's old keys works in one
   step; neither unbinds the key the other now wants.
-- **A malformed config.** switchboard falls back to default keys and keeps
-  running; `doctor` reports the parse error and the file to fix, and `install` and
-  `upgrade` exit 1 until it's fixed.
+- **A malformed config.** switchboard keeps running and keeps the tmux keys already
+  bound (the defaults only if none were bound yet); `doctor` reports the parse error and
+  the file to fix, and `install` and `upgrade` exit 1 until it's fixed.
 - **A sidebar key didn't change.** Run `switchboard doctor`. If it says the value
   "isn't a single printable key", you used more than one character (or a named
   key) — `sidebar_keys` takes exactly one printable char. If it says the key

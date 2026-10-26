@@ -147,9 +147,10 @@ cleaned by `switchboard prune` — see [How-to: housekeeping](howto-housekeeping
   string or list of strings, so setup couldn't run), `worktree add`, `no session`,
   `interrupted` or `didn't start`. `↵` shows the full message; fix the cause, then
   `d` the row and press `n` again. When a `worktree add` fails, switchboard removes
-  only what it can prove that build made (a tree on its branch with no commits, and
-  that branch); anything else is kept and named in the message ("kept … (it has
-  commits)"), so nothing of yours is deleted. If someone else made the same folder or
+  only what it can prove that build made (a tree on its branch with no commits and no
+  changes since its checkout finished, and that branch); anything else is kept and named
+  in the message ("kept … (it has commits)", "(it has changes)"), so nothing of yours is
+  deleted. If someone else made the same folder or
   branch mid-build, the build usually retries under a new name; when it can't tell
   whose the leftovers are, it fails instead, and the ✘ names what it kept. If others
   keep taking every new name it tries, it stops after five tries and the message shows

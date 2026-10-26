@@ -1004,10 +1004,14 @@ module Switchboard
     end
 
     # Surface a bad `tmux_keys` config so it isn't silently ignored: a config that
-    # failed to parse (fell back to defaults), a value that isn't a usable key, and a
-    # home key that collides with the toggle (so home was left unbound).
+    # failed to parse (the bound keys stay; defaults only if none were), a value that isn't
+    # a usable key, and a home key that collides with the toggle (so home was left unbound).
     def doctor_key_config
-      puts "  \e[33m–\e[0m tmux_keys: using the default keys (config.yml didn't parse — see above)" if config.load_error
+      if config.load_error
+        kept = %w[toggle home].any? { |role| Installer.tmux_option("@switchboard-#{role}-key") }
+        puts "  \e[33m–\e[0m tmux_keys: #{kept ? 'keeping the keys already bound' : 'using the default keys'} " \
+             "(config.yml didn't parse — see above)"
+      end
       %w[toggle home].each do |role|
         raw = config.raw_tmux_key(role)
         next if raw.nil? || config.valid_tmux_key?(raw)

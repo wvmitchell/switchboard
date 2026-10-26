@@ -126,8 +126,9 @@ module Switchboard
       hooks_ok = refresh_wiring
       warn_path
       warn_tmux_version
-      key = Config.new.tmux_key("toggle")
-      hooks_part = Config.new.load_error ? "the config" : "the agent-state hooks" # refresh_wiring fails on either
+      broken = Config.new.load_error
+      key = broken ? bound_toggle_key : Config.new.tmux_key("toggle") # a broken config keeps the bound key
+      hooks_part = broken ? "the config" : "the agent-state hooks" # refresh_wiring fails on either
       failed = [("the codex hooks" unless codex_ok), (hooks_part unless hooks_ok)].compact
       done = failed.empty? ? "Done" : "Done, except #{failed.join(' and ')} (✗ above)"
       puts "\n#{done} — run `switchboard` (or `sb`) from any shell to start; press prefix-#{key} to toggle the sidebar inside tmux."
@@ -511,11 +512,16 @@ module Switchboard
     #   new key → capture/clear a clobbered foreign binding (for doctor). A rejected
     #   bind falls back (toggle → s) WITHOUT cleaning, so the recovery key is safe.
     def apply_keybindings(announce: false, config: Config.new)
-      # A config that won't parse says nothing about the keys: keep what's bound, the way the
-      # sidebar keeps its last-good config. Defaults only when nothing is bound yet.
-      if config.load_error && ROLE_SUBCOMMANDS.each_key.any? { |role| tmux_option("@switchboard-#{role}-key") }
-        run_tmux("display-message", "switchboard: config.yml won't parse — tmux keys left as they were") if announce
-        return
+      # A config that won't parse says nothing about the keys: keep the last-good ones, the way
+      # the sidebar keeps its last-good config. Re-bound, not just left, since a tmux.conf
+      # reload can drop a binding while its @option lives on. Defaults only when none are recorded.
+      if config.load_error
+        recorded = ROLE_SUBCOMMANDS.each_key.to_h { |role| [role, tmux_option("@switchboard-#{role}-key")] }.compact
+        unless recorded.empty?
+          recorded.each { |role, key| run_tmux(*tmux_argv([:bind, role, key])) }
+          run_tmux("display-message", "switchboard: config.yml won't parse — tmux keys left as they were") if announce
+          return
+        end
       end
 
       raw = list_prefix_keys

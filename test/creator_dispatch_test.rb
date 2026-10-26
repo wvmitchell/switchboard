@@ -672,11 +672,13 @@ module Switchboard
       assert_path_exists dest
     end
 
-    # Value: protects=a timed-out or hook-failed add still cleaning up fully; fails_when=the
-    # rollback requires a clean tree (a half checkout reads dirty and would be stranded as a
-    # ✘); why_new=R2 (D4) replaced the existence-only rollback; seam=none. Extended (ship 7
-    # red team): a half checkout still carries git's `initializing` lock; past checkout the
-    # row could be entered, so changes there are kept, never forced away.
+    # Value: protects=an add killed mid-checkout (git's `initializing` lock still on) cleaning
+    # up fully, dirty or not; fails_when=the rollback requires a clean tree under that lock
+    # (a half checkout reads dirty and would be stranded as a ✘); why_new=R2 (D4) replaced the
+    # existence-only rollback; seam=none. Extended (ship 7 red team): past checkout git has
+    # dropped its lock (before post-checkout runs, so a failing hook's files count too) and the
+    # row could be entered, so changes are kept, never forced away; a `git status` that fails
+    # keeps the tree as well (fail-closed).
     def test_undo_add_removes_a_half_checked_out_tree_and_its_branch
       repo = temp_git_repo("proj", origin: true)
       config = config_for(repo)
@@ -700,6 +702,21 @@ module Switchboard
       git(repo, "worktree", "add", "-q", "-b", "clean", dest, "main")
       assert_nil Creator.undo_add(config.project("proj"), dest, "clean", Git.rev_parse(repo, "main")), "a finished, untouched checkout"
       refute_path_exists dest
+
+      dest = path("wts", "clean-locked")
+      git(repo, "worktree", "add", "-q", "-b", "clean-locked", dest, "main")
+      git(repo, "worktree", "lock", "--reason", "initializing", dest)
+      assert_nil Creator.undo_add(config.project("proj"), dest, "clean-locked", Git.rev_parse(repo, "main")), "git's lock, clean"
+      refute_path_exists dest
+      refute Git.branch_exists?(repo, "clean-locked")
+
+      dest = path("wts", "unknown")
+      git(repo, "worktree", "add", "-q", "-b", "unknown", dest, "main")
+      note = stub_method(Git, :clean?, ->(_w) { false }) do # `git status` failed
+        Creator.undo_add(config.project("proj"), dest, "unknown", Git.rev_parse(repo, "main"))
+      end
+      assert_includes note.to_s, "#{dest} (it has changes)"
+      assert_path_exists dest
     end
 
     # Value: protects=the rollback forces past only git's own lock from a killed add
@@ -893,8 +910,9 @@ module Switchboard
       end
     end
 
-    # Value: protects=a timeout (ours) still cleaning up a dirty, commitless tree (D4) while a
-    # hook's output that merely mentions "already exists" doesn't count as a race; fails_when=
+    # Value: protects=a timeout mid-checkout (ours, git's lock still on) still cleaning up a
+    # dirty, commitless tree (D4) while a hook's output that merely mentions "already exists"
+    # doesn't count as a race (the ship 7 no-lock case is in the half-checkout test); fails_when=
     # the race guards are unanchored or a timeout keeps the tree; why_new=cycle-2 maintainability; seam=none
     def test_undo_add_still_cleans_up_after_a_timeout_or_a_noisy_hook
       repo = temp_git_repo("proj", origin: true)
