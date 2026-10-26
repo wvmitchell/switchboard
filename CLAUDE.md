@@ -140,7 +140,8 @@ were bound from — `tmux-bind` records it in `@switchboard-config-path`
 config.yml differently from your shell; without that, a mismatch would make every
 `upgrade` re-run forever. A malformed config never crashes anything —
 `Config#initialize` rescues the parse error to `{}` + `load_error` (the sidebar keeps
-its last-good config; the `tmux-bind` path falls back to defaults) — but it is never
+its last-good config; `tmux-bind` keeps the keys already bound, and binds the defaults
+only when none are) — but it is never
 silent either: `doctor`'s config row turns red, and `install` / `upgrade` print it
 and exit 1 (`Installer.config_readable?` gates `refresh_wiring`, whose hook refresh
 would otherwise walk zero projects and report success). A file that parses to
@@ -394,9 +395,10 @@ workspace renamed onto the placeholder, or a failing hook printing git's words) 
 two can't be told apart: nothing is removed or retried and the record stays to guard
 it. Anything else is rolled back by `undo_add`, which removes only what it can PROVE
 is this create's — the tree only when it's on our branch with no commits past the
-base commit the add started from (`Git.rev_parse`, captured before; dirty is fine,
-nobody worked in it; a lock only when it's git's own `initializing` from a killed add,
-never someone else's), the branch only atomically at that commit (`Git.delete_branch_at`
+base commit the add started from (`Git.rev_parse`, captured before), dirty only while
+git's own `initializing` lock says the checkout never finished (past checkout the row is
+enterable, so changes are kept like a commit, fail-closed `Git.clean?`), and a lock only
+when it's that `initializing` one from a killed add, never someone else's), the branch only atomically at that commit (`Git.delete_branch_at`
 = `update-ref --no-deref -d <ref> <sha>`, never a symref's target, then its
 `branch.<name>` config, as `branch -D` would) and only when one
 strict worktree read (`Git.worktrees(strict: true)`: nil on a failed run or a path it

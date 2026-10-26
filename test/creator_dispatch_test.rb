@@ -674,16 +674,32 @@ module Switchboard
 
     # Value: protects=a timed-out or hook-failed add still cleaning up fully; fails_when=the
     # rollback requires a clean tree (a half checkout reads dirty and would be stranded as a
-    # ✘); why_new=R2 (D4) replaced the existence-only rollback; seam=none
+    # ✘); why_new=R2 (D4) replaced the existence-only rollback; seam=none. Extended (ship 7
+    # red team): a half checkout still carries git's `initializing` lock; past checkout the
+    # row could be entered, so changes there are kept, never forced away.
     def test_undo_add_removes_a_half_checked_out_tree_and_its_branch
       repo = temp_git_repo("proj", origin: true)
       config = config_for(repo)
       dest = path("wts", "half")
       git(repo, "worktree", "add", "-q", "-b", "half", dest, "main")
       File.write(File.join(dest, "partial.bin"), "half a checkout") # dirty, nothing committed
+      git(repo, "worktree", "lock", "--reason", "initializing", dest) # checkout never finished
       assert_nil Creator.undo_add(config.project("proj"), dest, "half", Git.rev_parse(repo, "main")), "nothing kept, nothing said"
       refute_path_exists dest
       refute Git.branch_exists?(repo, "half")
+
+      dest = path("wts", "entered")
+      git(repo, "worktree", "add", "-q", "-b", "entered", dest, "main")
+      File.write(File.join(dest, "notes.md"), "typed in the re-entry shell mid-build")
+      note = Creator.undo_add(config.project("proj"), dest, "entered", Git.rev_parse(repo, "main"))
+      assert_includes note.to_s, "#{dest} (it has changes)"
+      assert_path_exists File.join(dest, "notes.md")
+      assert Git.branch_exists?(repo, "entered"), "its branch stays with the kept tree"
+
+      dest = path("wts", "clean")
+      git(repo, "worktree", "add", "-q", "-b", "clean", dest, "main")
+      assert_nil Creator.undo_add(config.project("proj"), dest, "clean", Git.rev_parse(repo, "main")), "a finished, untouched checkout"
+      refute_path_exists dest
     end
 
     # Value: protects=the rollback forces past only git's own lock from a killed add
@@ -890,6 +906,7 @@ module Switchboard
         dest = path("wts", "ours-#{i}")
         git(repo, "worktree", "add", "-q", "-b", "ours-#{i}", dest, "main")
         File.write(File.join(dest, "partial.bin"), "half a checkout")
+        git(repo, "worktree", "lock", "--reason", "initializing", dest) # killed mid-checkout
         assert_nil Creator.undo_add(config.project("proj"), dest, "ours-#{i}", Git.rev_parse(repo, "main"), err), err
         refute_path_exists dest, err
       end

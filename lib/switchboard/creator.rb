@@ -205,9 +205,10 @@ module Switchboard
     # behind would re-enter with the agent. What's ours is proven against the base commit
     # the add started from, never assumed from a name (a same-name branch can appear
     # between the clash check and the add):
-    #   - the tree: on OUR branch with nothing committed past base. Dirty is fine — a
-    #     timed-out checkout leaves a half-filled tree, and nobody can have worked in one
-    #     that was never offered as a workspace. A commit means someone's work: keep it
+    #   - the tree: on OUR branch with nothing committed past base, and dirty only while
+    #     git's own `initializing` lock says the checkout never finished (a timed-out one
+    #     leaves a half-filled tree). Past checkout the row is enterable (re-entry opens a
+    #     plain shell there), so changes may be someone's work: keep them, like a commit
     #     (the record fails as a guarded ✘).
     #   - the branch: only while it still points at base, atomically, and never while a
     #     worktree has it checked out.
@@ -241,6 +242,8 @@ module Switchboard
           # Only git's own lock from a killed add (English: add_worktree sets LANGUAGE) is
           # ours to force past; anyone else's lock means someone claimed the tree.
           kept << "#{dest} (it's locked)"
+        elsif lock.nil? && !Git.clean?(dest) # fail-closed: a status error keeps it too
+          kept << "#{dest} (it has changes)"
         else
           Git.remove_worktree(repo, dest, force: true, locked: !lock.nil?)
           kept << "#{dest} (couldn't remove it)" if File.exist?(dest)

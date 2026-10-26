@@ -511,6 +511,13 @@ module Switchboard
     #   new key → capture/clear a clobbered foreign binding (for doctor). A rejected
     #   bind falls back (toggle → s) WITHOUT cleaning, so the recovery key is safe.
     def apply_keybindings(announce: false, config: Config.new)
+      # A config that won't parse says nothing about the keys: keep what's bound, the way the
+      # sidebar keeps its last-good config. Defaults only when nothing is bound yet.
+      if config.load_error && ROLE_SUBCOMMANDS.each_key.any? { |role| tmux_option("@switchboard-#{role}-key") }
+        run_tmux("display-message", "switchboard: config.yml won't parse — tmux keys left as they were") if announce
+        return
+      end
+
       raw = list_prefix_keys
       legacy = tmux_option("@switchboard-toggle-key").nil? && toggle_key_live_from?(raw, "s")
       wanted = ROLE_SUBCOMMANDS.keys.to_h { |role| [role, config.tmux_key(role)] }

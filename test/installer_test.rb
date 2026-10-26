@@ -485,6 +485,33 @@ module Switchboard
       assert_includes cmds, ["set-option", "-g", "@switchboard-toggle-key", "b"]
     end
 
+    # Value: protects=a config.yml that won't parse leaves the bound tmux keys alone (upgrade,
+    # `e` and `switchboard config` all rebind), yet a first bind with nothing recorded still
+    # gets the defaults; fails_when=apply_keybindings binds defaults under load_error;
+    # why_new=ship 7 red team; seam=none
+    def test_apply_keybindings_keeps_bound_keys_while_the_config_wont_parse
+      File.write(Config.path, "tmux_keys: [unclosed\n")
+      config = Config.new
+      assert config.load_error, "the fixture must not parse"
+      [[{ "@switchboard-toggle-key" => "b" }, false], [{}, true]].each do |options, binds|
+        cmds = []
+        stub_method(Installer, :list_prefix_keys, -> { "" }) do
+          stub_method(Installer, :tmux_option, ->(name) { options[name] }) do
+            stub_method(Installer, :run_tmux, ->(*argv) { cmds << argv; true }) do
+              Installer.apply_keybindings(announce: true, config: config)
+            end
+          end
+        end
+        binds_s = cmds.include?(["bind-key", "s", "run-shell", "'#{Installer.bin_path}' toggle-sidebar"])
+        assert_equal binds, binds_s, options.inspect
+        if binds
+          assert_includes cmds, ["set-option", "-g", "@switchboard-toggle-key", "s"]
+        else
+          assert_equal [["display-message", "switchboard: config.yml won't parse — tmux keys left as they were"]], cmds
+        end
+      end
+    end
+
     def test_apply_keybindings_announces_only_when_asked
       File.write(Config.path, YAML.dump("tmux_keys" => { "toggle" => "b" }))
       # silent path (fragment)

@@ -19,11 +19,14 @@ refer to the project's earlier, private repository; the public tracker starts at
   exit 1, and so does a file that parses but isn't a map of settings (a dropped colon turns
   it into one string, a bare `false` into nothing; a list used to crash all three commands).
   `doctor`'s config row also turns red instead of showing a green check above the error
-  (#14). With setup left to finish, `upgrade` still repairs what doesn't need the config.
+  (#14). With setup left to finish, `upgrade` still repairs what doesn't need the config,
+  and it (like saving a typo with `e`) now leaves your tmux keys as they were instead of
+  rebinding the defaults.
 - A failed workspace create can no longer delete someone else's commits. If a branch
   with the new workspace's name appeared while the worktree was being made, the cleanup
   used to force-delete it. Now the cleanup removes the branch only while it still points
-  at the commit the create started from, keeps any tree that has a commit in it, and keeps
+  at the commit the create started from, keeps any tree that has a commit in it or changes
+  made after its checkout finished (you could open the row while it built), and keeps
   anything git says was already there. It deletes only that exact branch name (never a
   branch it points to), and keeps it when it can't list the repo's worktrees to prove no
   one has it checked out. The failed row now names what it kept and why, and a tree that
