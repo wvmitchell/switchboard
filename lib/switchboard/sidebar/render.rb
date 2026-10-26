@@ -31,7 +31,7 @@ module Switchboard
       FAILED   = "\e[1;31m✘\e[0m" # a dispatch whose build/setup/launch failed: the heavy ✘ keeps its shape in reverse video (DR5)
       LINK_GLYPH    = "⇅"        # a live /remote-control link: this workspace is reachable from your phone (picked by eye)
       LINK_LIVE_FG  = "\e[32m"    # ...green while live: the resting dots' green, normal weight (default fg read too close to the grey)
-      LINK_LIVE_LABEL = "on phone" # the legend entry the p hint attaches to
+      LINK_LIVE_LABEL = "phone link on" # the legend entry the p hint attaches to
       LINK_STALE_FG = "\e[90m"    # ...and grey when idle past remote_link_stale_after (bold read identical; the theme-relative dim branch rows use)
       WS_PREFIX_COLS = 4          # a ws row's "<pointer> <dot> " before its name: fit_plain and colored must agree on it
       NOTE_FG  = "\e[2m"          # the dim task label / failure reason in the right region (DR3/DR8)
@@ -92,9 +92,13 @@ module Switchboard
       # What the row glyphs mean (DR9) — nothing else teaches them. The first section
       # under the help wordmark, so it's on page 1.
       LEGEND_HEADING = "icons"
-      LEGEND = [[SPIN_COLORED.first, "⠋", "working"], [WANTS_ON, "◆", "input"], [DONE, "●", "done"],
-                [MONITORING, "∞", "watching"], [OFFSTAGE, "◷", "background"], [BUILDING, "◌", "building"], [FAILED, "✘", "failed"],
-                ["#{LINK_LIVE_FG}#{LINK_GLYPH}\e[0m", "⇅", LINK_LIVE_LABEL], ["#{LINK_STALE_FG}#{LINK_GLYPH}\e[0m", "⇅", "idle link"]].freeze
+      # Labels fit the 40-col default beside the key column (32 cols; the live link's
+      # carries the ` · p shows a QR` hint too).
+      LEGEND = [[SPIN_COLORED.first, "⠋", "agent is working"], [WANTS_ON, "◆", "agent needs your input"],
+                [DONE, "●", "agent is done"], [MONITORING, "∞", "agent running a monitor/loop"],
+                [OFFSTAGE, "◷", "waiting on background work"], [BUILDING, "◌", "workspace being set up"],
+                [FAILED, "✘", "workspace setup failed"], ["#{LINK_LIVE_FG}#{LINK_GLYPH}\e[0m", "⇅", LINK_LIVE_LABEL],
+                ["#{LINK_STALE_FG}#{LINK_GLYPH}\e[0m", "⇅", "phone link, idle a while"]].freeze
 
       private
 

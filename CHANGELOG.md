@@ -15,7 +15,9 @@ refer to the project's earlier, private repository; the public tracker starts at
 ### Changed
 - The `?` overlay's glyph legend is now its own `icons` section, one glyph per row in
   the key column, laid out like the key rows below it, instead of a wrapped run of
-  glyphs. The overlay is a few lines longer, so a shorter pane pages to it sooner.
+  glyphs. The labels say what each one means (`◆ agent needs your input`, `◷ waiting
+  on background work`, `◌ workspace being set up`, …) instead of one word apiece. The
+  overlay is a few lines longer, so a shorter pane pages to it sooner.
 
 ## [0.56.0] — ◷: a turn that handed work off isn't "done" (2026-10-26)
 

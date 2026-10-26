@@ -188,8 +188,8 @@ module Switchboard
     # The ? overlay's legend is the only place the row glyphs are taught.
     def test_the_help_legend_teaches_both_link_states
       legend = sidebar.send(:legend_lines, 40).join("\n")
-      assert_includes legend, "#{Sidebar::LINK_LIVE_FG}⇅\e[0m       on phone"
-      assert_includes legend, "#{Sidebar::LINK_STALE_FG}⇅\e[0m       idle link"
+      assert_includes legend, "#{Sidebar::LINK_LIVE_FG}⇅\e[0m       phone link on"
+      assert_includes legend, "#{Sidebar::LINK_STALE_FG}⇅\e[0m       phone link, idle a while"
     end
 
     def test_console_counts_links_and_idle_links

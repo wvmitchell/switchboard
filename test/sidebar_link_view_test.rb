@@ -255,9 +255,9 @@ module Switchboard
     end
 
     def test_the_help_legend_names_the_live_qr_key
-      assert_includes strip_ansi(sidebar.send(:legend_lines, 80).join(" ")), "on phone · p shows a QR"
+      assert_includes strip_ansi(sidebar.send(:legend_lines, 80).join(" ")), "phone link on · p shows a QR"
       File.write(Config.path, YAML.dump("sidebar_keys" => { "phone_link" => "x" }))
-      assert_includes strip_ansi(sidebar.send(:legend_lines, 80).join(" ")), "on phone · x shows a QR"
+      assert_includes strip_ansi(sidebar.send(:legend_lines, 80).join(" ")), "phone link on · x shows a QR"
       File.write(Config.path, YAML.dump("sidebar_keys" => { "rename" => "p" }))
       legend = strip_ansi(sidebar.send(:legend_lines, 80).join(" "))
       refute_includes legend, "shows a QR", "an unbound key gets no hint"
