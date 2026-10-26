@@ -394,10 +394,10 @@ module Switchboard
     # match what was bound (a drift row that never clears). Installer.run_tmux re-escapes it.
     def tmux_key(role)
       raw = raw_tmux_key(role)
-      key = valid_tmux_key?(raw) ? raw.strip.sub(/\\;\z/, ";") : TMUX_KEY_DEFAULTS[role]
-      return nil if role == "home" && key == tmux_key("toggle")
+      chosen = valid_tmux_key?(raw) ? raw.strip.sub(/\\;\z/, ";") : TMUX_KEY_DEFAULTS[role]
+      return nil if role == "home" && chosen == tmux_key("toggle")
 
-      key
+      chosen
     end
 
     # The raw configured value for a role (unvalidated), or nil. doctor uses this to
