@@ -1109,6 +1109,10 @@ later one's remap: added mid-list, `p` would have taken the key from anyone who 
 
 ### Waiting on background work (the ◷ — observed, not declared)
 
+Sessions-file `status` contract last verified live against **Claude Code 2.1.308–2.1.310**
+(v0.56.0) — tracked apart from the hook contract and the ⇅ link; the security monitor
+(`docs/howto-security-monitor.md`) watches it.
+
 Claude hands work to a background agent / background Bash / the Monitor tool and ends its
 turn: the Stop writes `done`, a green `●` and a chime — for work still running. No hook
 EVENT says so (the Stop payload does carry a `background_tasks` key, seen on 2.1.310 but
@@ -1124,7 +1128,7 @@ sessions into `:offstage` (any busy/shell), `:idle` (every one idle for ≥ `SET
   thinking/waiting, never on a hook-less row (its session reads `busy` through every
   foreground turn too, so with no `done` there's no hand-off); ∞ outranks it (a monitor always reads `shell`). The
   internal name is `offstage`, not "background": `Link#bg?` already means a session that IS
-  a background job. The legend says `◷ background`.
+  a background job. The legend says `◷ waiting on background work`.
 - **The settle window.** Claude writes `done` 13–29ms BEFORE `idle` on a normal turn end, and
   a finished background agent reads `idle` ~15ms before its follow-up turn's `busy`. A 3s scan
   lands in those ~1% of the time, so: ◷ draws only when the hook's report is ≥ `SETTLE` (2s)

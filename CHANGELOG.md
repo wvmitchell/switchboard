@@ -10,7 +10,7 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
-## [0.56.1] — failures that used to stay silent now say so (2026-10-26)
+## [0.56.3] — failures that used to stay silent now say so (2026-10-26)
 
 ### Fixed
 - A `config.yml` that won't parse no longer lets `install` and `upgrade` look successful.
@@ -55,6 +55,15 @@ refer to the project's earlier, private repository; the public tracker starts at
 - `uninstall` now exits 1 when it can't remove the codex hooks block, and says "Done,
   except the codex hooks", like `install` does for the same failure (a codex config that
   turns unreadable mid-uninstall counts too). It still finishes the rest of the uninstall.
+
+## [0.56.2] — the `?` icons read like the keys (2026-10-26)
+
+### Changed
+- The `?` overlay's glyph legend is now its own `icons` section, one glyph per row in
+  the key column, laid out like the key rows below it, instead of a wrapped run of
+  glyphs. The labels say what each one means (`◆ agent needs your input`, `◷ waiting
+  on background work`, `◌ workspace being set up`, …) instead of one word apiece. The
+  overlay is a few lines longer, so a shorter pane pages to it sooner.
 
 ## [0.56.0] — ◷: a turn that handed work off isn't "done" (2026-10-26)
 
