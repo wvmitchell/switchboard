@@ -82,9 +82,16 @@ they follow your light/dark background).
 | `⠹` | blue | **thinking** — working a turn | braille spinner cycles |
 | `◆` / `◇` | magenta | **waiting** — blocked on a permission prompt or question | blinks filled/hollow |
 | `●` | green | **done** — finished its turn (your move) | steady |
+| `◷` | blue | **background** — the turn ended, but work it started (a background agent, shell or monitor) is still running | steady |
 | `✦` / `✧` | bright green | **just completed** — the completion sparkle | shimmers for ~3s, then settles to the steady `●` |
 | `◌` | yellow | **building** — a dispatched workspace being created and set up | steady |
 | `✘` | bold red | **failed** — its build, setup or agent launch failed (reason on the right) | steady |
+
+`◷` appears about two seconds after a turn that handed work off. When the work is a
+background agent, the chime and bold wait for it: they arrive once the session goes idle
+(usually at the end of the follow-up turn that reports the result). A background shell
+may never end (a dev server), so its turn chimes as usual and the `◷` stays while it runs. A workspace running a declared background
+monitor shows `∞` instead.
 
 The sparkle is the visual twin of the completion sound: the instant an agent
 reaches `:done`, its dot twinkles `✦`/`✧` for three seconds, then becomes the

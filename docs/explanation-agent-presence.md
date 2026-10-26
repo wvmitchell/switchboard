@@ -242,6 +242,55 @@ moment you return. The verb is **gated to a monitored workspace** (it's precisel
 exception to monitoring's suppression). Cloud routines that never touch the local
 reporter can't declare a notify — a stated limit, like the `∞` itself.
 
+### Waiting on background work — the `◷` (observed, not declared)
+
+When Claude hands work to a background agent, a background shell or the Monitor tool
+and ends its turn, the `Stop` hook writes `done` — but the work isn't done. No hook event
+means "turn over, background task outstanding" (the `Stop` payload carries a
+`background_tasks` field whose contents haven't been checked yet). Claude's own per-session file
+(`~/.claude/sessions/<pid>.json`, the one the `⇅` reads) does say it: after such a turn
+its `status` stays `busy` (a background agent) or reads `shell` (a background shell or
+monitor) instead of going `idle`. `ClaudeSessions` (`claude_sessions.rb`) reads that one
+file set for both cues. The file is undocumented, so only those exact strings count; any
+other value is no evidence and the row shows today's dot.
+
+The row draws a steady blue `◷` (the spinner's blue: work is happening; a still clock:
+not by the main agent) in place of a resting `●`. Only a hooked agent's row: a session
+reads `busy` through every ordinary turn too, so without the hook's `done` there is no
+way to tell a hand-off from plain work. `∞` outranks it — a declared monitor is
+the more specific cue. When the work is a background **agent** (the session reads
+`busy`), the chime and bold of that hand-off are **held** rather than dropped. A
+background **shell** (`shell`) shows the `◷` but rings as usual: it may be a dev server
+that never ends, and holding its chime would mute the very turn you were waiting on. An
+agent always reports back with a follow-up turn, so its hold always resolves. The
+`:done` edge writes an `OffstageHold` marker (a `KeyedMarkerStore` twin of
+`Attention`) instead of ringing. On disk, because the sidebar on screen when the work
+finishes may never have seen the hand-off (it was hidden; its baseline already read
+`done`). The hold resolves one of two ways:
+
+- **The follow-up turn starts** (the hook leaves `done`) — the usual case, since Claude
+  runs a normal turn when the result arrives. The hold is dropped; that turn's own `Stop`
+  rings as usual. If the sidebar on screen misses a short follow-up turn between two
+  scans, the hold stays and rings once the session settles instead.
+- **The session settles idle, or its process is gone** — the first on-screen announcing
+  scan claims the hold by unlinking it (only one unlink succeeds across every pane) and
+  rings + bolds. Missing evidence (a failed read, an unknown status) never counts as
+  finished: the hold just waits.
+
+Two timing facts, probed live (Claude Code 2.1.310), shape it. Claude writes `done`
+13–29ms before `idle` on an ordinary turn end, and a finished background agent reads
+`idle` for ~15ms before its follow-up turn reads `busy`. A 3s scan lands in those windows
+about 1% of the time, so both edges wait `ClaudeSessions::SETTLE` (2s): `◷` draws only
+once the hook's `done` is that old, and a hold matures only on an `idle` that old. A
+hidden pane learns when a `done` settles from a per-report "settled" bit in its warm
+fingerprint, since nothing on disk changes at that moment.
+
+A subagent's own tool calls fire the parent worktree's hooks too (their payload carries
+an `agent_id`; so do Claude's internal agents'). They used to turn the main dot into a
+spinner claiming the main agent was working. The reporter now ignores those, keeping a
+subagent's `PermissionRequest` (it wants you) and turning the dot back to `done` after
+you approve one, so its magenta can't stick.
+
 ### Why bold lives on disk but sound doesn't
 
 A completion **sound** is a one-time event — play it once, from wherever you're
@@ -269,6 +318,8 @@ The shape *and* color both carry meaning, so it reads on any background:
 ⠹ blue     thinking  — a braille spinner cycles while it works a turn
 ◆ magenta  waiting   — a blinking diamond; blocked on a question/permission
 ● green    done      — a steady dot; finished its turn (or idle), your move
+◷ blue     background — a steady clock; the turn ended, but work it handed off still runs
+∞ green    watching  — a steady loop; a declared background monitor
 ```
 
 Colors are plain ANSI palette entries (blue/magenta/green), so they follow your
