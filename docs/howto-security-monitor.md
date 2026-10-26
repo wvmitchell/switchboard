@@ -168,10 +168,12 @@ Re-verifying one doesn't advance the others.
   - **⇅ remote link**: `switchboard doctor`'s "remote links (⇅)" line must still show
     `N linked` with no warning while a `/rc` session is open (`RemoteLink.health` is
     the canary).
-  - **◷ background work**: in a hooked workspace, start a background agent (or a
-    `run_in_background` shell) and end the turn. The row must show `◷` once the turn
-    settles, then a resting dot (and one chime, for an agent) once the work ends. A
-    `●` and a chime at the hand-off means the `status` contract moved. There's no
+  - **◷ background work**: in a hooked workspace, start a background agent and end the
+    turn. The row must show `◷` once the turn settles, with no chime yet, then a
+    resting dot and one chime once the agent's follow-up turn ends. A `●` and a chime
+    at the hand-off means the `status` contract moved. (A `run_in_background` shell
+    also shows `◷`, but its chime rings at the hand-off by design, so it can't test the
+    hold.) There's no
     `doctor` canary for this yet; if one is added (a `status` health line like
     `RemoteLink.health`), check that instead of the manual run.
 - **Codex**: the installed version (`codex --version`) and
