@@ -115,7 +115,7 @@ opposite sides of that:
   `AgentHooks::ADAPTERS` fans out over, so `enable-hooks` and the dispatch worker (`Creator.work`)
   wire it per worktree.
 
-- **Codex is global.** Codex (checked through 0.163) deliberately does **not**
+- **Codex is global.** Codex (checked through 0.164) deliberately does **not**
   load a *linked* git worktree's own `<worktree>/.codex/hooks.json`: it redirects
   a linked worktree's project hooks to the main checkout's `.codex/` folder. And
   switchboard is nothing but linked worktrees, so the per-worktree file is dead on
@@ -171,7 +171,7 @@ Two more things follow from codex being global:
   not the two Claude markers, so the guard still works.
 
 This hook contract was last checked live against Claude Code 2.1.301–2.1.303 and
-codex-cli 0.163.0: the payload fields, delivery in linked worktrees, the
+codex-cli 0.164.0: the payload fields, delivery in linked worktrees, the
 nesting-guard environment, and a silent `PermissionRequest` hook leaving the
 prompt to you.
 

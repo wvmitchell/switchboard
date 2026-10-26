@@ -10,7 +10,7 @@ module Switchboard
   # Real-Codex smoke (#110 + the linked-worktree fix): the delivery path NO unit test
   # can reach — does the GLOBAL `[hooks]` block in `~/.codex/config.toml` actually FIRE
   # and write switchboard's agent-state files when a real `codex` runs in a LINKED git
-  # worktree? That last word is the whole point: codex (verified 0.142 through 0.163)
+  # worktree? That last word is the whole point: codex (verified 0.142 through 0.164)
   # deliberately does NOT load a linked worktree's own `<worktree>/.codex/hooks.json` — it
   # redirects a linked worktree's project hooks to the main checkout's `.codex/` — and
   # switchboard is nothing but linked worktrees, so the v0.39.0 per-worktree delivery was
