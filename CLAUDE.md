@@ -564,8 +564,10 @@ marks — an unreadable or foreign file is never touched. `install` runs the sam
 ### Agent-state dots (the subtle part)
 
 Hook contract last verified live against **Claude Code 2.1.301–2.1.303** and **codex-cli
-0.164.0** (v0.55.2): payload fields, linked-worktree delivery, the nesting-guard env, and a
-silent PermissionRequest hook leaving the prompt to the user.
+0.163.0** (v0.51.1): payload fields, linked-worktree delivery, the nesting-guard env, and a
+silent PermissionRequest hook leaving the prompt to the user. **codex-cli 0.164.0** (v0.55.2)
+re-passed the real-Codex smoke only: linked-worktree delivery, hook ordering, untrusted-block
+silence.
 
 The dot beside each workspace shows whether an agent (Claude/Codex/Aider) is
 thinking / done / waiting. `AgentState.scan` (`agent_state.rb`) merges **two

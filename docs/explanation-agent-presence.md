@@ -171,9 +171,11 @@ Two more things follow from codex being global:
   not the two Claude markers, so the guard still works.
 
 This hook contract was last checked live against Claude Code 2.1.301–2.1.303 and
-codex-cli 0.164.0: the payload fields, delivery in linked worktrees, the
+codex-cli 0.163.0: the payload fields, delivery in linked worktrees, the
 nesting-guard environment, and a silent `PermissionRequest` hook leaving the
-prompt to you.
+prompt to you. codex-cli 0.164.0 has since passed the real-Codex smoke test:
+delivery in linked worktrees, hook ordering, and an untrusted block staying
+silent.
 
 Codex's event map differs from Claude's in one place: Codex has no `Notification`
 event, so `PermissionRequest` (which Claude also uses, above) is its only `waiting`
