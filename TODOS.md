@@ -1026,7 +1026,7 @@ Found by the /ship reviews after the 3-cycle fix limit; deferred with Will's OK 
   stand-in). Deferred at ship time (decision dec-32768b9c, `gstack-shortcut` marker before the
   Enter in `type_rename`). *Start in:* a hooked workspace in the sandbox: rename it, watch the state file. If it
   fires, have the worker re-report the pre-type state once the rename is confirmed. **Priority:** P2.
-- **Session-name focus gate (v0.58.1): items deferred at ship time.** None lets our keys land
+- **Session-name focus gate (v0.60.1): items deferred at ship time.** None lets our keys land
   anywhere but our own empty prompt; each was found by the /ship reviews and deferred under the
   owner's rule that only a reachable typing-safety bug blocks. **Priority:** P2.
   - Accepted residual (decision 76a1b9be): inside the ~1.5 s of checks after our send, a script
