@@ -30,6 +30,8 @@ module Switchboard
     # same editor pane; once it's :q'd (pane closed) the id is retired and the
     # stash goes stale — live_editor_pane then reports nil and `e` spawns fresh.
     EDITOR_PANE_OPT = "@sb_editor_pane"
+    NOTIFY_MS = 4000 # the shortest a status-line notice stays up (see notify)
+    INPUT_QUIET = 2  # seconds without input from any client before keys go to a pane (see panes_by_tty)
 
     module_function
 
@@ -731,8 +733,56 @@ module Switchboard
 
     # Surface a short message on tmux's status line — visible no matter which
     # pane has focus (a sidebar-only flash is missed when you're not on the tree).
-    def notify(message)
-      system("tmux", "display-message", message.to_s, out: File::NULL, err: File::NULL)
+    # Held at least NOTIFY_MS (tmux's own display-time defaults to 750 ms: gone before it
+    # can be read); a keypress still clears it. Any failure retries without -d: tmux < 3.2
+    # has no -d and refuses the whole command (a second try on a dead server costs a fork).
+    # Never -N: it doesn't just hold the message through keypresses, it DISCARDS every key the
+    # client types until the delay ends (verified, tmux 3.8).
+    def notify(message, client: nil, display_time: self.display_time)
+      target = client ? ["-c", client] : []
+      system("tmux", *notify_args(message, display_time, target: target), out: File::NULL, err: File::NULL) ||
+        system("tmux", "display-message", *target, literal(message), out: File::NULL, err: File::NULL)
+    end
+
+    # notify on every attached client. A daemonized worker's own "current client" is whatever
+    # its TMUX_PANE named at spawn — maybe a session nobody is in now — so a notice about a pane
+    # goes to every screen instead. No client listed: the plain notify.
+    # The caller names the hold: -A here would resolve the worker's own session, not each client's.
+    def notify_everyone(message, display_time:)
+      names = IO.popen(["tmux", "list-clients", "-F", "\#{client_name}"], err: File::NULL, &:read).to_s.split("\n")
+      names = [] unless $?.success?
+      return notify(message, display_time: display_time) if names.empty?
+
+      names.each { |name| notify(message, client: name, display_time: display_time) }
+    rescue StandardError
+      notify(message, display_time: display_time)
+    end
+
+    def notify_args(message, display_time, target: [])
+      ["display-message", *target, "-d", notify_hold(display_time).to_s, literal(message)]
+    end
+
+    # The display-time in effect here: a session can set its own (-A resolves it from inside a
+    # pane); outside one there's only the global.
+    def display_time
+      v = `tmux show-options -Aqv display-time 2>/dev/null`.strip
+      v.empty? ? `tmux show-options -gqv display-time 2>/dev/null`.strip : v
+    end
+
+    # Pure: the user's display-time → our hold. Never shorter than theirs, and their 0
+    # (until a key) stays 0; unreadable is NOTIFY_MS.
+    def notify_hold(display_time)
+      ms = display_time.to_s.strip
+      return NOTIFY_MS unless ms.match?(/\A\d+\z/)
+
+      ms.to_i.zero? ? 0 : [ms.to_i, NOTIFY_MS].max
+    end
+
+    # display-message's text is a format: `#{…}` expands and `#(…)` runs a shell command, then
+    # strftime reads `%`; error text (a config parse error, an exception) can carry any of them.
+    # `##` and `%%` are the literals.
+    def literal(message)
+      message.to_s.gsub("#", "##").gsub("%", "%%")
     end
 
     # Is this pane on the active window of an attached session (i.e. on screen)?
@@ -744,40 +794,119 @@ module Switchboard
       active == "1" && attached.to_i.positive?
     end
 
-    # { bare tty => { pane:, visible:, in_mode:, synchronized:, width: } } for every pane on the server,
-    # or nil when tmux is unreachable. SessionName finds an agent's pane by its process's
-    # tty — a dispatched agent is the launcher's child, a grandchild of the pane, so
-    # parent pids can't. `visible` is TRI-state, unlike `visible?` (which reads an empty
-    # reply as hidden): true = the pane's window is on screen in an attached session,
-    # false = it isn't, nil = the row didn't parse. A typist must treat nil as "maybe
-    # watching". `in_mode` (copy/view mode — keys go to tmux, not the program),
-    # `synchronized` (synchronize-panes — keys go to every pane in the window) and `width`
-    # are nil when unreadable, too.
+    # { bare tty => { pane:, focused:, recent_input:, last_input:, sessions:, in_mode:, synchronized:, width: } } for
+    # every pane on the server, or nil when tmux is unreachable. SessionName finds an agent's
+    # pane by its process's tty — a dispatched agent is the launcher's child, a grandchild of
+    # the pane, so parent pids can't. Both gates a typist reads are TRI-state (unlike
+    # `visible?`, which reads an empty reply as hidden), nil = couldn't tell, which a typist
+    # must read as "someone may be keying here":
+    # - focused: the active pane of the active window of an attached session — where a
+    #   client's keys go. Unknown whenever the session has a client that can key some other
+    #   pane (parse_clients' any_pane: iTerm2's tmux -CC, or a client's own active pane).
+    # - last_input: the newest input epoch of any client or session (whole seconds), nil when
+    #   unknown — back-out's proof that nobody touched a key since our line went in.
+    # - sessions: every session's id, so a session killed since a snapshot reads as missing.
+    # - recent_input: ANY client on the server had input (keys or mouse) in the last
+    #   INPUT_QUIET seconds. Not focus: a scroll wheel or click lands on the pane under the
+    #   pointer, someone mid-keystroke is about to move, and a send-keys binding in one
+    #   session can type into another session's pane.
+    # `in_mode` (copy/view mode — keys go to tmux, not the program), `synchronized`
+    # (synchronize-panes — keys go to every pane in the window) and `width` are nil when
+    # unreadable, too.
     def panes_by_tty
       raw = IO.popen(["tmux", "list-panes", "-a", "-F",
-                      "\#{pane_id}\t\#{pane_tty}\t\#{window_active}\t\#{session_attached}\t\#{pane_in_mode}\t\#{pane_width}\t\#{pane_synchronized}"],
+                      "\#{pane_id}\t\#{pane_tty}\t\#{window_active}\t\#{session_attached}\t\#{pane_in_mode}\t" \
+                      "\#{pane_width}\t\#{pane_synchronized}\t\#{pane_active}\t\#{session_name}"],
                      err: File::NULL, &:read)
-      $?.success? ? parse_panes_by_tty(raw) : nil
+      return nil unless $?.success?
+
+      clients = IO.popen(["tmux", "list-clients", "-F",
+                          "\#{client_activity}\t\#{client_control_mode}\t\#{client_flags}\t\#{client_session}"],
+                         err: File::NULL, &:read)
+      clients = nil unless $?.success?
+      sessions = IO.popen(["tmux", "list-sessions", "-F", "\#{session_id}\t\#{session_activity}"], err: File::NULL, &:read)
+      parse_panes_by_tty(raw, clients, Time.now.to_i, sessions: $?.success? ? sessions : nil)
     rescue StandardError
       nil
     end
 
-    # Pure: the list-panes rows above → the map. A pane in several (grouped) sessions is
-    # listed once per session: visible if any row says so, else unknown if any row is.
-    def parse_panes_by_tty(raw)
+    # Pure: the list-panes rows (+ list-clients rows, nil = unreadable) → the map. A pane in
+    # several (grouped) sessions is listed once per session: true if any row says so, else
+    # unknown if any row is.
+    def parse_panes_by_tty(raw, clients_raw = nil, now = Time.now.to_i, sessions: nil) # nil = unreadable: fails closed
+      clients = parse_clients(clients_raw)
+      latest = latest_input(clients)
+      held = parse_sessions(sessions)
+      ever = latest && held && [latest, held[:latest]].max # what a detach can't take back
+      recent = latest && now - latest <= INPUT_QUIET # whole seconds: <= keeps the quiet at least INPUT_QUIET
       raw.to_s.lines.each_with_object({}) do |line, out|
-        id, tty, active, attached, mode, width, synced = line.chomp.split("\t", -1)
+        id, tty, active, attached, mode, width, synced, pane_active, session = line.chomp.split("\t", 9)
         tty = normalize_tty(tty)
         next unless tty && id.to_s.start_with?("%")
 
         seen = %w[0 1].include?(active) && attached.to_s.match?(/\A\d+\z/)
         vis = seen ? active == "1" && attached.to_i.positive? : nil
+        info = clients&.[](session.to_s) || { any_pane: false } # no client on it
+        any_pane = clients ? info[:any_pane] : nil
+        focused = any_pane == false ? vis && flag(pane_active) : nil # hidden ⇒ false
+        input = any_pane == false ? recent : nil
+        last = any_pane == false ? ever : nil
         prev = out[tty]
-        vis = true if prev && prev[:visible] == true
-        vis = nil if prev && prev[:visible].nil? && vis != true
-        out[tty] = { pane: id, visible: vis, in_mode: flag(mode), synchronized: flag(synced),
+        out[tty] = { pane: id, focused: merge_seen(prev, :focused, focused), recent_input: merge_seen(prev, :recent_input, input),
+                     last_input: prev && (prev[:last_input].nil? || last.nil?) ? nil : [prev&.[](:last_input), last].compact.max,
+                     sessions: held&.[](:ids), # server-wide, like last_input (a control client already reads unfocused: unknown)
+                     in_mode: flag(mode), synchronized: flag(synced),
                      width: width.to_s.match?(/\A\d+\z/) ? width.to_i : nil }
       end
+    end
+
+    # Pure: list-clients rows → { session => { lasts: [input epoch or nil per client], any_pane: } }.
+    # any_pane: a client of that session can key a pane other than the window's active one —
+    # a control-mode client (it shows every pane and sends keys by %id) or one with its own
+    # active pane (`active-pane`, a client flag some tmux 3.x releases have); nil if unreadable.
+    # nil overall when the list itself was unreadable.
+    def parse_clients(raw)
+      return nil if raw.nil?
+
+      raw.to_s.lines.each_with_object({}) do |line, out|
+        activity, control, flags, session = line.chomp.split("\t", 4)
+        return nil if session.nil? # a row cut short: whose client it is can't be told
+        last = activity.to_s.match?(/\A\d+\z/) ? activity.to_i : nil
+        ctl = flag(control)
+        any_pane = ctl.nil? || flags.nil? ? nil : ctl || flags.split(",").include?("active-pane")
+        prev = out[session.to_s]
+        out[session.to_s] = { lasts: (prev ? prev[:lasts] : []) + [last], any_pane: merge_seen(prev, :any_pane, any_pane) }
+      end
+    end
+
+    # Pure: the newest input epoch of ANY client (0 with no clients; nil when unreadable). Server-wide,
+    # not per session: a send-keys binding in one session can type into another's pane.
+    def latest_input(clients)
+      return nil unless clients
+
+      lasts = clients.values.flat_map { |c| c[:lasts] }
+      lasts.include?(nil) ? nil : (lasts.max || 0)
+    end
+
+    # Pure: list-sessions rows → { ids: [session ids, sorted], latest: newest session_activity }, nil
+    # when unreadable. A key stamps its session's activity too, and a session outlives the client
+    # that typed in it: client_activity leaves with a detach, so latest_input alone can move
+    # backward. Ids ($N) are never reused within a server, so a killed session is a missing id.
+    def parse_sessions(raw)
+      return nil if raw.nil?
+
+      rows = raw.to_s.lines.map { |line| line.chomp.split("\t", 2) }
+      return nil unless rows.all? { |id, at| id.to_s.match?(/\A\$\d+\z/) && at.to_s.match?(/\A\d+\z/) }
+
+      { ids: rows.map(&:first).sort, latest: rows.map { |_, at| at.to_i }.max || 0 }
+    end
+
+    # A grouped pane's next row folded into the last: true wins, then unknown.
+    def merge_seen(prev, key, now)
+      return now unless prev
+      return true if prev[key] == true || now == true
+
+      prev[key].nil? || now.nil? ? nil : false
     end
 
     # A tmux 0/1 format flag as a boolean, or nil when it isn't one.

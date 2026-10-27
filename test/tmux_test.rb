@@ -76,38 +76,164 @@ module Switchboard
     # prune's orphaned-sidebar reap (a THIS-SERVER sidebar process whose tty is no live
     # pane — parse_sidebar_processes scopes to our server's children by parent pid).
 
-    # --- parse_panes_by_tty: SessionName's pane lookup + tri-state visibility ---
+    # --- parse_panes_by_tty: SessionName's pane lookup + the tri-state keyboard gates ---
 
-    def test_parse_panes_by_tty_maps_each_tty_to_its_pane_and_visibility
-      raw = "%1\t/dev/ttys001\t1\t1\t0\t120\t0\n%2\t/dev/ttys002\t0\t1\t1\t80\t1\n%3\t/dev/ttys003\t1\t0\t0\t40\t0\n"
-      assert_equal({ "ttys001" => { pane: "%1", visible: true, in_mode: false, synchronized: false, width: 120 },
-                     "ttys002" => { pane: "%2", visible: false, in_mode: true, synchronized: true, width: 80 },
-                     "ttys003" => { pane: "%3", visible: false, in_mode: false, synchronized: false, width: 40 } },
-                   Tmux.parse_panes_by_tty(raw))
+    NOW = 1_000_000
+
+    # A list-panes row: window_active, session_attached, pane_active, and its session.
+    def pane_row(id, tty, active, attached, pane_active, session = "s", mode: "0", width: "120", synced: "0")
+      "#{id}\t/dev/#{tty}\t#{active}\t#{attached}\t#{mode}\t#{width}\t#{synced}\t#{pane_active}\t#{session}\n"
+    end
+
+    def client_row(session, activity: NOW - 60, control: "0", flags: "attached,focused,UTF-8")
+      "#{activity}\t#{control}\t#{flags}\t#{session}\n"
+    end
+
+    # One session, quiet since well before NOW: last_input then reads the clients' newest.
+    def parse_rows(raw, clients = nil, now = NOW, sessions: "$0\t#{NOW - 120}\n")
+      Tmux.parse_panes_by_tty(raw, clients, now, sessions: sessions)
+    end
+
+    # Value: protects=last_input counts session activity, which outlives a client that typed and then
+    # detached (client_activity leaves with it); each row lists every session id so a killed one reads
+    # missing; unreadable is unknown; fails_when=sessions are ignored or a garbled row reads as known;
+    # why_new=ship 6 Codex adversarial (a detach erased the key from last_input); seam=none
+    def test_parse_panes_by_tty_counts_session_activity_a_detach_cant_erase
+      raw = pane_row("%1", "ttys001", "1", "1", "0")
+      sessions = "$3\t#{NOW - 5}\n$1\t#{NOW - 90}\n"
+      row = parse_rows(raw, "", NOW, sessions: sessions)["ttys001"] # nobody attached now
+      assert_equal NOW - 5, row[:last_input], "the detached client's key is still on its session"
+      assert_equal %w[$1 $3], row[:sessions]
+      assert_nil parse_rows(raw, "", NOW, sessions: "$1\tsoon\n")["ttys001"][:last_input]
+      assert_nil parse_rows(raw, "", NOW, sessions: "%1\t#{NOW}\n")["ttys001"][:sessions]
+      assert_nil parse_rows(raw, "", NOW, sessions: nil)["ttys001"][:last_input], "unreadable list"
+    end
+
+    def test_parse_panes_by_tty_maps_each_tty_to_its_pane_and_gates
+      raw = pane_row("%1", "ttys001", "1", "1", "1") + pane_row("%2", "ttys002", "0", "1", "1", mode: "1", width: "80", synced: "1") +
+            pane_row("%3", "ttys003", "1", "0", "1", "t", width: "40")
+      assert_equal({ "ttys001" => { pane: "%1", focused: true, recent_input: false, last_input: NOW - 60, sessions: ["$0"], in_mode: false, synchronized: false, width: 120 },
+                     "ttys002" => { pane: "%2", focused: false, recent_input: false, last_input: NOW - 60, sessions: ["$0"], in_mode: true, synchronized: true, width: 80 },
+                     "ttys003" => { pane: "%3", focused: false, recent_input: false, last_input: NOW - 60, sessions: ["$0"], in_mode: false, synchronized: false, width: 40 } },
+                   parse_rows(raw, client_row("s"), NOW))
     end
 
     # Value: protects=an unreadable copy-mode flag or width never reads as "safe to type";
     # fails_when=a garbled field becomes false/0; why_new=new fields; seam=none
     def test_parse_panes_by_tty_reads_garbled_mode_and_width_as_unknown
-      row = Tmux.parse_panes_by_tty("%1\t/dev/ttys001\t0\t1\tx\t\n")["ttys001"]
+      row = parse_rows("%1\t/dev/ttys001\t0\t1\tx\t\n")["ttys001"]
       assert_nil row[:in_mode]
       assert_nil row[:width]
       assert_nil row[:synchronized], "a missing synchronize-panes flag is unknown, not off"
     end
 
-    # Value: protects=keys are never typed into a pane the user may be watching; fails_when=a
-    # garbled row reads as hidden (Tmux.visible?'s fail-open); why_new=new parser; seam=none
-    def test_parse_panes_by_tty_reads_a_garbled_row_as_unknown_not_hidden
+    # Value: protects=keys are never typed into a pane someone may be at; fails_when=a garbled
+    # row reads as hidden (Tmux.visible?'s fail-open); why_new=new parser; seam=none
+    def test_parse_panes_by_tty_reads_a_garbled_row_as_unknown_not_clear
       raw = "%1\t/dev/ttys001\t\t\n%2\t/dev/ttys002\tx\t1\n"
-      assert_equal [nil, nil], Tmux.parse_panes_by_tty(raw).values_at("ttys001", "ttys002").map { |h| h[:visible] }
-      assert_empty Tmux.parse_panes_by_tty("junk\n\t/dev/ttys009\t1\t1\n"), "no %id, no row"
+      rows = parse_rows(raw, client_row("s"), NOW).values_at("ttys001", "ttys002")
+      assert_equal [nil, nil], rows.map { |h| h[:focused] }
+      assert_empty parse_rows("junk\n\t/dev/ttys009\t1\t1\n"), "no %id, no row"
     end
 
-    def test_parse_panes_by_tty_a_grouped_pane_is_visible_if_any_session_shows_it
-      shown = "%1\t/dev/ttys001\t0\t1\n%1\t/dev/ttys001\t1\t1\n%1\t/dev/ttys001\t0\t0\n"
-      assert Tmux.parse_panes_by_tty(shown)["ttys001"][:visible]
-      murky = "%1\t/dev/ttys001\t0\t1\n%1\t/dev/ttys001\t?\t1\n%1\t/dev/ttys001\t0\t1\n"
-      assert_nil Tmux.parse_panes_by_tty(murky)["ttys001"][:visible]
+    # Value: protects=keys only reach a pane no client is keying into; fails_when=a shown pane
+    # reads unfocused without its own flag, or a garbled flag reads as unfocused; why_new=focus gate; seam=none
+    def test_parse_panes_by_tty_focus_is_the_active_pane_of_a_shown_window
+      raw = pane_row("%1", "ttys001", "1", "1", "0") + pane_row("%2", "ttys002", "1", "1", "x") +
+            pane_row("%3", "ttys003", "0", "1", "x") + pane_row("%4", "ttys004", "?", "1", "0")
+      rows = parse_rows(raw, client_row("s"), NOW)
+      assert_equal [false, nil, false, nil], rows.values_at("ttys001", "ttys002", "ttys003", "ttys004").map { |h| h[:focused] }
+    end
+
+    def test_parse_panes_by_tty_a_grouped_pane_is_focused_if_any_session_focuses_it
+      row = ->(active, pane_active) { pane_row("%1", "ttys001", active, "1", pane_active) }
+      focused = ->(raw) { parse_rows(raw, client_row("s"), NOW)["ttys001"][:focused] }
+      assert focused.call(row["0", "1"] + row["1", "1"])
+      assert_nil focused.call(row["0", "1"] + row["1", "x"])
+      assert_equal false, focused.call(row["0", "1"] + row["1", "0"])
+      assert_nil focused.call(row["1", "x"] + row["0", "1"]), "unknown first stays unknown"
+      assert focused.call(row["1", "1"] + row["1", "0"]), "focused first stays focused"
+    end
+
+    # Value: protects=a click or scroll (or a keystroke about to move focus) on a pane in view
+    # holds the typing; fails_when=client activity is ignored, read from the wrong session, or
+    # unknown reads as quiet; why_new=ship 4 mouse review; seam=none
+    def test_parse_panes_by_tty_recent_input_is_any_clients_activity
+      shown = pane_row("%1", "ttys001", "1", "1", "0")
+      input = ->(clients) { parse_rows(shown, clients, NOW)["ttys001"][:recent_input] }
+      assert input.call(client_row("s", activity: NOW - 1)), "input a second ago"
+      assert input.call(client_row("s", activity: NOW - Tmux::INPUT_QUIET)), "whole seconds: the boundary still counts, so the quiet is at least INPUT_QUIET"
+      assert_equal false, input.call(client_row("s", activity: NOW - Tmux::INPUT_QUIET - 1))
+      assert input.call(client_row("s", activity: NOW - 60) + client_row("s", activity: NOW)), "the newest client wins"
+      assert input.call(client_row("other", activity: NOW) + client_row("s")),
+             "server-wide: a send-keys binding in another session can type into this pane"
+      assert_nil input.call(client_row("s", activity: "x")), "garbled activity is unknown"
+      assert_nil input.call(client_row("s", activity: "x") + client_row("s")), "a garbled client isn't outvoted by a quiet one"
+      assert_nil input.call(client_row("s") + client_row("s", activity: "x")), "nor in the other order"
+      assert_equal false, input.call(""), "no client at all: nobody's input"
+      hidden = pane_row("%1", "ttys001", "0", "1", "1")
+      assert parse_rows(hidden, client_row("s", activity: NOW), NOW)["ttys001"][:recent_input],
+             "a pane nobody sees can still be typed into by send-keys"
+    end
+
+    # Value: protects=a click in any session showing a grouped pane counts, whichever row lists first;
+    # fails_when=the merge keeps the last row's input; why_new=ship 4 pass 2 testing; seam=none
+    def test_parse_panes_by_tty_a_grouped_pane_has_recent_input_if_any_session_does
+      rows = [pane_row("%1", "ttys001", "1", "1", "0", "s"), pane_row("%1", "ttys001", "1", "1", "0", "t")]
+      clients = client_row("s") + client_row("t", activity: NOW)
+      [rows.join, rows.reverse.join].each do |raw|
+        assert parse_rows(raw, clients, NOW)["ttys001"][:recent_input]
+      end
+    end
+
+    # Value: protects=a control-mode client (tmux -CC), which keys any pane by %id, makes every
+    # pane of its session unknown; fails_when=control mode is ignored; why_new=ship 4 security; seam=none
+    def test_parse_panes_by_tty_a_control_mode_client_makes_its_session_unknown
+      raw = pane_row("%1", "ttys001", "0", "1", "0") + pane_row("%2", "ttys002", "0", "1", "0", "t")
+      rows = parse_rows(raw, client_row("s", control: "1") + client_row("t"), NOW)
+      assert_equal [nil, nil], [rows["ttys001"][:focused], rows["ttys001"][:recent_input]]
+      assert_equal [false, false], [rows["ttys002"][:focused], rows["ttys002"][:recent_input]], "other sessions unaffected"
+      [client_row("s", control: "1") + client_row("s"), client_row("s") + client_row("s", control: "1")].each do |clients|
+        row = parse_rows(raw, clients, NOW)["ttys001"]
+        assert_equal [nil, nil], [row[:focused], row[:recent_input]], "a normal client beside it doesn't clear it: #{clients.inspect}"
+      end
+      garbled = parse_rows(raw, client_row("s", control: "?"), NOW)["ttys001"]
+      assert_nil garbled[:focused], "an unreadable control flag is unknown"
+      own = parse_rows(raw, client_row("s", flags: "attached,active-pane,focused") + client_row("t"), NOW)
+      assert_equal [nil, nil], [own["ttys001"][:focused], own["ttys001"][:recent_input]],
+                   "a client with its own active pane (some tmux 3.x) keys a pane the window doesn't call active"
+    end
+
+    # Value: protects=a client row cut short (no session field) makes the whole list unknown, not a
+    # client of session ""; fails_when=the row is filed under ""; why_new=ship 5 coverage audit; seam=none
+    def test_parse_panes_by_tty_a_truncated_client_row_is_unknown
+      row = parse_rows(pane_row("%1", "ttys001", "0", "1", "0"), "#{NOW - 60}\t0\n" + client_row("s"), NOW)["ttys001"]
+      assert_equal [nil, nil], [row[:focused], row[:recent_input]]
+    end
+
+    # Value: protects=an unreadable client list never reads as "nobody there"; fails_when=nil
+    # clients parse as empty; why_new=ship 4; seam=none
+    def test_parse_panes_by_tty_an_unreadable_client_list_is_unknown
+      row = parse_rows(pane_row("%1", "ttys001", "0", "1", "0"), nil, NOW)["ttys001"]
+      assert_equal [nil, nil], [row[:focused], row[:recent_input]]
+    end
+
+    # Value: protects=a tmux without the client_flags format (it expands to "") still lets an
+    # unfocused pane be typed into; fails_when=an empty flags field reads as unknown, holding every
+    # pane until the ceiling; why_new=only full flag strings were covered; seam=none; no_claim=which tmux release added client_flags
+    def test_parse_panes_by_tty_an_empty_client_flags_field_is_not_unknown
+      row = parse_rows(pane_row("%1", "ttys001", "1", "1", "0"), client_row("s", flags: ""), NOW)["ttys001"]
+      assert_equal [false, false], [row[:focused], row[:recent_input]]
+    end
+
+    # Value: protects=notices never get shorter than the user's own display-time, and their
+    # 0 (until a key) is kept; fails_when=a fixed hold overrides it; why_new=ship 4 red team; seam=none
+    def test_notify_hold_is_never_shorter_than_display_time
+      assert_equal Tmux::NOTIFY_MS, Tmux.notify_hold("750\n")
+      assert_equal 10_000, Tmux.notify_hold("10000")
+      assert_equal 0, Tmux.notify_hold("0")
+      assert_equal Tmux::NOTIFY_MS, Tmux.notify_hold("")
+      assert_equal Tmux::NOTIFY_MS, Tmux.notify_hold("x")
     end
 
     def test_parse_ttys_strips_dev_prefix_and_dedupes
@@ -264,6 +390,121 @@ module Switchboard
         end
       end
       refute sent, "and nothing is send-keys'd"
+    end
+
+    # Value: protects=a notice stays up long enough to read (tmux's 750 ms default was gone
+    # first); fails_when=-d is dropped; why_new=rename notice unreadable; seam=none
+    def test_notify_holds_the_message_on_the_status_line
+      calls = []
+      stub_method(Tmux, :system, ->(*args, **) { calls << args }) { Tmux.notify("hello") }
+      assert_equal [["tmux", "display-message", "-d", Tmux::NOTIFY_MS.to_s, "hello"]], calls
+    end
+
+    # Value: protects=a tmux older than 3.2 (no -d) still shows the notice; fails_when=the
+    # refused -d call isn't retried; why_new=-d needs tmux 3.2, switchboard supports 3.0; seam=none
+    def test_notify_falls_back_to_a_plain_message_when_tmux_refuses_d
+      calls = []
+      stub_method(Tmux, :system, ->(*args, **) { calls << args; calls.size > 1 }) { Tmux.notify("hello") }
+      assert_equal ["tmux", "display-message", "hello"], calls.last
+      assert_equal 2, calls.size
+    end
+
+    # Value: protects=a notice carrying error text shows it literally (display-message's text is
+    # a format: #{} expands, #() runs a command); fails_when=the # escape is dropped on either
+    # call; why_new=ship 4 security review; seam=none
+    def test_notify_shows_hash_sequences_literally
+      calls = []
+      stub_method(Tmux, :system, ->(*args, **) { calls << args; false }) { Tmux.notify('bad #(touch x) #{pane_id} 100%y') }
+      assert_equal ['bad ##(touch x) ##{pane_id} 100%%y'], calls.map(&:last).uniq, "strftime reads % too"
+    end
+
+    # Value: protects=a worker's notice reaches every attached client (its own "current client" may
+    # be a session nobody is in), held for the caller's display_time; fails_when=-c is dropped, only
+    # one client gets it, or the hold is ignored; why_new=ship 5 red team; seam=none
+    def test_notify_everyone_targets_each_attached_client
+      sent = []
+      popen = lambda do |_argv, **, &blk|
+        system(RbConfig.ruby, "-e", "exit 0")
+        blk.call(StringIO.new("/dev/ttys001\n/dev/ttys002\n"))
+      end
+      stub_method(IO, :popen, popen) do
+        stub_method(Tmux, :system, ->(*args, **) { sent << args; true }) { Tmux.notify_everyone("hi", display_time: "10000") }
+      end
+      assert_equal [["tmux", "display-message", "-c", "/dev/ttys001", "-d", "10000", "hi"],
+                    ["tmux", "display-message", "-c", "/dev/ttys002", "-d", "10000", "hi"]], sent
+    end
+
+    # Value: protects=notify_everyone still shows the notice (untargeted) when there's no client
+    # list, it fails, or it raises; fails_when=a fallback is dropped; why_new=ship 5 testing; seam=none
+    def test_notify_everyone_falls_back_to_a_plain_notice
+      ruby = RbConfig.ruby
+      { "empty" => ->(*, &blk) { system(ruby, "-e", "exit 0"); blk.call(StringIO.new("")) },
+        "failed" => ->(*, &blk) { system(ruby, "-e", "exit 1"); blk.call(StringIO.new("/dev/ttys001\n")) },
+        "raised" => ->(*, **) { raise IOError } }.each do |what, popen|
+        plain = []
+        stub_method(IO, :popen, popen) do
+          stub_method(Tmux, :notify, ->(msg, **kw) { plain << [msg, kw] }) { Tmux.notify_everyone("hi", display_time: "10000") }
+        end
+        assert_equal ["hi"], plain.map(&:first), what
+        refute plain.first.last.key?(:client), "#{what}: untargeted"
+        assert_equal "10000", plain.first.last[:display_time], "#{what}: the caller's hold survives the fallback"
+      end
+    end
+
+    # Value: protects=back-out's "nobody touched a key since our send" proof: the newest input of ANY
+    # client, 0 with none, nil when unknown (garbled activity, unreadable list, a control-mode or
+    # active-pane session); fails_when=per-session, or unknown reads as 0; why_new=ship 5; seam=none
+    def test_parse_panes_by_tty_last_input_is_the_newest_client_input
+      row = ->(clients, raw = pane_row("%1", "ttys001", "0", "1", "0")) { parse_rows(raw, clients, NOW)["ttys001"][:last_input] }
+      assert_equal NOW - 5, row.call(client_row("s", activity: NOW - 60) + client_row("other", activity: NOW - 5))
+      assert_equal NOW - 120, row.call(""), "no client: the sessions' newest still counts"
+      assert_nil row.call(client_row("s", activity: "x"))
+      assert_nil row.call(nil)
+      assert_nil row.call(client_row("s", control: "1"))
+      grouped = pane_row("%1", "ttys001", "0", "1", "0", "s") + pane_row("%1", "ttys001", "0", "1", "0", "t")
+      assert_nil row.call(client_row("s") + client_row("t", control: "1"), grouped), "unknown in any grouped session wins"
+    end
+
+    # Value: protects=no notice ever carries -N, which DISCARDS the client's keys until it expires
+    # (verified on tmux 3.8); fails_when=-N comes back; why_new=ship 6 security review; seam=none
+    def test_a_notice_never_swallows_keys
+      sent = []
+      stub_method(Tmux, :system, ->(*args, **) { sent << args; false }) { Tmux.notify("hi", client: "/dev/ttys001", display_time: "10000") }
+      assert_equal [["tmux", "display-message", "-c", "/dev/ttys001", "-d", "10000", "hi"],
+                    ["tmux", "display-message", "-c", "/dev/ttys001", "hi"]], sent
+      refute_includes sent.flatten, "-N"
+    end
+
+    # Value: protects=a caller that omits the client list fails closed (unknown), like every other
+    # unreadable input; fails_when=the default reads as "no clients"; why_new=ship 5 security; seam=none
+    def test_parse_panes_by_tty_without_a_client_list_is_unknown
+      row = parse_rows(pane_row("%1", "ttys001", "0", "1", "0"))["ttys001"]
+      assert_equal [nil, nil], [row[:focused], row[:recent_input]]
+    end
+
+    # Value: protects=a per-session display-time counts (inside a pane), and outside a session the
+    # global is read; fails_when=only -g is read; why_new=ship 4 pass 3 red team; seam=none
+    def test_display_time_prefers_the_session_value_then_the_global
+      replies = { "tmux show-options -Aqv display-time 2>/dev/null" => "9000\n",
+                  "tmux show-options -gqv display-time 2>/dev/null" => "750\n" }
+      stub_method(Tmux, :`, ->(cmd) { replies.fetch(cmd) }) { assert_equal "9000", Tmux.display_time }
+      replies["tmux show-options -Aqv display-time 2>/dev/null"] = ""
+      stub_method(Tmux, :`, ->(cmd) { replies.fetch(cmd) }) { assert_equal "750", Tmux.display_time }
+    end
+
+    # Value: protects=a failed list-clients reads as unknown (never as no control client, no input);
+    # fails_when=its output is used without checking the exit status; why_new=ship 4 coverage; seam=none
+    def test_panes_by_tty_reads_a_failed_client_list_as_unknown
+      row = pane_row("%1", "ttys001", "0", "1", "0")
+      clients = client_row("s") # outside the lambda: as the stubbed method its self is IO
+      popen = lambda do |argv, **, &blk|
+        ok = argv[1] == "list-panes"
+        system(RbConfig.ruby, "-e", ok ? "exit 0" : "exit 1")
+        out = ok ? row : clients
+        blk ? blk.call(StringIO.new(out)) : out
+      end
+      got = stub_method(IO, :popen, popen) { Tmux.panes_by_tty["ttys001"] }
+      assert_equal [nil, nil], [got[:focused], got[:recent_input]]
     end
 
     # --- work_dir: the pure pane-cwd pick (drives the sidebar's -c) -----------

@@ -70,7 +70,64 @@ module Switchboard
       assert_equal "/rename second\r", keys
     end
 
-    def test_the_worker_waits_while_the_agent_is_busy_watched_or_holds_a_draft
+    # The sidebar's `r`: the agent's pane stays in view while the keyboard is on the pane
+    # beside it, so nobody can type into it — the worker shouldn't wait for you to leave.
+    def test_an_agent_pane_in_view_but_not_focused_is_renamed_while_you_watch
+      start_agent
+      switch_client("agent")
+      tmux!("split-window", "-h", "-l", "20", "-t", "agent", "cat") # the new pane takes focus
+      leaf = File.basename(@wt)
+      assert run_bin("sync-session-name", @wt, leaf)
+      wait_until("the agent's session is renamed") { session&.dig("name") == leaf }
+      assert_equal "/rename #{leaf}\r", keys
+      assert_equal "agent", client_session, "renamed with the client still on the agent's window"
+    end
+
+    # Keys typed through a real attached client, in another session entirely, bump tmux's
+    # client_activity: the worker holds while someone types anywhere and lands once they stop.
+    # The stubs can't show that the live list-clients field moves.
+    def test_typing_through_a_client_anywhere_holds_the_worker_until_it_stops
+      start_agent
+      tmux!("new-session", "-d", "-s", "typing", "cat > /dev/null") # a harmless pane to type into
+      switch_client("typing")
+      leaf = File.basename(@wt)
+      typing = true
+      typer = Thread.new do
+        Thread.current.report_on_exception = false
+        while typing
+          @pty_in.write("x")
+          sleep 0.4 # gstack-timing-ok: a steady trickle of real keystrokes through the client
+        end
+      end
+      assert run_bin("sync-session-name", @wt, leaf)
+      sleep(2 * SessionName::FAST + 0.5) # gstack-timing-ok: a negative check needs >= 2 polls to observe
+      assert_empty keys, "nothing typed while someone types elsewhere"
+      typing = false
+      typer.value # re-raises if the typer died: then nothing was ever typed
+      wait_until("the session is renamed once typing stops", timeout: WAIT + 4) { session&.dig("name") == leaf }
+      assert_equal "/rename #{leaf}\r", keys
+    end
+
+    # A second client attaches, types, and detaches: its client_activity leaves with it, but the
+    # live session_activity keeps the stamp, so back-out's last_input still sees the key.
+    def test_a_key_from_a_client_that_detached_still_counts
+      tmux!("new-session", "-d", "-s", "visit", "cat > /dev/null")
+      sleep 1.1 # gstack-timing-ok: whole-second stamps; the key must land in a later second than setup
+      before = Time.now.to_i
+      io, input, pid = PTY.spawn("tmux", "attach", "-t", "visit")
+      input.write("x")
+      sleep 0.5 # gstack-timing-ok: let the server stamp the key
+      Process.kill("TERM", pid)
+      Process.wait(pid)
+      wait_until("the visitor is gone") { !tmux("list-clients", "-F", fmt("client_session")).include?("visit") }
+      row = Tmux.panes_by_tty.values.first
+      assert_operator row[:last_input], :>=, before, "the detached client's key still counts"
+    ensure
+      io&.close
+      input&.close
+    end
+
+    def test_the_worker_waits_while_the_agent_is_busy_focused_or_holds_a_draft
       start_agent(status: "busy")
       leaf = File.basename(@wt)
       @started = monotonic
@@ -81,10 +138,10 @@ module Switchboard
       switch_client("agent")
       set_status("idle")
       quiet_window
-      assert_empty keys, "nothing typed while you're watching the pane"
+      assert_empty keys, "nothing typed while the pane is focused"
 
       tmux!("send-keys", "-t", "agent", "-l", "my draft")
-      wait_until("the draft is in the box before the pane goes off screen") { capture("agent").include?("my draft") }
+      wait_until("the draft is in the box before focus moves away") { capture("agent").include?("my draft") }
       switch_client(HOME)
       quiet_window
       assert_equal "my draft", keys, "a draft is never touched"

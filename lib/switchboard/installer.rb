@@ -519,7 +519,7 @@ module Switchboard
         recorded = ROLE_SUBCOMMANDS.each_key.to_h { |role| [role, tmux_option("@switchboard-#{role}-key")] }.compact
         unless recorded.empty?
           recorded.each { |role, key| run_tmux(*tmux_argv([:bind, role, key])) }
-          run_tmux("display-message", "switchboard: config.yml won't parse — tmux keys left as they were") if announce
+          notify("switchboard: config.yml won't parse — tmux keys left as they were") if announce
           return
         end
       end
@@ -658,7 +658,13 @@ module Switchboard
     def announce_bindings(bound)
       desc = { "toggle" => "toggles the sidebar", "home" => "jumps home" }
       parts = bound.filter_map { |role, key| "prefix-#{key} #{desc[role]}" if key }
-      run_tmux("display-message", "switchboard: #{parts.join(', ')}") unless parts.empty?
+      notify("switchboard: #{parts.join(', ')}") unless parts.empty?
+    end
+
+    # Tmux.notify through the run_tmux/tmux_option seams: the same hold, fallback and escaping.
+    def notify(message)
+      run_tmux(*Tmux.notify_args(message, tmux_option("display-time"))) ||
+        run_tmux("display-message", Tmux.literal(message))
     end
 
     # Which of switchboard's indexed hooks are actually LIVE in the running tmux

@@ -495,7 +495,7 @@ module Switchboard
       config = Config.new
       assert config.load_error, "the fixture must not parse"
       bin = Installer.bin_path
-      note = ["display-message", "switchboard: config.yml won't parse — tmux keys left as they were"]
+      note = ["display-message", "-d", Tmux::NOTIFY_MS.to_s, "switchboard: config.yml won't parse — tmux keys left as they were"]
       cases = [
         [{ "@switchboard-toggle-key" => "b" }, true, [["bind-key", "b", "run-shell", "'#{bin}' toggle-sidebar"], note]],
         [{ "@switchboard-home-key" => "H" }, false, [["bind-key", "H", "run-shell", "'#{bin}' home"]]],
@@ -524,6 +524,17 @@ module Switchboard
       end
       assert_includes cmds, ["bind-key", "s", "run-shell", "'#{bin}' toggle-sidebar"], "nothing recorded: the defaults"
       assert_includes cmds, ["set-option", "-g", "@switchboard-toggle-key", "s"]
+    end
+
+    # Value: protects=installer notices still show on tmux < 3.2 (no -d), escaped, and the hold
+    # honors display-time read through the tmux_option seam; fails_when=the fallback is dropped or
+    # display-time is read outside the seam; why_new=ship 4 coverage; seam=none
+    def test_notify_holds_through_the_seam_and_falls_back_without_d
+      sent = []
+      stub_method(Installer, :tmux_option, ->(name) { name == "display-time" ? "10000" : nil }) do
+        stub_method(Installer, :run_tmux, ->(*a) { sent << a; sent.size > 1 }) { Installer.notify("50% #x") }
+      end
+      assert_equal [["display-message", "-d", "10000", "50%% ##x"], ["display-message", "50%% ##x"]], sent
     end
 
     def test_apply_keybindings_announces_only_when_asked
