@@ -186,6 +186,7 @@ module Switchboard
     def handoff
       # bin/switchboard's one-shot re-exec guard: left set, a new binary launched under system
       # Ruby 2.6 (a clone's `env ruby` shebang) would skip its own re-exec and fail to load.
+      # (Sidebar#exec_in_place clears it for the same reason.)
       ENV.delete("SB_REEXEC")
       exec(Installer.bin_path, "upgrade", "--finish", VERSION)
     rescue SystemCallError => e

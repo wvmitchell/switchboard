@@ -30,7 +30,6 @@ refer to the project's earlier, private repository; the public tracker starts at
 - A new version is test-run (`switchboard version`) before any sidebar switches to it,
   so a release or checkout that won't load leaves the old sidebar running instead of an
   empty pane. Overlapping reloads can't kill a sidebar while it starts up.
-||||||| 889e70e
 
 ## [0.58.0] — a rename renames the Claude session too (2026-10-27)
 
