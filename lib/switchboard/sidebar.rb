@@ -204,6 +204,7 @@ module Switchboard
       @prev_reload_trap = nil
       @tag_pending = nil   # the pid tag owed when one didn't land, retried by tick (retry_tag)
       @tag_tries = 0
+      @tag_clears = false  # whether that owed tag may clear a failed-reload flag (a new image's first)
       @pending = +""       # an incomplete escape sequence split across reads, carried
                            # to the next one and reassembled by tokenize (see handle) —
                            # so a sequence's final byte is never read alone as a key
@@ -1029,17 +1030,18 @@ module Switchboard
       landed = Tmux.tag_sidebar_pane(ENV["TMUX_PANE"], value, clear_failed: clear_failed)
       return landed if value.to_s == "0" # exec replaces us right after: nothing to retry
 
-      @tag_pending, @tag_tries = landed ? [nil, 0] : [value, 1]
+      @tag_pending, @tag_tries, @tag_clears = landed ? [nil, 0, false] : [value, 1, clear_failed]
       landed
     end
 
-    # Retry an owed tag, TAG_TRIES attempts in all, then give up (today's untagged pane). A
-    # retry never clears a failed-reload flag: only a new image's first tag proves new code.
+    # Retry an owed tag as it was asked, TAG_TRIES attempts in all, then give up (the pane
+    # keeps whatever tag it had). A new image's first tag may clear a failed-reload flag; the
+    # old code's re-tag after a failed exec never does, so a retry can't hide that failure.
     def retry_tag
       return unless @tag_pending
 
       @tag_tries += 1
-      landed = Tmux.tag_sidebar_pane(ENV["TMUX_PANE"], @tag_pending, clear_failed: false)
+      landed = Tmux.tag_sidebar_pane(ENV["TMUX_PANE"], @tag_pending, clear_failed: @tag_clears)
       @tag_pending = nil if landed || @tag_tries >= TAG_TRIES
     end
 

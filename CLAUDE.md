@@ -711,7 +711,8 @@ checkout. Nothing can repoint a sidebar at another install.
      when the root won't resolve, so the flag is never empty), after the failed exec's
      re-tag. `doctor` lists those panes, and the next reload's summary reports them. Only a
      new image's first tag clears the flag, in the same tmux call as the tag
-     (`clear_failed:`): the failed exec's re-tag and every retry leave it.
+     (`clear_failed:`), retries of it included (`@tag_clears`); the failed exec's re-tag, and
+     its retries, leave it.
      A pid tag that didn't land is owed (`@tag_pending`) and `tick` retries it
      (`retry_tag`), `TAG_TRIES` (5) attempts in all, then gives up: without it a `0` left by
      the exec would make every later reload skip a running sidebar, and tmux < 3.0 (no

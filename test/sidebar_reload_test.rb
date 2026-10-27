@@ -446,10 +446,12 @@ module Switchboard
         end
       end
       assert_equal({ visible?: 1, window_panes: 1 }, calls)
+      refute sb.instance_variable_get(:@reload_requested)
     end
 
-    # Value: protects=the tick is what retries an owed tag (one call while owed, none after);
-    # fails_when=the tick stops calling retry_tag; seam=none
+    # Value: protects=the tick is what retries an owed tag (one call while owed, none after),
+    # and a tag that never lands stops costing ticks after TAG_TRIES (R3); fails_when=the tick
+    # stops calling retry_tag, or keeps calling it past the cap; seam=none
     def test_a_tick_retries_an_owed_tag_once
       sb, = reloading(visible: false)
       sb.instance_variable_get(:@config).define_singleton_method(:prewarm?) { false }
@@ -463,7 +465,16 @@ module Switchboard
         end
       end
       assert_equal [Process.pid], tags, "retried on the next tick, then nothing once it landed"
-      refute sb.instance_variable_get(:@reload_requested)
+
+      sb.instance_variable_set(:@tag_pending, Process.pid)
+      sb.instance_variable_set(:@tag_tries, 1)
+      tries = 0
+      stub_method(Tmux, :visible?, ->(*) { false }) do
+        stub_method(Tmux, :window_panes, ->(*) { 2 }) do
+          stub_method(Tmux, :tag_sidebar_pane, ->(*, **) { tries += 1; false }) { (Sidebar::TAG_TRIES + 3).times { sb.send(:tick) } }
+        end
+      end
+      assert_equal Sidebar::TAG_TRIES - 1, tries, "a tag that never lands (tmux < 3.0) stops costing ticks"
     end
 
     # --- the exec itself ----------------------------------------------------------
@@ -545,8 +556,8 @@ module Switchboard
         2.times { sb.send(:retry_tag) }
         sb.send(:retry_tag) # landed: nothing owed
       end
-      assert_equal [[Process.pid, true], [Process.pid, false], [Process.pid, false]], calls,
-                   "only the new image's first tag may clear a failure flag"
+      assert_equal [[Process.pid, true], [Process.pid, true], [Process.pid, true]], calls,
+                   "a new image's first tag, retried, may still clear a failure flag"
       assert_nil sb.instance_variable_get(:@tag_pending)
     end
 
