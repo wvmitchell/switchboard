@@ -69,7 +69,8 @@ monitor's workspace, run a check by hand instead of assuming one ran.
    the 6-hour interval, so the workspace reads as monitoring between checks.
 2. Re-arm the schedule if it's due ([Keep it armed](#keep-it-armed)).
 3. Fast-forward the workspace's checkout to `main` ([Sync the
-   checkout](#sync-the-checkout)).
+   checkout](#sync-the-checkout)). If that changed this playbook, re-read it before
+   going on: the heartbeat read it from the checkout before the sync.
 4. Read the state file. **If it's missing or unreadable, rebuild it**: run every check,
    record what you see as the new baselines, and report nothing except that state was
    rebuilt. A lost state file must never turn into a wall of false alarms.
@@ -96,15 +97,23 @@ against `gh`.
 ### Sync the checkout
 
 The monitor's session is long-lived, so its workspace's checkout falls behind `main`
-with every merge. The checks read the playbook and repo state through `gh`, so they
-don't depend on the checkout. But the smoke runs (`bin/test-smoke`, the real-Codex
-smoke) run the checkout's code, and a stale checkout would pass an old switchboard as
-the current one. So every check fast-forwards it:
+with every merge. The checks read repo state through `gh`, so they don't depend on the
+checkout. But the heartbeat reads this playbook from it, and the smoke runs
+(`bin/test-smoke`, the real-Codex smoke) run its code: a stale checkout would pass an
+old switchboard as the current one. So every check fast-forwards it:
 
 ```sh
+branch=...  # sync.branch from the state file (see below)
 main=$(gh api repos/wvmitchell/switchboard/commits/main --jq .sha)
-GIT_TERMINAL_PROMPT=0 git fetch -q https://github.com/wvmitchell/switchboard.git main
-[ "$(git rev-parse FETCH_HEAD)" = "$main" ] && git merge -q --ff-only FETCH_HEAD
+if ! GIT_TERMINAL_PROMPT=0 git fetch -q https://github.com/wvmitchell/switchboard.git main ||
+   [ "$(git rev-parse FETCH_HEAD)" != "$main" ]; then
+  echo "couldn't sync"
+elif [ "$(git symbolic-ref -q --short HEAD)" != "$branch" ] ||
+     [ -n "$(git status --porcelain --untracked-files=normal)" ] ||
+     ! git merge-base --is-ancestor HEAD FETCH_HEAD ||
+     ! git merge -q --ff-only FETCH_HEAD; then
+  echo "checkout not syncable"
+fi
 ```
 
 - **Fetch over HTTPS, never the `origin` remote.** The repo is public, so the fetch
@@ -115,8 +124,14 @@ GIT_TERMINAL_PROMPT=0 git fetch -q https://github.com/wvmitchell/switchboard.git
   other checks still run.
 - **Only a fast-forward.** Sync only on the monitor's own branch, with a clean working
   tree and no commits of its own. Anything else (local changes, a diverged branch, a
-  different branch checked out) is a finding: report it and leave the checkout alone.
-  Never reset, stash or force anything.
+  different branch checked out) prints "checkout not syncable": that's a finding,
+  report it, leave the checkout alone, and skip the smoke runs this check. Never reset,
+  stash or force anything.
+- **The monitor's own branch** is `sync.branch` in the state file. This step runs
+  before the state file is read, so read just that key here. When it's missing (the
+  first check, or a rebuilt state), record the branch checked out now
+  (`git symbolic-ref --short HEAD`). `--untracked-files=normal` keeps a
+  `status.showUntrackedFiles=no` config from hiding new files.
 
 ## The checks
 
