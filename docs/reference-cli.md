@@ -317,18 +317,23 @@ Every running sidebar on the tmux server swaps in its switchboard's current code
 its own pane. `upgrade` does this itself. Use it by hand after a clone's `git pull`, or
 inside `switchboard sandbox` to see a sidebar code edit without detaching.
 
-- A sidebar from 0.59.0 on gets a signal (`SIGUSR1`). At its next safe moment (no
-  prompt, `?` overlay, QR code or filter open) it test-runs its binary (`version`,
-  3 seconds at most) and then execs it in place, keeping its pid, cursor and agent
-  state. One that's on screen goes at once. The rest are spread over 30 seconds
-  (`SWITCHBOARD_RELOAD_SPREAD`) or go when you switch to them.
+- A sidebar from 0.59.0 on gets a signal (`SIGUSR1`). It waits for its next safe moment
+  (no prompt, `?` overlay, QR code or filter open). Then it test-runs the new code
+  (`switchboard sidebar --check`, which builds and resumes a sidebar off screen, 3 seconds
+  at most) and execs it in place, keeping its pid, cursor and agent state.
+  - One that's on screen goes at once. The rest are spread over 30 seconds
+    (`SWITCHBOARD_RELOAD_SPREAD`), or go when you switch to them.
+  - If the test run fails, the sidebar stays on its old code and marks its pane;
+    `switchboard doctor` lists it. A test run that only timed out is retried a minute
+    later.
 - An older sidebar is restarted with `tmux respawn-pane`, rerunning the command that
-  started it, after the same test run of that binary.
+  started it, after a test run (`version`) of that binary. Only a pane started as
+  `<…/switchboard> sidebar` is restarted: a respawn kills whatever runs in the pane.
 - A sidebar whose binary is missing or fails the test run is left as it is.
 
 Each sidebar reloads its OWN binary, so running this from another checkout never
-repoints a sidebar. Prints `sidebars: N reloading in place, M restarted`, plus a line for
-any left running, or `no sidebars running`. Exits 0.
+repoints a sidebar. Prints `sidebars: N asked to reload in place, M restarted`, plus a line
+for any left running and any whose last reload failed, or `no sidebars running`. Exits 0.
 
 ### `switchboard version` (aliases: `-v`, `--version`)
 Print the version (`switchboard X.Y.Z`).

@@ -80,9 +80,10 @@ Then the new version finishes the setup:
   what it knows about running agents. It waits until you close an open prompt, the `?`
   overlay, the QR code or the filter. Sidebars you aren't looking at reload over the next
   half minute, or as soon as you switch to them. An older sidebar is restarted in its
-  pane. It reports how many of each (`sidebars: 12 reloading in place, 3 restarted`).
-  A sidebar whose switchboard was deleted, or won't start, is left running its old code,
-  and `upgrade` says so.
+  pane. It reports how many of each (`sidebars: 12 asked to reload in place, 3
+  restarted`). A sidebar whose switchboard was deleted, or won't start, is left running
+  its old code, and `upgrade` says so. If a sidebar's own test run of the new code fails,
+  it stays on its old code, and `switchboard doctor` lists it.
 
 A plain `brew upgrade` (without `switchboard upgrade`) reloads the sidebars too: each one
 notices that the install moved and swaps itself within a few seconds. For a clone, run

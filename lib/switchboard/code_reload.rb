@@ -16,9 +16,12 @@ module Switchboard
     RESUME_ENV = "SWITCHBOARD_SIDEBAR_RESUME"
     SPREAD_ENV = "SWITCHBOARD_RELOAD_SPREAD" # tests and smoke runs set 0
     TAG = "@sb_reload"   # pane option: this pane's sidebar pid, so a sender knows it can take the signal
+    FAILED_TAG = "@sb_reload_failed" # pane option: the root a reload couldn't switch to (doctor, the next reload)
     SIGNAL = "USR1"
     SPREAD = 30          # seconds an off-screen sidebar may wait, so a fleet doesn't boot + rescan at once
     PREFLIGHT_SECS = 3
+    RETRY_AFTER = 60     # a preflight that timed out (a cold disk right after brew upgrade) is tried again after this
+    CURSOR_FIELDS = %w[kind project path branch].freeze # a row's identity across the exec
     PAYLOAD_MAX = 64 * 1024
     VERSION = 1
     STATES = %w[thinking done waiting].freeze
@@ -43,37 +46,46 @@ module Switchboard
       nil
     end
 
-    # Does `<bin> version` load and exit 0 within the bound? exec only fails safe when the
-    # exec call itself fails; new code that raises while loading would kill the pane. Run
-    # in the env the exec will use (SB_REEXEC cleared, else a system-Ruby re-exec is
-    # skipped and a working binary reads as broken), with no stdio: it keeps the pane as
-    # its controlling tty, so nothing it does may read keys or paint.
-    def preflight(bin, secs: PREFLIGHT_SECS)
-      pid = Process.spawn({ "SB_REEXEC" => nil }, bin, "version",
+    # :ok, :failed or :timeout: does `<bin> <args>` (default `version`) exit 0 within the
+    # bound? exec only fails safe when the exec call itself fails; new code that raises while
+    # loading would kill the pane. A sidebar's own reload checks `sidebar --check` with its
+    # payload, which also proves the sidebar boots and resumes. Run in the env the exec will
+    # use (SB_REEXEC cleared, else a system-Ruby re-exec is skipped and a working binary reads
+    # as broken), with no stdio: it keeps the pane as its controlling tty, so nothing it does
+    # may read keys or paint.
+    def preflight(bin, *args, env: {}, secs: PREFLIGHT_SECS)
+      args = ["version"] if args.empty?
+      pid = Process.spawn({ "SB_REEXEC" => nil }.merge(env), bin, *args,
                           in: File::NULL, out: File::NULL, err: File::NULL, pgroup: true)
       status = ProcessIdentity.wait_within(pid, secs)
-      return status.success? if status
+      return status.success? ? :ok : :failed if status
 
       ProcessIdentity.terminate_group(pid)
-      false
+      :timeout
     rescue SystemCallError
-      false
+      :failed
     end
 
     # Reload every sidebar on this tmux server (`upgrade` / `reload-sidebars`). A tagged
-    # one gets the signal and swaps code itself, keeping its state. An untagged one (older
-    # than 0.59, or tmux < 3.0) is respawned by its own start command — but only when that
-    # binary exists and loads (`version`, once per distinct binary): a respawn kills the old
-    # process first, so a broken or deleted checkout would leave the window without a
-    # sidebar. Those stay running and are counted. nil off a server.
+    # one gets the signal and swaps code itself, keeping its state — tagged meaning the pane
+    # tag is the pane's pid, or a child of it (a shell like fish that doesn't exec its
+    # command). An untagged one (older than 0.59, or tmux < 3.0) is respawned by its own
+    # start command — but only when that binary exists and loads (`version`, once per
+    # distinct binary): a respawn kills the old process first, so a broken or deleted
+    # checkout would leave the window without a sidebar. Those stay running and are counted,
+    # and so are sidebars a previous reload couldn't switch. nil off a server.
     def reload_all
       targets = Tmux.sidebar_reload_targets or return nil
-      counts = { signaled: 0, respawned: 0, left: 0 }
-      loads = Hash.new { |memo, bin| memo[bin] = File.file?(bin) && File.executable?(bin) && preflight(bin) }
+      counts = { signaled: 0, respawned: 0, left: 0, failed: targets.count(&:failed) }
+      loads = Hash.new { |memo, bin| memo[bin] = File.file?(bin) && File.executable?(bin) && preflight(bin) == :ok }
+      parents = Tmux.parent_pids(targets.filter_map(&:tag_pid))
       marker = encode
       targets.each do |t|
-        if t.tagged
-          counts[:signaled] += 1 if Tmux.signal_sidebar(t)
+        signal_pid = t.tagged ? t.pid : (t.tag_pid if t.tag_pid && parents[t.tag_pid] == t.pid)
+        if t.between
+          counts[:signaled] += 1 # mid-exec from another reload: already on its way
+        elsif signal_pid
+          counts[:signaled] += 1 if Tmux.signal_sidebar(signal_pid)
         elsif t.bin && loads[t.bin] && Tmux.respawn_sidebar(t, marker)
           counts[:respawned] += 1
         else
@@ -83,17 +95,22 @@ module Switchboard
       counts
     end
 
-    # [summary, warning-or-nil] for reload_all's counts; summary nil with nothing reached.
+    # [[:ok | :note, line], ...] for reload_all's counts; empty with no sidebars. A signaled
+    # sidebar is only asked: it tests the new code itself, and records a failure for next time.
     def describe(counts)
       done = []
-      done << "#{counts[:signaled]} reloading in place" if counts[:signaled].positive?
+      done << "#{counts[:signaled]} asked to reload in place" if counts[:signaled].positive?
       done << "#{counts[:respawned]} restarted" if counts[:respawned].positive?
-      left = counts[:left]
-      warning = if left.positive?
-                  "#{left} sidebar#{'s' unless left == 1} left running old code: " \
-                    "#{left == 1 ? 'its' : 'their'} switchboard was removed or doesn't start"
-                end
-      [done.empty? ? nil : "sidebars: #{done.join(', ')}", warning]
+      lines = done.empty? ? [] : [[:ok, "sidebars: #{done.join(', ')}"]]
+      if (left = counts[:left]).positive?
+        lines << [:note, "#{left} sidebar#{'s' unless left == 1} left running old code: couldn't restart " \
+                         "#{left == 1 ? 'it' : 'them'} safely (switchboard missing or won't start, or not a plain `switchboard sidebar`)"]
+      end
+      if (failed = counts.fetch(:failed, 0)).positive?
+        lines << [:note, "#{failed} sidebar#{'s' unless failed == 1} couldn't reload last time and still " \
+                         "run#{'s' if failed == 1} old code — `switchboard doctor` lists them"]
+      end
+      lines
     end
 
     # 0..SPREAD seconds (SWITCHBOARD_RELOAD_SPREAD overrides the bound).
@@ -119,9 +136,10 @@ module Switchboard
 
       { cursor: cursor_from(data["cursor"]),
         offset: data["offset"].is_a?(Integer) && data["offset"] >= 0 ? data["offset"] : 0,
-        hook_states: hash_of(data["hook_states"]).select { |k, v| k.is_a?(String) && STATES.include?(v) }
-                                                 .transform_values(&:to_sym),
-        notify: hash_of(data["notify"]).filter_map { |k, v| [k, mtime_from(v)] if k.is_a?(String) && mtime_from(v) }.to_h,
+        hook_states: (data["hook_states"].is_a?(Hash) ? data["hook_states"] : {})
+          .select { |k, v| k.is_a?(String) && STATES.include?(v) }.transform_values(&:to_sym),
+        notify: (data["notify"].is_a?(Hash) ? data["notify"] : {})
+          .filter_map { |k, v| [k, mtime_from(v)] if k.is_a?(String) && mtime_from(v) }.to_h,
         announce: data["announce"] == true }
     rescue JSON::ParserError, EncodingError
       nil
@@ -135,7 +153,7 @@ module Switchboard
     def cursor_from(value)
       return nil unless value.is_a?(Hash)
 
-      cursor = value.slice("kind", "project", "path", "branch")
+      cursor = value.slice(*CURSOR_FIELDS)
       cursor.values.all? { |v| v.nil? || v.is_a?(String) } && cursor["kind"].is_a?(String) ? cursor : nil
     end
 
@@ -148,10 +166,6 @@ module Switchboard
       Time.at(sec, nsec, :nsec)
     rescue ArgumentError, RangeError
       nil
-    end
-
-    def hash_of(value)
-      value.is_a?(Hash) ? value : {}
     end
   end
 end

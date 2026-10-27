@@ -1,15 +1,14 @@
 # frozen_string_literal: true
 
 require_relative "smoke_helper"
+require_relative "fake_keg"
 
 module Switchboard
   # Real-tmux proof of #48: a running sidebar swaps in new code in its own pane. The
-  # home sidebar runs from a FAKE Homebrew prefix — <tmp>/Cellar/switchboard/{A,B} are
-  # copies of this checkout, <tmp>/opt/switchboard links to one — so StablePath gives it
-  # the opt path, exactly as under brew, and "upgrading" is repointing that link. B's
-  # wordmark is patched so the swap is visible on screen.
+  # home sidebar runs from a fake Homebrew prefix (FakeKeg) with kegs A and B; B's wordmark
+  # is patched so the swap is visible on screen.
   class SidebarReloadSmokeTest < SmokeCase
-    MARK_B = "◖═◗ SwitchboarB"
+    include FakeKeg
 
     def write_project_and_config
       super
@@ -23,32 +22,11 @@ module Switchboard
       keg("A")
       keg("B") { |root| patch_wordmark(root) }
       point_opt_at("A")
-      ENV["SWITCHBOARD_BIN"] = File.join(@prefix, "opt", "switchboard", "bin", "switchboard")
+      ENV["SWITCHBOARD_BIN"] = opt_bin
       super
       @pane = sidebar_pane_ids(HOME).first
       @pid = pane_pid
       wait_until("the sidebar tags its pane with its pid") { tag == @pid.to_s }
-    end
-
-    def keg(name)
-      root = File.join(@prefix, "Cellar", "switchboard", name)
-      FileUtils.mkdir_p(root)
-      FileUtils.cp_r(File.join(REPO, "bin"), root)
-      FileUtils.cp_r(File.join(REPO, "lib"), root)
-      yield root if block_given?
-      root
-    end
-
-    def patch_wordmark(root)
-      render = File.join(root, "lib", "switchboard", "sidebar", "render.rb")
-      File.write(render, File.read(render).sub(Sidebar::WORDMARK, MARK_B))
-    end
-
-    def point_opt_at(name)
-      opt = File.join(@prefix, "opt", "switchboard")
-      FileUtils.mkdir_p(File.dirname(opt))
-      FileUtils.rm_f(opt)
-      File.symlink(File.join(@prefix, "Cellar", "switchboard", name), opt)
     end
 
     def break_keg(name)

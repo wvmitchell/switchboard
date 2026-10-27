@@ -250,9 +250,7 @@ module Switchboard
       return unless Installer.installed_bin?
 
       counts = CodeReload.reload_all or return
-      summary, warning = CodeReload.describe(counts)
-      Installer.ok(summary) if summary
-      Installer.note(warning) if warning
+      CodeReload.describe(counts).each { |kind, line| Installer.public_send(kind, line) }
     end
 
     # Cheap local checks for setup an upgrade should have done.

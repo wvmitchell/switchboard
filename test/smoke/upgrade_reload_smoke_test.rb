@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "smoke_helper"
+require_relative "fake_keg"
 
 module Switchboard
   # Real-tmux proof that `upgrade --finish`, run from a shell with no $TMUX (as after
@@ -9,6 +10,24 @@ module Switchboard
   # The server here starts with the fragment applied (SmokeCase), and the test strips it
   # back to the "server still has the old wiring" state an upgrade leaves behind.
   class UpgradeReloadSmokeTest < SmokeCase
+    include FakeKeg
+
+    def write_project_and_config
+      super
+      ENV[CodeReload::SPREAD_ENV] = "0" # before boot: a reload never waits out the spread here
+    end
+
+    # The home sidebar runs from a fake keg, so a test can change the code on disk under a
+    # running sidebar without moving its install root: only a signal can make it reload then.
+    def spawn_home_sidebar
+      @prefix = path("prefix")
+      keg("A")
+      point_opt_at("A")
+      ENV["SWITCHBOARD_BIN"] = opt_bin
+      super
+    ensure
+      ENV["SWITCHBOARD_BIN"] = BIN
+    end
     def strip_live_wiring
       Installer::HOOK_SLOTS.each { |slot| tmux!("set-hook", "-gu", slot) }
       tmux!("unbind-key", "-T", "prefix", "s")
@@ -55,12 +74,12 @@ module Switchboard
       pane = home_sidebar
       pid = pid_of(pane)
       wait_until("the sidebar tags its pane") { tag_of(pane) == pid.to_s }
+      patch_wordmark(File.join(@prefix, "Cellar", "switchboard", "A")) # new code on disk, same install root
       ok, out = finish_as_installed
       assert ok, out
-      assert_includes out, "sidebars: 1 reloading in place"
-      wait_until("the reloaded image re-tags its pane") { tag_of(pane) == pid.to_s }
+      assert_includes out, "sidebars: 1 asked to reload in place"
+      wait_until("the new code paints the pane") { capture(pane).include?(MARK_B) }
       assert_equal pid, pid_of(pane), "in place: same process"
-      wait_until("it still paints") { capture(pane).include?(Sidebar::WORDMARK) }
     end
 
     # Value: protects=a sidebar too old for the signal is restarted by finish (R1);

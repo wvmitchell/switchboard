@@ -39,7 +39,7 @@ module Switchboard
       when "monitoring"        then monitoring(argv[1], argv[2])
       when "monitoring-nudge"  then monitoring_nudge(argv.drop(1))
       when "sound"             then play_sound(argv[1])
-      when "sidebar"           then Sidebar.run
+      when "sidebar"           then argv[1] == "--check" ? exit(Sidebar.check ? 0 : 1) : Sidebar.run
       when "reload-sidebars"   then reload_sidebars
       when "poke-sidebar"      then Tmux.poke_current_sidebar
       when "reload-config"     then reload_config_poke(argv[1])
@@ -160,9 +160,8 @@ module Switchboard
       counts = CodeReload.reload_all
       return puts("no tmux server running — no sidebars to reload") unless counts
 
-      summary, warning = CodeReload.describe(counts)
-      puts(summary || "no sidebars running")
-      puts(warning) if warning
+      lines = CodeReload.describe(counts)
+      puts(lines.empty? ? "no sidebars running" : lines.map(&:last))
     end
 
     # Background dispatch worker (Sidebar#create spawns it). Daemonized like the reaper:
@@ -775,6 +774,17 @@ module Switchboard
       doctor_remote_links
       doctor_session_names
       doctor_orphan_sidebars
+      doctor_reload_failures
+    end
+
+    # A sidebar whose code reload failed keeps running its old code (#48); it flags its
+    # pane. Silent when none did.
+    def doctor_reload_failures
+      failed = Tmux.sidebar_reload_targets.to_a.select(&:failed)
+      return if failed.empty?
+
+      puts row(false, "#{failed.size} sidebar(s) still on old code after a failed reload (pane #{failed.map(&:pane).join(', ')}) — " \
+                      "run `switchboard reload-sidebars`, or press your toggle key twice in that session")
     end
 
     # Session-name sync types into Claude's pane, so it reports what it couldn't do

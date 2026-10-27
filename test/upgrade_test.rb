@@ -389,13 +389,13 @@ module Switchboard
     def test_finishing_reloads_the_running_sidebars_and_counts_them
       out, calls = finish_reloading("0.1.0", { signaled: 3, respawned: 2, left: 0 })
       assert_equal 1, calls
-      assert_includes out, "sidebars: 3 reloading in place, 2 restarted"
+      assert_includes out, "sidebars: 3 asked to reload in place, 2 restarted"
       refute_includes out, "twice", "the restart chore is gone"
     end
 
     def test_a_sidebar_left_on_old_code_is_named
       out, = finish_reloading("0.1.0", { signaled: 0, respawned: 0, left: 1 })
-      assert_includes out, "1 sidebar left running old code: its switchboard was removed or doesn't start"
+      assert_includes out, "1 sidebar left running old code: couldn't restart it safely"
       refute_includes out, "sidebars:", "nothing reloaded, so no success line"
     end
 

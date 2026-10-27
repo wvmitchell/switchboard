@@ -27,9 +27,11 @@ refer to the project's earlier, private repository; the public tracker starts at
   inside `switchboard sandbox` to see a sidebar code edit without detaching.
 
 ### Safety
-- A new version is test-run (`switchboard version`) before any sidebar switches to it,
-  so a release or checkout that won't load leaves the old sidebar running instead of an
-  empty pane. Overlapping reloads can't kill a sidebar while it starts up.
+- A sidebar test-runs the new version (it builds and resumes a sidebar off screen) before
+  switching to it, so a release or checkout that can't start leaves the old sidebar
+  running instead of an empty pane. `switchboard doctor` lists any sidebar left behind
+  that way. Overlapping reloads can't kill a sidebar while it starts up. Only panes started
+  as a switchboard sidebar are ever restarted.
 
 ## [0.58.0] — a rename renames the Claude session too (2026-10-27)
 
