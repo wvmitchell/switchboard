@@ -709,9 +709,13 @@ checkout. Nothing can repoint a sidebar at another install.
 
      Either way it flags the pane `@sb_reload_failed=<root>` (falling back to the bin path
      when the root won't resolve, so the flag is never empty), after the failed exec's
-     re-tag, which would otherwise clear it. `doctor` lists those panes, and
-     the next reload's summary reports them. A start with a real pid clears the flag, in
-     the same tmux call as the tag.
+     re-tag. `doctor` lists those panes, and the next reload's summary reports them. Only a
+     new image's first tag clears the flag, in the same tmux call as the tag
+     (`clear_failed:`): the failed exec's re-tag and every retry leave it.
+     A pid tag that didn't land is owed (`@tag_pending`) and `tick` retries it
+     (`retry_tag`), `TAG_TRIES` (5) attempts in all, then gives up: without it a `0` left by
+     the exec would make every later reload skip a running sidebar, and tmux < 3.0 (no
+     `set-option -p`) fails every time, so an uncapped retry would cost every tick.
   2. Write the resume payload, delete `SB_REEXEC`.
   3. `trap(USR1, "IGNORE")` plus tag `0`: caught handlers reset across exec, `SIG_IGN`
      survives it, and a second reload during the boot would otherwise kill the new image.

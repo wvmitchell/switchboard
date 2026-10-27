@@ -343,7 +343,7 @@ module Switchboard
     def test_tagging_a_pane_clears_a_failed_reload_but_mid_exec_does_not
       calls = []
       stub_method(Tmux, :system, ->(*argv, **) { calls << argv; true }) do
-        Tmux.tag_sidebar_pane("%3", 42)
+        assert Tmux.tag_sidebar_pane("%3", 42)
         Tmux.tag_sidebar_pane("%3", 0)
         Tmux.flag_failed_reload("%3", "/Cellar/b")
       end
@@ -351,6 +351,12 @@ module Switchboard
                     ";", "set-option", "-p", "-u", "-t", "%3", CodeReload::FAILED_TAG], calls[0]
       assert_equal ["tmux", "set-option", "-p", "-t", "%3", CodeReload::TAG, "0"], calls[1]
       assert_equal ["tmux", "set-option", "-p", "-t", "%3", CodeReload::FAILED_TAG, "/Cellar/b"], calls[2]
+      calls.clear
+      stub_method(Tmux, :system, ->(*argv, **) { calls << argv; false }) do
+        refute Tmux.tag_sidebar_pane("%3", 42, clear_failed: false), "a tag that didn't land says so"
+      end
+      assert_equal [["tmux", "set-option", "-p", "-t", "%3", CodeReload::TAG, "42"]], calls,
+                   "old code re-tagging itself leaves the failure flag"
     end
 
     def test_parent_pids_reads_live_processes

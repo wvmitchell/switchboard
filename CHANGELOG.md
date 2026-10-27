@@ -10,6 +10,17 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
+## [0.60.3] — a sidebar whose reload tag didn't stick gets reloaded next time (2026-10-27)
+
+### Fixed
+- A sidebar marks its pane while it swaps in new code, and replaces the mark once it's up.
+  If that second write failed, every later `switchboard upgrade` or `reload-sidebars` skipped
+  that sidebar and left it on old code. It now retries the write a few times. A sidebar that
+  failed to reload also stays reported as failed until new code actually starts in it.
+- A sidebar already stuck this way can't fix itself, because it's running the old code.
+  Homebrew installs swap it on their own when you upgrade. On a git-clone install, press your
+  sidebar toggle key twice in that session once.
+
 ## [0.60.2] — switching in during a sidebar reload catches up first (2026-10-27)
 
 ### Fixed
