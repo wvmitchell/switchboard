@@ -10,7 +10,7 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
-## [0.58.1] — the Claude session renames while you watch (2026-10-27)
+## [0.60.1] — the Claude session renames while you watch (2026-10-27)
 
 ### Changed
 - Renaming a workspace with the sidebar's `r` now renames its Claude session within a couple
@@ -43,6 +43,42 @@ refer to the project's earlier, private repository; the public tracker starts at
 ### Fixed
 - A notice's text is shown literally: tmux reads `display-message` text as a format, so a `#`
   sequence in an error message could expand, or run a command, and a `%` was read as a date code.
+## [0.60.0] — Ruby 3.3 is the new minimum (2026-10-27)
+
+### Changed
+- **Clone installs now need Ruby 3.3 or newer** (was 3.0). Ruby 3.0, 3.1 and 3.2 no longer
+  get security fixes upstream; 3.3 is the oldest that does. Homebrew installs are unaffected:
+  the formula already brings a current Ruby. Check with `ruby -v`; if yours is older,
+  install a newer one (rbenv, `brew install ruby`) before running `switchboard upgrade`.
+- On a Ruby that's too old, `switchboard` still re-runs itself under a newer one it finds
+  (rbenv, Homebrew). If that one is too old as well, it now stops with a message saying so
+  instead of failing partway through loading.
+
+## [0.59.0] — upgrading reloads the running sidebars (2026-10-27)
+
+### Added
+- `switchboard upgrade` now swaps the new code into every running sidebar, so there's no
+  more pressing the toggle key twice in each session. A sidebar reloads itself in its own
+  pane and keeps your cursor, its folds and what it knows about running agents. It waits
+  until you close an open prompt, `?`, the QR code or the filter. Sidebars you aren't
+  looking at reload over the next half minute, or as soon as you switch to them. A
+  sidebar from before this release is restarted in its pane instead. `upgrade` prints
+  how many of each, and names any it left alone because their switchboard was removed or
+  won't start (#48).
+- A plain `brew upgrade` reloads the sidebars too: each one notices the install moved.
+  The one you're looking at swaps itself within a few seconds, the rest within about
+  40 seconds or as soon as you switch to them.
+- `switchboard reload-sidebars` does the same by hand: after a `git pull` in a clone, or
+  inside `switchboard sandbox` to see a sidebar code edit without detaching.
+
+### Safety
+- A sidebar test-runs the new version (it builds a sidebar off screen and applies its saved
+  state) before switching to it, so a release or checkout that can't start, or a config
+  that's missing or won't parse, leaves the old sidebar running instead of an empty pane.
+  `switchboard doctor` lists any sidebar left behind that way. Overlapping reloads can't
+  kill a sidebar while it starts up. Only panes started as a switchboard sidebar are ever
+  restarted, and a pane is checked again right before, so one that now runs something
+  else is left alone.
 
 ## [0.58.0] — a rename renames the Claude session too (2026-10-27)
 

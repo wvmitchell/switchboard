@@ -39,7 +39,8 @@ module Switchboard
       when "monitoring"        then monitoring(argv[1], argv[2])
       when "monitoring-nudge"  then monitoring_nudge(argv.drop(1))
       when "sound"             then play_sound(argv[1])
-      when "sidebar"           then Sidebar.run
+      when "sidebar"           then argv[1] == "--check" ? exit(Sidebar.check ? 0 : 1) : Sidebar.run
+      when "reload-sidebars"   then reload_sidebars
       when "poke-sidebar"      then Tmux.poke_current_sidebar
       when "reload-config"     then reload_config_poke(argv[1])
       when "sidebar-sync"      then Tmux.sidebar_sync(argv[1])
@@ -149,6 +150,18 @@ module Switchboard
       UpdateCheck.run_child
     rescue StandardError
       nil
+    end
+
+    # Every running sidebar swaps in its own binary's current code (#48): what `upgrade`
+    # does at the end, by hand — inside `switchboard sandbox`, after editing sidebar code.
+    # Any binary may run it: each sidebar re-execs its OWN SWITCHBOARD_BIN, so this can't
+    # repoint one at another checkout.
+    def reload_sidebars
+      counts = CodeReload.reload_all
+      return puts("no tmux server running — no sidebars to reload") unless counts
+
+      lines = CodeReload.describe(counts)
+      puts(lines.empty? ? "no sidebars running" : lines.map(&:last))
     end
 
     # Background dispatch worker (Sidebar#create spawns it). Daemonized like the reaper:
@@ -761,6 +774,17 @@ module Switchboard
       doctor_remote_links
       doctor_session_names
       doctor_orphan_sidebars
+      doctor_reload_failures
+    end
+
+    # A sidebar whose code reload failed keeps running its old code (#48); it flags its
+    # pane. Silent when none did.
+    def doctor_reload_failures
+      failed = Tmux.sidebar_reload_targets.to_a.select(&:failed)
+      return if failed.empty?
+
+      puts row(false, "#{failed.size} sidebar(s) still on old code after a failed reload (pane #{failed.map(&:pane).join(', ')}) — " \
+                      "run `switchboard reload-sidebars`, or press your toggle key twice in that session")
     end
 
     # Session-name sync types into Claude's pane, so it reports what it couldn't do
@@ -1311,6 +1335,7 @@ module Switchboard
           switchboard sound [done|waiting|alert]  play a state's sound (try audio / pick sounds)
           switchboard prune        kill orphaned sb/ sessions + reap orphaned sidebar processes (--dry-run / -n previews)
           switchboard sandbox      dogfood THIS checkout's sidebar in a throwaway, isolated tmux (auto-torn-down on detach)
+          switchboard reload-sidebars  every running sidebar swaps in its switchboard's current code, in place (upgrade does this itself)
           switchboard quit         close ALL switchboard sessions (full teardown — kills the one you're in too)
           switchboard doctor       check dependencies + config
           switchboard help         show this help

@@ -186,6 +186,7 @@ module Switchboard
     def handoff
       # bin/switchboard's one-shot re-exec guard: left set, a new binary launched under system
       # Ruby 2.6 (a clone's `env ruby` shebang) would skip its own re-exec and fail to load.
+      # (Sidebar#exec_in_place clears it for the same reason.)
       ENV.delete("SB_REEXEC")
       exec(Installer.bin_path, "upgrade", "--finish", VERSION)
     rescue SystemCallError => e
@@ -206,7 +207,7 @@ module Switchboard
       hooks_ok = Installer.refresh_wiring
       codex_ok = refresh_codex
       tmux_ok = reload_tmux
-      summary(from)
+      reload_sidebars if from
       hooks_ok && codex_ok && tmux_ok
     end
 
@@ -242,12 +243,14 @@ module Switchboard
     end
 
     # Any hand-off means new code (a clone pull need not bump the version); only the
-    # leftovers path, which loaded nothing new, skips the hint.
-    def summary(from)
-      return unless from
+    # leftovers path, which loaded nothing new, skips this. Every running sidebar swaps
+    # in the new code: in place where it can, else a restart (#48). Only the installed
+    # binary does it, like every other shared rewrite here.
+    def reload_sidebars
+      return unless Installer.installed_bin?
 
-      loaded = from == VERSION ? "the code they started with" : from
-      puts "\nRunning sidebars still have #{loaded} loaded: press prefix-#{Installer.bound_toggle_key} twice in each switchboard session to restart them."
+      counts = CodeReload.reload_all or return
+      CodeReload.describe(counts).each { |kind, line| Installer.public_send(kind, line) }
     end
 
     # Cheap local checks for setup an upgrade should have done.

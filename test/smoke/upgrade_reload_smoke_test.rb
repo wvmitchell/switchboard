@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "smoke_helper"
+require_relative "fake_keg"
 
 module Switchboard
   # Real-tmux proof that `upgrade --finish`, run from a shell with no $TMUX (as after
@@ -9,6 +10,24 @@ module Switchboard
   # The server here starts with the fragment applied (SmokeCase), and the test strips it
   # back to the "server still has the old wiring" state an upgrade leaves behind.
   class UpgradeReloadSmokeTest < SmokeCase
+    include FakeKeg
+
+    def write_project_and_config
+      super
+      ENV[CodeReload::SPREAD_ENV] = "0" # before boot: a reload never waits out the spread here
+    end
+
+    # The home sidebar runs from a fake keg, so a test can change the code on disk under a
+    # running sidebar without moving its install root: only a signal can make it reload then.
+    def spawn_home_sidebar
+      @prefix = path("prefix")
+      keg("A")
+      point_opt_at("A")
+      ENV["SWITCHBOARD_BIN"] = opt_bin
+      super
+    ensure
+      ENV["SWITCHBOARD_BIN"] = BIN
+    end
     def strip_live_wiring
       Installer::HOOK_SLOTS.each { |slot| tmux!("set-hook", "-gu", slot) }
       tmux!("unbind-key", "-T", "prefix", "s")
@@ -26,6 +45,69 @@ module Switchboard
 
     def wire_tmux_conf(body)
       File.write(File.join(ENV["HOME"], ".tmux.conf"), body)
+    end
+
+    # --- the sidebar reload at the end of finish (#48) ---------------------------
+
+    # `upgrade --finish` run as the INSTALLED binary: a `switchboard` on PATH that is this
+    # checkout's bin, which is what Installer.installed_bin? checks. Returns [ok, output].
+    def finish_as_installed(installed: true)
+      env = {}
+      if installed
+        dir = path("installed-bin")
+        FileUtils.mkdir_p(dir)
+        File.symlink(BIN, File.join(dir, "switchboard")) unless File.exist?(File.join(dir, "switchboard"))
+        env["PATH"] = "#{dir}:#{ENV['PATH']}"
+      end
+      out = IO.popen(env, [BIN, "upgrade", "--finish", "0.0.1"], err: %i[child out], in: File::NULL, &:read)
+      [$?.success?, out]
+    end
+
+    def home_sidebar = sidebar_pane_ids(HOME).first
+    def pid_of(pane) = tmux("display-message", "-p", "-t", pane, fmt("pane_pid")).strip.to_i
+    def tag_of(pane) = tmux("show-options", "-p", "-v", "-t", pane, CodeReload::TAG).strip
+
+    # Value: protects=upgrade --finish reaching every running sidebar (#48 R1); fails_when=finish
+    # stops calling the reload, or reload_all misses a tagged pane; why_new=the reload smoke drives
+    # reload-sidebars, not finish; seam=PATH symlink as the installed binary; no_claim=Homebrew itself
+    def test_finish_reloads_a_running_sidebar_in_place
+      pane = home_sidebar
+      pid = pid_of(pane)
+      wait_until("the sidebar tags its pane") { tag_of(pane) == pid.to_s }
+      patch_wordmark(File.join(@prefix, "Cellar", "switchboard", "A")) # new code on disk, same install root
+      ok, out = finish_as_installed
+      assert ok, out
+      assert_includes out, "sidebars: 1 asked to reload in place"
+      wait_until("the new code paints the pane") { capture(pane).include?(MARK_B) }
+      assert_equal pid, pid_of(pane), "in place: same process"
+    end
+
+    # Value: protects=a sidebar too old for the signal is restarted by finish (R1);
+    # fails_when=finish signals it (killing it) or skips it; seam=PATH symlink as the installed binary
+    def test_finish_restarts_a_sidebar_too_old_to_reload_itself
+      pane = home_sidebar
+      pid = pid_of(pane)
+      wait_until("the sidebar tags its pane") { tag_of(pane) == pid.to_s }
+      tmux!("set-option", "-p", "-u", "-t", pane, CodeReload::TAG) # what a pre-0.59 sidebar looks like
+      ok, out = finish_as_installed
+      assert ok, out
+      assert_includes out, "sidebars: 1 restarted"
+      wait_until("a new process in the same pane") { pid_of(pane).positive? && pid_of(pane) != pid }
+      assert_equal [pane], sidebar_pane_ids(HOME)
+      wait_until("the restarted sidebar paints") { capture(pane).include?(Sidebar::WORDMARK) }
+    end
+
+    # Value: protects=a dogfood checkout's upgrade never reloads the installed sidebars (the
+    # installed-binary rule); fails_when=the gate in Upgrade.reload_sidebars is dropped; seam=none
+    def test_finish_from_another_copy_leaves_the_sidebars_alone
+      pane = home_sidebar
+      pid = pid_of(pane)
+      wait_until("the sidebar tags its pane") { tag_of(pane) == pid.to_s }
+      tmux!("set-option", "-p", "-u", "-t", pane, CodeReload::TAG) # untagged: a reload would respawn it
+      _, out = finish_as_installed(installed: false)
+      refute_includes out, "sidebars:"
+      sleep 1 # a (wrong) respawn would land within this
+      assert_equal pid, pid_of(pane), "untouched"
     end
 
     # Value: protects=a plain-shell upgrade leaving new keys/hooks live; fails_when=the

@@ -3,21 +3,26 @@
 
 # A tmux popup runs in a non-interactive shell that doesn't load rbenv (set up
 # in .zshrc), so `env ruby` can resolve to macOS system Ruby 2.6 — too old: the
-# floor is 3.0 (Config uses YAML.safe_load_file, added in Psych 3.3 / Ruby 3.0).
-# If so, re-exec once under a modern ruby. The SB_REEXEC guard prevents an exec loop.
-if RUBY_VERSION < "3.0" && !ENV["SB_REEXEC"]
-  modern = [
+# floor is 3.3, the oldest Ruby still getting security fixes upstream.
+# If so, re-exec once under a modern ruby. The SB_REEXEC guard prevents an exec loop,
+# and a re-exec that still lands below the floor aborts here instead of failing to load.
+if RUBY_VERSION < "3.3"
+  modern = !ENV["SB_REEXEC"] && [
     File.expand_path("~/.rbenv/shims/ruby"),
     "/opt/homebrew/opt/ruby/bin/ruby",
     "/opt/homebrew/bin/ruby",
     "/usr/local/bin/ruby"
-  ].find { |path| File.executable?(path) }
+  ].find do |path|
+    # An rbenv shim can itself resolve below the floor; ask each one instead of taking the first.
+    File.executable?(path) &&
+      system(path, "-e", 'exit RUBY_VERSION >= "3.3"', out: File::NULL, err: File::NULL)
+  end
 
   if modern
     ENV["SB_REEXEC"] = "1"
     exec(modern, __FILE__, *ARGV)
   end
-  abort "switchboard needs Ruby >= 3.0 (running #{RUBY_VERSION}); none found on PATH"
+  abort "switchboard needs Ruby >= 3.3 (running #{RUBY_VERSION}); install a newer Ruby or put one first on PATH"
 end
 
 # A C/POSIX locale (a tmux pane started without LANG) would make Ruby tag every file read

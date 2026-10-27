@@ -15,7 +15,7 @@ reasoning, [Explanation: distribution](explanation-distribution.md).
 | `CHANGELOG.md` | Release notes. Each version needs a `## [X.Y.Z] — title (YYYY-MM-DD)` entry. |
 | `packaging/homebrew/switchboard.rb` | The formula template. The pipeline rewrites its `url` to the release tag and its `sha256` (a placeholder in the repo) to the tarball's hash; the in-repo `url` is not kept current. |
 | `packaging/release.rb` | Pure decision + rendering logic, plus a small CLI the workflow calls. Tests: `test/release_test.rb`. |
-| `.github/workflows/test.yml` | The offline suite (Ruby 3.0 + 3.3) and the real-tmux smoke job. A release gate. |
+| `.github/workflows/test.yml` | The offline suite (Ruby 3.3 + 4.0) and the real-tmux smoke job. A release gate. |
 | `.github/workflows/formula.yml` | Installs the formula from a local tap on macOS and runs `brew audit --strict` + `brew test`. A release gate. |
 | `.github/workflows/release.yml` | Tags, creates the GitHub Release, and updates the tap. |
 
@@ -143,7 +143,7 @@ reason=new version
 
 `packaging/homebrew/switchboard.rb`:
 
-- **Depends on** `gh`, `git`, `ruby` (macOS system Ruby is 2.6; switchboard needs ≥ 3.0), `tmux`.
+- **Depends on** `gh`, `git`, `ruby` (macOS system Ruby is 2.6; switchboard needs ≥ 3.3), `tmux`.
 - **Installs** `bin/`, `lib/`, `switchboard.tmux` into `libexec`, rewrites
   `bin/switchboard`'s shebang to Homebrew Ruby, and links `switchboard` and `sb`
   into Homebrew's `bin`.

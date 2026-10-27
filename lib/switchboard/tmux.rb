@@ -691,6 +691,111 @@ module Switchboard
       end
     end
 
+    # --- code reload (#48) ---------------------------------------------------
+
+    # Our pid on our own pane (CodeReload::TAG): a sender signals only a pane whose tag is
+    # its pane_pid (or a child of it), so a pane respawned or recycled since, or a sidebar
+    # older than 0.59 (no tag; the signal's default action would kill it), is never
+    # signaled. A real pid also clears an earlier failed reload's flag: this is new code.
+    def tag_sidebar_pane(pane, value)
+      return unless pane
+
+      cmd = ["tmux", "set-option", "-p", "-t", pane, CodeReload::TAG, value.to_s]
+      cmd += [";", "set-option", "-p", "-u", "-t", pane, CodeReload::FAILED_TAG] unless value.to_s == "0"
+      system(*cmd, out: File::NULL, err: File::NULL)
+    end
+
+    # A reload this pane's sidebar couldn't make (doctor and the next reload report it).
+    def flag_failed_reload(pane, root)
+      return unless pane
+
+      system("tmux", "set-option", "-p", "-t", pane, CodeReload::FAILED_TAG, root.to_s, out: File::NULL, err: File::NULL)
+    end
+
+    ReloadTarget = Struct.new(:pane, :pid, :tag, :tagged, :between, :tag_pid, :failed, :bin, keyword_init: true)
+
+    # Every sidebar pane, split by whether it can reload itself. nil off a server.
+    def sidebar_reload_targets
+      out = IO.popen(["tmux", "list-panes", "-a", "-F",
+                      "\#{pane_id}\t\#{pane_pid}\t\#{#{CodeReload::TAG}}\t\#{#{CodeReload::FAILED_TAG}}\t" \
+                      "\#{pane_dead}\t\#{pane_title}\t\#{pane_start_command}"],
+                     err: File::NULL, &:read)
+      $?.success? ? parse_reload_targets(out) : nil
+    rescue SystemCallError
+      nil
+    end
+
+    # Pure: the rows of that list-panes. `between` is a sidebar mid-exec (its tag reads 0
+    # until the new image is up): it's reloading already, and a respawn would kill the boot.
+    # `tag_pid` is a tag that isn't the pane's pid: a sidebar under a shell that didn't exec
+    # it, if that pid's parent turns out to be the pane (the caller checks, in one ps). A dead
+    # pane (remain-on-exit) is skipped: its pid may already belong to something else.
+    def parse_reload_targets(raw)
+      raw.to_s.lines.filter_map do |line|
+        id, pid, tag, failed, dead, title, command = line.chomp.split("\t", 7)
+        next unless id && dead != "1" && title.to_s.strip == SIDEBAR_TITLE && pid.to_s.match?(/\A\d+\z/)
+
+        other = tag.to_s.match?(/\A[1-9]\d*\z/) && tag != pid ? tag.to_i : nil
+        ReloadTarget.new(pane: id, pid: pid.to_i, tag: tag.to_s, tagged: tag == pid, between: tag == "0", tag_pid: other,
+                         failed: !failed.to_s.empty?, bin: start_bin(command))
+      end
+    end
+
+    # The binary a sidebar pane was started with, or nil unless the command has exactly the
+    # shape spawn_sidebar writes (`<…/switchboard> sidebar`): any program can title its pane
+    # sb-sidebar, and a respawn kills whatever runs there.
+    def start_bin(command)
+      bin, verb, *rest = Shellwords.split(command.to_s)
+      bin if verb == "sidebar" && rest.empty? && File.basename(bin.to_s) == "switchboard"
+    rescue ArgumentError
+      nil
+    end
+
+    # { pid => parent pid } for the live ones among `pids`, in one ps.
+    def parent_pids(pids)
+      return {} if pids.empty?
+
+      out = IO.popen(["ps", "-o", "pid=,ppid=", "-p", pids.join(",")], err: File::NULL, &:read)
+      out.to_s.lines.filter_map do |line|
+        pid, ppid = line.split
+        [pid.to_i, ppid.to_i] if pid.to_s.match?(/\A\d+\z/) && ppid.to_s.match?(/\A\d+\z/)
+      end.to_h
+    rescue SystemCallError
+      {}
+    end
+
+    def signal_sidebar(pid)
+      Process.kill(CodeReload::SIGNAL, pid)
+      true
+    rescue SystemCallError
+      false
+    end
+
+    # Is the pane still what the listing saw? The preflights between the listing and a respawn
+    # take time, and `respawn-pane -k` kills whatever runs there now (an editor, or a sidebar
+    # that tagged itself meanwhile and should be signaled instead).
+    def same_reload_target?(target)
+      out = IO.popen(["tmux", "display-message", "-p", "-t", target.pane,
+                      "\#{pane_pid}\t\#{#{CodeReload::TAG}}\t\#{pane_dead}\t\#{pane_title}\t\#{pane_start_command}"],
+                     err: File::NULL, &:read)
+      return false unless $?.success?
+
+      pid, tag, dead, title, command = out.chomp.split("\t", 5)
+      dead != "1" && title.to_s.strip == SIDEBAR_TITLE && pid.to_i == target.pid &&
+        tag.to_s == target.tag.to_s && start_bin(command) == target.bin # any tag change (a sidebar tagging itself) aborts
+    rescue SystemCallError
+      false
+    end
+
+    # Restart a pane by rerunning ITS OWN start command (no command given), so a
+    # checkout's sidebar stays on its checkout. The resume marker makes the new process
+    # skip its clear and pace its first warm paint. tmux < 3.0 has no -e: retry without.
+    def respawn_sidebar(target, marker)
+      ok = system("tmux", "respawn-pane", "-k", "-e", "#{CodeReload::RESUME_ENV}=#{marker}", "-t", target.pane,
+                  out: File::NULL, err: File::NULL)
+      ok || system("tmux", "respawn-pane", "-k", "-t", target.pane, out: File::NULL, err: File::NULL)
+    end
+
     # Every live sidebar pane id across all sessions/windows (title == SIDEBAR_TITLE).
     def all_sidebar_panes
       `tmux list-panes -a -F '#\{pane_id} #\{pane_title}' 2>/dev/null`.lines.filter_map do |line|

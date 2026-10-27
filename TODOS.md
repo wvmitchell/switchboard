@@ -91,15 +91,6 @@ safe today; each is narrow).
   build fails and keeps it (nothing is lost, but the renamed workspace wears the build's
   ✘ until dismissed). Check under `Creation.with_project_lock`, as `reserve` does.
   **Priority:** P2.
-- **Respawn sidebars when switchboard is upgraded.** *Why:* every window's sidebar is a
-  long-lived process; after `brew upgrade` / `git pull` an old one keeps running the old
-  `switch`, which starts the agent without checking the dispatch record (so it can start
-  on a failed build's un-set-up tree). The 0.51.0 CHANGELOG tells users to refresh by
-  hand, and `switchboard upgrade` (0.52.0) prints the "press prefix-s twice in each
-  session" hint rather than restarting them (the user chose no automatic restart from
-  `upgrade`; a sidebar replacing ITSELF on a version change is this item). *Start in:*
-  compare `VERSION` (or the bin's mtime) with the value at startup in
-  `tick`, then exit and let `reconcile_sidebars` respawn. **Priority:** P2.
 - **Input edges in the task prompt and modals.** *Why:* an unpaired paste-start marker
   wedges the task prompt in paste mode (Esc/^C/↵ all become text; `prefix-s` escapes); a
   literal paste-end inside pasted text ends the paste early; a 1 KB read split on a
@@ -410,6 +401,36 @@ safe today; each is narrow).
   like the open-repo orphan was. *Start in:* `Prompt#edit_buffer` — route it through
   `Input.tokenize` so both readers share one grammar. Pure cleanup; do it next time
   the prompt path is touched.
+
+## Sidebar hot reload (issue #48, v0.59.0) follow-ups
+
+Found by the /ship reviews after the 3-cycle fix limit; deferred with Will's OK (D4).
+*Start in:* the reload section of `lib/switchboard/sidebar.rb`, `CodeReload.reload_all`.
+
+- **A failed reload at a switch-in skips that switch-in's catch-up.** *Why:* `reload_and_refresh`
+  returns early when a reload is due, but if the preflight or exec then fails nothing makes up the
+  skipped reload: for ~15s (`TREE_TICKS`) the » marker is stale, a completion in the workspace you
+  just entered can bold/chime, and the next tick announces against the old baseline. *Fix:* keep
+  `locate` in that early return, and `reload(announce_sounds: false)` on screen in `reload_failed`
+  and the `bin or return` exit. **Priority:** P2.
+- **A `0` tag is trusted forever.** *Why:* if the new image's one re-tag `set-option` fails (or the
+  process dies mid-exec under remain-on-exit), every later reload counts the pane "asked to reload"
+  and never signals or respawns it; no failure flag is written. *Fix:* write `0:<epoch>` and treat a
+  stale one (or a dead pid) as untagged. **Priority:** P2.
+- **Exec isn't pinned to the keg the preflight checked.** *Why:* `current_root`, the preflight and
+  exec each resolve `SWITCHBOARD_BIN`; a `brew upgrade` landing between them execs an unchecked keg.
+  *Fix:* exec the realpath the preflight ran. **Priority:** P2.
+- **Legacy respawns only check `version`.** *Why:* an untagged sidebar is respawned after
+  `<bin> version`, not `sidebar --check`, so a release that loads but can't construct a sidebar
+  kills the working old one (the one-time 0.58→0.59 hop). *Fix:* preflight `sidebar --check` when
+  the binary supports it. **Priority:** P2.
+- **An empty-but-real baseline is restored as "never scanned".** *Why:* `restore_baseline` leaves
+  `@prev_hook_states` nil for `{}`, so the first scan skips notify delivery while advancing the
+  cursor: an alert in between is swallowed. *Fix:* carry an `initialized` bit in the payload.
+  **Priority:** P2.
+- **Smaller reload edges.** A signal that fails (ESRCH) lands in no count; on tmux < 3.0 every
+  reload is a respawn without the resume marker, so a home pane re-runs its launch-time prune; a
+  respawned old sidebar loses a half-typed task prompt (one-time hop). **Priority:** P3.
 
 ## Sidebar off-screen-work (architecture-review) follow-ups
 
