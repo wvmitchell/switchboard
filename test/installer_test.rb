@@ -146,6 +146,23 @@ module Switchboard
       assert_equal ["set-option", "-g", "@switchboard-toggle-clobbered", "x"], Installer.tmux_argv([:set_clobber, "toggle", "x"])
     end
 
+    # Value: protects=a tmux key ending in `;` (C-;) reaches tmux escaped, so it binds and
+    # every @option records it verbatim; fails_when=run_tmux passes a trailing `;` raw (tmux
+    # reads it as a command separator: binds "C-", stores "C-", and key_drift? then reads an
+    # unapplied edit on every upgrade); why_new=ship 4 red team, confirmed on tmux 3.8;
+    # seam=system; no_claim=tmux's own parsing (verified by hand on an isolated server)
+    def test_run_tmux_escapes_a_trailing_semicolon
+      seen = []
+      stub_method(Installer, :system, ->(*argv, **) { seen << argv; true }) do
+        Installer.run_tmux("bind-key", "C-;", "run-shell", "x")
+        Installer.run_tmux("set-option", "-g", "@switchboard-toggle-rejected", ";")
+        Installer.run_tmux("unbind-key", "\\;")
+      end
+      assert_equal ["tmux", "bind-key", "C-\\;", "run-shell", "x"], seen[0]
+      assert_equal ["tmux", "set-option", "-g", "@switchboard-toggle-rejected", "\\;"], seen[1]
+      assert_equal ["tmux", "unbind-key", "\\;"], seen[2], "already escaped: left alone"
+    end
+
     # --- run_rebind: bind-first + bind-failure fallback (via the run_tmux seam) -
 
     def test_run_rebind_executes_full_sequence_on_success
@@ -192,7 +209,266 @@ module Switchboard
       refute(cmds.any? { |c| c == ["bind-key", "s", "run-shell", "'#{Installer.bin_path}' home"] }, "no default fallback for home")
     end
 
+    # Value: protects=a key tmux refused staying remembered, so its fallback doesn't read as
+    # an unapplied edit, and a later good bind forgetting it; fails_when=the rejected option is
+    # set before the recovery (which clears it) or never cleared; why_new=new (R4); seam=run_tmux
+    def test_run_rebind_remembers_a_refused_key_and_forgets_it_on_a_good_bind
+      cmds = []
+      bad = ["bind-key", "Frobnicate", "run-shell", "'#{Installer.bin_path}' toggle-sidebar"]
+      stub_method(Installer, :run_tmux, ->(*argv) { cmds << argv; argv != bad }) do
+        Installer.run_rebind("toggle", "Frobnicate", recorded: "g", legacy_toggle: false, clobbered: nil)
+      end
+      assert_equal ["set-option", "-g", "@switchboard-toggle-rejected", "Frobnicate"], cmds.last,
+                   "recorded after the recovery bind, which clears it"
+      cmds.clear
+      stub_method(Installer, :run_tmux, ->(*argv) { cmds << argv; true }) do
+        Installer.run_rebind("toggle", "b", recorded: "s", legacy_toggle: false, clobbered: nil)
+      end
+      assert_includes cmds, ["set-option", "-gu", "@switchboard-toggle-rejected"]
+      # Extended (audit): a role unbound in config forgets a refusal too, so a later hand edit
+      # back to that key still reads as drift.
+      cmds.clear
+      stub_method(Installer, :run_tmux, ->(*argv) { cmds << argv; true }) do
+        Installer.run_rebind("home", nil, recorded: "H", legacy_toggle: false, clobbered: nil)
+      end
+      assert_includes cmds, ["set-option", "-gu", "@switchboard-home-rejected"]
+    end
+
+    # Value: protects=uninstall leaving no switchboard option in the live server for either role,
+    # the new -rejected one included; fails_when=teardown_live drops a role's unbind or option
+    # clear; why_new=teardown_live's commands were never asserted (only noted as manual); seam=run_tmux
+    def test_teardown_live_unbinds_and_forgets_every_recorded_option
+      cmds = []
+      opts = { "@switchboard-toggle-key" => "t", "@switchboard-home-key" => "H" }
+      stub_method(Installer, :tmux_option, ->(name) { opts[name] }) do
+        stub_method(Installer, :run_tmux, ->(*argv) { cmds << argv; true }) { Installer.teardown_live }
+      end
+      assert_includes cmds, ["unbind-key", "t"]
+      assert_includes cmds, ["unbind-key", "H"]
+      %w[toggle home].product(%w[key clobbered rejected]).each do |role, kind|
+        assert_includes cmds, ["set-option", "-gu", "@switchboard-#{role}-#{kind}"]
+      end
+      Installer::HOOK_SLOTS.each { |slot| assert_includes cmds, ["set-hook", "-gu", slot] }
+    end
+
+    # Value: protects=the home role's -rejected record too (set after its nil recovery, cleared
+    # on a later good bind); fails_when=the set is skipped or precedes the recovery for home;
+    # why_new=ship review S3/S4: only toggle was asserted; seam=run_tmux
+    def test_run_rebind_tracks_a_refused_home_key_like_toggle
+      cmds = []
+      bad = ["bind-key", "Bogus", "run-shell", "'#{Installer.bin_path}' home"]
+      stub_method(Installer, :run_tmux, ->(*argv) { cmds << argv; argv != bad }) do
+        Installer.run_rebind("home", "Bogus", recorded: "H", legacy_toggle: false, clobbered: nil)
+      end
+      assert_equal ["set-option", "-g", "@switchboard-home-rejected", "Bogus"], cmds.last
+      cmds.clear
+      stub_method(Installer, :run_tmux, ->(*argv) { cmds << argv; true }) do
+        Installer.run_rebind("home", "H", recorded: nil, legacy_toggle: false, clobbered: nil)
+      end
+      assert_includes cmds, ["set-option", "-gu", "@switchboard-home-rejected"]
+    end
+
+    # Value: protects=no false drift verdict from a config.yml that didn't parse (its keys read
+    # as defaults); fails_when=key_drift? ignores load_error; why_new=ship review M1/S6; seam=tmux_server?
+    def test_key_drift_has_no_verdict_on_a_config_that_did_not_parse
+      File.write(Config.path, "--\ntmux_keys:\n  toggle: t\n")
+      stub_method(Installer, :tmux_server?, -> { flunk "never asks tmux about a broken config" }) do
+        assert_nil Installer.key_drift?("toggle", config: Config.new)
+      end
+    end
+
+    # Value: protects=no drift verdict with no tmux server (upgrade from a plain shell must not
+    # read every configured key as unapplied and "finish" on each run); fails_when=key_drift?
+    # drops its tmux_server? gate (tmux_option reads nil, so any configured key looks drifted);
+    # why_new=every drift test stubs tmux_server? true; seam=tmux_server?
+    def test_key_drift_has_no_verdict_without_a_tmux_server
+      File.write(Config.path, YAML.dump("tmux_keys" => { "toggle" => "t" }))
+      stub_method(Installer, :tmux_server?, -> { false }) do
+        stub_method(Installer, :tmux_option, ->(*) { flunk "no server, nothing to read" }) do
+          assert_nil Installer.key_drift?("toggle", config: Config.new)
+        end
+      end
+    end
+
+    # Value: protects=doctor/upgrade telling a hand-edited tmux_keys apart from a key tmux
+    # refused; fails_when=key_drift_from? ignores the recorded or the rejected key; why_new=
+    # new (R4: doctor and upgrade read only the bound key); seam=none
+    def test_key_drift_is_an_unapplied_edit_never_a_refused_key
+      {
+        ["s", "s", nil] => false,   # applied
+        ["F13", "s", "F13"] => false, # tmux refused F13, s is the deliberate fallback
+        ["t", "s", nil] => true,    # edited by hand, never re-applied
+        ["u", "s", "t"] => true,    # edited again after a refusal
+        [nil, nil, nil] => false,   # home unbound on both sides
+        [nil, "S", nil] => true,    # home removed from config, still bound
+        ["H", nil, nil] => true     # home added to config, never bound
+      }.each do |(configured, recorded, rejected), drift|
+        assert_equal drift, Installer.key_drift_from?(configured, recorded, rejected), [configured, recorded, rejected].inspect
+      end
+    end
+
     # --- apply_keybindings: ties config + recorded options + the seam together --
+
+    # Value: protects=swapping toggle and home keys leaves both bound (neither role unbinds a
+    # key the other now wants); fails_when=rebind unbinds its recorded key unconditionally
+    # (the toggle loses its new key); why_new=ship 2 Codex adversarial; seam=run_tmux
+    def test_apply_keybindings_survives_a_toggle_home_swap
+      File.write(Config.path, YAML.dump("tmux_keys" => { "toggle" => "H", "home" => "s" }))
+      recorded = { "@switchboard-toggle-key" => "s", "@switchboard-home-key" => "H" }
+      cmds = []
+      stub_method(Installer, :list_prefix_keys, -> { "" }) do
+        stub_method(Installer, :tmux_option, ->(name) { recorded[name] }) do
+          stub_method(Installer, :run_tmux, ->(*argv) { cmds << argv; true }) do
+            Installer.apply_keybindings(config: Config.new)
+          end
+        end
+      end
+      assert_includes cmds, ["bind-key", "H", "run-shell", "'#{Installer.bin_path}' toggle-sidebar"]
+      assert_includes cmds, ["bind-key", "s", "run-shell", "'#{Installer.bin_path}' home"]
+      refute_includes cmds, ["unbind-key", "H"], "home must not unbind the toggle's new key"
+      refute_includes cmds, ["unbind-key", "s"], "toggle must not unbind home's new key"
+      assert_includes cmds, ["set-option", "-g", "@switchboard-config-path", File.expand_path(Config.path)],
+                      "records which config these keys came from"
+    end
+
+    # Value: protects=moving the toggle onto home's old key while unsetting home leaves the toggle
+    # bound, and a legacy `s` cleanup never unbinds the key home now wants; fails_when=the
+    # desired-nil cleanup or the legacy-`s` unbind ignores `taken:`; why_new=the swap test only
+    # reaches the bind branch (both roles desired), never the cleanup or legacy branches;
+    # seam=none; no_claim=the live tmux server's key table
+    def test_a_key_another_role_takes_is_never_unbound_by_cleanup
+      File.write(Config.path, YAML.dump("tmux_keys" => { "toggle" => "H" })) # home unset
+      recorded = { "@switchboard-toggle-key" => "s", "@switchboard-home-key" => "H" }
+      cmds = []
+      stub_method(Installer, :list_prefix_keys, -> { "" }) do
+        stub_method(Installer, :tmux_option, ->(name) { recorded[name] }) do
+          stub_method(Installer, :run_tmux, ->(*argv) { cmds << argv; true }) do
+            Installer.apply_keybindings(config: Config.new)
+          end
+        end
+      end
+      assert_includes cmds, ["bind-key", "H", "run-shell", "'#{Installer.bin_path}' toggle-sidebar"]
+      refute_includes cmds, ["unbind-key", "H"], "home's cleanup must not unbind the toggle's new key"
+      assert_includes cmds, ["unbind-key", "s"], "the toggle's old key is still cleaned up"
+
+      ops = Installer.rebind_ops("toggle", "b", recorded: nil, legacy_toggle: true, taken: ["s"])
+      refute_includes ops, [:unbind, "s"], "legacy cleanup leaves `s` to the home role that wants it"
+    end
+
+    # Value: protects=drift is judged only against the config tmux actually bound from, so a
+    # shell/server config mismatch (or a failed tmux read) can't make upgrade loop; fails_when=
+    # key_drift? ignores @switchboard-config-path; why_new=ship 2 Claude adversarial; seam=tmux_option
+    # Value: protects=a `;` key settles: configured C-; (or the tmux.conf spelling C-\;, which
+    # tmux records as C-;) against a recorded C-; is no drift, and the truncated C- an
+    # unescaped bind recorded still is; fails_when=tmux_key keeps the backslash, or the escape
+    # leaves the recorded key unequal to the configured one (doctor's row never clears and
+    # every upgrade "finishes" again); why_new=ship 4 pass 3 state machines; seam=tmux_option;
+    # no_claim=tmux's own recording (checked by hand on an isolated tmux 3.8 server)
+    def test_a_semicolon_key_bound_as_configured_is_not_drift
+      stub_method(Installer, :tmux_server?, -> { true }) do
+        { "C-;" => "C-;", "C-\\;" => "C-;", "\\;" => ";" }.each do |written, key|
+          File.write(Config.path, YAML.dump("tmux_keys" => { "toggle" => written }))
+          config = Config.new
+          assert_equal key, config.tmux_key("toggle"), written
+          opts = { "@switchboard-toggle-key" => key, "@switchboard-config-path" => File.expand_path(Config.path) }
+          refute stub_method(Installer, :tmux_option, ->(name) { opts[name] }) { Installer.key_drift?("toggle", config: config) }, written
+        end
+        opts = { "@switchboard-toggle-key" => "C-", "@switchboard-config-path" => File.expand_path(Config.path) }
+        File.write(Config.path, YAML.dump("tmux_keys" => { "toggle" => "C-;" }))
+        assert stub_method(Installer, :tmux_option, ->(name) { opts[name] }) { Installer.key_drift?("toggle", config: Config.new) }
+      end
+    end
+
+    # Value: protects=uninstall unbinding a recorded `;` key for real (escaped at the run_tmux
+    # seam, not only in the op list); fails_when=teardown stops going through run_tmux, leaving
+    # prefix-C-; bound to a removed binary; why_new=ship 4 pass 3 state machines; seam=system
+    def test_teardown_unbinds_a_recorded_semicolon_key
+      seen = []
+      stub_method(Installer, :tmux_option, ->(name) { name == "@switchboard-toggle-key" ? "C-;" : nil }) do
+        stub_method(Installer, :system, ->(*argv, **) { seen << argv; true }) { Installer.teardown_live }
+      end
+      assert_includes seen, ["tmux", "unbind-key", "C-\\;"]
+    end
+
+    def test_key_drift_needs_the_config_tmux_bound_from
+      File.write(Config.path, YAML.dump("tmux_keys" => { "toggle" => "t" }))
+      base = { "@switchboard-toggle-key" => "s" }
+      stub_method(Installer, :tmux_server?, -> { true }) do
+        { nil => nil, "/elsewhere/config.yml" => nil, File.expand_path(Config.path) => true }.each do |bound_from, verdict|
+          opts = base.merge("@switchboard-config-path" => bound_from)
+          got = stub_method(Installer, :tmux_option, ->(name) { opts[name] }) { Installer.key_drift?("toggle", config: Config.new) }
+          verdict.nil? ? assert_nil(got, bound_from.inspect) : assert_equal(verdict, got, bound_from.inspect)
+        end
+      end
+    end
+
+    # Value: protects=a refused toggle key whose fallback `s` is home's key keeps the toggle on
+    # `s` (home yields and is recorded as refused, so upgrade's drift check converges); fails_when=
+    # home binds over the toggle's fallback; why_new=ship 3 red team + state machines, D3;
+    # seam=run_tmux; no_claim=tmux's real key parser (the refusal is simulated)
+    def test_a_refused_toggle_keeps_its_fallback_over_home
+      File.write(Config.path, YAML.dump("tmux_keys" => { "toggle" => "F13", "home" => "s" }))
+      cmds = []
+      tmux = lambda do |*argv|
+        cmds << argv
+        !(argv[0] == "bind-key" && argv[1] == "F13")
+      end
+      stub_method(Installer, :list_prefix_keys, -> { "" }) do
+        stub_method(Installer, :tmux_option, ->(_name) { nil }) do
+          stub_method(Installer, :run_tmux, tmux) { Installer.apply_keybindings(config: Config.new) }
+        end
+      end
+      assert_includes cmds, ["bind-key", "s", "run-shell", "'#{Installer.bin_path}' toggle-sidebar"]
+      refute_includes cmds, ["bind-key", "s", "run-shell", "'#{Installer.bin_path}' home"], "home never steals the fallback"
+      refute_includes cmds, ["unbind-key", "s"]
+      assert_includes cmds, ["set-option", "-g", "@switchboard-home-rejected", "s"]
+      assert_includes cmds, ["set-option", "-g", "@switchboard-toggle-rejected", "F13"]
+      refute Installer.key_drift_from?("s", nil, "s"), "the yielded home key reads as applied"
+    end
+
+    # Value: protects=home's cleanup never unbinds the key the toggle just fell back onto
+    # (home was recorded on `s`, the toggle's configured key is refused); fails_when=taken
+    # omits keys earlier roles actually bound; why_new=ship 3 pass 2 testing; seam=run_tmux
+    def test_a_yielding_home_never_unbinds_the_toggles_fallback
+      File.write(Config.path, YAML.dump("tmux_keys" => { "toggle" => "F13", "home" => "s" }))
+      recorded = { "@switchboard-home-key" => "s" }
+      cmds = []
+      tmux = ->(*argv) { cmds << argv; !(argv[0] == "bind-key" && argv[1] == "F13") }
+      stub_method(Installer, :list_prefix_keys, -> { "" }) do
+        stub_method(Installer, :tmux_option, ->(name) { recorded[name] }) do
+          stub_method(Installer, :run_tmux, tmux) { Installer.apply_keybindings(config: Config.new) }
+        end
+      end
+      assert_includes cmds, ["bind-key", "s", "run-shell", "'#{Installer.bin_path}' toggle-sidebar"]
+      refute_includes cmds, ["unbind-key", "s"], "home's cleanup must not unbind the toggle's fallback"
+    end
+
+    # Value: protects=only our bin path followed by a role's exact subcommand counts as ours
+    # (a Linux bin under /home/ must not make every binding of ours look like a role's);
+    # fails_when=ours? matches subcommand substrings anywhere; why_new=ship 3 pass 2 red team;
+    # seam=bin_path
+    def test_ours_needs_a_roles_exact_subcommand
+      bin = "/home/me/switchboard/bin/switchboard"
+      stub_method(Installer, :bin_path, -> { bin }) do
+        assert Installer.ours?(%(run-shell "'#{bin}' home"))
+        assert Installer.ours?(%(run-shell "'#{bin}' toggle-sidebar"))
+        refute Installer.ours?(%(run-shell "'#{bin}' quit")), "a path containing /home/ isn't the home role"
+        refute Installer.ours?(%(run-shell "'#{bin}' rename home-page"))
+        refute Installer.ours?(%(run-shell "'#{bin}' homework"))
+      end
+    end
+
+    # Value: protects=a toggle/home swap records no clobber of switchboard's own binding (doctor
+    # stays quiet); fails_when=foreign_binding treats the other role's binding as foreign;
+    # why_new=ship 3 red team + state machines; seam=list_prefix_keys
+    def test_a_key_swap_records_no_clobber_of_our_own_binding
+      bin = Installer.bin_path
+      raw = "bind-key -T prefix s run-shell \"'#{bin}' toggle-sidebar\"\n" \
+            "bind-key -T prefix H run-shell \"'#{bin}' home\"\n"
+      assert_nil Installer.foreign_binding(raw, "H"), "home's binding is ours"
+      assert_nil Installer.foreign_binding(raw, "s"), "the toggle's binding is ours"
+      assert_equal "send-keys x", Installer.foreign_binding("bind-key -T prefix q send-keys x\n", "q")
+    end
 
     def test_apply_keybindings_binds_configured_toggle_and_home
       File.write(Config.path, YAML.dump("tmux_keys" => { "toggle" => "b", "home" => "H" }))
@@ -207,6 +483,47 @@ module Switchboard
       assert_includes cmds, ["bind-key", "b", "run-shell", "'#{Installer.bin_path}' toggle-sidebar"]
       assert_includes cmds, ["bind-key", "H", "run-shell", "'#{Installer.bin_path}' home"]
       assert_includes cmds, ["set-option", "-g", "@switchboard-toggle-key", "b"]
+    end
+
+    # Value: protects=a config.yml that won't parse keeps the last-good tmux keys (upgrade,
+    # `e` and `switchboard config` all rebind), re-bound in case a tmux.conf reload dropped
+    # them, yet a first bind with nothing recorded still gets the defaults; fails_when=
+    # apply_keybindings binds defaults, or only leaves the keys, under load_error;
+    # why_new=ship 7 red team + security; seam=none
+    def test_apply_keybindings_keeps_bound_keys_while_the_config_wont_parse
+      File.write(Config.path, "tmux_keys: [unclosed\n")
+      config = Config.new
+      assert config.load_error, "the fixture must not parse"
+      bin = Installer.bin_path
+      note = ["display-message", "switchboard: config.yml won't parse — tmux keys left as they were"]
+      cases = [
+        [{ "@switchboard-toggle-key" => "b" }, true, [["bind-key", "b", "run-shell", "'#{bin}' toggle-sidebar"], note]],
+        [{ "@switchboard-home-key" => "H" }, false, [["bind-key", "H", "run-shell", "'#{bin}' home"]]],
+        [{ "@switchboard-toggle-key" => "b", "@switchboard-home-key" => "H" }, false,
+         [["bind-key", "b", "run-shell", "'#{bin}' toggle-sidebar"], ["bind-key", "H", "run-shell", "'#{bin}' home"]]]
+      ]
+      cases.each do |options, announce, expected|
+        cmds = []
+        stub_method(Installer, :list_prefix_keys, -> { "" }) do
+          stub_method(Installer, :tmux_option, ->(name) { options[name] }) do
+            stub_method(Installer, :run_tmux, ->(*argv) { cmds << argv; true }) do
+              Installer.apply_keybindings(announce: announce, config: config)
+            end
+          end
+        end
+        assert_equal expected, cmds, options.inspect # re-bound in place, nothing unbound or re-recorded
+      end
+
+      cmds = []
+      stub_method(Installer, :list_prefix_keys, -> { "" }) do
+        stub_method(Installer, :tmux_option, ->(_name) { nil }) do
+          stub_method(Installer, :run_tmux, ->(*argv) { cmds << argv; true }) do
+            Installer.apply_keybindings(config: config)
+          end
+        end
+      end
+      assert_includes cmds, ["bind-key", "s", "run-shell", "'#{bin}' toggle-sidebar"], "nothing recorded: the defaults"
+      assert_includes cmds, ["set-option", "-g", "@switchboard-toggle-key", "s"]
     end
 
     def test_apply_keybindings_announces_only_when_asked
@@ -238,16 +555,16 @@ module Switchboard
 
     def test_foreign_binding_flags_a_non_switchboard_binding
       raw = %(bind-key  -T prefix b  send-keys hello\n)
-      assert_equal "send-keys hello", Installer.foreign_binding(raw, "b", "toggle-sidebar")
+      assert_equal "send-keys hello", Installer.foreign_binding(raw, "b")
     end
 
     def test_foreign_binding_ignores_our_own_binding
       raw = %(bind-key  -T prefix b  run-shell "'#{Installer.bin_path}' toggle-sidebar"\n)
-      assert_nil Installer.foreign_binding(raw, "b", "toggle-sidebar"), "our own binding isn't a clobber"
+      assert_nil Installer.foreign_binding(raw, "b"), "our own binding isn't a clobber"
     end
 
     def test_foreign_binding_nil_when_key_unbound
-      assert_nil Installer.foreign_binding("", "b", "toggle-sidebar")
+      assert_nil Installer.foreign_binding("", "b")
     end
 
     # Value: protects=doctor reading back exactly the fragment install wired; fails_when=
@@ -692,7 +1009,9 @@ module Switchboard
       File.write(conf, "# mine\n")
       # A FAILED write (remove_global's rescue → false) would fail again on a re-run, so it
       # must not wedge uninstall: report it, don't claim removal, and finish the rest.
-      out = stub_method(CodexHook, :remove_global, -> { false }) { silently { Installer.uninstall(conf: conf) } }
+      ok = nil
+      out = stub_method(CodexHook, :remove_global, -> { false }) { silently { ok = Installer.uninstall(conf: conf) } }
+      refute ok, "uninstall exits 1 with the block still there, as install does"
       assert_includes out, "codex hooks block is still there"
       # Never "delete it by hand": codex keeps its own tables inside the block (plan R8).
       refute_match(/by hand|delete/i, out)
@@ -700,7 +1019,64 @@ module Switchboard
       assert_includes out, "#{File.join(Installer.repo_root, 'bin', 'switchboard')} uninstall"
       refute_includes out, "removed global codex hooks"
       refute_includes out, "Stopped before removing anything else"
-      assert_includes out, "Done."
+      assert_includes out, "Done, except the codex hooks"
+    end
+
+    # Value: protects=a codex removal that found nothing left (remove_global's plain false)
+    # not failing uninstall; fails_when=step_codex_unhooks maps every false to :failed;
+    # why_new=cycle-2 maintainability; seam=CodexHook.remove_global, CodexHook.installed?
+    def test_uninstall_treats_nothing_left_to_remove_as_done
+      codex_home!
+      with_codex { CodexHook.install_global }
+      conf = path("tmux.conf")
+      File.write(conf, "# mine\n")
+      ok = nil
+      gone = [true, false] # installed? before the remove, then after it
+      out = stub_method(CodexHook, :installed?, -> { gone.shift || false }) do
+        stub_method(CodexHook, :remove_global, -> { false }) { silently { ok = Installer.uninstall(conf: conf) } }
+      end
+      assert ok, out
+      refute_includes out, "Done, except the codex hooks"
+      refute_includes out, "still there"
+    end
+
+    # Value: protects=uninstall never says "Done" when the codex config became unreadable (the
+    # block may still be there); fails_when=step_codex_unhooks trusts installed? == false on an
+    # unreadable file; why_new=ship 2 Claude adversarial; seam=CodexHook.remove_global/installed?
+    def test_uninstall_fails_when_the_codex_config_turned_unreadable
+      codex_home!
+      with_codex { CodexHook.install_global }
+      conf = path("tmux.conf")
+      File.write(conf, "# mine\n")
+      ok = nil
+      gone = [true, false] # installed? true at entry, then "false" because the file can't be read
+      out = stub_method(CodexHook, :installed?, -> { gone.shift || false }) do
+        stub_method(CodexHook, :remove_global, -> { File.chmod(0o000, CodexHook.config_path); false }) do
+          silently { ok = Installer.uninstall(conf: conf) }
+        end
+      end
+      refute ok, out
+      assert_includes out, "Done, except the codex hooks"
+    ensure
+      File.chmod(0o600, CodexHook.config_path) if CodexHook.config_path && File.exist?(CodexHook.config_path)
+    end
+
+    # Value: protects=install blaming the config, not the hooks, when config.yml won't parse;
+    # fails_when=the summary always says "the agent-state hooks"; why_new=cycle-2 red team; seam=step_*
+    def test_install_names_the_config_when_it_will_not_parse
+      File.write(Config.path, "--\nprojects:\n")
+      run = lambda do |options|
+        stub_method(Installer, :tmux_option, ->(name) { options[name] }) do
+          %i[step_symlink wire_tmux step_init step_codex_hooks warn_path warn_tmux_version].reduce(-> { silently { Installer.install(no_tmux: true) } }) do |inner, m|
+            -> { stub_method(Installer, m, ->(*, **) { true }) { inner.call } }
+          end.call
+        end
+      end
+      out = run.call({})
+      assert_includes out, "Done, except the config (✗ above)"
+      assert_includes out, "press prefix-s to toggle", "nothing bound yet: the default"
+      # Extended (ship 7 red team): a broken config keeps the bound key, so that's the one named.
+      assert_includes run.call("@switchboard-toggle-key" => "t"), "press prefix-t to toggle"
     end
 
     # Value: protects=a refused or raced uninstall never reads as success and never advises
@@ -795,6 +1171,18 @@ module Switchboard
       end
       assert_equal true, result
       assert_includes cmds.first, "-- F13", "probed the bound key, not the configured one"
+    end
+
+    # Value: protects=the live check naming a `;` key escaped (bare, tmux reads the `;` as
+    # the end of `list-keys -T prefix --`, lists the whole table, and any toggle line reads
+    # as live); fails_when=toggle_key_live? drops its escape; why_new=ship 4 pass 3 state
+    # machines; seam=none
+    def test_toggle_key_live_escapes_a_semicolon_key
+      cmds = []
+      fake = ->(cmd) { cmds << cmd; Kernel.send(:`, "true"); %(bind-key -T prefix C-\\; run-shell "'/x/switchboard' toggle-sidebar"\n) }
+      live = stub_method(Installer, :tmux_server?, -> { true }) { stub_method(Installer, :`, fake) { Installer.toggle_key_live?("C-;") } }
+      assert_equal true, live
+      assert cmds.first.end_with?("-- #{Shellwords.escape('C-\\;')} 2>/dev/null"), cmds.first
     end
 
     # Value: protects=doctor and upgrade reading "no tmux server" as unknown, not "key

@@ -59,6 +59,11 @@ or a file it can't write),
 the other steps still run, the closing line reads `Done, except the codex hooks
 (✗ above)`, and `install` exits 1. The ✗ line says what to fix.
 
+If `config.yml` won't parse, or parses to something that isn't a map of settings,
+`install` prints the parse error instead of refreshing your worktrees' hooks (it can't
+list the projects), the closing line reads `Done, except the config (✗ above)`, and it
+exits 1.
+
 Backs up the target tmux.conf (and `~/.codex/config.toml`) to `.bak` before its
 first edit. See [How-to: keybindings](howto-keybindings.md) for the wiring it
 installs.
@@ -96,8 +101,11 @@ branch with no upstream):
    a note, and the reporter and codex block are left as they are.
 
 Already current, it prints `switchboard X is up to date` and exits 0, unless the setup
-is stale (old worktree hooks, hook slots or the toggle key not live, an old or missing reporter, or an old
-codex block), in which case it runs step 2. Exits 1 if a fetch or setup step fails,
+is stale (old worktree hooks, hook slots or the toggle key not live, a `tmux_keys`
+change made by editing `config.yml` by hand, an old or missing reporter, or an old
+codex block), in which case it runs step 2. If `config.yml` won't parse, it finishes
+whatever setup doesn't need the config, then prints the parse error and exits 1 rather
+than reporting "up to date". Exits 1 if a fetch or setup step fails,
 and also when `brew update` failed and nothing was upgraded (Homebrew may not have the
 newest release, so it says so instead of "nothing newer"). A `brew update` failure is
 only a note when the upgrade still lands.
@@ -116,7 +124,9 @@ The codex block goes **first**. Only switchboard's part of it is removed: tables
 codex wrote inside it, and `/hooks` approvals for other hook files, stay (moved to
 just above where the block was). If the block can't be removed safely, or codex
 rewrites the file mid-run, `uninstall` stops before removing anything else and
-exits 1; fix what the ✗ line names, then re-run it.
+exits 1; fix what the ✗ line names, then re-run it. If the removal itself fails to
+write (or the codex config turns unreadable mid-run), the rest of the uninstall still runs, the
+closing line reads `Done, except the codex hooks (✗ above)`, and it exits 1.
 
 ### `switchboard init`
 Create an empty (annotated) config if none exists. No-op with a message if one
@@ -247,7 +257,8 @@ Kill orphaned `sb/` sessions — ones whose worktree git no longer has (deleted,
 moved, or crashed). Reconciles against `git worktree list`. `--dry-run`/`-n` only
 reports. Works outside tmux (it talks to the tmux server). Only touches projects
 it can *verify* (configured + git-readable), so a moved repo's sessions are left
-alone. See [How-to: housekeeping](howto-housekeeping.md).
+alone, as are those of a project whose folder is missing, even under a session prefix
+another project shares. See [How-to: housekeeping](howto-housekeeping.md).
 
 ### `switchboard quit`
 Close *all* `sb/` sessions — full teardown, the one you're in killed last. Also
@@ -261,11 +272,12 @@ present + parseable, unrecognized top-level config keys (the misindented-nested-
 trap), PATH symlinks (under Homebrew: that `switchboard` and `sb` on PATH are this install, not
 missing or shadowed by an old clone's link, a clone's `bin/` directory, or another program), which install tmux.conf is wired to (this
 one ✓, another that still exists –, or one that's gone ✗), tmux wiring (bound keys +
-hooks, and whether they're *live* in the running server vs only in config), a bad or clashing `sidebar_keys` remap,
+hooks, and whether they're *live* in the running server vs only in config; a `tmux_keys` key
+edited by hand that tmux hasn't applied, or one tmux refused), a bad or clashing `sidebar_keys` remap,
 whether a newer release is out (Homebrew installs: a `git ls-remote` to GitHub, bounded
 to 5s, and it says so when it can't check; a clone or `--HEAD` install says which branch
 it follows instead), the Claude hooks in the worktree you're standing in (missing,
-unreadable, out of date because an older release wrote them, or unparseable, naming why), the global codex block (how many
+unreadable, out of date because an older release wrote them, or unparseable, naming why), the global codex block from any shell (how many
 of its hooks codex has approved, `N/M trusted`, or a fix when the block is stale, can't
 be rewritten safely, or collides with your own `[hooks]`), `gh`
 auth + per-project badge staleness, audio player +
@@ -317,7 +329,7 @@ no-op outside the right tmux context.
 | `poke-window <window>` | `session-window-changed` hook | Redraw the sidebar on a same-session window switch (gated to `sb/` sessions). |
 | `sidebar-sync <window>` | `after-new-window` hook | Give a new window its own sidebar iff the session opts in. |
 | `reload-config [origin]` | the post-edit Ctrl-R poke | Re-read config and redraw after editing it from the sidebar. |
-| `tmux-bind` | the `switchboard.tmux` fragment | (Re)bind the configured `tmux_keys`, cleaning up the previously-bound key. |
+| `tmux-bind` | the `switchboard.tmux` fragment | (Re)bind the configured `tmux_keys`, cleaning up the previously-bound key. A `config.yml` that won't parse re-binds the keys already bound (the defaults only if none were). |
 | `check-update` | a visible sidebar, at most every 4 hours (spawned detached) | Homebrew installs: reads the newest release tag and caches it for the update line under the wordmark (#47). Does nothing under `SWITCHBOARD_NO_UPDATE_CHECK`. |
 | `create-workspace <id>` | the sidebar's `n` (spawned detached) | Background worker for a dispatched workspace: fetch, `git worktree add`, wire hooks, open the session. |
 | `launch <dest>` | the line the worker types into the new pane | Run the setup script, then start the agent with the task. |

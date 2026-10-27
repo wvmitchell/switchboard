@@ -707,13 +707,21 @@ module Switchboard
       end
     end
 
+    # Present AND parseable (#14): a broken file reads as no projects, so a green row here
+    # would vouch for the very thing that emptied the tree.
+    def doctor_config
+      return puts(row(false, "no config — run `switchboard install`")) unless Config.exist?
+
+      err = config.load_error_message
+      puts row(err.nil?, err ? "config: #{Config.path} — #{err}" : "config: #{Config.path}")
+    end
+
     def doctor
       %w[tmux git gh].each do |tool|
         puts row(!`command -v #{tool} 2>/dev/null`.strip.empty?, tool)
       end
       doctor_version
-      exists = Config.exist?
-      puts row(exists, exists ? "config: #{Config.path}" : "no config — run `switchboard install`")
+      doctor_config
       doctor_unknown_keys
       doctor_install
       doctor_sidebar_keys
@@ -984,14 +992,39 @@ module Switchboard
       unless live.nil?
         puts row(live, live ? "prefix-#{toggle} bound (toggle-sidebar)" : "prefix-#{toggle} NOT bound — running tmux is stale; run `switchboard upgrade` (or reload tmux)")
       end
+      doctor_key_drift(skip_toggle: live == false) # the NOT-bound row above already covers it
       doctor_clobber
     end
 
+    # A tmux_keys edit made in config.yml by hand (not via `e` / `switchboard config`, which
+    # rebind at once) stays unapplied until tmux reloads; the bound key still works, so the
+    # row above reads green.
+    def doctor_key_drift(skip_toggle: false)
+      return unless Installer.tmux_wired? # unwired (--no-tmux): switchboard manages no keys to drift
+      %w[toggle home].each do |role|
+        next if role == "toggle" && skip_toggle
+        if (refused = Installer.refused_key(role, config: config))
+          why = role == "home" ? "tmux refused it, or the toggle fell back onto it" : "tmux refused it"
+          puts "  \e[33m–\e[0m tmux_keys.#{role} is #{refused} in config, but it isn't bound (#{why}) — pick another key"
+          next
+        end
+        next unless Installer.key_drift?(role, config: config)
+
+        bound = Installer.tmux_option("@switchboard-#{role}-key")
+        puts "  \e[33m–\e[0m tmux_keys.#{role} is #{config.tmux_key(role) || 'unbound'} in config, but tmux has " \
+             "#{bound ? "prefix-#{bound}" : 'nothing'} bound — run `switchboard upgrade` (or reload tmux) to apply it"
+      end
+    end
+
     # Surface a bad `tmux_keys` config so it isn't silently ignored: a config that
-    # failed to parse (fell back to defaults), a value that isn't a usable key, and a
-    # home key that collides with the toggle (so home was left unbound).
+    # failed to parse (the bound keys stay; defaults only if none were), a value that isn't
+    # a usable key, and a home key that collides with the toggle (so home was left unbound).
     def doctor_key_config
-      puts row(false, "config failed to parse (#{config.load_error}) — using defaults; fix #{Config.path}") if config.load_error
+      if config.load_error
+        kept = %w[toggle home].any? { |role| Installer.tmux_option("@switchboard-#{role}-key") }
+        puts "  \e[33m–\e[0m tmux_keys: #{kept ? 'keeping the keys already bound' : 'using the default keys'} " \
+             "(config.yml didn't parse — see above)"
+      end
       %w[toggle home].each do |role|
         raw = config.raw_tmux_key(role)
         next if raw.nil? || config.valid_tmux_key?(raw)
@@ -1144,9 +1177,9 @@ module Switchboard
     def doctor_hooks
       doctor_reporter
       here = worktree_at(nil)
-      return unless here
-
       AgentHooks::ADAPTERS.each do |adapter| # claude, per-worktree
+        next unless here # the codex block below is global, so it reports from any shell
+
         # Present isn't enough: hooks written by an older release miss its new entries. Only
         # the installed binary can judge that: hooks call back into the binary that wrote them.
         if adapter.unreadable?(here)
@@ -1190,7 +1223,8 @@ module Switchboard
                "the switchboard hooks (or start codex with --dangerously-bypass-hook-trust)"
         end
       else
-        puts "  \e[33m–\e[0m codex hooks (global) not installed — `switchboard install --codex-hooks`"
+        # From a home shell this would nag everyone who declined it at install.
+        puts "  \e[33m–\e[0m codex hooks (global) not installed — `switchboard install --codex-hooks`" if here
       end
     end
 

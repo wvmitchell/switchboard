@@ -97,6 +97,31 @@ module Switchboard
       assert_empty r[:ran]
     end
 
+    # Value: protects=upgrade never calling itself current over a config it couldn't read;
+    # fails_when=either nothing-to-fetch exit skips config_readable?; why_new=a broken config
+    # listed no worktrees, so leftovers? said false and upgrade printed "up to date"; seam=none
+    def test_a_config_that_wont_parse_fails_instead_of_reading_as_up_to_date
+      File.write(Config.path, "--\nprojects:\n  - name: app\n")
+      [brew_upgrade(latest: VERSION), brew_upgrade(stamps: %w[same same])].each do |r|
+        refute r[:result]
+        assert_includes r[:out], "config failed to parse ("
+        refute_includes r[:out], "is up to date"
+        refute r[:handed]
+      end
+    end
+
+    # Value: protects=a broken config never blocks repairs that don't need it (tmux, codex,
+    # reporter); fails_when=the config check returns before finish(leftovers:); why_new=ship 2
+    # red team (D5); seam=leftovers?/finish (finish's own failure on the config is pinned in
+    # installer_refresh_test)
+    def test_a_broken_config_still_finishes_leftover_setup
+      File.write(Config.path, "--\nprojects:\n")
+      [brew_upgrade(latest: VERSION, leftovers: true), brew_upgrade(stamps: %w[same same], leftovers: true)].each do |r|
+        assert_equal :finished, r[:result], "leftover setup still finished"
+        refute_includes r[:out], "is up to date"
+      end
+    end
+
     def test_an_unreachable_release_list_lets_brew_decide
       r = brew_upgrade(latest: nil)
       assert_includes r[:out], "couldn't check for a newer release"
@@ -625,15 +650,43 @@ module Switchboard
       stub_method(Installer, :installed_bin?, -> { false }) do
         stub_method(Installer, :wired_fragment, ->(*) { Installer.fragment_path }) do
           stub_method(Installer, :live_hooks, -> { Installer::HOOK_SLOTS.to_h { |s| [s, true] } }) do
-            stub_method(Installer, :tmux_option, ->(name) { name == "@switchboard-toggle-key" ? "s" : nil }) do
-              stub_method(Installer, :toggle_key_live?, ->(key = nil) { asked << key; key == "s" }) do
-                refute Upgrade.leftovers?
+            opts = { "@switchboard-toggle-key" => "s", "@switchboard-toggle-rejected" => "F13",
+                     "@switchboard-config-path" => File.expand_path(Config.path) }
+            stub_method(Installer, :tmux_option, ->(name) { opts[name] }) do
+              stub_method(Installer, :tmux_server?, -> { true }) do # so key_drift? really runs
+                stub_method(Installer, :toggle_key_live?, ->(key = nil) { asked << key; key == "s" }) do
+                  refute Upgrade.leftovers?
+                end
               end
             end
           end
         end
       end
       assert_equal ["s"], asked
+    end
+
+    # Value: protects=an up-to-date upgrade applying a tmux_keys edited by hand (toggle or
+    # home); fails_when=tmux_stale? checks only the bound toggle key; why_new=new (R4: the
+    # bound key still worked, so upgrade said current); seam=tmux_option/tmux_server?
+    def test_leftovers_include_a_hand_edited_tmux_key
+      HookFile.ensure_script
+      File.write(Config.path, YAML.dump("tmux_keys" => { "toggle" => "s", "home" => "H" }))
+      opts = { "@switchboard-toggle-key" => "s", "@switchboard-home-key" => "S", "@switchboard-config-path" => File.expand_path(Config.path) }
+      stub_method(Installer, :installed_bin?, -> { false }) do
+        stub_method(Installer, :wired_fragment, ->(*) { Installer.fragment_path }) do
+          stub_method(Installer, :live_hooks, -> { Installer::HOOK_SLOTS.to_h { |s| [s, true] } }) do
+            stub_method(Installer, :toggle_key_live?, ->(*) { true }) do
+              stub_method(Installer, :tmux_server?, -> { true }) do
+                stub_method(Installer, :tmux_option, ->(name) { opts[name] }) do
+                  assert Upgrade.leftovers?, "home edited from S to H by hand"
+                  opts["@switchboard-home-key"] = "H"
+                  refute Upgrade.leftovers?, "applied"
+                end
+              end
+            end
+          end
+        end
+      end
     end
 
     # --- cycle-2 findings (D5) ------------------------------------------------

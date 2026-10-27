@@ -10,6 +10,57 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
+## [0.57.1] — failures that used to stay silent now say so (2026-10-27)
+
+### Fixed
+- A `config.yml` that won't parse no longer lets `install` and `upgrade` look successful.
+  They used to skip every worktree's hooks without a word (an unreadable config lists no
+  projects), and `upgrade` reported "up to date". Both now print the parse error and
+  exit 1, and so does a file that parses but isn't a map of settings (a dropped colon turns
+  it into one string, a bare `false` into nothing; a list used to crash all three commands).
+  `doctor`'s config row also turns red instead of showing a green check above the error
+  (#14). With setup left to finish, `upgrade` still repairs what doesn't need the config,
+  and it (like saving a typo with `e`) now leaves your tmux keys as they were instead of
+  rebinding the defaults.
+- A failed workspace create can no longer delete someone else's commits. If a branch
+  with the new workspace's name appeared while the worktree was being made, the cleanup
+  used to force-delete it. Now the cleanup removes the branch only while it still points
+  at the commit the create started from, keeps any tree that has a commit in it or changes
+  made after its checkout finished (you could open the row while it built), and keeps
+  anything git says was already there. It deletes only that exact branch name (never a
+  branch it points to), and keeps it when it can't list the repo's worktrees to prove no
+  one has it checked out. The failed row now names what it kept and why, and a tree that
+  was someone else's isn't claimed by the failed build. A create that timed out halfway
+  still cleans up, but a tree someone else locked is kept, and a deleted branch takes its
+  config (an upstream a hook set) with it. A file git status would hide (your
+  `status.showUntrackedFiles=no`) still counts, and git itself refuses to remove a tree
+  that changed after the check.
+- `d` on a workspace now asks before deleting files your git config hides from
+  `git status` (untracked files under `status.showUntrackedFiles=no`, or a changed
+  submodule); it used to remove them without asking.
+- Reading git's output no longer depends on the locale: switchboard's own binary already
+  read it as UTF-8 (since 0.52.0), and now every `Git` helper does, whoever loads it. A
+  worktree whose path isn't valid UTF-8 (possible only on Linux) is now skipped in the
+  sidebar instead of crashing it, and `prune` and a failed create's cleanup leave that
+  project's sessions and branches alone (including sessions under a name another project
+  shares) rather than act on a list they couldn't fully read.
+- `doctor` and `upgrade` now notice a `tmux_keys` change made by editing `config.yml`
+  by hand, for both the toggle and the home key. The key tmux still had bound worked, so
+  `doctor` showed green and `upgrade` never applied the change; `doctor` now names the
+  mismatch and an up-to-date `upgrade` re-applies the keys. A key tmux refused, and the
+  default it fell back to, still reads as applied, and nothing is judged against a different
+  `config.yml` than the one tmux bound from. Swapping the toggle and home keys now leaves
+  both bound (applying the swap used to unbind the new toggle key). A key ending in `;`
+  (like `C-;`) now binds: tmux read the `;` as the end of the command, so it never did.
+  The tmux.conf spelling (`C-\;`) means the same key.
+- The `⇅` and `◷` glyphs and `doctor`'s remote-link check now find Claude's session files
+  when `CLAUDE_CONFIG_DIR` contains glob characters, like `~/cfg [work]`.
+- `doctor` run outside a worktree now shows the global codex hooks rows (the trust count
+  and any advice) when the block is installed. They used to appear only inside a worktree.
+- `uninstall` now exits 1 when it can't remove the codex hooks block, and says "Done,
+  except the codex hooks", like `install` does for the same failure (a codex config that
+  turns unreadable mid-uninstall counts too). It still finishes the rest of the uninstall.
+
 ## [0.57.0] — the sidebar says when a new release is out (2026-10-26)
 
 ### Added

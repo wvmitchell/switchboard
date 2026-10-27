@@ -9,9 +9,24 @@ module Switchboard
   module Git
     module_function
 
-    # All worktrees registered against a repo, parsed from porcelain output.
-    def worktrees(repo)
-      capture(repo, "worktree", "list", "--porcelain").split("\n\n").filter_map do |block|
+    # All worktrees registered against a repo, parsed from porcelain output. `strict:` is for
+    # callers deciding what's safe to destroy: nil unless git listed them all readably (a
+    # failed run reads as an empty list, and a skipped path could hold any branch).
+    def worktrees(repo, strict: false)
+      out = capture(repo, "worktree", "list", "--porcelain")
+      return nil if strict && (!$?&.success? || undecodable?(out))
+
+      parse_worktrees(out)
+    end
+
+    def parse_worktrees(out)
+      # Split as bytes, then skip a worktree whose path isn't valid UTF-8 (Linux only;
+      # macOS can't hold one): passed on as binary it would raise in every compare
+      # against a UTF-8 path, so it's left out rather than crash the tree.
+      out.b.split("\n\n").filter_map do |block|
+        block.force_encoding(Encoding::UTF_8)
+        next unless block.valid_encoding?
+
         h = {}
         block.each_line do |line|
           key, _, val = line.strip.partition(" ")
@@ -27,8 +42,14 @@ module Switchboard
       end
     end
 
+    # Does this porcelain listing hold an entry worktrees skips (its path isn't valid UTF-8)?
+    # Display can live without it; deciding what's safe to destroy can't (strict: is nil).
+    def undecodable?(porcelain)
+      porcelain.b.split("\n\n").any? { |block| !block.force_encoding(Encoding::UTF_8).valid_encoding? }
+    end
+
     def dirty?(worktree)
-      !capture(worktree, "status", "--porcelain").strip.empty?
+      !capture(worktree, "status", "--porcelain").b.strip.empty? # bytes: a non-UTF-8 name can't raise
     end
 
     # Fail-CLOSED clean check for the destructive delete path: true ONLY when
@@ -39,10 +60,12 @@ module Switchboard
     # status failed") would read as clean and skip the "you have uncommitted changes"
     # prompt. So here a non-zero exit ⇒ not clean ⇒ the caller prompts to force. Still
     # fast: porcelain skips fully-ignored dirs, so a huge node_modules doesn't stall.
+    # The flags override a user's status.showUntrackedFiles=no / submodule ignores, which
+    # would read a tree holding new files as clean.
     def clean?(worktree)
-      out = capture(worktree, "status", "--porcelain")
+      out = capture(worktree, "status", "--porcelain", "--untracked-files=normal", "--ignore-submodules=none")
       ok = $?&.success? # set by capture's backtick; grab before anything else runs
-      !!ok && out.strip.empty?
+      !!ok && out.b.strip.empty?
     end
 
     # Best-effort refresh so a base ref like origin/main is current before we
@@ -150,7 +173,9 @@ module Switchboard
     # `locked:` adds the second --force git needs for a locked tree (an add killed
     # mid-checkout leaves its "initializing" lock behind).
     def remove_worktree(repo, path, force: false, locked: false)
-      args = ["git", "-C", repo, "worktree", "remove"]
+      # Unforced, git refuses a tree with changes; untracked files count even when the user's
+      # status.showUntrackedFiles=no would hide them (git then deletes them without a word).
+      args = ["git", "-c", "status.showUntrackedFiles=all", "-C", repo, "worktree", "remove"]
       args << "--force" if force
       args << "--force" if force && locked
       args << path
@@ -177,6 +202,48 @@ module Switchboard
       return false if blank?(old) || blank?(new)
 
       system("git", "-C", repo, "branch", "-m", old, new, out: File::NULL, err: File::NULL)
+    end
+
+    # The commit `ref` names, or nil when it doesn't resolve.
+    def rev_parse(repo, ref)
+      return nil if blank?(ref)
+
+      out = capture(repo, "rev-parse", "--verify", "--quiet", "#{ref}^{commit}").strip
+      $?&.success? && !out.empty? ? out : nil
+    end
+
+    # Delete `branch` only while it still points at `sha` — one atomic step (update-ref's
+    # old-value check), so a commit landing on it after the caller looked is never lost.
+    # Unlike `branch -D` it won't refuse a branch checked out somewhere: callers check.
+    def delete_branch_at(repo, branch, sha)
+      return false if blank?(branch) || blank?(sha)
+
+      # --no-deref: delete this exact ref, never the branch a symref (a hook's doing) points at.
+      ok = system("git", "-C", repo, "update-ref", "--no-deref", "-d", "refs/heads/#{branch}", sha,
+                  out: File::NULL, err: File::NULL)
+      # `branch -D` drops the branch's config too; update-ref doesn't. An upstream a hook set
+      # would otherwise ride along to the next branch cut under this name (--no-track keeps it).
+      system("git", "-C", repo, "config", "--remove-section", "branch.#{branch}", out: File::NULL, err: File::NULL) if ok
+      ok
+    end
+
+    # Why git has `worktree` locked: the reason as written ("" when none was given, or when it
+    # couldn't be read whole), or nil when it isn't locked (or its admin dir can't be found).
+    def lock_reason(worktree)
+      gitdir = capture(worktree, "rev-parse", "--absolute-git-dir").b.strip # a path, any bytes
+      return nil unless $?&.success? && !gitdir.empty?
+
+      lock = File.join(gitdir, "locked")
+      return nil unless File.file?(lock)
+
+      # Free text, any bytes, any length: only a whole read can match git's own marker, so one
+      # cut short (or unreadable) is someone's lock. Only git's own trailing newline is dropped.
+      raw = File.binread(lock, 4097).to_s
+      return "" if raw.bytesize > 4096
+
+      raw.b.force_encoding(Encoding::UTF_8).scrub.delete_suffix("\n") # chomp would eat a \r too
+    rescue StandardError
+      ""
     end
 
     # A local branch by this name already exists. Used to pre-check a rename target
@@ -354,9 +421,11 @@ module Switchboard
       str.nil? || str.empty?
     end
 
+    # Tagged UTF-8 whatever the locale: under tmux's C locale a backtick hands back
+    # US-ASCII holding git's raw path bytes, and the first split on a `café` path raises.
     def capture(repo, *args)
       cmd = ["git", "-C", repo, *args].map { |a| Shellwords.escape(a) }.join(" ")
-      `#{cmd} 2>/dev/null`
+      `#{cmd} 2>/dev/null`.force_encoding(Encoding::UTF_8)
     end
   end
 end

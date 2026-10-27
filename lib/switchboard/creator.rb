@@ -127,12 +127,15 @@ module Switchboard
     end
 
     # git worktree add for the reserved name, retrying past a dir/branch collision with
-    # a fresh placeholder (the row re-labels itself). [name, dest, nil] or [nil, nil, msg].
+    # a fresh placeholder (the row re-labels itself). [name, dest, nil] or [nil, nil, msg],
+    # msg naming anything the rollback kept.
     #
-    # A collision is what existed BEFORE the add. git cuts the branch before checkout, and
-    # a failing post-checkout hook still leaves a full tree, so "it exists now" would read
-    # every other failure as a collision and leak a branch (or a whole un-set-up tree)
-    # per retry. Anything else is undone and fails with git's message.
+    # A collision is what existed BEFORE the add — our check, or git's own "already exists"
+    # when someone made it in between (then the record moves off their path, never pointing
+    # a ✘ at their workspace). git cuts the branch before checkout, and a failing
+    # post-checkout hook still leaves a full tree, so "it exists now" would read every other
+    # failure as a collision and leak a branch (or a whole un-set-up tree) per retry.
+    # Anything else is undone and fails with git's message.
     def add_reserved(config, project, rec)
       name = rec["name"]
       dest = rec["path"]
@@ -140,34 +143,152 @@ module Switchboard
       PLACEHOLDER_TRIES.times do
         branch = branch_for(config, name)
         clash = File.exist?(dest) || File.symlink?(dest) || Git.branch_exists?(project["path"], branch)
-        ok, err = add_worktree(config, project, name, dest, project["base_ref"]) unless clash
+        base_sha = Git.rev_parse(project["path"], project["base_ref"]) unless clash
+        # At that commit, not the ref: a fetch moving origin/main mid-add would otherwise
+        # make a clean failed add look like someone's work to the rollback.
+        ok, err = add_worktree(config, project, name, dest, base_sha || project["base_ref"]) unless clash
         return [name, dest, nil] if ok
 
         unless clash
-          undo_add(project, dest, branch)
-          break
+          theirs = preexisted?(err.to_s, dest, branch)
+          # git's "already exists" means it made nothing there. A tree on our branch at dest
+          # anyway is either someone's (a workspace renamed onto this placeholder) or ours under
+          # a failing hook that printed git's words; they can't be told apart, so nothing is
+          # removed, nothing retried, and this record stays to guard it.
+          if theirs && File.exist?(dest) && Git.current_branch(dest) == branch
+            return [nil, nil, "#{err}; kept #{dest} and branch #{branch} (can't tell whose they are)"]
+          end
+
+          kept = undo_add(project, dest, branch, base_sha, err)
+          # Retry only when nothing of ours stayed behind: past a path clash, a branch git cut
+          # for us that the rollback had to keep is ours, and the ✘ must name it.
+          collided = theirs && !(path_preexisted?(err, dest) && Git.branch_exists?(project["path"], branch))
+          unless collided
+            move_off(config, rec, dest) if theirs
+            return [nil, nil, [err, kept].compact.join("; ")] # a refused leftover is said, not silent
+          end
         end
 
         # Under the same reservation lock as `n`: the new name must dodge other in-flight
         # dispatches too, or two records would share a path and the launcher claim the
         # wrong one.
+        taken = dest
         name, dest = Creation.with_project_lock(rec["project"]) do
           picked = reserve(config, rec["project"])
           picked && Creation.update(rec["id"], name: picked[0], path: picked[1]) ? picked : nil
         end
-        break unless dest
+        unless dest
+          park(rec["id"], taken) # nothing free: still never left on someone's folder
+          return [nil, nil, "no free workspace name"]
+        end
       end
-      [nil, nil, err || "no free workspace name"]
+      # Racers took every name we tried: say the last thing git said, not that names ran out.
+      [nil, nil, err ? "#{err}; gave up after #{PLACEHOLDER_TRIES} tries" : "no free workspace name"]
+    end
+
+    # A failed build must never name a folder that's someone else's: their row would wear our
+    # ✘ and GC would guard their tree as ours. Move it to a fresh unused name, or park it.
+    def move_off(config, rec, dest)
+      Creation.with_project_lock(rec["project"]) do
+        picked = reserve(config, rec["project"])
+        picked ? Creation.update(rec["id"], name: picked[0], path: picked[1]) : park(rec["id"], dest)
+      end
+    end
+
+    # A path beside `dest` that can't exist (a dotted name reserve never generates), under a
+    # name that can't be mistaken for the workspace whose folder it left.
+    def park(id, dest)
+      Creation.update(id, name: "unbuilt-#{id}", path: File.join(File.dirname(dest), ".unbuilt-#{id}"))
     end
 
     # Roll back a failed add that we started from a clean slate: an un-set-up tree left
-    # behind would re-enter with the agent. Only a tree on OUR branch is ours to remove
-    # (a racing writer's isn't); -D refuses a branch still checked out anywhere.
-    def undo_add(project, dest, branch)
-      if File.exist?(dest) && Git.current_branch(dest) == branch
-        Git.remove_worktree(project["path"], dest, force: true, locked: true)
+    # behind would re-enter with the agent. What's ours is proven against the base commit
+    # the add started from, never assumed from a name (a same-name branch can appear
+    # between the clash check and the add):
+    #   - the tree: on OUR branch with nothing committed past base, and dirty only while
+    #     git's own `initializing` lock says the checkout never finished (a timed-out one
+    #     leaves a half-filled tree). Past checkout the row is enterable (re-entry opens a
+    #     plain shell there), so changes may be someone's work: keep them, like a commit
+    #     (the record fails as a guarded ✘).
+    #   - the branch: only while it still points at base, atomically, and never while a
+    #     worktree has it checked out.
+    # No base commit, no proof: delete nothing. When git's failure says the path or branch
+    # was already there, a racing writer made it between the clash check and the add, so
+    # it's never removed (a dirty tree there may be its uncommitted work). Returns what it
+    # kept and why (for the ✘ detail), or nil when nothing of ours was left behind.
+    def undo_add(project, dest, branch, base_sha, git_error = nil)
+      repo = project["path"]
+      err = git_error.to_s
+      kept = []
+      if branch_preexisted?(err, branch) # git made nothing: the branch (and any tree) is someone's
+        kept << "#{dest} (it was there before)" if File.exist?(dest)
+        kept << "branch #{branch} (it was there before)" if Git.branch_exists?(repo, branch)
+        return kept.empty? ? nil : "kept #{kept.join(' and ')}"
       end
-      Git.delete_branch(project["path"], branch, force: true) if Git.branch_exists?(project["path"], branch)
+
+      if path_preexisted?(err, dest) # someone's path; the branch git just cut is ours
+        kept << "#{dest} (it was there before)" if File.exist?(dest)
+      elsif File.exist?(dest) && Git.current_branch(dest) != branch
+        kept << "#{dest} (not on this create's branch)" # a half-registered tree, or someone's: say so
+      elsif File.exist?(dest)
+        count = base_sha && Git.commits_since(dest, base_sha)
+        if !base_sha
+          kept << "#{dest} (base commit unknown)"
+        elsif count.nil?
+          kept << "#{dest} (couldn't check its commits)"
+        elsif !count.zero?
+          kept << "#{dest} (it has commits)"
+        elsif (lock = Git.lock_reason(dest)) && lock != "initializing"
+          # Only git's own lock from a killed add (English: add_worktree sets LANGUAGE) is
+          # ours to force past; anyone else's lock means someone claimed the tree.
+          kept << "#{dest} (it's locked)"
+        elsif lock.nil? && !Git.clean?(dest) # fail-closed: a status error keeps it too
+          kept << "#{dest} (it has changes)"
+        else
+          # Forced only past git's own lock (a half checkout); otherwise git itself refuses if
+          # anything appeared since the clean check.
+          Git.remove_worktree(repo, dest, force: !lock.nil?, locked: !lock.nil?)
+          kept << "#{dest} (couldn't remove it)" if File.exist?(dest)
+        end
+      end
+      if Git.branch_exists?(repo, branch) && (why = keep_branch(repo, dest, branch, base_sha))
+        kept << "branch #{branch} (#{why})"
+      end
+      "kept #{kept.join(' and ')}" unless kept.empty?
+    end
+
+    # git's failure says the path or branch was already there (someone made it after our check).
+    def preexisted?(git_error, dest, branch)
+      path_preexisted?(git_error, dest) || branch_preexisted?(git_error, branch)
+    end
+
+    # git's own last line (English) when what it was given existed before its `worktree add -b`.
+    # Exact, and naming OUR branch or path (git echoes its argument), so a failing hook whose
+    # last line looks like git's can't pass for it. The two mean different things: a branch
+    # clash stops git before it makes anything, but a path clash comes AFTER git cut our branch.
+    def branch_preexisted?(git_error, branch)
+      git_error.b == "a branch named '#{branch}' already exists".b
+    end
+
+    def path_preexisted?(git_error, dest)
+      git_error.b == "'#{dest}' already exists".b
+    end
+
+    # Delete our branch when it's provably free at base (nil); otherwise why it stays.
+    def keep_branch(repo, dest, branch, base_sha)
+      return "base commit unknown" unless base_sha
+
+      # One strict read decides it: a failed listing, or a path it couldn't decode, could hide
+      # the worktree that has it checked out. A repo always lists its main worktree, so an
+      # empty list is a failure too.
+      listed = Git.worktrees(repo, strict: true)
+      return "couldn't list worktrees" if listed.nil? || listed.empty?
+
+      holder = listed.find { |w| w[:branch] == branch }
+      return File.identical?(holder[:path], dest) ? "its tree was kept" : "it's checked out" if holder
+      return nil if Git.delete_branch_at(repo, branch, base_sha)
+
+      Git.rev_parse(repo, "refs/heads/#{branch}") == base_sha ? "couldn't delete it" : "it moved off the base"
     end
 
     # `--no-track` so a branch cut from a remote-tracking base (origin/main) does NOT
@@ -179,7 +300,9 @@ module Switchboard
     # not pin the row on ◌ with no way out but `d`.
     def add_worktree(config, project, name, dest, base, timeout: ADD_DEADLINE)
       Tempfile.create("sb-add") do |log|
-        pid = Process.spawn({ "GIT_TERMINAL_PROMPT" => "0" },
+        # English messages whatever git's language, so the *_preexisted? checks can read the failure; only
+        # the message catalog changes (LC_CTYPE, paths and checkout are untouched).
+        pid = Process.spawn({ "GIT_TERMINAL_PROMPT" => "0", "LANGUAGE" => "en" },
                             "git", "-C", project["path"], "worktree", "add", "--no-track",
                             "-b", branch_for(config, name), dest, base,
                             in: File::NULL, out: log, err: log, pgroup: true)

@@ -40,6 +40,10 @@ module Switchboard
       ClaudeSessions.sessions_dir
     end
 
+    def session_files
+      ClaudeSessions.session_files
+    end
+
     # { ws_path => [Link, …] } for the tracked worktrees with a LIVE linked session,
     # newest first by startedAt (procStart when that's missing), then pid. `stale_after` is seconds or
     # nil (off). Total: any failure is "no links". `sessions:` is a ClaudeSessions.scan the
@@ -68,7 +72,7 @@ module Switchboard
     # status flip would read as unchanged — but adding/removing the bridge id changes
     # the size, and a whole-file rewrite changes the inode.
     def fingerprint(cache, stale_after:, now: Time.now)
-      files = Dir.glob(File.join(sessions_dir, "*.json"))
+      files = session_files
       cache.select! { |f, _| files.include?(f) }
       files.filter_map do |f|
         st = File.stat(f)
@@ -97,7 +101,7 @@ module Switchboard
     # change fails every live session at once — so doctor alarms only on
     # drift == alive. A RENAMED bridge key is undetectable — it reads as "nothing linked".
     def health
-      parsed = Dir.glob(File.join(sessions_dir, "*.json")).map { |f| read_json(f) }
+      parsed = session_files.map { |f| read_json(f) }
       shaped = parsed.select { |d| shaped?(d) }
       running = shaped.select { |d| ProcessIdentity.alive?(d["pid"]) }
       claude = claude_pids(running.map { |d| d["pid"] })
@@ -141,7 +145,7 @@ module Switchboard
     end
 
     def linked_records
-      Dir.glob(File.join(sessions_dir, "*.json")).filter_map do |f|
+      session_files.filter_map do |f|
         record(read_json(f))
       rescue StandardError
         nil # one odd file loses only its own link

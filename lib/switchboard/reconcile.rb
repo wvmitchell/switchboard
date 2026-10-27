@@ -62,10 +62,14 @@ module Switchboard
       prefixes = []
       valid = []
       parents = []
+      verified = []
       Model.new(config, with_dirty: false).projects.each do |project|
         names = project.worktrees.map { |w| Tmux.session_name(w) }
-        next if names.empty?
+        # A listing git failed, or a worktree in it we couldn't read (non-UTF-8 path), would
+        # make a live session look orphaned: leave the whole project alone.
+        next if names.empty? || Git.worktrees(project.path, strict: true).nil?
 
+        verified << [project.name, project.path]
         prefixes << Tmux.session_prefix(project.name)
         valid.concat(names)
         # Collect parent dirs of DEDICATED worktrees only. The primary checkout's
@@ -79,12 +83,18 @@ module Switchboard
         end
       end
 
+      # Any configured project we couldn't verify (unreadable, empty, or a missing folder Model
+      # drops) keeps its prefix out of reach too: another project's name may sanitize to it
+      # (app.dev / app-dev).
+      skipped = config.projects.reject { |p| verified.include?([p["name"], p["path"]]) }
+                      .filter_map { |p| Tmux.session_prefix(p["name"]) if p["name"] }
+
       unless dry_run
         reap_bridges(parents)
         ClaudeHistory.reap_bridges # GC the rename bridges migrate leaves in ~/.claude/projects
       end
 
-      orphaned = orphans(live, valid, prefixes, current: Tmux.session_of, now: now)
+      orphaned = orphans(live, valid, prefixes - skipped, current: Tmux.session_of, now: now)
       orphaned.each { |name| Tmux.kill_session(name) } unless dry_run
       Report.new(reachable: true, sb_count: live.size, orphans: orphaned)
     end

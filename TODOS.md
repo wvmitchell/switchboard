@@ -19,17 +19,6 @@ and where to start.
 Found by the 0.52.0 ship reviews and deliberately deferred (the behavior fails loudly or
 safe today; each is narrow).
 
-- **doctor/upgrade check the toggle key switchboard bound, not the configured one.** *Why:*
-  `Installer.bound_toggle_key` prefers `@switchboard-toggle-key`, so a `tmux_keys.toggle`
-  edited in config.yml by hand (not via `e`/`switchboard config`, which rebind at once)
-  reads green in doctor and `upgrade` never rebinds it — on main, doctor checked the
-  configured key. *Start in:* tell "tmux rejected the configured key" (a recorded fallback)
-  apart from "config changed since bind"; feed both doctor's row and `Upgrade.tmux_stale?`.
-  Workaround: `switchboard config` or reload tmux. **Priority:** P1.
-- **A malformed config.yml makes install/upgrade skip the hook refresh silently.** *Why:*
-  `Config.new` rescues a parse error to `{}`, so `Installer.configured_worktrees` is empty,
-  `step_rewire_hooks` prints nothing and `upgrade` says up to date. *Start in:* check
-  `Config.new.load_error` in `refresh_wiring` and fail with it. **Priority:** P1.
 - **A settings file with an overflowing number (`1e400`) crashes current?/refresh.** *Why:*
   `JSON.parse` yields Infinity, `merged`'s `JSON.generate` raises `GeneratorError`, unrescued
   on `leftovers?`, `doctor` and `enable-hooks`. *Start in:* round-trip in `load_settings`
@@ -89,15 +78,6 @@ safe today; each is narrow).
   first `\r`/`\n` and keep the prompt open), `input.rb` `handle`; consider bracketed paste
   in tree mode with the pasted span dropped. Tests: a pasted line with `n` must not
   dispatch; assert `@typeahead` is cleared. **Priority:** P1.
-- **Rollback must prove a failed add's tree and branch are its own.** *Why:* `undo_add`
-  force-removes the tree and `-D`s the branch after checking only that the branch exists
-  and is checked out at the path — a same-name branch created between the clash check and
-  `worktree add -b` (or a transient `branch_exists?` false negative) gets force-deleted
-  with its commits, and work done inside a still-building tree goes with it. Codex's
-  structured gate flagged it P1 on the final pass; deferred by choice (D12/D14).
-  *Start in:* `Creator.undo_add` — `-D` only when the branch tip equals the base commit
-  (or git's failure wasn't "already exists"), and run `untouched?` before removing the
-  tree (keep a dirty or committed tree as a guarded ✘, like `discard`). **Priority:** P1.
 - **Renaming an un-set-up build can drop its guard.** *Why:* in the few ms between
   `git worktree move` and `leave_bridge`, another sidebar's GC sees the old path missing
   (rule 3) and deletes the unfinished record; `certified?(nil)` then lets a later
@@ -105,7 +85,12 @@ safe today; each is narrow).
   attach to an unrelated tree later renamed (or clash-relabeled) onto its path, and then
   `unfinished_at?` lets a confirmed `d` force past that tree's lock. *Start in:*
   `Creation.renamable?` (refuse an `unfinished?` record) and `Rename.perform` (refuse a
-  destination a record claims). **Priority:** P2.
+  destination a record claims). The same check closes a newer case (v0.57.1 review): a
+  workspace renamed onto the exact placeholder an in-flight build reserved makes that
+  build's `worktree add` fail with "already exists" over a tree on its branch, so the
+  build fails and keeps it (nothing is lost, but the renamed workspace wears the build's
+  ✘ until dismissed). Check under `Creation.with_project_lock`, as `reserve` does.
+  **Priority:** P2.
 - **Respawn sidebars when switchboard is upgraded.** *Why:* every window's sidebar is a
   long-lived process; after `brew upgrade` / `git pull` an old one keeps running the old
   `switch`, which starts the agent without checking the dispatch record (so it can start
@@ -480,14 +465,6 @@ safe today; each is narrow).
   (a keypress-time remote check) is rejected for the same reasons as the bullet above.
   Captured so the reasoning isn't lost.
 
-## Community / contributor hygiene (devex-review) follow-ups
-
-- ~~**Add CONTRIBUTING.md once there's contributor interest.**~~ ✓ Done — added
-  `CONTRIBUTING.md` (tests, the zero-gem/Ruby-3.0 constraints, the
-  module-vs-class conventions, and the release process) as part of the full
-  `docs/` Diataxis set. The conventions also live human-readable in
-  `docs/explanation-architecture.md`.
-
 ## Sidebar diff count (issue #79) follow-ups
 
 - **Working-tree (uncommitted) diff count as a config knob.** The row diff count
@@ -539,32 +516,168 @@ safe today; each is narrow).
   ever fire, this entry is correctly ignored forever.
 
 
+## Silent failures (v0.57.1) follow-ups
+
+- **State-dir globs break on a path with glob characters.** *What:* ten `Dir.glob` calls
+  build their pattern from a state dir (`creation.rb` `all`, `agent_state.rb`, `notify.rb`,
+  `monitoring.rb`, `pending_delete.rb`, `keyed_marker_store.rb`, `offstage_hold.rb`,
+  `Sidebar#dir_fingerprint`; grep `Dir.glob(File.join` for the rest); switch each to `Dir.glob(pattern, base: dir)` the way
+  `ClaudeSessions.session_files` now does. *Why:* an `XDG_STATE_HOME` containing `[`, `{`, `*`
+  or `?` makes them match nothing; worst is `Creation.all` coming back empty, which drops a
+  failed build's guard (`certified?(nil)` lets re-entry start the agent un-set-up).
+  *Pros:* mechanical, one test per store. *Cons:* touches every store. *Context:* found in
+  the TODO triage that produced v0.57.1. **Priority:** P2.
+
+- **A C-locale tmux client mangles `-F` output.** *What:* with `LC_ALL=C`, tmux replaces
+  the tab and any non-ASCII byte in `-F` formats with `_`, so `Tmux.sessions` misparses and
+  `quit`/`kill_all` can't match names (prune is saved only because `created` reads as 0,
+  inside the grace window). Use a printable ASCII separator (or one field per call) in the
+  formats switchboard parses. *Why:* teardown silently does nothing under a C-locale client.
+  *Pros:* small. *Cons:* every `-F` parser changes at once. *Context:* v0.57.1 triage.
+  **Priority:** P2.
+
+- **The rest of `Git`'s readers on a non-UTF-8 path.** *What:* v0.57.1 made
+  `Git.worktrees` skip an undecodable entry; `current_branch`, `commits_since` and the diff
+  readers (with `core.quotePath=false`) can still raise on one. Audit each caller and either
+  scrub or compare as bytes. Also `parse_worktrees` itself: it drops a whole entry when ANY
+  line is undecodable, so a worktree on a branch whose name isn't valid UTF-8 (git prints
+  `branch <ref>` raw) vanishes from the tree, and `strict: true` returns nil for the whole
+  listing (rollback then keeps everything, prune skips the project: safe, but silent).
+  Validate only the `worktree` line and drop or scrub just the bad field. *Why:* a
+  Linux-only crash path in the sidebar's helpers, and an invisible row.
+  *Context:* v0.57.1 item 3 caller audit; ship 4 red team. **Priority:** P3.
+
+- **`keep_branch`'s listing and its delete aren't one step.** *What:* between
+  `Git.worktrees(strict: true)` and `update-ref --no-deref -d`, another process could check
+  the branch out. *Why:* at worst a worktree is left on a deleted branch at base (no commits
+  lost, the old-value guard holds). *Pros:* closes the last race on the rollback. *Cons:*
+  git offers no atomic "delete unless checked out"; it needs a lock switchboard doesn't
+  have. *Context:* v0.57.1 review, accepted as theoretical. **Priority:** P4.
+
+- **`ours?` misses a bin path containing `$`, `"` or `\`.** *What:* `tmux list-keys`
+  prints the run-shell argument double-quoted and backslash-escapes those characters, so the
+  raw `bin_path` never matches and switchboard's own binding is recorded as a clobber
+  (doctor then warns about itself). Unescape the binding before matching. The key column has
+  the same problem: `list-keys` prints a `;` key as `\;`, so `foreign_binding` can't find a
+  user's own binding on `;` (tmux's default last-pane) and the clobber goes unrecorded. *Why:* a false
+  warning, not a lost key; pre-existing. *Context:* v0.57.1 pass-3 red team. **Priority:** P4.
+
+- **`uninstall` says Done over a codex config it can't read from the start.**
+  *What:* `step_codex_unhooks` returns early when `CodexHook.installed?` is false, and that
+  reads false for an unreadable `config.toml`, so uninstall exits 0 with our block still in
+  the file. Only a file that turns unreadable mid-uninstall is reported. *Why:* a silent
+  success, though an inert one (codex can't read the file either). *Cons of the obvious
+  fix:* treating "unreadable" as a failure would fail uninstall on every run for someone
+  whose unreadable `config.toml` never held our block; a fix needs a way to say "couldn't
+  check" without failing. *Context:* ship 4 red team, deferred by the user. **Priority:** P4.
+
+- **Two narrow paths that can still act on someone's work.** *What:* (a) `prune` takes
+  its valid session names from Model's `Git.worktrees` and verifies the project with a
+  second, strict listing; if the first comes back partial and the second full, a live
+  session older than `SESSION_GRACE` reads as orphaned. Build `names` from the strict
+  listing itself. (b) A post-checkout hook that starts a rebase or bisect and then fails
+  leaves a worktree git lists as detached, so `keep_branch` finds no holder and
+  `delete_branch_at` deletes a branch the rebase still needs (the old `branch -D` refused
+  it). Check rebase/bisect state before deleting. *Why:* each can kill a session or delete
+  a branch; neither trigger was reproducible in normal use. *Context:* v0.57.1 ship 5
+  adversarial review (Claude + Codex structured P2), deferred by the user. **Priority:** P3.
+
+- **Rollback and key-tracking design notes.** *What:* (a) `undo_add` assumes git cuts the
+  `-b` branch before it checks the path (true in current `builtin/worktree.c`, no version
+  pinned); (b) an older switchboard install whose fragment tmux also sources rewrites
+  `@switchboard-*-key` but not `-rejected`/`-config-path`, so doctor can show a stale row
+  (upgrade is gated on `fragment_wired_here?`, doctor isn't); (c) a config value spelled
+  `\\;` resolves to `\;` while tmux records `;` (drift row never clears); (d) a branch kept
+  after `move_off` (named in the ✘) is never collected later; (e) a project with a
+  non-UTF-8 worktree path keeps every failed create's branch and is never pruned, and
+  doctor doesn't name why; (f) on a tmux too old for `list-keys -- KEY`, the whole-table
+  fallback reads a bound `C-;` as unbound (its regex allows a backslash only before the
+  whole key). *Why:* all fail safe or say so in the ✘ text; worth a pass once (a)-(b) of
+  the entry above land. *Context:* v0.57.1 ship 5 adversarial + state-machine reviews.
+  **Priority:** P4.
+
+- **Small cleanups from the v0.57.1 review.** *What:* the `rebind_ops` header doesn't
+  mention `taken:`; `Upgrade.tmux_stale?` and `CLI#doctor_key_drift` hard-code
+  `%w[toggle home]` instead of `Installer::ROLE_SUBCOMMANDS.keys`; the
+  `@switchboard-<role>-rejected` name is hand-built at 7 sites (route it through
+  `tmux_argv` ops like `-key`/`-clobbered`); `install` re-parses config.yml to pick its
+  "Done, except …" label instead of asking `refresh_wiring` which part failed; the
+  `key_drift?` comment lists only two of the reasons it returns nil (`bound_from?` has them
+  all); a dead `if p["name"]` guard in `Reconcile.prune` (`Config#projects` drops nameless
+  entries); `docs/howto-manage-projects.md` hard-codes "5 tries" where the code uses
+  `PLACEHOLDER_TRIES`. *Why:* no behavior change today; each is a place a later edit can
+  drift. *Context:* ship 5 and 6 maintainability reviews, deferred by the user. **Priority:** P4.
+
+- **Rollback edges from the v0.57.1 lock and config fixes.** *What:* (a) `delete_branch_at`
+  ignores a failed `git config --remove-section` (a held `config.lock`), so a hook-set
+  upstream can survive onto the next branch cut under that name; (b) `d` on a ✘ row whose
+  tree the rollback kept "(it's locked)" still double-forces after the confirm, and the prompt
+  doesn't say the tree is locked; (c) a failed `git` spawn in `Git.lock_reason` also reads as
+  "(it's locked)" (fails safe, wrong reason); (d) `LANGUAGE=en` from `add_worktree` reaches
+  the user's own checkout hooks; (e) a config.yml of literal `null`/`~` reads as empty (YAML's
+  meaning) rather than broken. *Why:* all fail safe or only mislabel; none loses work.
+  *Context:* ship 6 Claude + Codex adversarial reviews, deferred. **Priority:** P4.
+
+- **More rollback and config edges (ship 7).** *What:* (a) `Config.add_project` /
+  `remove_project` read config.yml raw, so a top level that isn't a map (a list, or one
+  string after a dropped colon) raises a Ruby error out of `add` and sidebar `a` instead of
+  `load_error_message` (pre-existing; `load_data` now calls that file broken); (b) when a
+  clash leads `add_reserved` to retry under a new name, the `kept` text `undo_add` returned
+  is dropped, so anything it kept goes unnamed; (c) the "can't tell whose they are" return
+  skips `move_off`, so if the tree really is a workspace renamed onto the placeholder, its
+  row keeps our ✘ and `d` there can force-remove a clean live workspace; (d) `run_tmux`
+  escapes ANY argument ending in `;`, including the `@switchboard-config-path` value, so a
+  config path ending in `\;` never matches `bound_from?` (escape only key arguments);
+  (e) `upgrade` re-runs "finishing setup" forever when the fragment is wired here but its
+  bind fails, since `finish` never re-checks `key_drift?` after `reload_fragment`; (f) a
+  `locked` entry that isn't a regular file (a dir or FIFO) reads as unlocked, so the ✘ says
+  "(couldn't remove it)" instead of "(it's locked)"; (g) git older than about 2.17 words
+  "A branch named 'x' already exists." differently, so the clash checks miss it there.
+  *Why:* each fails safe, mislabels, or predates the branch. *Context:* ship 7 Claude
+  adversarial and red-team reviews, deferred by the user. **Priority:** P3 for (a) and (c),
+  P4 for the rest.
+
+- **Ship 8 edges.** *What:* (a) a placeholder landing on a folder someone `rm -rf`'d without
+  `git worktree prune` fails the create with git's last line ("use 'add -f' to override, or
+  'prune' or 'remove' to clear"), which drops the path, and isn't retried under a fresh name;
+  read git's `fatal:` line and treat "is a missing but already registered worktree" as a
+  collision; (b) a relative `SWITCHBOARD_CONFIG` expands against a different directory in the
+  tmux server than in the shell, so `bound_from?` never matches and key drift is never
+  flagged, and a `~nosuchuser/...` value raises out of `tmux-bind` after the binds ran;
+  (c) widens ship 7 (a): `Config.add_project` reads a top-level `false` as `{}` and rewrites
+  the file with only the new project, dropping `worktree_root` and every comment (check
+  `load_error` before writing); (d) on a tmux too old for `list-keys -- KEY`, the whole-table
+  fallback can't match a quoted `"C-;"` (tmux 3.8 prints it quoted), so `upgrade` would loop
+  on a `C-;` toggle there (design note (f) above). *Why:* each fails safe or is pre-existing.
+  *Context:* ship 8 Claude adversarial review, deferred by the user. **Priority:** P3 for (c),
+  P4 for the rest.
+
+- **Rollback and cancel paths still trust a status check.** *What:* (a) the cancel teardowns,
+  `Creator.discard` (`creator.rb` after `untouched?`) and `Sidebar#discard_built` (`d` on a
+  built ◌ row, via `reap_worktree!` and `branch -D`), check the tree clean and then remove it
+  with `--force`, so a file written between the check and the removal is deleted; remove
+  unforced under `-c status.showUntrackedFiles=all` the way `undo_add` now does, and delete
+  the branch with `delete_branch_at` at the base commit; (b) a tracked file flagged
+  `assume-unchanged` or `skip-worktree` (sparse checkout, or a hook that flags it) hides its
+  edits from `Git.clean?` and from git's own unforced `worktree remove`, so `undo_add` can
+  delete them; fail closed when `git ls-files -v` shows an `h`/`S` entry; (c) the new
+  `--ignore-submodules=none` in `Git.clean?` has no test (a submodule with
+  `diff.ignoreSubmodules=all`); (d) `test/git_test.rb`: the "point of the fail-closed twin"
+  comment now sits above the untracked-files test instead of the status-error one. *Why:*
+  (a) and (b) can still lose a file in a narrow race or an unusual setup; (c)-(d) are test
+  hygiene. *Context:* ship 8 reviews (security, red team, Codex adversarial), deferred by the
+  user. **Priority:** P2 for (a)-(b), P4 for (c)-(d).
+
 ## Agent CLI hooks (Claude 2.1.301 / Codex 0.163 compat review) follow-ups
 
-- **A non-ASCII worktree path breaks `Git.worktrees` under a C locale (verify scope
-  first).** *What:* with `LC_ALL=C`, `git worktree list --porcelain` output for a
-  worktree like `…/café` arrives US-ASCII with raw high bytes, and
-  `Git.worktrees`' `.split("\n\n")` raises `ArgumentError: invalid byte sequence in
-  US-ASCII` (`git.rb:14`, reproduced at ship time, 2026-10-23). *Why:* in a C-locale
-  tmux that project's tree may fail to list at all; check how `Model` handles the raise.
-  *Pros:* fixes the root that makes every other C-locale encoding guard (the ⇅ byte
-  compare, `Agents.lsof_path`) mostly moot. *Cons:* touches the core git read path.
-  *Context:* read git output as bytes or force UTF-8 + scrub, the way `RemoteLink.read_json`
-  and `CodexHook.read_config` already do. *Depends on:* nothing.
-
 - **Remote-link glyph: rare edges deferred at ship review (v0.53.0).** *What, in priority
-  order:* (1) `RemoteLink`'s three `Dir.glob(File.join(sessions_dir, "*.json"))` calls
-  read `[`/`{`/`*`/`?` in the dir path as pattern syntax, so a `CLAUDE_CONFIG_DIR` like
-  `~/cfg [work]` finds no session files: no `⇅` anywhere, and doctor wrongly says Claude
-  moved them (verified) — one `session_files` helper using `Dir.glob("*.json", base:)`;
-  (2) ~~`@links` survives refresh_agents' outer rescue~~ (done in v0.54.0: hydrated in its ensure);
-  (3) the doctor canary misses a format change while one old-format leftover file sits
-  beside the new ones (shaped > 0, alive 0 reads healthy); (4) `claude_pids` misses a
-  Claude whose process shows as `node …/cli.js`; (5) an empty workspace name shifts that
+  order:* (1) the doctor canary misses a format change while one old-format leftover file sits
+  beside the new ones (shaped > 0, alive 0 reads healthy); (2) `claude_pids` misses a
+  Claude whose process shows as `node …/cli.js`; (3) an empty workspace name shifts that
   row's columns — let `fit_plain` report whether the cues were kept and share it with
-  `colored` (the cursor-bar grey half of this went away in v0.53.1); (6) a stale comment:
+  `colored` (the cursor-bar grey half of this went away in v0.53.1); (4) a stale comment:
   `Agents.lsof_path`'s encoding rationale predates the byte compares.
-  *Why:* none hits a normal setup; (1) is the only verified user-visible one. *Pros:*
+  *Why:* none hits a normal setup (the one verified user-visible item, the glob, shipped in v0.57.1). *Pros:*
   small, testable changes. *Cons:* each touches a reviewed path, so give it its own short
   review. *Context:* ship review of v0.53.0 (D2/D3 — deferred to keep the release from
   reopening its review loop). *Depends on:* v0.53.0.
@@ -656,19 +769,6 @@ safe today; each is narrow).
   decision dec-549dc4af; `gstack-shortcut` marker in `ClaudeHook::EVENTS`). *Start in:* force a
   `/compact` mid-turn in a live session and watch the dot; if it flips, give the reporter a
   matcher skipping `compact` (every worktree then needs `enable-hooks`). **Priority:** P3.
-
-- **Doctor: show the codex rows outside a git worktree.** *Why:* `CLI#doctor_hooks` returns
-  before the global codex section when doctor isn't run inside a worktree, so `switchboard
-  doctor` from a home shell never shows `N/M trusted` or the stale/unsafe/collision advice,
-  though the codex block is global (red team, v0.51.1 ship). *Start in:* print the codex
-  section before `return unless here`; keep only the per-worktree Claude row gated.
-  **Priority:** P2.
-
-- **Uninstall: exit 1 after a codex write error.** *Why:* when the codex block can't be
-  written (read-only config), uninstall prints ✗, carries on, then prints a plain "Done." and
-  exits 0, while `install` now exits 1 for the same failure. *Start in:*
-  `Installer.step_codex_unhooks`' `else` branch: keep going, but have `uninstall` return false
-  and say "Done, except the codex hooks" like install. **Priority:** P3.
 
 - **Install: say `/hooks` when a re-ensure changes the commands.** *Why:* after a brew ↔ clone
   switch, re-running `install` rewrites the block's commands and carries their old approvals,

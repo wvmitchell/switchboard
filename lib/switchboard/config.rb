@@ -190,13 +190,23 @@ module Switchboard
     # Why this exists rather than the old inline read raising: a malformed
     # config.yml would otherwise crash every consumer (the sidebar, `doctor`, and
     # now the `tmux-bind` keybinding path). Degrade to an empty config and remember
-    # the parse error so `doctor` can report it; a valid file is unaffected.
-    attr_reader :load_error
+    # the parse error: `doctor` reports it and `install`/`upgrade` exit 1 on it. Valid
+    # YAML whose top level isn't a map counts too; a valid file is unaffected.
+    attr_reader :load_error, :file
+
+    # The one wording doctor, install and upgrade use for it.
+    def load_error_message = load_error && "config failed to parse (#{load_error})"
 
     def load_data(file)
       return {} unless File.exist?(file)
 
-      YAML.safe_load_file(file) || {}
+      data = YAML.safe_load_file(file)
+      data = {} if data.nil? # an empty file; `false` (or any other scalar) is not a config
+      # Valid YAML can still be no config: a dropped colon reads the file as one string, a
+      # leading dash as a list. Either lists no projects (or raises on lookup), so it's broken.
+      raise "the top level isn't a map of settings" unless data.is_a?(Hash)
+
+      data
     rescue StandardError => e
       @load_error = e.message
       {}
@@ -387,13 +397,15 @@ module Switchboard
     # a usable key token, else the role default (toggle ⇒ "s", home ⇒ nil/unbound).
     # A `home` that resolves equal to the toggle is dropped — one key can't carry two
     # actions, and the toggle wins (doctor surfaces the collision). nil ⇒ leave the
-    # role unbound. What `tmux-bind` binds.
+    # role unbound. What `tmux-bind` binds. A `;` written the tmux.conf way (`\;`, `C-\;`)
+    # reads as the key itself: tmux records it as `;`, so the escaped spelling would never
+    # match what was bound (a drift row that never clears). Installer.run_tmux re-escapes it.
     def tmux_key(role)
       raw = raw_tmux_key(role)
-      key = valid_tmux_key?(raw) ? raw.strip : TMUX_KEY_DEFAULTS[role]
-      return nil if role == "home" && key == tmux_key("toggle")
+      chosen = valid_tmux_key?(raw) ? raw.strip.sub(/\\;\z/, ";") : TMUX_KEY_DEFAULTS[role]
+      return nil if role == "home" && chosen == tmux_key("toggle")
 
-      key
+      chosen
     end
 
     # The raw configured value for a role (unvalidated), or nil. doctor uses this to

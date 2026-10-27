@@ -10,9 +10,13 @@ says which repos to scan.
 sidebar and `switchboard add` grow it. Edit it any time with `switchboard config`
 or `e` in the sidebar — both reload on save.
 
-> A malformed config never crashes switchboard. It degrades to an empty config,
-> keeps the last-good values in a running sidebar, and `switchboard doctor`
-> reports the parse error. See [Explanation: architecture](explanation-architecture.md).
+> A malformed config never crashes switchboard, and it's never silent. It degrades to
+> an empty config and a running sidebar keeps its last-good values, while
+> `switchboard doctor` shows a red config row with the parse error, and `install` and
+> `upgrade` print it and exit 1. A file that parses but isn't a map of settings (a
+> dropped colon turns it into one string; a bare `false`; a list) counts as malformed;
+> an empty or comment-only file doesn't. See
+> [Explanation: architecture](explanation-architecture.md).
 
 ---
 
@@ -226,7 +230,8 @@ A **key token** is a single char (`s`), a named key (`Space`, `F1`, `BSpace`),
 or a modifier combo (`C-s`, `M-x`). A usable token is a non-empty string with no
 whitespace, quotes, or control chars; anything else falls back to the role
 default and `doctor` flags it. tmux is the final authority on whether a token is
-a real key — an unusable one is caught at bind time.
+a real key — an unusable one is caught at bind time. A key ending in `;` works
+(`C-;`); the tmux.conf spelling `C-\;` means the same key.
 
 If `home` resolves to the same key as `toggle`, `home` is dropped (one key can't
 carry two actions; the toggle wins) and `doctor` reports the collision.

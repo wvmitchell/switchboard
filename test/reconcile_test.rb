@@ -139,6 +139,64 @@ module Switchboard
       assert_empty killed, "a missing-dir project's sessions are never pruned"
     end
 
+    # Value: protects=a live session whose worktree git listed but we couldn't read (non-UTF-8
+    # path, Linux) is never killed as an orphan; fails_when=prune skips the strict-listing guard;
+    # why_new=ship cycle-2 red team, D10; seam=Git.undecodable?
+    def test_prune_leaves_a_project_with_an_unreadable_worktree_alone
+      setup_app_project
+      live = [sess("sb/app/app"), sess("sb/app/feat"), sess("sb/app/gone")]
+      killed = stub_method(Git, :undecodable?, ->(_out) { true }) { run_prune(live) }
+      assert_empty killed, "a project we can't fully read is unverifiable: hands off"
+    end
+
+    # Value: protects=a configured project whose folder is missing (an unmounted drive) keeps
+    # its sessions even when another project sanitizes to the same prefix; fails_when=skipped is
+    # built from Model's projects (which drop a missing folder) instead of config; why_new=ship 3
+    # red team, D1; seam=none; no_claim=a real tmux server (sessions are stubbed)
+    def test_prune_protects_the_prefix_of_a_project_whose_folder_is_missing
+      dash = temp_git_repo("dash")
+      File.write(Config.path, YAML.dump("projects" => [{ "name" => "a.b", "path" => path("unmounted") },
+                                                         { "name" => "a-b", "path" => dash }]))
+      killed = run_prune([sess("sb/a-b/dash"), sess("sb/a-b/feat")])
+      assert_empty killed, "sb/a-b/ is hands-off while a.b's folder is missing"
+    end
+
+    # Value: protects=a project is verified by name AND path, so a hand-edited duplicate name
+    # whose folder is missing still protects its prefix; fails_when=verified is keyed by name
+    # alone; why_new=ship 3 red team; seam=none; no_claim=a real tmux server
+    def test_prune_verifies_a_project_by_name_and_path
+      dash = temp_git_repo("dash")
+      File.write(Config.path, YAML.dump("projects" => [{ "name" => "a-b", "path" => dash },
+                                                         { "name" => "a-b", "path" => path("unmounted") }]))
+      killed = run_prune([sess("sb/a-b/dash"), sess("sb/a-b/feat")])
+      assert_empty killed, "the unmounted a-b keeps sb/a-b/ hands-off"
+    end
+
+    # Value: protects=prune still reaps an orphan when every project is verified (the skip list
+    # isn't over-broad); fails_when=skipped includes verified projects; why_new=ship 3 D1;
+    # seam=none; no_claim=a real tmux server
+    def test_prune_still_reaps_when_every_project_is_verified
+      dash = temp_git_repo("dash")
+      File.write(Config.path, YAML.dump("projects" => [{ "name" => "a-b", "path" => dash }]))
+      killed = run_prune([sess("sb/a-b/dash"), sess("sb/a-b/gone")])
+      assert_equal ["sb/a-b/gone"], killed
+    end
+
+    # Value: protects=a skipped (unreadable) project's sessions survive even when another
+    # project's name sanitizes to the same prefix (a.b / a-b); fails_when=prune keeps a prefix a
+    # skipped project contributes; why_new=ship 2 Codex structured; seam=Git.worktrees
+    def test_prune_protects_a_prefix_a_skipped_project_shares
+      dot = temp_git_repo("dot")
+      dash = temp_git_repo("dash")
+      File.write(Config.path, YAML.dump("projects" => [{ "name" => "a.b", "path" => dot }, { "name" => "a-b", "path" => dash }]))
+      skipped = File.realpath(dot)
+      live = [sess("sb/a-b/dot"), sess("sb/a-b/dash"), sess("sb/a-b/feat")]
+      real = Git.method(:worktrees)
+      unreadable = ->(repo, strict: false) { strict && File.realpath(repo) == skipped ? nil : real.call(repo, strict: strict) }
+      killed = stub_method(Git, :worktrees, unreadable) { run_prune(live) }
+      assert_empty killed, "the shared sb/a-b/ prefix is hands-off while a.b can't be read"
+    end
+
     def test_prune_reports_unreachable_when_no_tmux_server
       setup_app_project
       killed = []

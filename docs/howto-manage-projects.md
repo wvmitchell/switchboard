@@ -119,7 +119,9 @@ agent does it for you once it understands the work. See
 
 From the sidebar, press `d` on the highlighted row (confirms first):
 
-- On a **workspace** row: deletes the worktree and closes its session.
+- On a **workspace** row: deletes the worktree and closes its session. If it has
+  uncommitted changes or untracked files (even ones your git config hides from
+  `git status`), it asks again before forcing the delete.
 - On a **project** header: unregisters the project *and* closes its sessions. The
   repo on disk is untouched.
 
@@ -146,7 +148,15 @@ cleaned by `switchboard prune` — see [How-to: housekeeping](howto-housekeeping
   couldn't read the project's config, or its `worktree_creation_command` isn't a
   string or list of strings, so setup couldn't run), `worktree add`, `no session`,
   `interrupted` or `didn't start`. `↵` shows the full message; fix the cause, then
-  `d` the row and press `n` again.
+  `d` the row and press `n` again. When a `worktree add` fails, switchboard removes
+  only what it can prove that build made (a tree on its branch with no commits and no
+  changes since its checkout finished, and that branch); anything else is kept and named
+  in the message ("kept … (it has commits)", "(it has changes)"), so nothing of yours is
+  deleted. If someone else made the same folder or
+  branch mid-build, the build usually retries under a new name; when it can't tell
+  whose the leftovers are, it fails instead, and the ✘ names what it kept. If others
+  keep taking every new name it tries, it stops after five tries and the message shows
+  git's last error with "gave up after 5 tries".
 - **PR badge missing for a worktree.** Badges come from `gh` and are cached. Press
   `R` to force a refresh; run `switchboard doctor` to check `gh` auth and cache
   age. A PR merged/closed *on GitHub* needs an explicit `R` (no local signal

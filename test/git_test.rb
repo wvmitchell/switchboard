@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "test_helper"
+require "open3"
 
 module Switchboard
   # Git is the runtime source of truth, so these run against real throwaway repos
@@ -16,6 +17,101 @@ module Switchboard
       assert_includes branches, "main"
       assert_includes branches, "feature"
       refute(wts.any? { |w| w[:bare] })
+    end
+
+    # Value: protects=a non-ASCII worktree listing under tmux's C locale; fails_when=capture
+    # keeps the locale's US-ASCII tag (split raises "invalid byte sequence"); why_new=no
+    # encoding test on Git.worktrees (reproduced at the v0.53.0 ship); seam=none
+    def test_worktrees_lists_a_non_ascii_path_under_a_c_locale
+      repo = temp_git_repo("app")
+      cafe = path("café")
+      git(repo, "worktree", "add", "-q", cafe, "-b", "cafe")
+      saved = Encoding.default_external
+      Encoding.default_external = Encoding::US_ASCII # what backticks tag output with under LC_ALL=C
+      found = Git.worktrees(repo).find { |w| w[:branch] == "cafe" }
+      refute_nil found
+      assert_equal Encoding::UTF_8, found[:path].encoding
+      assert found[:path].valid_encoding?
+      assert File.identical?(cafe, found[:path])
+    ensure
+      Encoding.default_external = saved if saved
+    end
+
+    # Value: protects=the real C-locale path (backticks tag output from LC_ALL, not from
+    # Ruby's default_external set in-process); fails_when=capture loses its UTF-8 tag under
+    # LC_ALL=C; why_new=the test above only sets default_external; seam=none
+    def test_worktrees_lists_a_non_ascii_path_in_an_lc_all_c_process
+      repo = temp_git_repo("app")
+      cafe = path("caf\u00e9")
+      git(repo, "worktree", "add", "-q", cafe, "-b", "cafe")
+      lib = File.expand_path("../lib", __dir__)
+      script = 'require "switchboard"; w = Switchboard::Git.worktrees(ARGV[0]).find { |x| x[:branch] == "cafe" }; ' \
+               'print w && w[:path].encoding.to_s + " " + w[:path].valid_encoding?.to_s'
+      out, status = Open3.capture2({ "LC_ALL" => "C", "LANG" => "C" }, RbConfig.ruby, "-I", lib, "-e", script, repo)
+      assert status.success?, out
+      assert_equal "UTF-8 true", out
+    end
+
+    # Value: protects=one undecodable worktree (a Latin-1 path on Linux) not taking the whole
+    # project's tree down; fails_when=worktrees splits invalid UTF-8 text (raises) or passes a
+    # binary path on (raises in later compares); why_new=R1 (D2); seam=Git.capture
+    def test_worktrees_skips_an_entry_whose_path_isnt_utf8
+      porcelain = "worktree /ok\nHEAD abc\nbranch refs/heads/main\n\n" \
+                  "worktree /caf\xE9\nHEAD def\nbranch refs/heads/latin\n".dup.force_encoding(Encoding::UTF_8)
+      wts = stub_method(Git, :capture, ->(*) { porcelain }) { Git.worktrees("/repo") }
+      assert_equal ["/ok"], wts.map { |w| w[:path] }
+    end
+
+    # Value: protects=destructive callers can tell a skipped worktree happened (strict: is nil),
+    # while display still lists the readable ones; fails_when=worktrees(strict: true) ignores an
+    # invalid block, or flags a readable repo; why_new=D10, ship 3 D4/D6; seam=Git.capture
+    def test_strict_worktrees_is_nil_when_an_entry_cant_be_read
+      bad = "worktree /ok\nHEAD abc\n\nworktree /caf\xE9\nHEAD def\n".dup.force_encoding(Encoding::UTF_8)
+      `true` # a successful $? for the stubbed capture
+      assert_nil(stub_method(Git, :capture, ->(*) { bad }) { Git.worktrees("/repo", strict: true) })
+      assert_equal ["/ok"], (stub_method(Git, :capture, ->(*) { bad }) { Git.worktrees("/repo") }).map { |w| w[:path] }
+      refute_nil Git.worktrees(temp_git_repo("app"), strict: true)
+    end
+
+    # Value: protects=a symref branch is deleted as itself, never its target (main); fails_when=
+    # delete_branch_at drops --no-deref; why_new=ship 2 Codex adversarial; seam=none
+    def test_delete_branch_at_never_follows_a_symref
+      repo = temp_git_repo("app")
+      main = Git.rev_parse(repo, "main")
+      git(repo, "symbolic-ref", "refs/heads/alias", "refs/heads/main")
+      assert Git.delete_branch_at(repo, "alias", main)
+      assert Git.branch_exists?(repo, "main"), "main survives"
+      refute Git.branch_exists?(repo, "alias")
+    end
+
+    # Value: protects=a rolled-back branch takes its config with it, so an upstream a hook set
+    # can't ride along to the next branch cut under the same name (a plain push to it);
+    # fails_when=delete_branch_at drops the ref but not branch.<name>.*; why_new=ship 5 Codex
+    # adversarial rerun (branch -D did this; update-ref doesn't); seam=none. Extended (ship 5
+    # coverage audit): a refused delete (the branch moved) keeps its config — that branch is
+    # someone's; fails_when=the config removal runs whether or not update-ref deleted the ref
+    def test_delete_branch_at_drops_the_branchs_config
+      repo = temp_git_repo("app")
+      main = Git.rev_parse(repo, "main")
+      git(repo, "branch", "wv/x", "main")
+      git(repo, "config", "branch.wv/x.remote", "origin")
+      git(repo, "config", "branch.wv/x.merge", "refs/heads/main")
+      assert Git.delete_branch_at(repo, "wv/x", main)
+      refute Git.branch_exists?(repo, "wv/x")
+      assert_empty `git -C #{Shellwords.escape(repo)} config --get-regexp '^branch\\.wv/x\\.' 2>/dev/null`
+
+      git(repo, "commit", "-q", "--allow-empty", "-m", "moved")
+      git(repo, "branch", "wv/y", "main")
+      git(repo, "config", "branch.wv/y.remote", "origin")
+      refute Git.delete_branch_at(repo, "wv/y", main), "wv/y moved past the old sha"
+      assert_equal "origin", git(repo, "config", "branch.wv/y.remote").strip
+    end
+
+    # Value: protects=destructive callers can tell a failed listing from an empty one; fails_when=
+    # worktrees(strict: true) returns [] on a git failure; why_new=ship 2 (D7); seam=none
+    def test_strict_worktrees_is_nil_when_git_fails
+      assert_nil Git.worktrees(path("not-a-repo"), strict: true)
+      assert_equal [], Git.worktrees(path("not-a-repo"))
     end
 
     def test_worktrees_flags_a_bare_repo
@@ -117,9 +213,32 @@ module Switchboard
     # The point of the fail-closed twin: an undeterminable status (not a repo / git
     # errored) is NOT clean, so the destructive delete prompts to force rather than
     # silently skipping the guard — unlike dirty?, which reads a git error as "clean".
+    # Value: protects=a new untracked file counts as a change even when the user's git config
+    # hides untracked files from status; fails_when=clean? runs a bare `status --porcelain`;
+    # why_new=ship 8 Codex adversarial (a failed create force-removed such a draft); seam=none
+    def test_clean_sees_untracked_files_even_when_status_hides_them
+      repo = temp_git_repo
+      git(repo, "config", "status.showUntrackedFiles", "no")
+      File.write(File.join(repo, "draft.txt"), "x")
+      refute Git.clean?(repo)
+    end
+
     def test_clean_is_false_when_status_cannot_be_determined
       refute Git.clean?(path("notarepo")), "git error ⇒ not clean (fail-closed)"
       assert Git.dirty?(path("notarepo")) == false, "dirty? stays fail-open (reads as clean)"
+    end
+
+    # Value: protects=a status line naming a file whose name isn't UTF-8 (Linux, with
+    # core.quotePath=false) reads as dirty, never raises out of the rollback that relies on
+    # clean?; fails_when=either check strips the UTF-8-tagged text; why_new=ship 7 red team;
+    # seam=Git.capture (macOS won't create such a name)
+    def test_clean_and_dirty_read_a_non_utf8_status_as_changes
+      repo = temp_git_repo
+      status = ->(*) { `true`; "?? caf\xE9".dup.force_encoding(Encoding::UTF_8) }
+      stub_method(Git, :capture, status) do
+        refute Git.clean?(repo)
+        assert Git.dirty?(repo)
+      end
     end
 
     # A fully-ignored heavy dir (node_modules) isn't dirty, so the check both matches
@@ -379,6 +498,20 @@ module Switchboard
       git(repo, "worktree", "add", "-q", path("wt"), "-b", "old")
       refute Git.rename_branch(repo, "old", "taken"), "-m fails into an existing branch"
       assert Git.branch_exists?(repo, "old"), "the source branch is untouched on refusal"
+    end
+
+    # Value: protects=the rollback's proof of ownership — a base that won't resolve is nil, never
+    # a non-sha string; fails_when=rev_parse drops --verify/^{commit} or the exit check (git echoes
+    # an unresolved arg to stdout); why_new=undo_add tests only pass a resolvable "main"; seam=none
+    def test_rev_parse_names_a_commit_or_nil
+      repo = temp_git_repo("app")
+      git(repo, "tag", "-a", "-m", "annotated", "v1")
+      head = git(repo, "rev-parse", "HEAD").strip
+      assert_equal head, Git.rev_parse(repo, "main")
+      assert_equal head, Git.rev_parse(repo, "v1"), "an annotated tag peels to its commit"
+      assert_nil Git.rev_parse(repo, "no-such-ref")
+      assert_nil Git.rev_parse(repo, "")
+      assert_nil Git.rev_parse(repo, nil)
     end
 
     def test_branch_exists

@@ -10,6 +10,10 @@ module Switchboard
   #     └ yes / couldn't tell ─► brew | git pull ─ moved? ─ no ─► "nothing newer yet" ─ leftovers? ─ yes ─► finish
   #                                                   └ yes ─► exec <bin> upgrade --finish <old>
   #
+  # Both "nothing to fetch" exits fail on a config that won't parse (it lists no projects, so
+  # stale hooks would read as current) — but only after finishing any leftover setup that
+  # doesn't need it: finish's refresh_wiring reports the parse error and fails the run.
+  #
   # The install method is the channel: a Homebrew install follows releases, a `--HEAD`
   # one follows main, a clone follows whatever branch it tracks. The hand-off is an exec,
   # not a call, because this process has the OLD code loaded and only the new binary
@@ -32,7 +36,10 @@ module Switchboard
       latest = LatestRelease.latest if method == :brew
       case behind?(method, latest)
       when false
+        # finish repairs what doesn't need the config (tmux, codex, reporter) and still fails
+        # on a broken one (refresh_wiring reports it); with nothing to repair, say so directly.
         return finish(nil, leftovers: true) if leftovers?
+        return false unless Installer.config_readable? # else stale hooks would read as current
 
         puts "switchboard #{VERSION} is up to date — run `switchboard doctor` if something seems off."
         return true
@@ -50,7 +57,7 @@ module Switchboard
       if before && stamp(method) == before # unknown ⇒ hand off
         return update_blocked if fetched == :update_failed
         nothing_newer(method, latest)
-        return leftovers? ? finish(nil, leftovers: true) : true
+        return leftovers? ? finish(nil, leftovers: true) : Installer.config_readable?
       end
 
       handoff
@@ -267,7 +274,8 @@ module Switchboard
 
       # tmux < 3.0 can't hold the indexed hook slots at all, so only the key can be stale there.
       slots_stale = Installer.tmux_version.to_f >= 3.0 && Installer.live_hooks&.value?(false)
-      slots_stale || Installer.toggle_key_live?(Installer.bound_toggle_key) == false
+      slots_stale || Installer.toggle_key_live?(Installer.bound_toggle_key) == false ||
+        %w[toggle home].any? { |role| Installer.key_drift?(role) } # a hand-edited tmux_keys
     end
 
     def git_out(root, *args)

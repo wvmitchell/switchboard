@@ -84,7 +84,11 @@ sidebar processes** — a `switchboard sidebar` that outlived its pane — by di
 the running-process count (`pgrep`) against the sidebar-pane count
 (`Tmux.sidebar_pane_count`); a straggler matters because tmux recycles pane ids,
 so it can end up reading a different live pane and double-fire completion sounds.
-`prune` **reaps** them (`Reconcile.reap_sidebars`): it pairs each running sidebar
+`prune` kills only `sb/` sessions under the prefix of a project it could VERIFY (a
+non-empty listing that `Git.worktrees(strict: true)` reads in full); every configured
+project it couldn't (missing folder, failed or undecodable listing) protects its
+prefix — another project's name may sanitize to the same one (`app.dev` / `app-dev`).
+It also **reaps** those orphaned sidebars (`Reconcile.reap_sidebars`): it pairs each running sidebar
 with its tty (`Tmux.sidebar_processes`) and SIGTERMs any whose tty matches no live
 pane (`Tmux.live_pane_ttys`) — so a sidebar that owns a pane is never touched, and
 a nil/empty pane list (a flaky/garbled `tmux` read) reaps nothing rather than wipe
@@ -112,14 +116,37 @@ exactly that — never a scan of `list-keys`, so it can't clobber a user's own
 share a lifetime: both die on server restart). It binds before it unbinds, so a
 key tmux rejects falls back to the default without stranding the recovery key, and
 records a displaced foreign binding in `@switchboard-*-clobbered` for `doctor` to
-warn about. The decision is the pure `Installer.rebind_ops` (unit-tested via the
-`run_tmux` seam); validation is a **minimal denylist** (`Config#valid_tmux_key?`) —
-tmux is the authority on real keys. Editing `tmux_keys` via `e`/`switchboard config`
-re-applies immediately (`reload_config_poke` / `edit_config` call `apply_keybindings`,
-`announce: true` flashing the result); a from-scratch `install` still needs a tmux
-reload. A malformed config no longer crashes anything — `Config#initialize` rescues
-the parse error to `{}` + `load_error` (the sidebar keeps its last-good config; the
-`tmux-bind` path falls back to defaults; `doctor` reports it).
+warn about (`ours?` = our bin path followed by EITHER role's exact subcommand, so a
+toggle/home swap isn't a clobber of ourselves). A refused key is remembered in
+`@switchboard-<role>-rejected`. Cleanup never unbinds a key another role wants or now
+holds (`taken:`), so swapping toggle and home keeps both; and when the toggle's
+fallback lands on home's key, the **toggle wins** — home yields, is recorded as
+refused, and `doctor` names it (`Installer.refused_key`). The decision is the pure
+`Installer.rebind_ops` (unit-tested via the `run_tmux` seam); validation is a
+**minimal denylist** (`Config#valid_tmux_key?`) — tmux is the authority on real keys.
+A key ending in `;` (`C-;`) needs care: tmux reads ANY argv element ending in an
+unescaped `;` as a command separator, even via `system` with no shell, so
+`Installer.run_tmux` escapes it to `\;`; tmux records the bound key as the bare `;`,
+so `Config#tmux_key` reads the tmux.conf spelling (`C-\;`) as `C-;`, or drift would
+never clear.
+Editing `tmux_keys` via `e`/`switchboard config` re-applies immediately
+(`reload_config_poke` / `edit_config` call `apply_keybindings`, `announce: true`
+flashing the result); a from-scratch `install` still needs a tmux reload. A hand edit
+of config.yml is caught as **key drift** (`Installer.key_drift?`: configured ≠ bound
+and ≠ refused) by `doctor` (a row per role) and by `upgrade` (`tmux_stale?`, so an
+up-to-date run re-applies it). Drift is judged only against the config file the keys
+were bound from — `tmux-bind` records it in `@switchboard-config-path`
+(`Installer.bound_from?`) — because the tmux server's environment can resolve
+config.yml differently from your shell; without that, a mismatch would make every
+`upgrade` re-run forever. A malformed config never crashes anything —
+`Config#initialize` rescues the parse error to `{}` + `load_error` (the sidebar keeps
+its last-good config; `tmux-bind` keeps the keys already bound, and binds the defaults
+only when none are) — but it is never
+silent either: `doctor`'s config row turns red, and `install` / `upgrade` print it
+and exit 1 (`Installer.config_readable?` gates `refresh_wiring`, whose hook refresh
+would otherwise walk zero projects and report success). A file that parses to
+anything but a map (a dropped colon makes one string, a bare `false`, a list) is
+malformed too; only an empty or comment-only file reads as `{}`.
 
 Ruby **>= 3.0** is required (`Config` uses `YAML.safe_load_file`, added in Psych
 3.3 / Ruby 3.0). `bin/switchboard` re-execs itself under a modern ruby if launched
@@ -358,10 +385,31 @@ record — no record, or `setup_ok` — so a failed, canceled, OR still-in-fligh
 whose session died opens a plain shell with the reason instead. The worker never opens
 a session on a dead server (the record's `server` socket gone: a `kill-server` mid-build
 would otherwise start a headless server and run the agent there), and it discards a tree
-canceled before the launcher claimed it. A failed `worktree add` is a collision only if
-the dir or branch existed BEFORE it (git cuts the branch before checkout, and a failing
-post-checkout hook leaves a full tree); anything else is undone (`undo_add`) and fails
-once with git's message. Cancels come from `quit`/remove-project
+canceled before the launcher claimed it. A failed `worktree add` is a collision when
+the dir or branch existed BEFORE it, or when git itself says "already exists" about OUR
+branch or path, exactly (someone made it in between; a hook line naming anything else is
+not git's): the build retries under a fresh placeholder (up to
+`PLACEHOLDER_TRIES`; racers taking every one fail it with git's last error plus "gave
+up after N tries", not "no free workspace name"), and any give-up afterwards moves the record to a fresh name or parks it (`move_off`/`park`,
+`.unbuilt-<id>`), so a ✘ never sits on someone else's folder. git's "already exists"
+means it made nothing, so if a tree on OUR branch sits at the destination anyway (a
+workspace renamed onto the placeholder, or a failing hook printing git's words) the
+two can't be told apart: nothing is removed or retried and the record stays to guard
+it. Anything else is rolled back by `undo_add`, which removes only what it can PROVE
+is this create's — the tree only when it's on our branch with no commits past the
+base commit the add started from (`Git.rev_parse`, captured before), dirty only while
+git's own `initializing` lock says the checkout never finished (past checkout the row is
+enterable, so changes are kept like a commit, fail-closed `Git.clean?` counting untracked
+files whatever the user's status config, and the removal unforced so git refuses anything
+that appeared since), and a lock only when it's that `initializing` one from a killed add,
+never someone else's; the branch only atomically at that commit (`Git.delete_branch_at`
+= `update-ref --no-deref -d <ref> <sha>`, never a symref's target, then its
+`branch.<name>` config, as `branch -D` would) and only when one
+strict worktree read (`Git.worktrees(strict: true)`: nil on a failed run or a path it
+can't decode; `keep_branch` also treats an empty list as a failure) proves no worktree
+holds it. Whatever it keeps is
+named, with why, in the ✘ detail. git runs with `LANGUAGE=en` so those messages stay
+matchable. Cancels come from `quit`/remove-project
 (`cancel_all`, scoped to THIS tmux server via the record's `server` = `$TMUX` socket),
 `d` on a `◌` row (`dismiss_dispatch`: re-reads the record, tears down only if its cancel
 actually landed), and `d` on a real row mid-build (`delete` cancels before the kill).
@@ -572,7 +620,9 @@ clears `SB_REEXEC` so a clone's new binary can still re-exec under a modern Ruby
 project, primaries too, via `HookFile.refresh`) + the codex block if installed + running
 the tmux fragment in the live server from any shell (`reload_fragment`, only when
 tmux.conf sources THIS install). An up-to-date run still finishes leftover setup
-(`leftovers?`), so re-running repairs an interrupted upgrade.
+(`leftovers?`, which includes tmux key drift), so re-running repairs an interrupted
+upgrade; with a config.yml that won't parse it finishes what doesn't need the config,
+then exits 1 naming the parse error instead of saying "up to date".
 
 Two guards carry the design. **Only the installed binary rewrites anything shared**
 (`Installer.installed_bin?`: the running `SWITCHBOARD_BIN` is the `switchboard` on PATH):
@@ -717,7 +767,9 @@ Two consequences of codex being global:
   outside the block (they head the next table); comments INSIDE the managed block are regenerated
   away (dec-3417a712). A refusal also fails the command (exit 1: `install` after
   its other steps, `uninstall` before any, `enable-hooks`). `uninstall` runs the codex step FIRST and stops on a refusal,
-  so its "re-run uninstall" advice can't point at a command it already unlinked. A begin
+  so its "re-run uninstall" advice can't point at a command it already unlinked. A write that
+  fails instead (a read-only config, or one that turns unreadable mid-run) is `:failed`: the rest
+  of uninstall still runs, it ends "Done, except the codex hooks" and exits 1. A begin
   marker without its end line is refused as `:unsafe` (checked before the collision guard,
   which would otherwise misread our own `[hooks]` as foreign).
 - **Nesting (#130).** A global hook fires for EVERY codex, including a nested `codex exec`
