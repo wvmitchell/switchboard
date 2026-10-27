@@ -329,7 +329,7 @@ no-op outside the right tmux context.
 | `poke-window <window>` | `session-window-changed` hook | Redraw the sidebar on a same-session window switch (gated to `sb/` sessions). |
 | `sidebar-sync <window>` | `after-new-window` hook | Give a new window its own sidebar iff the session opts in. |
 | `reload-config [origin]` | the post-edit Ctrl-R poke | Re-read config and redraw after editing it from the sidebar. |
-| `tmux-bind` | the `switchboard.tmux` fragment | (Re)bind the configured `tmux_keys`, cleaning up the previously-bound key. |
+| `tmux-bind` | the `switchboard.tmux` fragment | (Re)bind the configured `tmux_keys`, cleaning up the previously-bound key. A `config.yml` that won't parse re-binds the keys already bound (the defaults only if none were). |
 | `create-workspace <id>` | the sidebar's `n` (spawned detached) | Background worker for a dispatched workspace: fetch, `git worktree add`, wire hooks, open the session. |
 | `launch <dest>` | the line the worker types into the new pane | Run the setup script, then start the agent with the task. |
 

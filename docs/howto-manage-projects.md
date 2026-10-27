@@ -119,7 +119,9 @@ agent does it for you once it understands the work. See
 
 From the sidebar, press `d` on the highlighted row (confirms first):
 
-- On a **workspace** row: deletes the worktree and closes its session.
+- On a **workspace** row: deletes the worktree and closes its session. If it has
+  uncommitted changes or untracked files (even ones your git config hides from
+  `git status`), it asks again before forcing the delete.
 - On a **project** header: unregisters the project *and* closes its sessions. The
   repo on disk is untouched.
 
