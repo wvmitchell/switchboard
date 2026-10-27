@@ -10,7 +10,7 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
-## [0.59.1] — switching in during a sidebar reload catches up first (2026-10-27)
+## [0.60.2] — switching in during a sidebar reload catches up first (2026-10-27)
 
 ### Fixed
 - Switching into a session while its sidebar was about to reload skipped the usual refresh.
@@ -18,6 +18,50 @@ refer to the project's earlier, private repository; the public tracker starts at
   seconds. Flipping away and back within a few seconds could also replay completion
   chimes another sidebar had already played, and keys you typed right after switching
   acted on the old tree. The sidebar now refreshes quietly first, then reloads.
+
+## [0.60.1] — the Claude session renames while you watch (2026-10-27)
+
+### Changed
+- Renaming a workspace with the sidebar's `r` now renames its Claude session within a couple
+  of seconds, with the pane still in view. Switchboard used to wait until the agent's pane was
+  off screen, so you had to switch away and stay away. It now waits only while someone may be
+  at that pane's keyboard: a tmux client has it focused, or any tmux client had keyboard or
+  mouse input in the last 2 seconds (a click or scroll lands on the pane under the pointer, and
+  a `send-keys` binding in one session can type into another). After `r` your keyboard is on the sidebar. A client that can
+  type into any pane, an iTerm2-style control-mode client (`tmux -CC`) or one with its own active
+  pane, makes its session wait. Every other check is
+  unchanged: between turns, an empty prompt, Enter only on the exact command.
+- Switchboard takes its typed line back only if nobody has touched a key since it typed it (the
+  pane isn't focused and no tmux client or session had input since, counting a client that typed
+  and has since detached). Otherwise it leaves the line where it is
+  and shows a notice on every attached client for 10 seconds (or until your next key) saying which
+  `/rename` is still in a prompt, so it never erases anything you typed. It presses Enter only on the
+  same condition. After it takes a line back, it waits longer before trying that session again
+  (2, 4, 8… checks, up to 30).
+- The rename worker keeps checking every 2 seconds for 5 minutes (was 30 seconds) before it
+  slows down, so a rename that has to wait lands soon after you move to another pane. While
+  only your keyboard is in the way it keeps checking every 2 seconds the whole time, each
+  check one cheap pane read instead of a full look at every session.
+- Switchboard's status-line notices (the rename notice, "refreshing PRs…", config reload
+  errors, the key-binding notice after a config edit) now stay up for at least 4 seconds,
+  or your tmux `display-time` if that's longer (0, until a key, is kept), instead of tmux's
+  default 750 ms; a session's own `display-time` counts for the sidebar's notices (the key-binding
+  notice reads the global one). A keypress still clears them. On tmux older than 3.2 they show for
+  `display-time`, as before.
+
+### Fixed
+- A notice's text is shown literally: tmux reads `display-message` text as a format, so a `#`
+  sequence in an error message could expand, or run a command, and a `%` was read as a date code.
+## [0.60.0] — Ruby 3.3 is the new minimum (2026-10-27)
+
+### Changed
+- **Clone installs now need Ruby 3.3 or newer** (was 3.0). Ruby 3.0, 3.1 and 3.2 no longer
+  get security fixes upstream; 3.3 is the oldest that does. Homebrew installs are unaffected:
+  the formula already brings a current Ruby. Check with `ruby -v`; if yours is older,
+  install a newer one (rbenv, `brew install ruby`) before running `switchboard upgrade`.
+- On a Ruby that's too old, `switchboard` still re-runs itself under a newer one it finds
+  (rbenv, Homebrew). If that one is too old as well, it now stops with a message saying so
+  instead of failing partway through loading.
 
 ## [0.59.0] — upgrading reloads the running sidebars (2026-10-27)
 

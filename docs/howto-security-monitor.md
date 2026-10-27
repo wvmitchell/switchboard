@@ -246,9 +246,9 @@ Re-verifying one doesn't advance the others.
     hold.) There's no
     `doctor` canary for this yet; if one is added (a `status` health line like
     `RemoteLink.health`), check that instead of the manual run.
-  - **Session-name sync**: rename a workspace that has an idle Claude session, then
-    switch away so its pane is off screen. Within a minute the Claude session must
-    carry the new name (the `name` in its sessions file, or the `/resume` picker), and
+  - **Session-name sync**: rename a workspace that has an idle Claude session with the
+    sidebar's `r`, then keep the pane in view without typing. Within a few seconds the
+    Claude session must carry the new name (the `name` in its sessions file, or the `/resume` picker), and
     `doctor` must show no `session name:` line. Any `session name:` line (`unrecognized`,
     `unconfirmed`, `failed_send`, `ceiling`) means the screen contract moved. `doctor`'s
     canaries for `status`, `name` and `kind` read only the sessions file, never the
@@ -314,9 +314,11 @@ gh issue list -R wvmitchell/switchboard -L 100 --json number,title
 
 On top of a normal check, once a week:
 
-- **Ruby support floor** (#35): CI's Ruby 3.0 job is pinned to `ubuntu-24.04` because
-  setup-ruby has no 3.0 build for newer images. Watch for GitHub's retirement notice for
-  that image and for setup-ruby dropping 3.0. Either one forces the decision in #35.
+- **Ruby support floor** (#35): the floor is 3.3, the oldest Ruby still getting security
+  fixes upstream. Check its end-of-life date on the Ruby maintenance-branches page; as it
+  nears, open an issue to raise the floor to the next maintained release (the same bump:
+  `bin/switchboard`'s re-exec guard, the CI matrix, the docs). Also flag a new Ruby
+  release CI's newest job doesn't cover yet.
 - **Action pins**: are the SHA pins in `.github/workflows/*.yml` still the newest release
   of their major? Dependabot should be proposing bumps; weeks of silence means check
   `.github/dependabot.yml` still parses.

@@ -11,7 +11,7 @@ class Switchboard < Formula
 
   depends_on "gh"
   depends_on "git"
-  depends_on "ruby" # macOS system Ruby is 2.6; switchboard needs >= 3.0
+  depends_on "ruby" # macOS system Ruby is 2.6; switchboard needs >= 3.3
   depends_on "tmux"
 
   def install

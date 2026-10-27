@@ -54,8 +54,8 @@ and your phone's camera opens that exact session.
 Renaming a workspace **renames its Claude session too**, so your phone's session list
 and Claude's resume picker show the workspace's name, not the first one Claude gave
 it. No agent has a rename API, so switchboard types `/rename <name>` into the agent's
-pane, and only when that's safe: between turns, while you're looking at another
-window, into an empty prompt. Turn it off with `sync_session_name: false`.
+pane, and only when that's safe: between turns, while your keyboard is on another
+pane and you haven't touched it for a couple of seconds, into an empty prompt. Turn it off with `sync_session_name: false`.
 
 ## Why
 
@@ -77,7 +77,7 @@ switchboard install                          # tmux wiring + starter config (ide
 switchboard                                  # launch — drops you in the sidebar
 ```
 
-Or from a clone (you'll need **tmux**, **git**, **gh**, and **Ruby ≥ 3.0**, no gems;
+Or from a clone (you'll need **tmux**, **git**, **gh**, and **Ruby ≥ 3.3**, no gems;
 on macOS: `brew install tmux git gh`):
 
 ```sh

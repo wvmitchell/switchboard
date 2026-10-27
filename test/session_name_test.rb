@@ -17,16 +17,21 @@ module Switchboard
     # keys act on it like Claude's input would. `on_type` runs right after our text
     # lands, to stage what happens in the window before Enter.
     class FakeClaude
-      attr_accessor :box, :status, :visible, :name, :screen_override, :on_type, :present, :in_mode, :foreground,
+      attr_accessor :box, :status, :focused, :recent_input, :last_input, :name, :screen_override, :on_type, :present, :in_mode, :sessions, :foreground,
                     :width, :swallow, :synchronized, :claude_tty
-      attr_reader :keys
+      attr_reader :keys, :notices, :notice_opts
 
-      def initialize(status: "idle", visible: false, box: "", name: "old-xy")
+      def initialize(status: "idle", focused: false, box: "", name: "old-xy")
         @status = status
-        @visible = visible
+        @focused = focused
+        @recent_input = false
+        @last_input = 0 # nobody has touched a key since the epoch
+        @sessions = ["$0"] # one tmux session, there throughout
         @box = box
         @name = name
         @keys = []
+        @notices = []
+        @notice_opts = []
         @present = true
         @in_mode = false
         @foreground = true
@@ -84,9 +89,14 @@ module Switchboard
         [Tmux, :panes_by_tty, lambda {
           next panes.call if panes.is_a?(Proc)
 
-          panes&.transform_values { |v| { visible: fake.visible, in_mode: fake.in_mode, synchronized: fake.synchronized, width: fake.width }.merge(v) }
+          panes&.transform_values { |v| { focused: fake.focused, recent_input: fake.recent_input, last_input: fake.last_input, sessions: fake.sessions, in_mode: fake.in_mode, synchronized: fake.synchronized, width: fake.width }.merge(v) }
         }],
         [Tmux, :capture_pane, ->(_) { fake.screen }],
+        [Tmux, :notify, ->(msg) { fake.notices << [:one_client, msg] }],
+        [Tmux, :notify_everyone, lambda { |msg, **opts|
+          fake.notices << msg
+          fake.notice_opts << opts
+        }],
         [Tmux, :send_literal, ->(_, text) { fake.type(text) }],
         [Tmux, :send_keys, ->(_, *keys) { fake.press(*keys) }],
         [SessionName, :pause, ->(_) {}]
@@ -145,6 +155,17 @@ module Switchboard
       assert_equal :draft, SessionName::Box.parse("#{rule}\n❯ \e[2mghost\e[mtyped\n#{rule}\n"), "bare SGR resets"
     end
 
+    # Value: protects=the leftover warning sees our line in a wrapped or multi-line prompt (parse
+    # says :draft there); fails_when=region_text drops rows or keeps the dim placeholder; why_new=ship 5
+    # Codex structured P2; seam=none
+    def test_region_text_joins_a_wrapped_prompt
+      div = "─" * 40
+      screen = "#{div}\n❯ /rename named\n-it and more\n#{div}\n"
+      assert_equal :draft, SessionName::Box.parse(screen)
+      assert_includes SessionName::Box.region_text(screen), "/rename named-it"
+      assert_nil SessionName::Box.region_text("no box\n")
+    end
+
     # --- Claude.deliver: the typing rule ---
 
     def test_idle_hidden_empty_box_types_the_rename_and_presses_enter
@@ -169,12 +190,104 @@ module Switchboard
       end
     end
 
-    def test_a_watched_or_maybe_watched_pane_types_nothing
-      [true, nil].each do |visible|
-        fake = FakeClaude.new(visible: visible)
-        assert_equal :waiting, deliver(fake)
+    # Value: protects=the sidebar r case lands while you watch (the keyboard is on the sidebar,
+    # not Claude); fails_when=the gate still reads visibility; why_new=focus gate; seam=none
+    def test_a_pane_in_view_but_not_focused_is_typed_into
+      fake = FakeClaude.new
+      assert_equal :done, deliver(fake)
+      assert_equal [[:literal, "/rename named-it"], ["Enter"]], fake.keys
+    end
+
+    # Value: protects=no keys land in a pane someone may be keying into (focused, or a client
+    # touched it just now: a click or scroll lands under the pointer); fails_when=either gate is
+    # unchecked or unknown reads as clear; why_new=focus gate + ship 4 mouse review; seam=none
+    def test_a_pane_someone_may_be_at_holds_and_types_nothing
+      [[true, false], [nil, false], [false, true], [false, nil]].each do |focused, input|
+        fake = FakeClaude.new(focused: focused)
+        fake.recent_input = input
+        held = []
+        state = with_fake(fake) { SessionName::Claude.sync(ws, "named-it", {}, held) }
+        assert_equal :held, state, "focused=#{focused.inspect} recent_input=#{input.inspect}"
+        assert_equal ["ttys001"], held, "the worker re-checks this tty cheaply"
         refute fake.typed?
       end
+    end
+
+    # Value: protects=a held session never hides another session that needs a full pass;
+    # fails_when=held survives a pass whose result isn't :held; why_new=ship 4 polling cost; seam=none
+    def test_held_is_cleared_when_anything_else_is_pending
+      fake = FakeClaude.new(focused: true)
+      busy = fake.session.merge(pid: 5151, status: "busy")
+      held = []
+      state = with_fake(fake) do
+        stub_method(ClaudeSessions, :sessions_in, ->(_) { [fake.session, busy] }) do
+          stub_method(SessionName::Claude, :current, ->(pid) { { status: pid == 5151 ? "busy" : "idle", name: "old-xy" } }) do
+            SessionName::Claude.sync(ws, "named-it", {}, held)
+          end
+        end
+      end
+      assert_equal :waiting, state, "one session held, the other mid-turn"
+      assert_empty held, "a mid-turn session needs the next full pass"
+    end
+
+    # Value: protects=focus moving into the pane during the checks before typing stops the
+    # typing; fails_when=the pre-typing re-read skips focus; why_new=focus gate; seam=none
+    def test_focus_moving_into_the_pane_before_typing_types_nothing
+      fake = FakeClaude.new
+      reads = 0
+      fake.define_singleton_method(:focused) { (reads += 1) > 1 }
+      assert_equal :waiting, deliver(fake)
+      refute fake.typed?
+    end
+
+    # Value: protects=focus moving in during the slow ps checks still stops the typing (the pane
+    # is read again after them); fails_when=the final pre-type pane read is dropped; why_new=ship 4
+    # security review (focus read first); seam=none
+    def test_focus_moving_in_during_the_ps_checks_before_typing_types_nothing
+      fake = FakeClaude.new
+      orig = SessionName::Claude.method(:still_claude?)
+      with_fake(fake) do
+        stub_method(SessionName::Claude, :still_claude?, lambda { |*a|
+          fake.focused = true
+          orig.call(*a)
+        }) { assert_equal :waiting, SessionName::Claude.sync(ws, "named-it") }
+      end
+      refute fake.typed?
+    end
+
+    # Value: protects=focus moving in during the ps checks before Enter means no Enter, and our
+    # line is left (a focused pane never gets backspaces); fails_when=the final pre-Enter pane read is
+    # dropped; why_new=ship 4 security review; seam=none
+    def test_focus_moving_in_during_the_ps_checks_before_enter_presses_no_enter
+      fake = FakeClaude.new
+      typed = false
+      fake.on_type = ->(_) { typed = true }
+      orig = SessionName::Claude.method(:still_claude?)
+      with_fake(fake) do
+        stub_method(SessionName::Claude, :still_claude?, lambda { |*a|
+          fake.focused = true if typed
+          orig.call(*a)
+        }) { assert_equal :failed_send, SessionName::Claude.sync(ws, "named-it") }
+      end
+      refute_includes fake.keys.flatten, "Enter"
+      assert_equal "/rename named-it", fake.box
+    end
+
+    # Value: protects=copy mode starting during back_out's ps checks gets no backspaces (they'd
+    # go to tmux); fails_when=the final back-out pane read is dropped; why_new=ship 4; seam=none
+    def test_copy_mode_starting_during_the_back_out_ps_checks_gets_no_backspaces
+      fake = FakeClaude.new
+      fake.on_type = ->(f) { f.status = "busy" }
+      calls = 0
+      orig = SessionName::Claude.method(:still_claude?)
+      with_fake(fake) do
+        stub_method(SessionName::Claude, :still_claude?, lambda { |*a|
+          calls += 1
+          fake.in_mode = true if calls == 2 # the pre-type check, then back_out's
+          orig.call(*a)
+        }) { assert_equal :failed_send, SessionName::Claude.sync(ws, "named-it") }
+      end
+      assert_equal [[:literal, "/rename named-it"]], fake.keys
     end
 
     def test_a_draft_in_the_box_is_never_touched
@@ -216,16 +329,311 @@ module Switchboard
       refute_includes fake.keys.flatten, "Enter"
     end
 
-    # Value: protects=no backspace lands on a pane someone just switched to (they may be
-    # typing); fails_when=back_out ignores visibility; why_new=run-3 state-machine review; seam=none
-    def test_switching_to_the_pane_while_typing_leaves_the_text_for_whoever_is_looking
-      [true, nil].each do |seen|
+    # Value: protects=the sidebar r case (pane in view, keyboard on the sidebar) still backs our
+    # line out when a turn starts mid-type; fails_when=back_out's recipient gate still demands an
+    # off-screen pane (leaving a stray /rename in the box); why_new=existing back-out tests all run
+    # off screen; seam=none; no_claim=real Claude
+    def test_a_turn_starting_while_typing_into_a_pane_in_view_backs_out_our_text
+      fake = FakeClaude.new
+      fake.on_type = ->(f) { f.status = "busy" }
+      assert_equal :waiting, deliver(fake)
+      assert_equal "", fake.box
+      assert_equal ["BSpace"] * "/rename named-it".length, fake.keys.last
+    end
+
+    # Value: protects=someone moving into the pane right after our text lands gets no Enter and
+    # no backspaces (they may be about to type); our line stays and a sticky notice says so;
+    # fails_when=back-out ignores focus; why_new=ship 5 (close the eat-your-input class); seam=none
+    def test_moving_into_the_pane_right_after_typing_leaves_our_line_and_says_so
+      [true, nil].each do |focused|
         fake = FakeClaude.new
-        fake.on_type = ->(f) { f.visible = seen }
-        assert_equal :failed_send, deliver(fake), "visible=#{seen.inspect}"
+        fake.on_type = ->(f) { f.focused = focused }
+        assert_equal :failed_send, deliver(fake), "focused=#{focused.inspect}"
         assert_equal "/rename named-it", fake.box
-        assert_equal [[:literal, "/rename named-it"]], fake.keys, "no key follows the text"
+        assert_equal [[:literal, "/rename named-it"]], fake.keys
+        assert_equal ["switchboard: '/rename named-it' is still in a Claude prompt; clear it before you send"], fake.notices
+        assert_equal [{ display_time: SessionName::Claude::LEFTOVER_MS.to_s }], fake.notice_opts
       end
+    end
+
+    # Value: protects=any key anywhere since our send (typed into this pane, a trailing space Box.parse
+    # can't see, focus round-tripping, typing in another pane) means no backspaces; fails_when=back-out
+    # trusts the box alone or a 2 s quiet window; why_new=ship 5 Codex + native adversarial; seam=none
+    def test_any_key_since_our_send_leaves_the_line
+      fake = FakeClaude.new
+      fake.on_type = lambda { |f| # a key after our send (tmux stamps both)
+        f.last_input = Time.now.to_i + 1
+        f.recent_input = true
+      }
+      assert_equal :failed_send, deliver(fake)
+      assert_equal "/rename named-it", fake.box
+      assert_equal [[:literal, "/rename named-it"]], fake.keys
+      assert_equal 1, fake.notices.size
+
+      fake = FakeClaude.new
+      fake.on_type = lambda { |f| # can't tell
+        f.last_input = nil
+        f.recent_input = nil
+      }
+      assert_equal :failed_send, deliver(fake)
+      assert_equal [[:literal, "/rename named-it"]], fake.keys, "unknown input is no"
+    end
+
+    # Value: protects=a key in the same whole second as our send counts as after it (tmux stamps
+    # whole seconds); fails_when=<= instead of <; why_new=ship 5 (clock frozen: ship 6 testing); seam=none
+    def test_a_key_in_the_same_second_as_our_send_counts
+      frozen = Time.at(1_800_000_000)
+      fake = FakeClaude.new
+      fake.on_type = lambda { |f|
+        f.last_input = frozen.to_i # exactly the send's second
+        f.recent_input = false     # stale enough not to stop the Enter gate by itself
+        f.status = "busy"          # so it's the back-out that decides
+      }
+      stub_method(Time, :now, -> { frozen }) { assert_equal :failed_send, deliver(fake) }
+      assert_equal [[:literal, "/rename named-it"]], fake.keys
+    end
+
+    # Value: protects=Enter, like the backspaces, goes only where nobody touched a key since our send
+    # (a key Box.parse can't see, like a trailing space, would ride in with it); fails_when=Enter checks
+    # only the last INPUT_QUIET; why_new=ship 6 red team; seam=none
+    def test_a_key_since_our_send_stops_the_enter_even_once_it_is_not_recent
+      frozen = Time.at(1_800_000_000)
+      fake = FakeClaude.new
+      fake.on_type = lambda { |f|
+        f.last_input = frozen.to_i + 1 # after the send
+        f.recent_input = false         # older than INPUT_QUIET by the time Enter is checked
+      }
+      stub_method(Time, :now, -> { frozen }) { assert_equal :failed_send, deliver(fake) }
+      refute_includes fake.keys.flatten, "Enter"
+      assert_equal "/rename named-it", fake.box
+    end
+
+    # Value: protects=a session killed after someone typed in it can't make the backspaces look safe
+    # (its session_activity leaves with it), so every session there at the send must still be;
+    # fails_when=untouched? trusts last_input alone; why_new=ship 6 Codex adversarial; seam=none
+    def test_a_session_killed_after_a_key_keeps_the_backspaces_away
+      fake = FakeClaude.new
+      fake.sessions = %w[$0 $1]
+      fake.on_type = lambda { |f|
+        f.status = "busy"    # so back-out runs
+        f.sessions = %w[$0]  # $1 had the key, then was killed
+      }
+      assert_equal :failed_send, deliver(fake)
+      assert_equal [[:literal, "/rename named-it"]], fake.keys, "no Enter, no backspaces"
+    end
+
+    # Value: protects=an unreadable session list at the send types nothing (the snapshot can't be
+    # taken); fails_when=the send goes ahead without one; why_new=ship 6; seam=none
+    def test_an_unreadable_session_list_at_the_send_types_nothing
+      fake = FakeClaude.new
+      fake.sessions = nil
+      assert_equal :waiting, deliver(fake)
+      assert_empty fake.keys
+    end
+
+    # Value: protects=a clean back-out (input elsewhere) isn't retried every poll: 2, 4, 8… passes
+    # skipped, nothing spent; fails_when=the cooldown is dropped or never expires; why_new=ship 5
+    # red team (type-and-erase flicker); seam=none
+    def test_a_clean_back_out_backs_off_before_trying_again
+      fake = FakeClaude.new
+      fake.on_type = ->(f) { f.status = "busy" }
+      cooldown = {}
+      states = with_fake(fake) do
+        Array.new(4) { SessionName::Claude.sync(ws, "named-it", {}, [], cooldown) }
+      end
+      assert_equal [:waiting] * 4, states
+      assert_equal 1, fake.keys.count { |k| k.first == :literal }, "typed once, then two passes skipped"
+      fake.status = "idle"
+      fake.on_type = nil
+      assert_equal :done, with_fake(fake) { SessionName::Claude.sync(ws, "named-it", {}, [], cooldown) }, "it does retry"
+      assert_equal({ n: 1, skip: 0 }, cooldown.values.first, "a live session keeps its entry")
+      fake.present = false # the session exits
+      with_fake(fake) { SessionName::Claude.sync(ws, "named-it", {}, [], cooldown) }
+      assert_empty cooldown, "an exited session's back-off is dropped"
+    end
+
+    # Value: protects=a session renamed while backing off (by hand, or Claude caught up) ends as done
+    # at once, not after the skips; fails_when=the cooldown short-circuits the name check;
+    # why_new=ship 6 native adversarial; seam=none
+    def test_a_session_renamed_while_backing_off_is_done_at_once
+      fake = FakeClaude.new
+      fake.on_type = ->(f) { f.status = "busy" }
+      cooldown = {}
+      assert_equal :waiting, with_fake(fake) { SessionName::Claude.sync(ws, "named-it", {}, [], cooldown) }
+      assert_operator cooldown.values.first[:skip], :>, 0
+      fake.name = "named-it"
+      assert_equal :done, with_fake(fake) { SessionName::Claude.sync(ws, "named-it", {}, [], cooldown) }
+    end
+
+    # Value: protects=a /rename left in the box is reported as a leftover even while someone sits at
+    # the pane (doctor says failed_send, not "never found a safe moment"); fails_when=the held branch
+    # skips the box read; why_new=ship 5 red team; seam=none
+    def test_a_leftover_is_reported_while_someone_is_at_the_pane
+      fake = FakeClaude.new(focused: true, box: "/rename named-it")
+      held = []
+      assert_equal :leftover, with_fake(fake) { SessionName::Claude.sync(ws, "named-it", {}, held) }
+      assert_empty held
+      refute fake.typed?
+    end
+
+    # Value: protects=a half-erased line (a prefix of ours) still gets the notice; fails_when=only a
+    # full "/rename " prefix counts; why_new=ship 5 red team; seam=none
+    def test_a_partly_erased_leftover_still_posts_the_notice
+      fake = FakeClaude.new
+      fake.on_type = ->(f) { f.status = "busy" }
+      erased = 0
+      with_fake(fake) do
+        stub_method(Tmux, :send_keys, lambda { |_, *keys|
+          next fake.press(*keys) unless keys.first == "BSpace"
+
+          erased += 1
+          fake.box = "/rename " # only part of our line went
+        }) { assert_equal :failed_send, SessionName::Claude.sync(ws, "named-it") }
+      end
+      assert_equal 1, erased
+      assert_equal 1, fake.notices.size
+    end
+
+    # Value: protects=a key pressed during back-out's redraw wait (after input went quiet) still keeps
+    # the backspaces away; fails_when=the last pane read ignores recent input; why_new=ship 5; seam=none
+    def test_a_key_during_the_back_out_redraw_wait_gets_no_backspaces
+      fake = FakeClaude.new
+      fake.on_type = lambda { |f|
+        f.status = "busy"
+        f.focused = true # they moved in; input was quiet when back-out started
+      }
+      settles = 0
+      with_fake(fake) do
+        settle = SessionName::Claude::SETTLE
+        # SETTLE pauses: Enter's settle, back-out's settle, then box_stays?'s redraw wait
+        stub_method(SessionName, :pause, ->(secs) { fake.recent_input = true if secs == settle && (settles += 1) == 3 }) do
+          assert_equal :failed_send, SessionName::Claude.sync(ws, "named-it")
+        end
+      end
+      assert_equal [[:literal, "/rename named-it"]], fake.keys
+    end
+
+    # Value: protects=a /rename someone is typing themselves while at the pane isn't reported as our
+    # leftover (doctor would blame the worker); fails_when=any /rename counts; why_new=ship 5 red team; seam=none
+    def test_someone_typing_their_own_rename_at_the_pane_stays_held
+      fake = FakeClaude.new(focused: true, box: "/rename my-own")
+      held = []
+      assert_equal :held, with_fake(fake) { SessionName::Claude.sync(ws, "named-it", {}, held) }
+      assert_equal ["ttys001"], held
+    end
+
+    # Value: protects=our line with a key landed before it still gets the notice; fails_when=only a
+    # leading "/rename " counts; why_new=ship 5 security; seam=none
+    def test_our_line_behind_a_stray_key_still_posts_the_notice
+      fake = FakeClaude.new
+      fake.on_type = lambda { |f|
+        f.focused = true
+        f.box = "x/rename named-it"
+      }
+      assert_equal :failed_send, deliver(fake)
+      assert_equal 1, fake.notices.size
+    end
+
+    # Value: protects=the back-off doubles and stops at BACKOFF_CAP, and a cooled session retries;
+    # fails_when=a constant or unbounded skip; why_new=ship 5 testing; seam=none
+    def test_the_back_off_doubles_up_to_its_cap
+      cooldown = {}
+      skips = Array.new(6) do
+        SessionName::Claude.back_off(cooldown, :k)
+        cooldown[:k][:skip]
+      end
+      assert_equal [2, 4, 8, 16, SessionName::Claude::BACKOFF_CAP, SessionName::Claude::BACKOFF_CAP], skips
+      SessionName::Claude::BACKOFF_CAP.times { SessionName::Claude.cool(cooldown, :k) }
+      assert_equal 0, cooldown[:k][:skip]
+    end
+
+    # Value: protects=keys typed during back_out's slow ps checks (focus no longer gates them) keep
+    # every backspace away; fails_when=the box isn't re-read last; why_new=ship 4 pass 2 red team; seam=none
+    def test_typing_during_the_back_out_ps_checks_keeps_the_backspaces_away
+      fake = FakeClaude.new
+      fake.on_type = ->(f) { f.status = "busy" }
+      calls = 0
+      orig = SessionName::Claude.method(:still_claude?)
+      with_fake(fake) do
+        stub_method(SessionName::Claude, :still_claude?, lambda { |*a|
+          calls += 1
+          if calls == 2 # the pre-type check, then back_out's: a key arrives and is drawn
+            fake.box += "h"
+            fake.last_input = Time.now.to_i + 1
+          end
+          orig.call(*a)
+        }) { assert_equal :failed_send, SessionName::Claude.sync(ws, "named-it") }
+      end
+      assert_equal "/rename named-ith", fake.box
+      assert_equal [[:literal, "/rename named-it"]], fake.keys
+    end
+
+    # Value: protects=the cheap re-check ends as soon as any held pane frees or vanishes;
+    # fails_when=all? becomes any?, or a missing row counts as held; why_new=ship 4 pass 2; seam=none
+    def test_still_held_ends_when_any_held_pane_frees_or_vanishes
+      busy = { focused: true, recent_input: false }
+      free = { focused: false, recent_input: false }
+      stub_method(Tmux, :panes_by_tty, -> { { "ttys001" => busy, "ttys002" => free } }) do
+        refute SessionName::Claude.still_held?(%w[ttys001 ttys002]), "one freed"
+        refute SessionName::Claude.still_held?(%w[ttys001 ttys003]), "one vanished"
+        assert SessionName::Claude.still_held?(%w[ttys001])
+      end
+      stub_method(Tmux, :panes_by_tty, -> {}) { refute SessionName::Claude.still_held?(%w[ttys001]), "unreadable: full pass" }
+    end
+
+    # Value: protects=a key typed before back-out still keeps every backspace away (only an exact
+    # box gets them, now that focus doesn't); fails_when=back-out stops re-reading the box;
+    # why_new=D1 dropped focus from the back-out gate; seam=none
+    def test_typing_after_moving_in_keeps_the_backspaces_away
+      fake = FakeClaude.new
+      fake.on_type = lambda { |f|
+        f.focused = true
+        f.box += "h"
+      }
+      assert_equal :failed_send, deliver(fake)
+      assert_equal "/rename named-ith", fake.box
+      assert_equal [[:literal, "/rename named-it"]], fake.keys
+      assert_equal 1, fake.notices.size, "text left in a prompt someone is at is said now, not just in doctor"
+      assert_includes fake.notices.first, "/rename"
+    end
+
+    # Value: protects=no leftover notice when nothing of ours is left (someone replaced the line);
+    # fails_when=the notice fires on any failed back-out; why_new=ship 5; seam=none
+    def test_a_failed_back_out_with_no_rename_left_posts_no_notice
+      fake = FakeClaude.new
+      fake.on_type = lambda { |f|
+        f.focused = true
+        f.box = "hello"
+      }
+      assert_equal :failed_send, deliver(fake)
+      assert_empty fake.notices
+    end
+
+    # Value: protects=a clean back-out says nothing (no false alarm on the status line);
+    # fails_when=the leftover notice fires on every back-out; why_new=ship 5; seam=none
+    def test_a_clean_back_out_posts_no_notice
+      fake = FakeClaude.new
+      fake.on_type = ->(f) { f.status = "busy" }
+      assert_equal :waiting, deliver(fake)
+      assert_empty fake.notices
+    end
+
+    # Value: protects=a key that reached Claude but isn't drawn yet (~130 ms) keeps the backspaces
+    # away: tmux stamps it on arrival, so the last untouched? read sees it though the box doesn't;
+    # fails_when=back-out trusts the box read; why_new=ship 4 pass 3 testing; seam=none
+    def test_a_key_not_yet_drawn_at_back_out_keeps_the_backspaces_away
+      fake = FakeClaude.new
+      fake.on_type = ->(f) { f.status = "busy" }
+      calls = 0
+      orig = SessionName::Claude.method(:still_claude?)
+      with_fake(fake) do
+        stub_method(SessionName::Claude, :still_claude?, lambda { |*a|
+          fake.last_input = Time.now.to_i + 1 if (calls += 1) == 2 # back_out's check: arrived, undrawn
+          orig.call(*a)
+        }) { assert_equal :failed_send, SessionName::Claude.sync(ws, "named-it") }
+      end
+      assert_equal "/rename named-it", fake.box
+      assert_equal [[:literal, "/rename named-it"]], fake.keys
     end
 
     # Value: protects=a key typed (or a backspace on our text) during back_out's checks isn't
@@ -237,8 +645,8 @@ module Switchboard
         reads = 0
         panes = lambda {
           reads += 1
-          change.call(fake) if reads == 4 # snapshot, pre-type, pre-Enter, then back_out's pane check
-          { "ttys001" => { pane: "%1", visible: false, in_mode: false, synchronized: false, width: 120 } }
+          change.call(fake) if reads == 5 # snapshot, pre-type (twice), pre-Enter, then back_out's pane check
+          { "ttys001" => { pane: "%1", focused: false, recent_input: false, last_input: 0, sessions: ["$0"], in_mode: false, synchronized: false, width: 120 } }
         }
         assert_equal :failed_send, with_fake(fake, panes: panes) { SessionName::Claude.sync(ws, "named-it") }
         assert_equal left, fake.box
@@ -276,7 +684,7 @@ module Switchboard
     # half-drawn line; fails_when=back_out backspaces a prefix; why_new=run-3 Codex; seam=none
     def test_a_prefix_at_back_out_is_left_alone
       fake = FakeClaude.new(box: "/rena")
-      with_fake(fake) { assert_equal :failed_send, SessionName::Claude.back_out(4242, "start", "%1", "ttys001", "/rename named-it") }
+      with_fake(fake) { assert_equal :failed_send, SessionName::Claude.back_out(4242, "start", "%1", "ttys001", "/rename named-it", Time.now.to_i, ["$0"]) }
       assert_equal "/rena", fake.box
       assert_empty fake.keys
     end
@@ -317,7 +725,7 @@ module Switchboard
         panes = lambda {
           reads += 1
           change.call(fake) if reads == 2 # the pass snapshot, then the pre-typing re-read
-          { "ttys001" => { pane: "%1", visible: false, in_mode: false, synchronized: false, width: 120 } }
+          { "ttys001" => { pane: "%1", focused: false, recent_input: false, last_input: 0, sessions: ["$0"], in_mode: false, synchronized: false, width: 120 } }
         }
         assert_equal :waiting, with_fake(fake, panes: panes) { SessionName::Claude.sync(ws, "named-it") }, what
         refute fake.typed?, "typed after the #{what} changed"
@@ -337,7 +745,7 @@ module Switchboard
       panes = lambda {
         reads += 1
         early.claude_tty = "ttys009" if reads == 2 # moved during the pre-typing checks
-        { "ttys001" => { pane: "%1", visible: false, in_mode: false, synchronized: false, width: 120 } }
+        { "ttys001" => { pane: "%1", focused: false, recent_input: false, last_input: 0, sessions: ["$0"], in_mode: false, synchronized: false, width: 120 } }
       }
       assert_equal :waiting, with_fake(early, panes: panes) { SessionName::Claude.sync(ws, "named-it") }
       refute early.typed?
@@ -463,10 +871,10 @@ module Switchboard
     def test_an_unreadable_pane_list_after_typing_sends_no_more_keys
       fake = FakeClaude.new
       reads = 0
-      row = { pane: "%1", visible: false, in_mode: false, synchronized: false, width: 120 }
-      panes = -> { (reads += 1) <= 2 ? { "ttys001" => row } : nil } # pass snapshot + pre-type read, then gone
+      row = { pane: "%1", focused: false, recent_input: false, last_input: 0, sessions: ["$0"], in_mode: false, synchronized: false, width: 120 }
+      panes = -> { (reads += 1) <= 4 ? { "ttys001" => row } : nil } # pass snapshot, both pre-type reads, the send snapshot, then gone
       assert_equal :failed_send, with_fake(fake, panes: panes) { SessionName::Claude.sync(ws, "named-it") }
-      assert_operator reads, :>=, 3, "the pre-Enter re-read must actually run"
+      assert_operator reads, :>=, 5, "the pre-Enter re-read must actually run"
       assert_equal [[:literal, "/rename named-it"]], fake.keys, "typed once, then nothing"
     end
 
@@ -583,7 +991,7 @@ module Switchboard
       reads = 0
       panes = lambda {
         reads += 1
-        { "ttys001" => { pane: reads == 1 ? "%1" : "%9", visible: false, in_mode: false, synchronized: false, width: 120 } }
+        { "ttys001" => { pane: reads == 1 ? "%1" : "%9", focused: false, recent_input: false, last_input: 0, sessions: ["$0"], in_mode: false, synchronized: false, width: 120 } }
       }
       assert_equal :waiting, with_fake(fake, panes: panes) { SessionName::Claude.sync(ws, "named-it") }
       refute_includes fake.keys.flatten, "Enter"
@@ -772,6 +1180,58 @@ module Switchboard
       [result, slept]
     end
 
+    # Value: protects=a session held by someone at the keyboard costs one list-panes per poll,
+    # keeps 2 s polls, and lands as soon as they leave; fails_when=held polls run full passes, back
+    # off, or never re-check; why_new=ship 4 red team (polling cost while focused); seam=none
+    def test_a_held_session_is_rechecked_cheaply_and_lands_once_freed
+      dest = ws
+      fake = FakeClaude.new(focused: true)
+      passes = []
+      orig = SessionName::Claude.method(:sync)
+      result, slept = with_fake(fake) do
+        stub_method(SessionName::Claude, :sync, lambda { |*a|
+          passes << :full
+          orig.call(*a)
+        }) { run_worker(dest, "named-it") { |t| fake.focused = false if t >= 400 } } # past FAST_FOR
+      end
+      assert_equal :done, result
+      assert_equal [2] * 200, slept, "held polls stay fast, even past FAST_FOR"
+      assert_equal 15, passes.size, "a full pass per SLOW_CAP while held (0..390), then the one that lands"
+      assert_equal "named-it", fake.name
+    end
+
+    # Value: protects=a held worker still notices a session that exits (a full pass every
+    # SLOW_CAP); fails_when=the cheap re-check alone decides forever; why_new=ship 4; seam=none
+    def test_a_held_worker_still_runs_a_full_pass_every_slow_cap
+      dest = ws
+      fake = FakeClaude.new(focused: true)
+      full_at = []
+      now = nil
+      orig = SessionName::Claude.method(:sync)
+      result, = with_fake(fake) do
+        stub_method(SessionName::Claude, :sync, lambda { |*a|
+          full_at << now.to_i
+          orig.call(*a)
+        }) do
+          run_worker(dest, "named-it") do |t|
+            now = t
+            fake.present = false if t >= 60 # the session exits; its pane stays focused
+          end
+        end
+      end
+      assert_equal :gone, result
+      assert_equal [0, 30, 60], full_at.first(3).map { |t| t.nil? ? 0 : t }
+    end
+
+    # Value: protects=a pane focused for the whole hour ends as a ceiling verdict doctor shows, not
+    # an error; fails_when=:held has no ceiling verdict; why_new=ship 4 coverage; seam=none
+    def test_a_session_held_for_the_whole_hour_ends_at_the_ceiling
+      dest = ws
+      result, = with_fake(FakeClaude.new(focused: true)) { run_worker(dest, "named-it") }
+      assert_equal :ceiling, result
+      assert_equal [{ path: File.realpath(dest), kind: "ceiling", name: "named-it" }], SessionName::Outcome.all
+    end
+
     def test_work_stops_once_the_session_is_named_and_clears_old_outcomes
       dest = ws
       SessionName::Outcome.record(dest, :ceiling, "named-it")
@@ -787,8 +1247,8 @@ module Switchboard
       dest = ws
       result, slept = with_fake(FakeClaude.new(status: "busy")) { run_worker(dest, "named-it") }
       assert_equal :ceiling, result
-      assert_equal [2] * 15 + [4, 8, 16], slept.first(18)
-      assert_equal [30], slept.drop(18).uniq
+      assert_equal [2] * 150 + [4, 8, 16], slept.first(153) # 5 minutes of 2 s polls is a choice (ship 4)
+      assert_equal [30], slept.drop(153).uniq
       assert_equal [{ path: File.realpath(dest), kind: "ceiling", name: "named-it" }], SessionName::Outcome.all
     end
 

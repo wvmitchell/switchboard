@@ -16,14 +16,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # The stdlib-Minitest suite + the YAML.safe_load_file floor; 3.0 is the
-        # documented minimum, 3.3 a current release. No `bundle install` — the
-        # whole point is zero gem dependencies on a clean runner. setup-ruby has
-        # no 3.0 build for ubuntu-26.04 (ubuntu-latest since 2026-10), so the
-        # floor stays pinned to 24.04.
+        # The stdlib-Minitest suite on the documented floor (3.3, the oldest Ruby
+        # still getting security fixes upstream — #35) and the newest release, the
+        # one Homebrew's `ruby` hands formula installs. No `bundle install` — the
+        # whole point is zero gem dependencies on a clean runner.
         include:
-          - { ruby: '3.0', os: ubuntu-24.04 }
           - { ruby: '3.3', os: ubuntu-latest }
+          - { ruby: '4.0', os: ubuntu-latest }
     name: ruby ${{ matrix.ruby }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

@@ -17,8 +17,8 @@ These are not negotiable — they're the project's identity:
 1. **Zero gem dependencies.** Stdlib only. No Gemfile, no `bundle install`, no
    build step. Everything is Ruby stdlib plus shelling out to `tmux`, `git`, and
    `gh`. If you reach for a gem, find another way.
-2. **Ruby ≥ 3.0.** `Config` uses `YAML.safe_load_file` (Psych 3.3 / Ruby 3.0).
-   CI runs `3.0` and `3.3`. Don't use syntax newer than 3.0 supports.
+2. **Ruby ≥ 3.3**, the oldest Ruby still getting security fixes upstream (#35).
+   CI runs `3.3` and `4.0`. Don't use syntax newer than 3.3 supports.
 3. **The UI degrades, it never crashes.** Every shell-out escapes its args with
    `Shellwords` and swallows stderr; every failure path returns `[]`/`{}`/`nil`
    rather than raising into the sidebar. A long-lived TUI with a person watching
@@ -127,7 +127,7 @@ without it and asserts an untrusted block writes no state (the case behind `doct
    that fails before and passes after.
 3. `bin/test` is green locally.
 4. Open a PR against `main`. CI (`.github/workflows/test.yml`) runs the suite on
-   Ruby 3.0 and 3.3.
+   Ruby 3.3 and 4.0.
 
 Keep changes focused. If you spot adjacent tech debt, note it in
 [TODOS.md](TODOS.md) (which records *what*, *why*, and *where to start* for
