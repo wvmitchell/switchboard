@@ -15,8 +15,8 @@ refer to the project's earlier, private repository; the public tracker starts at
 ### Fixed
 - A sidebar marks its pane while it swaps in new code, and replaces the mark once it's up.
   If that second write failed, every later `switchboard upgrade` or `reload-sidebars` skipped
-  that sidebar and left it on old code. It now retries the write a few times. A sidebar that
-  failed to reload also stays reported as failed until new code actually starts in it.
+  that sidebar and left it on old code. It now retries the write a few times, and a retry
+  never hides a reload that failed: `switchboard doctor` still lists that sidebar.
 - A sidebar already stuck this way can't fix itself, because it's running the old code.
   Homebrew installs swap it on their own when you upgrade. On a git-clone install, press your
   sidebar toggle key twice in that session once.
