@@ -223,6 +223,46 @@ module Switchboard
       assert_equal [:locate], log, "inside POKE_TTL the poke only locates, reload pending or not"
     end
 
+    # Value: protects=a switch-in reload that adds a row above the cursor leaves it on the same
+    # workspace, so a key read with the poke acts on what was selected; fails_when=the reload
+    # keeps the row index instead of its identity; seam=none
+    def test_the_switch_in_reload_keeps_the_cursor_on_its_workspace
+      sb = sidebar(nodes: [proj("app"), ws("b", path: "/wt/b")], cursor: 1)
+      grown = [proj("app"), ws("a", path: "/wt/a"), ws("b", path: "/wt/b")] # "a" made in another session
+      sb.define_singleton_method(:reload) do |**|
+        @nodes = grown
+        recompute_rows
+      end
+      stub_method(Tmux, :visible?, ->(*) { true }) { sb.send(:reload_and_refresh) }
+      assert_equal "/wt/b", sb.send(:current).path
+    end
+
+    # Value: protects=a switch-in inside POKE_TTL with a reload pending hands the new image a
+    # silent first scan (no catch-up re-baselined it); fails_when=the announce stamp survives;
+    # seam=none
+    def test_a_throttled_switch_in_hands_over_a_silent_payload
+      sb, = reloading(visible: false)
+      sb.send(:request_reload)
+      sb.instance_variable_set(:@last_reload, sb.send(:monotonic))
+      sb.instance_variable_set(:@last_announce_scan, sb.send(:monotonic)) # rang just before leaving
+      sb.define_singleton_method(:locate) { nil }
+      stub_method(Tmux, :visible?, ->(*) { true }) { sb.send(:reload_and_refresh) }
+      refute CodeReload.decode(sb.send(:resume_payload))[:announce]
+    end
+
+    # Value: protects=the caught-up tree is on screen while the preflight runs (up to 3s), not
+    # the frame from before the switch; fails_when=reexec checks before it paints; seam=none
+    def test_reexec_paints_before_its_preflight
+      order = []
+      sb = sidebar(nodes: [proj("app"), ws("a")])
+      sb.define_singleton_method(:render) { order << :render }
+      exec_sidebar(preflight: :failed, sb: sb) { flunk "no exec" }
+      stub_method(CodeReload, :preflight, ->(*, **) { order << :preflight; :failed }) do
+        stub_method(Tmux, :flag_failed_reload, ->(*) {}) { sb.send(:reexec) }
+      end
+      assert_equal %i[render preflight], order.last(2)
+    end
+
     # Value: protects=a switch-in with a code reload pending catches up silently BEFORE the swap,
     # and a key read in the same batch as the poke acts on that caught-up tree; fails_when=the
     # pending-reload skip comes back, or the catch-up moves to the loop top or after exec; seam=none

@@ -682,7 +682,10 @@ checkout. Nothing can repoint a sidebar at another install.
     once. The switch-in still runs its usual silent reload first (throttled by `reload_due?`,
     like any switch-in): keys read with the poke act on the tree before the loop top swaps,
     the swap may fail, and the new image must baseline against that reload or it replays
-    chimes.
+    chimes. Inside POKE_TTL there is no catch-up scan, so the switch-in drops
+    `@last_announce_scan` and the swap's first scan is silent. That reload keeps the cursor
+    by row identity (`keep_cursor`), and `reexec` paints before its preflight, so the
+    caught-up tree is on screen during the check.
   - It's never due under `?`, QR or `/`, never mid-prompt (prompts block the loop), and
     never with half an escape sequence in `@pending`: the new image would read its tail
     (`O`, from focus-out) as a key. All of these live in `reexec_allowed?`, which

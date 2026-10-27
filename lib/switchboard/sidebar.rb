@@ -925,7 +925,12 @@ module Switchboard
       # (paint + reload) and reintroduce the off-screen work this change removes.
       set_visible(Tmux.visible?(ENV["TMUX_PANE"]))
       return locate unless @visible    # hidden background poke: badges are cached, nothing to paint
-      return locate unless reload_due? # coalesce a rapid switch storm into one heavy reload
+      unless reload_due? # coalesce a rapid switch storm into one heavy reload
+        # No catch-up scan here, so a swap right after must start silent: its baseline
+        # predates whatever another pane rang while we were away (#48).
+        @last_announce_scan = nil if @reload_requested
+        return locate
+      end
 
       # Marking @visible=true above also consumes the off->on edge: the next tick sees
       # @visible already true, so its catch-up branch won't reload a second time.
@@ -933,8 +938,9 @@ module Switchboard
       # arrived (the next genuine completion, scanned while we're here, still rings).
       # It runs even with a code reload due: keys read with this poke act on the tree
       # before the loop top swaps, the swap may fail, and the new image's first scan
-      # baselines against this one, or it would replay chimes (#48).
-      reload(announce_sounds: false)
+      # baselines against this one, or it would replay chimes (#48). The cursor keeps
+      # its row's identity: rows added elsewhere would otherwise shift it under the keys.
+      keep_cursor { reload(announce_sounds: false) }
       project = @current_path && project_for_path(@current_path)
       maybe_refresh_prs(project) if project && Pr.stale?(project, NAV_TTL)
     end
@@ -1055,6 +1061,7 @@ module Switchboard
       @reload_requested = false
       @reexec_at = nil
       bin = ENV["SWITCHBOARD_BIN"] or return
+      render if @visible # the loop top runs before its paint: show the caught-up tree during the check
       root = CodeReload.current_root(bin)
       payload = resume_payload
       case CodeReload.preflight(bin, "sidebar", "--check", env: { CodeReload::RESUME_ENV => payload })
