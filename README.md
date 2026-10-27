@@ -51,6 +51,12 @@ its `⇅` grey and is counted as an **idle link**, so a door you opened and forg
 doesn't stay open unnoticed. Press `p` on a `⇅` row to show its link as a QR code,
 and your phone's camera opens that exact session.
 
+Renaming a workspace **renames its Claude session too**, so your phone's session list
+and Claude's resume picker show the workspace's name, not the first one Claude gave
+it. No agent has a rename API, so switchboard types `/rename <name>` into the agent's
+pane, and only when that's safe: between turns, while you're looking at another
+window, into an empty prompt. Turn it off with `sync_session_name: false`.
+
 ## Why
 
 Coding agents pay off in parallel — several at once, each in its own worktree.

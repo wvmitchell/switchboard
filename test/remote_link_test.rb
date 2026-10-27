@@ -462,7 +462,9 @@ module Switchboard
       write_session("3", cwd: w, procStart: "Thu Jan  1 00:00:00 2026") # live pid, start time moved
       File.write(File.join(RemoteLink.sessions_dir, "bad.json"), "{")
       h = as_claude { RemoteLink.health }
-      assert_equal({ dir: RemoteLink.sessions_dir, files: 4, shaped: 3, alive: 3, drift: 1, linked: 1 }, h)
+      assert_equal({ dir: RemoteLink.sessions_dir, files: 4, shaped: 3, alive: 3, drift: 1, linked: 1,
+                     verified: 2, odd_status: 0, unnamed: 0,
+                     matched: 2, unknown_kind: 0 }, h)
     end
 
     # Value: protects=a lone crash leftover whose pid now runs some OTHER program (pid 1) is
@@ -556,6 +558,114 @@ module Switchboard
       boom = ->(d) { d.is_a?(Hash) && d["name"] == "BOOM" ? raise("odd") : real.call(d) }
       links = stub_method(RemoteLink, :record, boom) { stub_method(ProcessIdentity, :same?, ->(*) { true }) { scan([w])[w] } }
       assert_equal ["session_good"], links.map(&:bridge_id)
+    end
+
+    # --- sessions_in: SessionName's reader (every live session in a workspace, linked or not) ---
+
+    def sessions_in(path, cwds)
+      stub_method(Agents, :cwds_of, ->(*) { cwds }) { ClaudeSessions.sessions_in(path) }
+    end
+
+    def test_sessions_in_finds_an_unlinked_session_by_its_kernel_cwd_with_name_and_status
+      w = wt("alpha")
+      write_session("1", cwd: "/somewhere/else", bridgeSessionId: :absent, name: "old-xy", status: "idle")
+      found = sessions_in(w, { Process.pid => File.join(w, "sub") })
+      assert_equal [[Process.pid, "old-xy", "idle"]], found.map { |s| s.values_at(:pid, :name, :status) }
+    end
+
+    # Value: protects=keys are never typed into a session another workspace owns; fails_when=
+    # sessions_in falls back to the recorded cwd like scan does; why_new=new reader; seam=none
+    def test_sessions_in_never_falls_back_to_the_recorded_cwd
+      w = wt("alpha")
+      write_session("1", cwd: w)
+      assert_empty sessions_in(w, { Process.pid => wt("alphabet") }), "a sibling sharing the prefix isn't inside"
+    end
+
+    # Value: protects=a failed lsof waits instead of reading as "nobody here" (which ends the
+    # worker silently); fails_when=an empty lsof answer returns []; why_new=red-team; seam=none
+    def test_sessions_in_is_nil_when_lsof_places_no_live_session
+      w = wt("alpha")
+      write_session("1", cwd: w)
+      assert_nil sessions_in(w, {})
+    end
+
+    # Value: protects=lsof answering for only SOME live pids is "can't tell", not "not here";
+    # fails_when=only an all-empty answer returns nil; why_new=pass-3 red team; seam=none
+    def test_sessions_in_is_nil_when_lsof_misses_any_live_session
+      w = wt("alpha")
+      other = Process.spawn("sleep", "30", out: File::NULL, err: File::NULL)
+      write_session("1", cwd: w)
+      write_session("2", cwd: w, pid: other, procStart: ProcessIdentity.start_of(other))
+      assert_nil sessions_in(w, { Process.pid => w })
+      refute_nil sessions_in(w, { Process.pid => w, other => w })
+    ensure
+      if other
+        Process.kill("TERM", other)
+        Process.wait(other)
+      end
+    end
+
+    # Value: protects=one Claude lsof can't place elsewhere doesn't stall every workspace, and a
+    # session in a worktree nested inside this one is its own; fails_when=any unplaced pid
+    # returns nil, or prefix matching takes nested worktrees; why_new=ship-2 red team; seam=none
+    def test_sessions_in_ignores_an_unplaced_session_elsewhere_and_nested_worktrees
+      w = wt("alpha")
+      nested = File.join(w, ".claude", "worktrees", "side")
+      FileUtils.mkdir_p(nested)
+      File.write(File.join(nested, ".git"), "gitdir: elsewhere\n")
+      other = Process.spawn("sleep", "30", out: File::NULL, err: File::NULL)
+      write_session("1", cwd: w)
+      write_session("2", cwd: wt("elsewhere"), pid: other, procStart: ProcessIdentity.start_of(other))
+      assert_equal [Process.pid], sessions_in(w, { Process.pid => File.join(w, "sub") }).map { |x| x[:pid] }
+      assert_empty sessions_in(w, { Process.pid => nested, other => wt("elsewhere") })
+    ensure
+      if other
+        Process.kill("TERM", other)
+        Process.wait(other)
+      end
+    end
+
+    def test_health_counts_live_sessions_of_a_kind_switchboard_doesnt_know
+      w = wt("alpha")
+      write_session("1", cwd: w, kind: "repl")
+      assert_equal [1, 1, 0], as_claude { RemoteLink.health }.values_at(:matched, :unknown_kind, :verified)
+    end
+
+    def test_health_canaries_count_interactive_sessions_only
+      w = wt("alpha")
+      write_session("1", cwd: w, kind: "bg", status: "pondering", name: :absent)
+      assert_equal [0, 0, 0], as_claude { RemoteLink.health }.values_at(:verified, :odd_status, :unnamed)
+    end
+
+    # Value: protects=only interactive sessions (a prompt of ours) are typed into; fails_when=
+    # the filter is a bg denylist again; why_new=red-team; seam=none
+    def test_sessions_in_takes_interactive_sessions_only
+      w = wt("alpha")
+      write_session("1", cwd: w, kind: "print")
+      write_session("2", cwd: w, kind: :absent)
+      assert_empty sessions_in(w, { Process.pid => w })
+    end
+
+    def test_sessions_in_skips_background_jobs_dead_pids_and_drifted_start_times
+      w = wt("alpha")
+      write_session("1", cwd: w, kind: "bg")
+      write_session("2", cwd: w, pid: 2**22 + 12_345) # not running
+      write_session("3", cwd: w, procStart: "Thu Jan  1 00:00:00 2026")
+      assert_empty sessions_in(w, { Process.pid => w, 2**22 + 12_345 => w })
+    end
+
+    def test_sessions_in_reads_a_non_string_name_as_nil
+      w = wt("alpha")
+      write_session("1", cwd: w, name: 42)
+      assert_nil sessions_in(w, { Process.pid => w }).first[:name]
+    end
+
+    def test_health_counts_live_sessions_with_a_status_value_switchboard_doesnt_know
+      w = wt("alpha")
+      write_session("1", cwd: w, status: "idle")
+      write_session("2", cwd: w, status: "pondering")
+      write_session("3", cwd: w, status: :absent)
+      assert_equal [3, 2], as_claude { RemoteLink.health }.values_at(:verified, :odd_status)
     end
   end
 end

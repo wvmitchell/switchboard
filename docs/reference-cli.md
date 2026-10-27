@@ -230,6 +230,12 @@ non-zero — switchboard doesn't guess a name; you (or the agent) supply it.
 > hand. Set `auto_rename: false` to opt out. (`switchboard rename-nudge` is the internal
 > subcommand that hook runs; not for direct use.)
 
+> **The Claude session gets the name too.** Inside tmux, a rename starts a background
+> worker that types `/rename <name>` into the workspace's live Claude session once it's
+> idle and off screen, so the phone's session list and the resume picker follow. Renaming
+> to the current name retries it. See [`sync_session_name`](reference-config.md#sync_session_name).
+> (`switchboard sync-session-name` is that worker; not for direct use.)
+
 > **After a rename, `cd` into the new path.** The move leaves a symlink bridge at
 > the old path (so a running agent's hooks keep resolving), but your interactive
 > shell's `pwd` still reports the old name. The command prints the exact `cd` to

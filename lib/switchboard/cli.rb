@@ -35,6 +35,7 @@ module Switchboard
       when "disable-hooks"     then disable_hooks(argv[1])
       when "rename"            then exit(1) unless rename(argv[1])
       when "rename-nudge"      then rename_nudge(argv.drop(1))
+      when "sync-session-name" then sync_session_name(argv[1], argv[2])
       when "monitoring"        then monitoring(argv[1], argv[2])
       when "monitoring-nudge"  then monitoring_nudge(argv.drop(1))
       when "sound"             then play_sound(argv[1])
@@ -158,6 +159,22 @@ module Switchboard
 
       Process.daemon(true, true)
       Creator.work(config, id)
+    rescue StandardError
+      nil
+    end
+
+    # Session-name worker (Rename.perform spawns it, inside tmux only). Daemonized like
+    # the reaper so the pane that ran the rename can close under it; it may wait up to
+    # SessionName::CEILING for a safe moment to type.
+    def sync_session_name(dest, name)
+      return unless dest && name
+      # Typing into panes is only for a switchboard workspace — not a parent dir (which
+      # would reach every Claude under it) or anything else this public verb is handed.
+      wt = current_worktree(dest)
+      return unless wt && !wt.primary && real_path(wt.path) == real_path(dest)
+
+      Process.daemon(true, true)
+      SessionName.work(dest, name)
     rescue StandardError
       nil
     end
@@ -516,6 +533,7 @@ module Switchboard
         false
       when :unchanged
         puts "already named #{File.basename(result.dest)}"
+        announce_session_sync(result)
         true
       when :invalid
         warn "invalid name — must be letters/digits/. - _ (no `/`) and a valid git branch name"
@@ -542,6 +560,17 @@ module Switchboard
       target = sub.empty? ? result.dest : File.join(result.dest, sub)
       puts "renamed to #{result.dest}"
       puts "  cd into the new path: cd #{Shellwords.escape(target)}"
+      announce_session_sync(result)
+    end
+
+    # Usually an agent ran the rename, and it's about to see Claude's "session renamed"
+    # note appear as if the user typed /rename — say up front that it's switchboard's.
+    def announce_session_sync(result)
+      return unless result.spawned
+
+      leaf = File.basename(result.dest)
+      puts "  any live Claude session here will be renamed to #{leaf} too, #{SessionName::WHEN} — " \
+           "a note that the session was named #{leaf} is switchboard syncing it, not a new request"
     end
 
     # Agent hook entry (#92): nudge the agent to `switchboard rename` while this
@@ -730,7 +759,34 @@ module Switchboard
       doctor_sounds
       doctor_sessions
       doctor_remote_links
+      doctor_session_names
       doctor_orphan_sidebars
+    end
+
+    # Session-name sync types into Claude's pane, so it reports what it couldn't do
+    # (SessionName::Outcome) and canaries the session-file fields it relies on: `status`
+    # (it gates on it) and `name` (it confirms by it). Silent when there's nothing to say.
+    def doctor_session_names
+      SessionName::Outcome.all.each do |o|
+        retry_hint = "retry with `switchboard rename #{o[:name]}` from inside it"
+        retry_hint = "clear that prompt, then #{retry_hint}" if o[:kind] == SessionName::Outcome::FAILED_SEND
+        puts "  \e[33m–\e[0m session name: #{o[:path]} — #{SessionName::Outcome::MESSAGES.fetch(o[:kind], o[:kind])}; #{retry_hint}"
+      end
+      h = RemoteLink.health
+      if h[:matched].positive? && h[:unknown_kind] == h[:matched]
+        return puts row(false, "session names: no live Claude session reports a kind switchboard knows " \
+                               "(#{RemoteLink::KINDS.join('/')}) — Claude changed the format; renames won't reach the session")
+      end
+      return unless h[:verified].positive?
+
+      if h[:odd_status] == h[:verified]
+        puts row(false, "session names: no live Claude session reports a status switchboard knows " \
+                        "(#{RemoteLink::STATUSES.join('/')}) — Claude changed the format; renames won't reach the session")
+      end
+      return unless h[:unnamed] == h[:verified]
+
+      puts row(false, "session names: no live Claude session records a name — Claude changed the format; " \
+                      "renames can't be confirmed")
     end
 
     # The ⇅ glyph reads Claude's UNDOCUMENTED per-session files, and degrades to "no
@@ -1249,7 +1305,7 @@ module Switchboard
           switchboard refresh      re-fetch PR badges from gh (normally automatic)
           switchboard enable-hooks [P]   wire agent-state dots in a worktree (default: cwd)
           switchboard disable-hooks [P]  remove them from that worktree
-          switchboard rename NAME    rename the current workspace (dir + tmux session)
+          switchboard rename NAME    rename the current workspace (dir + tmux session + Claude session name)
           switchboard monitoring on [secs]|off  flag this workspace as running a background monitor (∞; optional secs = liveness ttl for slow loops; bare = status)
           switchboard monitoring notify  (from a monitored workspace) surface this cycle's output — bold + a distinct alert sound, even though routine ticks stay silent
           switchboard sound [done|waiting|alert]  play a state's sound (try audio / pick sounds)

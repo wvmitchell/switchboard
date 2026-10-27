@@ -772,5 +772,25 @@ module Switchboard
         assert_equal ["echo", Creation.notice(:reentry_building)], Shellwords.split(captured), state
       end
     end
+
+    # Value: protects=a sidebar rename tells YOU the Claude session will follow (its agent sees
+    # /rename appear); fails_when=the notice is dropped or fires when no worker spawned;
+    # why_new=red-team (the CLI had the notice, the sidebar didn't); seam=none
+    def test_rename_posts_a_status_line_notice_only_when_the_session_sync_spawned
+      File.write(Config.path, YAML.dump("projects" => [{ "name" => "app", "path" => "/repos/app" }]))
+      [[true, 1], [false, 0]].each do |spawned, notices|
+        sb = sidebar(nodes: [proj("app"), ws("old")], cursor: 1)
+        sb.instance_variable_set(:@config, Config.new)
+        said = []
+        stub_method(sb, :prompt_line, ->(*, **) { "new" }) do
+          stub_method(sb, :reload, -> {}) do
+            stub_method(Rename, :perform, ->(*) { Rename::Result.new(:ok, "/wt/new", spawned) }) do
+              stub_method(Tmux, :notify, ->(msg) { said << msg }) { sb.send(:rename) }
+            end
+          end
+        end
+        assert_equal notices, said.grep(/Claude session there will be renamed/).size, "spawned=#{spawned}"
+      end
+    end
   end
 end

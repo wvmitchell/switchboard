@@ -511,7 +511,7 @@ module Switchboard
     end
 
     def live_session(**over)
-      { "pid" => Process.pid, "cwd" => @dir, "sessionId" => "s",
+      { "pid" => Process.pid, "cwd" => @dir, "sessionId" => "s", "kind" => "interactive",
         "procStart" => ProcessIdentity.start_of(Process.pid), "bridgeSessionId" => "session_x" }.merge(over)
     end
 
@@ -2096,6 +2096,106 @@ module Switchboard
       end
     ensure
       File.chmod(0o600, path) if path && File.file?(path)
+    end
+
+    # --- session-name sync (SessionName): the agent notice, the worker verb, doctor ---
+
+    def test_a_rename_that_spawned_the_sync_tells_the_agent_the_coming_note_is_switchboards
+      stub_method(CLI, :current_worktree, -> { Worktree.new(project: "proj", path: "/x", primary: false) }) do
+        stub_method(Rename, :perform, ->(*) { Rename::Result.new(:ok, "/wts/proj/new", true) }) do
+          out = capture { assert CLI.rename("new") }
+          assert_match(/Claude session here will be renamed to new too/, out)
+          assert_match(/switchboard syncing it, not a new request/, out)
+        end
+        stub_method(Rename, :perform, ->(*) { Rename::Result.new(:unchanged, "/wts/proj/new", true) }) do
+          assert_match(/renamed to new too/, capture { assert CLI.rename("new") })
+        end
+        stub_method(Rename, :perform, ->(*) { Rename::Result.new(:ok, "/wts/proj/new") }) do
+          refute_match(/Claude session/, capture { assert CLI.rename("new") })
+        end
+      end
+    end
+
+    def test_run_sync_session_name_daemonizes_then_runs_the_worker
+      calls = []
+      dir = path("wts", "proj", "new")
+      FileUtils.mkdir_p(dir)
+      wt = Worktree.new(project: "proj", path: dir, primary: false)
+      stub_method(Process, :daemon, ->(*a) { calls << [:daemon, *a] }) do
+        stub_method(SessionName, :work, ->(*a) { calls << [:work, *a] }) do
+          stub_method(CLI, :current_worktree, ->(*) { wt }) { CLI.run(["sync-session-name", dir, "new"]) }
+          CLI.run(%w[sync-session-name])
+        end
+      end
+      assert_equal [[:daemon, true, true], [:work, dir, "new"]], calls
+    end
+
+    # Value: protects=the public verb types only into a switchboard workspace; fails_when=a
+    # parent dir reaches every Claude under it; why_new=pass-3 security; seam=none
+    def test_sync_session_name_refuses_anything_but_a_non_primary_worktree
+      calls = []
+      dir = path("wts", "proj", "new")
+      FileUtils.mkdir_p(dir)
+      [nil, Worktree.new(project: "proj", path: dir, primary: true),
+       Worktree.new(project: "proj", path: path("wts", "proj"), primary: false)].each do |wt|
+        stub_method(Process, :daemon, ->(*a) { calls << a }) do
+          stub_method(SessionName, :work, ->(*a) { calls << a }) do
+            stub_method(CLI, :current_worktree, ->(*) { wt }) { CLI.run(["sync-session-name", dir, "new"]) }
+          end
+        end
+      end
+      assert_empty calls
+    end
+
+    def test_doctor_lists_session_name_failures_with_the_retry
+      ws = path("wts", "proj", "named")
+      FileUtils.mkdir_p(ws)
+      SessionName::Outcome.record(ws, :failed_send, "named")
+      out = capture { CLI.send(:doctor_session_names) }
+      assert_includes out, "session name: #{File.realpath(ws)}"
+      assert_includes out, "text may be left in the prompt"
+      assert_includes out, "clear that prompt, then retry with `switchboard rename named`"
+    end
+
+    def test_doctor_session_names_flags_status_values_it_doesnt_know_and_is_silent_otherwise
+      write_claude_session("1", live_session("status" => "pondering", "name" => "a"))
+      out = stub_method(RemoteLink, :claude_pids, ->(pids) { pids.map(&:to_i).to_set }) { capture { CLI.send(:doctor_session_names) } }
+      assert_match(/Claude changed the format; renames won't reach the session/, out)
+      write_claude_session("1", live_session("status" => "idle", "name" => "a"))
+      out = stub_method(RemoteLink, :claude_pids, ->(pids) { pids.map(&:to_i).to_set }) { capture { CLI.send(:doctor_session_names) } }
+      assert_empty out
+    end
+
+    # Value: protects=the format canary fires only when EVERY live session's status is
+    # unknown; fails_when=one odd session (a new transient status) trips it; why_new=the
+    # test above has one session at a time; seam=none; no_claim=real Claude status values
+    def test_doctor_session_names_stays_silent_when_only_some_statuses_are_unknown
+      # Value: protects=doctor raises no format alarm when no Claude session is open (0 of 0 isn't
+      # "every"); fails_when=the verified.positive? gate is dropped; why_new=every canary test seeds
+      # a live session; seam=none; no_claim=none beyond protects
+      assert_empty capture { CLI.send(:doctor_session_names) }, "no sessions, nothing to say"
+      write_claude_session("1", live_session("status" => "pondering", "name" => "a"))
+      write_claude_session("2", live_session("status" => "idle", "name" => "b"))
+      out = stub_method(RemoteLink, :claude_pids, ->(pids) { pids.map(&:to_i).to_set }) { capture { CLI.send(:doctor_session_names) } }
+      assert_empty out
+    end
+
+    # Value: protects=doctor notices Claude dropping/renaming the `name` field the worker confirms
+    # by; fails_when=the name canary is removed; why_new=red-team (unconfirmed loop); seam=none
+    def test_doctor_session_names_flags_sessions_of_an_unknown_kind
+      write_claude_session("1", live_session("kind" => "repl", "status" => "idle", "name" => "a"))
+      out = stub_method(RemoteLink, :claude_pids, ->(pids) { pids.map(&:to_i).to_set }) { capture { CLI.send(:doctor_session_names) } }
+      assert_match(/no live Claude session reports a kind switchboard knows/, out)
+    end
+
+    def test_doctor_session_names_flags_sessions_without_a_name_and_explains_unconfirmed
+      write_claude_session("1", live_session("status" => "idle"))
+      out = stub_method(RemoteLink, :claude_pids, ->(pids) { pids.map(&:to_i).to_set }) { capture { CLI.send(:doctor_session_names) } }
+      assert_match(/no live Claude session records a name/, out)
+      ws = path("wts", "proj", "named")
+      FileUtils.mkdir_p(ws)
+      SessionName::Outcome.record(ws, :unconfirmed, "named")
+      assert_match(/Claude never showed the new name/, capture { CLI.send(:doctor_session_names) })
     end
 
     private
