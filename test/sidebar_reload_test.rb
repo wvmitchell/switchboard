@@ -177,13 +177,116 @@ module Switchboard
       assert_equal [:exec], execs, "D2: switch in before it reloaded, see it within a second"
     end
 
-    def test_the_switch_poke_skips_its_reload_when_one_is_due
+    # Value: protects=a turn that finished while this pane was away rings nowhere across a switch-in
+    # swap: the payload carries the silent catch-up's baseline; fails_when=the swap runs before the
+    # switch-in scan, or that scan stops advancing the baseline; why_new=the ordering test stubs
+    # reload, so no real scan feeds a real payload; seam=none; no_claim=the new image's real boot
+    # (payload decoded into a fresh Edges; rebuild, diffs, PR/update spawns stubbed)
+    def test_a_switch_in_swap_carries_the_catch_up_baseline_so_nothing_replays
+      a = real_dir("a")
+      sb, = reloading(visible: false)
+      sb.instance_variable_set(:@nodes, [proj("app"), ws("a", path: a)])
+      sb.instance_variable_get(:@edges).restore_baseline(hook_states: { a => :thinking }, notify: {}) # left mid-turn
+      as = Struct.new(:last_hook_states).new({ a => :done })                                          # finished while away
+      as.define_singleton_method(:scan) { |_paths, hooks_only: false| { a => :done } }
+      sb.instance_variable_set(:@agent_state, as)
+      %i[rebuild locate refresh_diffs maybe_check_update].each { |m| sb.define_singleton_method(m) { |*| nil } }
+      sb.instance_variable_get(:@edges).define_singleton_method(:refresh_stale_prs) { |*| nil }
+      sb.instance_variable_get(:@edges).define_singleton_method(:maybe_refresh_prs) { |*| nil }
+      payload = nil
+      sb.define_singleton_method(:reexec) { payload = CodeReload.decode(resume_payload) }
+      sounds = []
+      stub_method(Sound, :play, ->(spec, **) { sounds << spec }) do
+        sb.send(:request_reload)
+        stub_method(Tmux, :visible?, ->(*) { true }) { sb.send(:reload_and_refresh) }
+        sb.send(:maybe_reexec)
+        refute_nil payload, "the swap still happens after the catch-up"
+        assert_equal({ a => :done }, payload[:hook_states], "the payload is the catch-up's baseline")
+        refute payload[:announce], "a silent catch-up doesn't license the new image's first scan to ring"
+        fresh = Sidebar::Edges.new
+        fresh.restore_baseline(hook_states: payload[:hook_states], notify: payload[:notify])
+        assert_empty fresh.on_scan({ a => :done }, monitoring: Set.new, nodes: [ws("a", path: a)], config: Config.new,
+                                                   current_path: nil, announce_sounds: true, refresh_prs: false),
+                     "the new image sees no edge for a turn the old one already caught up on"
+      end
+      assert_empty sounds, "rung by the pane on screen when it finished, never again here"
+    end
+
+    def test_a_switch_storm_still_coalesces_with_a_reload_pending
       sb, = reloading(visible: false)
       sb.send(:request_reload)
-      reloads = 0
-      sb.define_singleton_method(:reload) { |**| reloads += 1 }
+      sb.instance_variable_set(:@last_reload, sb.send(:monotonic)) # reloaded just now
+      log = []
+      sb.define_singleton_method(:reload) { |**| log << :reload }
+      sb.define_singleton_method(:locate) { log << :locate }
       stub_method(Tmux, :visible?, ->(*) { true }) { sb.send(:reload_and_refresh) }
-      assert_equal 0, reloads, "the new image's first reload replaces this one"
+      assert_equal [:locate], log, "inside POKE_TTL the poke only locates, reload pending or not"
+    end
+
+    # Value: protects=a switch-in reload that adds a row above the cursor leaves it on the same
+    # workspace, so a key read with the poke acts on what was selected; fails_when=the reload
+    # keeps the row index instead of its identity; seam=none
+    def test_the_switch_in_reload_keeps_the_cursor_on_its_workspace
+      sb = sidebar(nodes: [proj("app"), ws("b", path: "/wt/b")], cursor: 1)
+      grown = [proj("app"), ws("a", path: "/wt/a"), ws("b", path: "/wt/b")] # "a" made in another session
+      sb.define_singleton_method(:reload) do |**|
+        @nodes = grown
+        recompute_rows
+      end
+      stub_method(Tmux, :visible?, ->(*) { true }) { sb.send(:reload_and_refresh) }
+      assert_equal "/wt/b", sb.send(:current).path
+    end
+
+    # Value: protects=a cursor on a workspace's second branch row stays on that branch through a
+    # switch-in reload (sibling branch rows share the path); fails_when=row identity ignores the
+    # branch; seam=none
+    def test_the_switch_in_reload_keeps_the_cursor_on_its_branch_row
+      rows = [proj("app"), ws("a", path: "/wt/a"),
+              Tree::Node.new(kind: "br", project: "app", path: "/wt/a", branch: "one"),
+              Tree::Node.new(kind: "br", project: "app", path: "/wt/a", branch: "two")]
+      sb = sidebar(nodes: rows, cursor: 3)
+      sb.define_singleton_method(:reload) { |**| recompute_rows }
+      stub_method(Tmux, :visible?, ->(*) { true }) { sb.send(:reload_and_refresh) }
+      assert_equal "two", sb.send(:current).branch
+    end
+
+    # Value: protects=a switch-in inside POKE_TTL with a reload pending hands the new image a
+    # silent first scan (no catch-up re-baselined it); fails_when=the announce stamp survives;
+    # seam=none
+    def test_a_throttled_switch_in_hands_over_a_silent_payload
+      sb, = reloading(visible: false)
+      sb.send(:request_reload)
+      sb.instance_variable_set(:@last_reload, sb.send(:monotonic))
+      sb.instance_variable_set(:@last_announce_scan, sb.send(:monotonic)) # rang just before leaving
+      sb.define_singleton_method(:locate) { nil }
+      stub_method(Tmux, :visible?, ->(*) { true }) { sb.send(:reload_and_refresh) }
+      refute CodeReload.decode(sb.send(:resume_payload))[:announce]
+    end
+
+    # Value: protects=the caught-up tree is on screen while the preflight runs (up to 3s), not
+    # the frame from before the switch; fails_when=reexec checks before it paints; seam=none
+    def test_reexec_paints_before_its_preflight
+      order = []
+      sb = sidebar(nodes: [proj("app"), ws("a")])
+      sb.define_singleton_method(:render) { order << :render }
+      exec_sidebar(preflight: :failed, sb: sb) { flunk "no exec" }
+      stub_method(CodeReload, :preflight, ->(*, **) { order << :preflight; :failed }) do
+        stub_method(Tmux, :flag_failed_reload, ->(*) {}) { sb.send(:reexec) }
+      end
+      assert_equal %i[render preflight], order.last(2)
+    end
+
+    # Value: protects=a switch-in with a code reload pending catches up silently BEFORE the swap,
+    # and a key read in the same batch as the poke acts on that caught-up tree; fails_when=the
+    # pending-reload skip comes back, or the catch-up moves to the loop top or after exec; seam=none
+    def test_keys_batched_with_the_switch_poke_see_the_caught_up_tree
+      sb, execs = reloading(visible: false)
+      sb.send(:request_reload)
+      sb.define_singleton_method(:reload) { |**kw| execs << [:reload, kw] }
+      sb.define_singleton_method(:move) { |*| execs << :move }
+      stub_method(Tmux, :visible?, ->(*) { true }) { sb.send(:handle, "\fj") }
+      sb.send(:maybe_reexec)
+      assert_equal [[:reload, { announce_sounds: false }], :move, :exec], execs
     end
 
     def test_an_overlay_or_the_filter_holds_the_reload

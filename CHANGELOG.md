@@ -10,6 +10,19 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
+## [0.60.2] — switching in during a sidebar reload catches up first (2026-10-27)
+
+### Fixed
+- Switching into a session while its sidebar was about to reload skipped the usual refresh.
+  If the reload then failed, the sidebar showed the session you'd left for up to 15
+  seconds. Flipping away and back within a few seconds could also replay completion
+  chimes another sidebar had already played, and keys you typed right after switching
+  acted on the old tree. The sidebar now refreshes quietly first, then reloads, and shows
+  that refreshed tree while it checks the new code.
+- After switching sessions, the sidebar's cursor stays on the workspace or branch row it
+  was on. A workspace created in another session above it used to shift the cursor onto a
+  different one.
+
 ## [0.60.1] — the Claude session renames while you watch (2026-10-27)
 
 ### Changed

@@ -237,9 +237,14 @@ The signal's trap only sets a flag and writes a self-pipe that `IO.select` watch
 exec happens at the top of the run loop, never inside a prompt (prompts block the loop),
 and never under `?`, the QR code or the filter. An on-screen sidebar goes at once. An
 off-screen one waits a random 0–30s so a fleet doesn't boot and rescan git at once, and a
-switch-in makes it go right away.
+switch-in makes it go right away. That switch-in still runs its usual quiet catch-up
+reload first, keeping the cursor on the row it was on: keys typed with the switch act on
+a current tree, the exec may fail, and the new image's first scan baselines against that
+reload, or it would replay chimes another sidebar already rang. A switch-in inside the
+reload throttle skips that reload, so the swap's first scan is silent instead.
 
-Before exec, the sidebar test-runs `<bin> sidebar --check` with its resume payload,
+Before exec, an on-screen sidebar repaints, so the caught-up tree shows during the check.
+Then it test-runs `<bin> sidebar --check` with its resume payload,
 stdio closed and the `SB_REEXEC` guard cleared, bounded at 3s. That builds a sidebar off
 screen and applies the payload (no rebuild: that writes). exec only fails safe when the
 exec call itself fails, and a new release that can't construct a sidebar or take its

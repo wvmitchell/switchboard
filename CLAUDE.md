@@ -679,7 +679,13 @@ checkout. Nothing can repoint a sidebar at another install.
 - **`maybe_reexec`, at the loop top**, turns the flag into a request.
   - On screen the request is due now. Off screen it's due after `CodeReload.spread_delay`
     (0–30s) so a fleet doesn't boot plus rescan at once, and a switch-in makes it due at
-    once (`reload_and_refresh` skips its own reload then).
+    once. The switch-in still runs its usual silent reload first (throttled by `reload_due?`,
+    like any switch-in): keys read with the poke act on the tree before the loop top swaps,
+    the swap may fail, and the new image must baseline against that reload or it replays
+    chimes. Inside POKE_TTL there is no catch-up scan, so the switch-in drops
+    `@last_announce_scan` and the swap's first scan is silent. That reload keeps the cursor
+    by row identity (`keep_cursor`), and `reexec` paints before its preflight, so the
+    caught-up tree is on screen during the check.
   - It's never due under `?`, QR or `/`, never mid-prompt (prompts block the loop), and
     never with half an escape sequence in `@pending`: the new image would read its tail
     (`O`, from focus-out) as a key. All of these live in `reexec_allowed?`, which
