@@ -19,8 +19,8 @@ refer to the project's earlier, private repository; the public tracker starts at
   chimes another sidebar had already played, and keys you typed right after switching
   acted on the old tree. The sidebar now refreshes quietly first, then reloads, and shows
   that refreshed tree while it checks the new code.
-- After switching sessions, the sidebar's cursor stays on the workspace it was on. A
-  workspace created in another session above it used to shift the cursor onto a
+- After switching sessions, the sidebar's cursor stays on the workspace or branch row it
+  was on. A workspace created in another session above it used to shift the cursor onto a
   different one.
 
 ## [0.60.1] — the Claude session renames while you watch (2026-10-27)

@@ -422,6 +422,12 @@ Found by the /ship reviews after the 3-cycle fix limit; deferred with Will's OK 
   `@prev_hook_states` nil for `{}`, so the first scan skips notify delivery while advancing the
   cursor: an alert in between is swallowed. *Fix:* carry an `initialized` bit in the payload.
   **Priority:** P2.
+- **A reload's `announce` is judged on a possibly stale `@visible`.** *Why:* a key batched with
+  the switch poke can move you away (`↵` to another session); `@visible` stays true until the
+  next tick, so a swap in between hands over `announce: true` from a hidden pane. The new
+  image re-samples visibility before its first scan, so it doesn't ring off screen today.
+  *Fix:* re-sample `Tmux.visible?` in `resume_payload`. **Priority:** P3. Found by the 0.60.2
+  adversarial review.
 - **Smaller reload edges.** A signal that fails (ESRCH) lands in no count; on tmux < 3.0 every
   reload is a respawn without the resume marker, so a home pane re-runs its launch-time prune; a
   respawned old sidebar loses a half-typed task prompt (one-time hop). **Priority:** P3.
