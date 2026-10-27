@@ -91,15 +91,6 @@ safe today; each is narrow).
   build fails and keeps it (nothing is lost, but the renamed workspace wears the build's
   ✘ until dismissed). Check under `Creation.with_project_lock`, as `reserve` does.
   **Priority:** P2.
-- **Respawn sidebars when switchboard is upgraded.** *Why:* every window's sidebar is a
-  long-lived process; after `brew upgrade` / `git pull` an old one keeps running the old
-  `switch`, which starts the agent without checking the dispatch record (so it can start
-  on a failed build's un-set-up tree). The 0.51.0 CHANGELOG tells users to refresh by
-  hand, and `switchboard upgrade` (0.52.0) prints the "press prefix-s twice in each
-  session" hint rather than restarting them (the user chose no automatic restart from
-  `upgrade`; a sidebar replacing ITSELF on a version change is this item). *Start in:*
-  compare `VERSION` (or the bin's mtime) with the value at startup in
-  `tick`, then exit and let `reconcile_sidebars` respawn. **Priority:** P2.
 - **Input edges in the task prompt and modals.** *Why:* an unpaired paste-start marker
   wedges the task prompt in paste mode (Esc/^C/↵ all become text; `prefix-s` escapes); a
   literal paste-end inside pasted text ends the paste early; a 1 KB read split on a

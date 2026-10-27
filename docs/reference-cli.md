@@ -93,7 +93,9 @@ branch with no upstream):
      specific reason;
    - re-ensures the global codex block if it's installed (never adds one);
    - runs `switchboard.tmux` in the running tmux server, from any shell, when your
-     tmux.conf sources this install.
+     tmux.conf sources this install;
+   - reloads every running sidebar (only when the running binary is the `switchboard`
+     on your PATH), like `switchboard reload-sidebars`, and prints what it reached.
 
    The first three run only when the running binary is the `switchboard` on your PATH,
    because the hooks and the reporter call back into whichever binary wrote them; from
@@ -303,6 +305,24 @@ update firing in the throwaway can't repoint your global `~/.local/bin/claude` s
 into the tree teardown deletes (#145). If an older sandbox already dangled your launcher
 (`command not found: claude`), repoint it:
 `ln -sf ~/.local/share/claude/versions/<latest> ~/.local/bin/claude`.
+
+### `switchboard reload-sidebars`
+Every running sidebar on the tmux server swaps in its switchboard's current code, in
+its own pane. `upgrade` does this itself. Use it by hand after a clone's `git pull`, or
+inside `switchboard sandbox` to see a sidebar code edit without detaching.
+
+- A sidebar from 0.58.0 on gets a signal (`SIGUSR1`). At its next safe moment (no
+  prompt, `?` overlay, QR code or filter open) it test-runs its binary (`version`,
+  3 seconds at most) and then execs it in place, keeping its pid, cursor and agent
+  state. One that's on screen goes at once. The rest are spread over 30 seconds
+  (`SWITCHBOARD_RELOAD_SPREAD`) or go when you switch to them.
+- An older sidebar is restarted with `tmux respawn-pane`, rerunning the command that
+  started it, after the same test run of that binary.
+- A sidebar whose binary is missing or fails the test run is left as it is.
+
+Each sidebar reloads its OWN binary, so running this from another checkout never
+repoints a sidebar. Prints `sidebars: N reloading in place, M restarted`, plus a line for
+any left running, or `no sidebars running`. Exits 0.
 
 ### `switchboard version` (aliases: `-v`, `--version`)
 Print the version (`switchboard X.Y.Z`).

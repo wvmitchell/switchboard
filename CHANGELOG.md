@@ -10,6 +10,27 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
+## [0.58.0] — upgrading reloads the running sidebars (2026-10-27)
+
+### Added
+- `switchboard upgrade` now swaps the new code into every running sidebar, so there's no
+  more pressing the toggle key twice in each session. A sidebar reloads itself in its own
+  pane and keeps your cursor, its folds and what it knows about running agents. It waits
+  until you close an open prompt, `?`, the QR code or the filter. Sidebars you aren't
+  looking at reload over the next half minute, or as soon as you switch to them. A
+  sidebar from before this release is restarted in its pane instead. `upgrade` prints
+  how many of each, and names any it left alone because their switchboard was removed or
+  won't start (#48).
+- A plain `brew upgrade` reloads the sidebars too: each one notices the install moved
+  and swaps itself within a few seconds.
+- `switchboard reload-sidebars` does the same by hand: after a `git pull` in a clone, or
+  inside `switchboard sandbox` to see a sidebar code edit without detaching.
+
+### Safety
+- A new version is test-run (`switchboard version`) before any sidebar switches to it,
+  so a release or checkout that won't load leaves the old sidebar running instead of an
+  empty pane. Overlapping reloads can't kill a sidebar while it starts up.
+
 ## [0.57.1] — failures that used to stay silent now say so (2026-10-27)
 
 ### Fixed

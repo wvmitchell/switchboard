@@ -39,6 +39,7 @@ module Switchboard
       when "monitoring-nudge"  then monitoring_nudge(argv.drop(1))
       when "sound"             then play_sound(argv[1])
       when "sidebar"           then Sidebar.run
+      when "reload-sidebars"   then reload_sidebars
       when "poke-sidebar"      then Tmux.poke_current_sidebar
       when "reload-config"     then reload_config_poke(argv[1])
       when "sidebar-sync"      then Tmux.sidebar_sync(argv[1])
@@ -148,6 +149,19 @@ module Switchboard
       UpdateCheck.run_child
     rescue StandardError
       nil
+    end
+
+    # Every running sidebar swaps in its own binary's current code (#48): what `upgrade`
+    # does at the end, by hand — inside `switchboard sandbox`, after editing sidebar code.
+    # Any binary may run it: each sidebar re-execs its OWN SWITCHBOARD_BIN, so this can't
+    # repoint one at another checkout.
+    def reload_sidebars
+      counts = CodeReload.reload_all
+      return puts("no tmux server running — no sidebars to reload") unless counts
+
+      summary, warning = CodeReload.describe(counts)
+      puts(summary || "no sidebars running")
+      puts(warning) if warning
     end
 
     # Background dispatch worker (Sidebar#create spawns it). Daemonized like the reaper:
@@ -1255,6 +1269,7 @@ module Switchboard
           switchboard sound [done|waiting|alert]  play a state's sound (try audio / pick sounds)
           switchboard prune        kill orphaned sb/ sessions + reap orphaned sidebar processes (--dry-run / -n previews)
           switchboard sandbox      dogfood THIS checkout's sidebar in a throwaway, isolated tmux (auto-torn-down on detach)
+          switchboard reload-sidebars  every running sidebar swaps in its switchboard's current code, in place (upgrade does this itself)
           switchboard quit         close ALL switchboard sessions (full teardown — kills the one you're in too)
           switchboard doctor       check dependencies + config
           switchboard help         show this help

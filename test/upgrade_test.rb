@@ -358,27 +358,68 @@ module Switchboard
       end
     end
 
-    def test_finishing_an_upgrade_names_both_versions_and_the_sidebar_restart
+    # The sidebar reload at the end of finish (#48), with reload_all's counts canned.
+    def finish_reloading(from, counts, installed: true, leftovers: false)
+      calls = 0
+      reload = lambda do
+        calls += 1
+        counts
+      end
+      _, out = stub_method(CodeReload, :reload_all, reload) do
+        stub_method(Installer, :installed_bin?, -> { installed }) do
+          stub_method(Installer, :refresh_wiring, -> { true }) do
+            stub_method(Upgrade, :refresh_codex, -> { true }) do
+              stub_method(Upgrade, :reload_tmux, -> { true }) { quietly { Upgrade.finish(from, leftovers: leftovers) } }
+            end
+          end
+        end
+      end
+      [out, calls]
+    end
+
+    def test_finishing_an_upgrade_names_both_versions
       ok, out = finish("0.1.0")
       assert ok
       assert_includes out, "0.1.0 → #{VERSION}"
-      assert_includes out, "press prefix-s twice in each switchboard session"
     end
 
-    # Value: protects=the restart hint after a clone pull that didn't bump version.rb (a
-    # real hand-off always means new code); fails_when=the hint keys off a version change
-    # again; why_new=D1 item 8; seam=none
-    def test_any_hand_off_gets_the_sidebar_hint_even_without_a_version_bump
-      _, out = finish(VERSION)
-      assert_includes out, "press prefix-s twice"
+    # Value: protects=upgrade reloads every running sidebar and says how (#48 R1); fails_when=the
+    # summary drops a count or the old "press prefix-s twice" chore returns; why_new=replaces the
+    # hint tests; seam=none; no_claim=real tmux (reload_all is canned; CodeReloadTest/smoke cover it)
+    def test_finishing_reloads_the_running_sidebars_and_counts_them
+      out, calls = finish_reloading("0.1.0", { signaled: 3, respawned: 2, left: 0 })
+      assert_equal 1, calls
+      assert_includes out, "sidebars: 3 reloading in place, 2 restarted"
+      refute_includes out, "twice", "the restart chore is gone"
     end
 
-    # Value: protects=the sidebar-restart hint naming the toggle key the user actually has bound;
-    # fails_when=the hint hardcodes prefix-s (or reads only the configured key); why_new=every
-    # finish test runs with the default key, so a hardcoded `s` passed them; seam=none
-    def test_the_sidebar_hint_names_the_bound_toggle_key
-      _, out = stub_method(Installer, :bound_toggle_key, -> { "F13" }) { finish("0.1.0") }
-      assert_includes out, "press prefix-F13 twice"
+    def test_a_sidebar_left_on_old_code_is_named
+      out, = finish_reloading("0.1.0", { signaled: 0, respawned: 0, left: 1 })
+      assert_includes out, "1 sidebar left running old code: its switchboard was removed or doesn't start"
+      refute_includes out, "sidebars:", "nothing reloaded, so no success line"
+    end
+
+    def test_no_sidebars_or_no_server_prints_nothing_about_them
+      out, = finish_reloading("0.1.0", { signaled: 0, respawned: 0, left: 0 })
+      refute_includes out, "sidebar"
+      out, = finish_reloading("0.1.0", nil)
+      refute_includes out, "sidebar"
+    end
+
+    # Value: protects=a clone pull that didn't bump version.rb still reloads (a hand-off
+    # always means new code); fails_when=the reload keys off a version change; seam=none
+    def test_any_hand_off_reloads_even_without_a_version_bump
+      _, calls = finish_reloading(VERSION, { signaled: 1, respawned: 0, left: 0 })
+      assert_equal 1, calls
+    end
+
+    # Value: protects=only the installed binary touches shared state, and a leftovers-only run
+    # (no new code) reloads nothing; fails_when=either gate is dropped; seam=installed_bin? (PATH)
+    def test_no_reload_from_a_checkout_or_without_new_code
+      _, calls = finish_reloading("0.1.0", { signaled: 1, respawned: 0, left: 0 }, installed: false)
+      assert_equal 0, calls, "a dogfood checkout's upgrade leaves the installed sidebars alone"
+      _, calls = finish_reloading(nil, { signaled: 1, respawned: 0, left: 0 }, leftovers: true)
+      assert_equal 0, calls
     end
 
     # Value: protects=an up-to-date re-run saying it is finishing stale setup, not that it is

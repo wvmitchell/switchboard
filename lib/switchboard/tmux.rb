@@ -689,6 +689,62 @@ module Switchboard
       end
     end
 
+    # --- code reload (#48) ---------------------------------------------------
+
+    # Our pid on our own pane (CodeReload::TAG): a sender signals only a pane whose tag
+    # equals its pane_pid, so a pane respawned or recycled since, or a sidebar older than
+    # 0.58 (no tag; the signal's default action would kill it), is never signaled.
+    def tag_sidebar_pane(pane, value)
+      return unless pane
+
+      system("tmux", "set-option", "-p", "-t", pane, CodeReload::TAG, value.to_s, out: File::NULL, err: File::NULL)
+    end
+
+    ReloadTarget = Struct.new(:pane, :pid, :tagged, :bin, keyword_init: true)
+
+    # Every sidebar pane, split by whether it can reload itself. nil off a server.
+    def sidebar_reload_targets
+      out = IO.popen(["tmux", "list-panes", "-a", "-F",
+                      "\#{pane_id}\t\#{pane_pid}\t\#{#{CodeReload::TAG}}\t\#{pane_title}\t\#{pane_start_command}"],
+                     err: File::NULL, &:read)
+      $?.success? ? parse_reload_targets(out) : nil
+    rescue SystemCallError
+      nil
+    end
+
+    # Pure: the rows of that list-panes. `bin` is the start command's first word (tmux
+    # quotes it), nil when it won't parse.
+    def parse_reload_targets(raw)
+      raw.to_s.lines.filter_map do |line|
+        id, pid, tag, title, command = line.chomp.split("\t", 5)
+        next unless id && title.to_s.strip == SIDEBAR_TITLE && pid.to_s.match?(/\A\d+\z/)
+
+        ReloadTarget.new(pane: id, pid: pid.to_i, tagged: tag == pid, bin: start_bin(command))
+      end
+    end
+
+    def start_bin(command)
+      Shellwords.split(command.to_s).first
+    rescue ArgumentError
+      nil
+    end
+
+    def signal_sidebar(target)
+      Process.kill(CodeReload::SIGNAL, target.pid)
+      true
+    rescue SystemCallError
+      false
+    end
+
+    # Restart a pane by rerunning ITS OWN start command (no command given), so a
+    # checkout's sidebar stays on its checkout. The resume marker makes the new process
+    # skip its clear and pace its first warm paint. tmux < 3.0 has no -e: retry without.
+    def respawn_sidebar(target, marker)
+      ok = system("tmux", "respawn-pane", "-k", "-e", "#{CodeReload::RESUME_ENV}=#{marker}", "-t", target.pane,
+                  out: File::NULL, err: File::NULL)
+      ok || system("tmux", "respawn-pane", "-k", "-t", target.pane, out: File::NULL, err: File::NULL)
+    end
+
     # Every live sidebar pane id across all sessions/windows (title == SIDEBAR_TITLE).
     def all_sidebar_panes
       `tmux list-panes -a -F '#\{pane_id} #\{pane_title}' 2>/dev/null`.lines.filter_map do |line|

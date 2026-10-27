@@ -31,7 +31,7 @@ here.
 ```sh
 bin/switchboard            # start: attach home from a shell, or toggle the sidebar inside tmux (alias: sb)
 bin/switchboard install    # symlinks (switchboard + sb) onto PATH (skipped under Homebrew) + wire tmux bindings + empty config (--no-tmux/--print-tmux/--tmux-conf)
-bin/switchboard upgrade    # fetch the newest version the way it was installed (brew / brew --HEAD / clone fetch + ff-only merge), then exec the NEW binary's `upgrade --finish`: refresh reporter + stale worktree hooks + codex block, run the tmux fragment in the live server from any shell. Already current ⇒ says so, unless setup is stale (then finishes it)
+bin/switchboard upgrade    # fetch the newest version the way it was installed (brew / brew --HEAD / clone fetch + ff-only merge), then exec the NEW binary's `upgrade --finish`: refresh reporter + stale worktree hooks + codex block, run the tmux fragment in the live server from any shell, then reload every running sidebar in place (#48). Already current ⇒ says so, unless setup is stale (then finishes it)
 bin/switchboard uninstall  # reverse install (both symlinks — left to `brew uninstall` under Homebrew — + tmux marker block + live unbind)
 bin/switchboard doctor     # check that tmux/git/gh + config + install wiring exist
 bin/switchboard init       # create ~/.config/switchboard/config.yml (empty; grown by the add-project flow)
@@ -42,6 +42,7 @@ bin/switchboard monitoring on|off # flag/unflag this workspace as running a back
 bin/switchboard monitoring notify # (from a MONITORED workspace) declare "come look — this cycle surfaced something": bold + a distinct `alert` sound + sparkle, the one exception to the silent routine ticks. Gated to monitored; writes an Attention bold (direct) + a Notify mtime marker (the sidebar's announce-gated ring). See the ∞ section.
 bin/switchboard prune      # kill orphaned sb/ sessions (reconcile vs git worktrees) + reap orphaned sidebar processes; --dry-run/-n previews
 bin/switchboard sandbox    # dogfood THIS checkout's sidebar in a throwaway, fully-isolated tmux — auto-torn-down on detach (the interactive twin of bin/test-smoke, #126)
+bin/switchboard reload-sidebars # every running sidebar swaps in its OWN binary's current code, in place (SIGUSR1 to tagged panes, respawn for older ones — #48); inside the sandbox, the dogfood loop for a sidebar code edit
 bin/switchboard quit       # close ALL sb/ sessions (full teardown; current session last; clears agent state)
 bin/test                   # run the stdlib-Minitest suite (offline; bin/test <file> for one)
 bin/test-smoke             # run the real-tmux smoke layer (boots a server; needs tmux; out of bin/test — #104)
@@ -183,7 +184,8 @@ Useful env overrides when running locally without disturbing real state:
 `SWITCHBOARD_RELEASES_URL` (where `LatestRelease` reads release tags — the suite points
 it at a dead path so nothing reaches GitHub), `SWITCHBOARD_UPDATE_CACHE` (the update
 line's cache file) and `SWITCHBOARD_NO_UPDATE_CHECK` (no background update check — the
-suite, smoke runs and the sandbox set it),
+suite, smoke runs and the sandbox set it), `SWITCHBOARD_RELOAD_SPREAD` (seconds an
+off-screen sidebar may wait before a code reload, default 30 — the reload smoke sets 0),
 `XDG_DATA_HOME`/`XDG_STATE_HOME` (reporter script + state dirs), `CODEX_HOME` (the
 global codex `config.toml` the codex hooks block is written into — sandboxed in tests).
 
@@ -622,7 +624,10 @@ the tmux fragment in the live server from any shell (`reload_fragment`, only whe
 tmux.conf sources THIS install). An up-to-date run still finishes leftover setup
 (`leftovers?`, which includes tmux key drift), so re-running repairs an interrupted
 upgrade; with a config.yml that won't parse it finishes what doesn't need the config,
-then exits 1 naming the parse error instead of saying "up to date".
+then exits 1 naming the parse error instead of saying "up to date". A hand-off (new code)
+ends by reloading every running sidebar (`Upgrade.reload_sidebars` → `CodeReload.reload_all`,
+installed binary only; see the hot-reload section) and prints the counts. The old "press
+prefix-s twice" hint is gone.
 
 Two guards carry the design. **Only the installed binary rewrites anything shared**
 (`Installer.installed_bin?`: the running `SWITCHBOARD_BIN` is the `switchboard` on PATH):
@@ -636,6 +641,74 @@ specific cause — invalid JSON/UTF-8, a malformed hooks section, unreadable, no
 file under 4 MiB — as `doctor` does) only when it carries one of our
 marks — an unreadable or foreign file is never touched. `install` runs the same
 `refresh_wiring`, so the manual route converges too.
+
+### Hot reload: sidebars swap in new code in place (#48)
+
+A running sidebar **execs its own `SWITCHBOARD_BIN` in place** (`CodeReload`,
+`code_reload.rb`, plus the reload section of `sidebar.rb`). The pane runs the binary with
+no shell (`Tmux.spawn_sidebar`), so exec keeps the pid, pty and `%pane` id, and
+`owns_pane?` holds. Each sidebar re-execs its OWN bin: under brew that's the opt path
+(StablePath), so it lands in the new keg, and a dogfood checkout's sidebar stays on its
+checkout. Nothing can repoint a sidebar at another install.
+
+- **Triggers.**
+  - `SIGUSR1`, from `upgrade --finish` (installed binary only) and `switchboard
+    reload-sidebars` (any binary). Senders read `list-panes -a` once
+    (`Tmux.sidebar_reload_targets`) and signal only a sidebar pane whose `@sb_reload`
+    tag == `#{pane_pid}`. An untagged pane (older than 0.58, or tmux < 3.0, where SIGUSR1's
+    default action would KILL it) is instead `respawn-pane -k`'d with NO command (it reruns
+    the pane's own start command), plus `-e` for the resume marker, retried without `-e` on
+    old tmux. That only happens when its start binary is an executable file that passes
+    the preflight (once per distinct binary). Otherwise it's left running and counted:
+    respawn kills first, so a broken or deleted checkout would cost the window its
+    sidebar.
+  - The backstop in `tick`: `CodeReload.stale?`, which checks whether `SWITCHBOARD_BIN`'s
+    realpath root is still `LOADED_ROOT` (captured at require time). Only a Homebrew keg
+    move changes it (so a plain `brew upgrade` reloads too). It's inert for clones, and
+    costs stats only, no tmux call: the R3 contract pins that an idle tick costs what it did.
+- **The trap** only sets `@reload_signal` and writes a self-pipe (`@wake_r` is in
+  `IO.select`). It's installed in `run`, restored in `teardown`, and installed BEFORE the
+  tag goes on.
+- **`maybe_reexec`, at the loop top**, turns the flag into a request. On screen the
+  request is due now; off screen after `CodeReload.spread_delay` (0–30s) so a fleet
+  doesn't boot plus rescan at once; a switch-in makes it due at once (`reload_and_refresh`
+  skips its own reload then). It's never due under `?`, QR or `/`, and never mid-prompt
+  (prompts block the loop). `frame_timeout` honors `@reexec_at` only while the reload is
+  allowed, else a passed deadline would spin `IO.select`.
+- **`reexec`**:
+  1. Preflight: `<bin> version`, 3s bound, `{"SB_REEXEC"=>nil}` so a system-Ruby re-exec
+     still happens, all stdio `/dev/null` since it keeps the pane as its ctty. A failure
+     blocks that root for the backstop (`@reexec_blocked_root`; a newer keg gets its own
+     try).
+  2. Write the resume payload, delete `SB_REEXEC`.
+  3. `trap(USR1, "IGNORE")` plus tag `0`: caught handlers reset across exec, `SIG_IGN`
+     survives it, and a second reload during the boot would otherwise kill the new image.
+  4. Flush stdout, then exec.
+
+  A failed exec puts the env, trap and tag back. exec skips `ensure`, so the tty stays raw
+  with focus events on, and the new image re-asserts that.
+- **Resume** (`SWITCHBOARD_SIDEBAR_RESUME`, JSON v1, ≤64 KiB, read AND deleted by
+  `take_resume` before anything spawns):
+  - It carries the cursor (identity: kind/project/path/branch, restored after the first
+    reload's `locate`, falling back to `cursor_to_current`), the offset, the Edges
+    baseline (`Edges#baseline`/`restore_baseline`: the sticky hook states past
+    PRESENCE_TTL and the notify cursor), and `announce`.
+  - `announce` is true only if the old image was visible with an announcing scan within
+    REFRESH+1s. Otherwise the first reload is silent, so a switch-in reload never replays
+    chimes another pane already rang. A missing field reads as silent.
+  - On resume, `setup` skips its `\e[2J`, and `run` skips the empty first paint: the old
+    frame stays up until the new one overwrites it. Off screen, the first warm waits out
+    the spread (`@warm_not_before`).
+- **Cross-version contract**: newer code accepts every older payload (lenient, per field;
+  anything unknown is a cold start). `@sb_reload` and `SIGUSR1` never change meaning.
+  `Creation` records stay readable by older launchers (`Creator.launch` lives as long as
+  its agent and keeps old code).
+- **Tests**: `code_reload_test`, `sidebar_reload_test`, the reload summary in
+  `upgrade_test` / `cli_test`, and `test/smoke/sidebar_reload_smoke_test.rb`. The smoke
+  test uses a fake brew prefix in the tmpdir (`Cellar/switchboard/{A,B}` copies plus an
+  `opt` link; StablePath's regex is prefix-agnostic) and covers: the signal swap (same
+  pane and pid, cursor kept), the backstop flip, a broken B leaving the old sidebar alive,
+  an untagged pane respawned, and back-to-back reloads.
 
 ### Agent-state dots (the subtle part)
 

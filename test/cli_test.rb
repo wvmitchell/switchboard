@@ -2119,5 +2119,32 @@ module Switchboard
     ensure
       $stderr = orig
     end
+
+    # --- reload-sidebars (#48, D4) ---------------------------------------------
+
+    def reload_sidebars_with(counts)
+      calls = 0
+      out, = stub_method(CodeReload, :reload_all, -> { calls += 1; counts }) { capture_io { CLI.run(["reload-sidebars"]) } }
+      [out, calls]
+    end
+
+    def test_reload_sidebars_reports_what_it_reached
+      out, calls = reload_sidebars_with({ signaled: 2, respawned: 1, left: 1 })
+      assert_equal 1, calls
+      assert_includes out, "sidebars: 2 reloading in place, 1 restarted"
+      assert_includes out, "1 sidebar left running old code"
+    end
+
+    def test_reload_sidebars_with_nothing_to_reach_says_so
+      assert_includes reload_sidebars_with({ signaled: 0, respawned: 0, left: 0 }).first, "no sidebars running"
+      assert_includes reload_sidebars_with(nil).first, "no tmux server running"
+    end
+
+    # Value: protects=the dogfood loop in the sandbox (any binary may reload); fails_when=the
+    # verb gains the installed-binary gate upgrade has; seam=installed_bin? (PATH)
+    def test_reload_sidebars_runs_from_any_binary
+      _, calls = stub_method(Installer, :installed_bin?, -> { false }) { reload_sidebars_with({ signaled: 1, respawned: 0, left: 0 }) }
+      assert_equal 1, calls
+    end
   end
 end

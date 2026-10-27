@@ -199,6 +199,56 @@ could otherwise turn harmful. So the orphan that rings duplicates stops within o
 running-process count (`pgrep`) against the sidebar-pane count, so a straggler is
 visible before it can misbehave.
 
+## Swapping in new code without a restart (#48)
+
+Every sidebar is a long-lived process, so after an upgrade each one would keep running
+the code it started with. Everything else switchboard runs (hooks, PR-refresh children,
+dispatch workers) re-invokes the binary, so it picks up new code by itself. The sidebars
+can't, and upgrades used to end with "press the toggle key twice in each session".
+
+Now a sidebar **execs itself in place**. The pane runs the binary directly (no shell in
+between), so `exec(SWITCHBOARD_BIN, "sidebar")` keeps the pid, the pty and the pane id:
+from tmux's side nothing changed, and `owns_pane?` stays true. Most of what the sidebar
+knows is already on disk (folds, width, header, attention, holds). The few per-process
+things worth keeping ride one env var (`SWITCHBOARD_SIDEBAR_RESUME`) into the new image:
+
+- **the cursor row**, found again by identity;
+- **the agent-edge baseline.** It's sticky past `PRESENCE_TTL` on purpose, and without
+  it an agent that's been quiet a while would read as new, its completion would ring
+  nowhere, and the ◷ would drop;
+- **whether the first scan may ring.** It may only if the old process was on screen and
+  scanning a moment ago. Otherwise the first scan is a silent catch-up, like any
+  switch-in.
+
+Two things ask for it:
+
+- **A signal.** `upgrade` and `switchboard reload-sidebars` send `SIGUSR1`, but only to a
+  pane whose `@sb_reload` tag equals its `pane_pid`. A sidebar older than 0.58 has no tag,
+  and the signal's default action would kill it, so instead it is restarted with
+  `respawn-pane` (its own start command) after a test run of that binary.
+- **A moved install.** Each tick checks whether `SWITCHBOARD_BIN` still resolves to the
+  code it loaded. Under Homebrew a plain `brew upgrade` repoints `opt/` at a new keg, so
+  the sidebar notices without being told. It's a stat or two, no subprocess. A clone's
+  path never moves, so this check never fires there.
+
+The signal's trap only sets a flag and writes a self-pipe that `IO.select` watches. The
+exec happens at the top of the run loop, never inside a prompt (prompts block the loop),
+and never under `?`, the QR code or the filter. An on-screen sidebar goes at once. An
+off-screen one waits a random 0–30s so a fleet doesn't boot and rescan git at once, and a
+switch-in makes it go right away.
+
+Before exec, the sidebar test-runs `<bin> version`, with stdio closed and the
+`SB_REEXEC` guard cleared, bounded at 3s. exec only fails safe when the exec call itself
+fails, and a new release that raises while loading would otherwise kill the pane. Just
+before exec it sets `SIGUSR1` to ignored and clears its tag: caught handlers reset across
+exec, an ignored signal stays ignored, and a second reload landing during the boot would
+otherwise kill the new image. The new image installs its handler, then re-tags.
+
+The resume payload and the signal are a **cross-version contract**: newer code must read
+every older payload (anything it doesn't understand is a cold start), and the tag and the
+signal never change meaning. The same holds for `Creation` records, because a launcher
+(`Creator.launch`) lives as long as its agent and keeps the code it started with.
+
 ## Trade-offs, named
 
 - **Per-process state on disk** vs. a shared daemon: simpler lifecycle (tmux owns
@@ -218,6 +268,9 @@ visible before it can misbehave.
   opts back into pure dormancy.
 - **The pty-confirmation guard** errs toward *not* killing a sidebar on an
   ambiguous reply, accepting a brief leak over ever silencing a healthy panel.
+- **Exec in place** over `respawn-pane` for a reload: same pid and pane, no blank
+  frame, state carried, and a release that won't load is caught before anything is
+  replaced. Respawn stays the fallback for sidebars too old to take the signal.
 
 ## Related
 
