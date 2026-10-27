@@ -108,17 +108,26 @@ main=$(gh api repos/wvmitchell/switchboard/commits/main --jq .sha)
 if ! GIT_TERMINAL_PROMPT=0 git fetch -q https://github.com/wvmitchell/switchboard.git main ||
    [ "$(git rev-parse FETCH_HEAD)" != "$main" ]; then
   echo "couldn't sync"
-elif [ "$(git symbolic-ref -q --short HEAD)" != "$branch" ] ||
+else
+  git merge-base --is-ancestor refs/remotes/origin/main "$main" &&
+    git update-ref refs/remotes/origin/main "$main"
+  if [ "$(git symbolic-ref -q --short HEAD)" != "$branch" ] ||
      [ -n "$(git status --porcelain --untracked-files=normal)" ] ||
      ! git merge-base --is-ancestor HEAD FETCH_HEAD ||
      ! git merge -q --ff-only FETCH_HEAD; then
-  echo "checkout not syncable"
+    echo "checkout not syncable"
+  fi
 fi
 ```
 
 - **Fetch over HTTPS, never the `origin` remote.** The repo is public, so the fetch
-  needs no credentials and can't hang on SSH auth. It also leaves `origin/main`
-  untouched.
+  needs no credentials and can't hang on SSH auth.
+- **Move `origin/main` forward too.** An HTTPS fetch by URL updates only `FETCH_HEAD`,
+  and the sidebar's `+/−` counts are taken against `origin/main`. Left behind, every
+  merge would show up as a diff on the monitor's workspace that isn't there. Once the
+  fetch matches `gh`, set the ref to that commit, forward only (it's shared by every
+  worktree of the repo, and `main` is the right value for all of them). A ref that
+  isn't an ancestor (a force-pushed `main`) is left for a real `git fetch`.
 - **Trust `gh`.** If `FETCH_HEAD` isn't the `main` that `gh` reports, or the fetch
   fails, record "couldn't sync" in `last_error` and skip the smoke runs this check. The
   other checks still run.
