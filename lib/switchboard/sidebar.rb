@@ -66,14 +66,14 @@ module Switchboard
       new.run
     end
 
-    # `sidebar --check`: the reload preflight (#48). Builds a sidebar and resumes it from the
-    # payload in the environment, without the terminal or tmux, so a release that loads but
-    # can't start or resume a sidebar fails here instead of closing every pane it reaches.
+    # `sidebar --check`: the reload preflight (#48). Builds a sidebar and applies the resume
+    # payload in the environment, without the terminal, tmux or a rebuild (which writes), so
+    # a release that loads but can't construct a sidebar or take its payload fails here
+    # instead of closing every pane it reaches.
     def self.check
       sb = new
-      if (payload = CodeReload.take_resume)
-        sb.instance_variable_get(:@edges).restore_baseline(hook_states: payload[:hook_states], notify: payload[:notify])
-      end
+      payload = CodeReload.take_resume
+      sb.send(:apply_resume, payload) if payload
       true
     rescue StandardError
       false
@@ -193,7 +193,8 @@ module Switchboard
       @reload_signal = false # set by the SIGUSR1 trap; the loop turns it into a request
       @reexec_at = nil     # monotonic when a requested reload is due (off screen: spread out)
       @reexec_blocked_root = nil # a root whose preflight failed: the backstop won't retry it
-      @reexec_retry_at = nil # after a preflight timeout: when the backstop may try again
+      @reexec_retry_at = nil # after a preflight timeout: when to try again
+      @reexec_timeouts = Hash.new(0) # root => preflight timeouts: a hang, not a slow disk, blocks it
       @warm_not_before = nil # a reloaded off-screen pane's first warm waits out the spread
       @last_announce_scan = nil # monotonic of the last announcing on-screen scan: a reload's first scan may ring only after a recent one
       @wake_r = @wake_w = nil # self-pipe the trap writes, so IO.select wakes for it
@@ -1030,8 +1031,11 @@ module Switchboard
       @reexec_at = [@reexec_at, due].compact.min
     end
 
+    # Also never with half an escape sequence pending: the new image would read its tail (an
+    # `O` from focus-out) as a key. Here, not only in maybe_reexec, so frame_timeout can't spin
+    # on an overdue deadline while it waits for the rest of the sequence.
     def reexec_allowed?
-      !@help && !@link_view && @filter.nil?
+      !@help && !@link_view && @filter.nil? && @pending.empty?
     end
 
     def maybe_reexec
@@ -1040,8 +1044,8 @@ module Switchboard
         request_reload
       end
       return unless @reload_requested && reexec_allowed?
+      return if @reexec_retry_at && monotonic < @reexec_retry_at # after a timeout, even on screen
       return unless @visible || monotonic >= @reexec_at
-      return unless @pending.empty? # half an escape sequence: the new image would read its tail as a key
 
       reexec
     end
@@ -1049,25 +1053,31 @@ module Switchboard
     # Preflight, then exec. Every failure keeps this process running its current code.
     def reexec
       @reload_requested = false
-      @reexec_at = nil
+      @reexec_at = @reexec_retry_at = nil
       bin = ENV["SWITCHBOARD_BIN"] or return
       root = CodeReload.current_root(bin)
       payload = resume_payload
       case CodeReload.preflight(bin, "sidebar", "--check", env: { CodeReload::RESUME_ENV => payload })
       when :ok then exec_in_place(bin, root, payload)
-      when :timeout then reload_failed(root, retry_after: CodeReload::RETRY_AFTER) # a slow disk: try again later
-      else reload_failed(root)
+      when :timeout then reload_timed_out(root || bin)
+      else reload_failed(root || bin)
       end
     end
 
+    # A slow disk right after `brew upgrade`: ask again in RETRY_AFTER, whatever triggered
+    # it. A check that keeps hanging is a broken release, not a slow disk: block it.
+    def reload_timed_out(root)
+      return reload_failed(root) if (@reexec_timeouts[root] += 1) >= CodeReload::TIMEOUTS_TO_BLOCK
+
+      @reload_requested = true
+      @reexec_retry_at = @reexec_at = monotonic + CodeReload::RETRY_AFTER
+      Tmux.flag_failed_reload(ENV["TMUX_PANE"], root)
+    end
+
     # Stay on this code, say so on the pane (doctor, the next reload), and keep the backstop
-    # off this root — for good after a real failure, for a while after a timeout.
-    def reload_failed(root, retry_after: nil)
-      if retry_after
-        @reexec_retry_at = monotonic + retry_after
-      else
-        @reexec_blocked_root = root
-      end
+    # off this root until a different one appears.
+    def reload_failed(root)
+      @reexec_blocked_root = root
       Tmux.flag_failed_reload(ENV["TMUX_PANE"], root)
     end
 
@@ -1084,8 +1094,8 @@ module Switchboard
       ENV.delete(CodeReload::RESUME_ENV)
       ENV["SB_REEXEC"] = reexec_guard if reexec_guard
       install_reload_trap
-      tag_pane
-      reload_failed(root)
+      tag_pane # before the flag: a real-pid tag clears it
+      reload_failed(root || bin)
     end
 
     # What the new image needs that isn't on disk: where the cursor was, the agent-edge
@@ -1104,9 +1114,7 @@ module Switchboard
     # A reloaded process's start: no blank frame. On screen it reloads now; off screen its
     # first warm waits out the spread (a fleet restarted at once would rescan git at once).
     def resume_start
-      @edges.restore_baseline(hook_states: @resume[:hook_states], notify: @resume[:notify])
-      @resume_cursor = @resume[:cursor]
-      @offset = @resume[:offset]
+      apply_resume(@resume)
       if @visible
         pin_if_resized
         reload(announce_sounds: @resume[:announce])
@@ -1116,10 +1124,17 @@ module Switchboard
       end
     end
 
+    # What the payload carries over, applied before the first scan (also `sidebar --check`).
+    def apply_resume(payload)
+      @edges.restore_baseline(hook_states: payload[:hook_states], notify: payload[:notify])
+      @resume_cursor = payload[:cursor]
+      @offset = payload[:offset]
+    end
+
     # exec kept our pid but not the old image's Process.detach threads, so its children (a PR
-    # refresh, a sound) would linger as zombies. Nothing here waits on a child it spawned
-    # asynchronously (every such spawn is detached; shell-outs wait inline), so a non-blocking
-    # sweep can't take anyone's exit status.
+    # refresh, a sound) would linger as zombies. The sweep may also reap this image's own
+    # detached children before their detach thread does; no caller reads a detach thread's
+    # value, and shell-outs wait inline on this same thread, so no status anyone uses is lost.
     def reap_strays
       loop { break unless Process.wait(-1, Process::WNOHANG) }
     rescue Errno::ECHILD

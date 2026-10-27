@@ -242,6 +242,16 @@ module Switchboard
       assert_equal [:exec], execs
     end
 
+    # Value: protects=a held escape never spins the CPU on an overdue reload (Red Team pass 2);
+    # fails_when=the pending gate lives outside reexec_allowed?; seam=none
+    def test_a_pending_escape_keeps_the_normal_timeout_past_the_deadline
+      sb, = reloading(visible: false)
+      sb.instance_variable_set(:@reload_requested, true)
+      sb.instance_variable_set(:@reexec_at, sb.send(:monotonic) - 5)
+      sb.instance_variable_set(:@pending, +"\e[")
+      assert_equal Sidebar::IDLE, sb.send(:frame_timeout)
+    end
+
     # --- the backstop -------------------------------------------------------------
 
     def test_a_moved_keg_requests_a_reload_from_tick
@@ -338,24 +348,26 @@ module Switchboard
 
     # --- the exec itself ----------------------------------------------------------
 
-    def exec_sidebar(preflight: :ok, &on_exec)
+    def exec_sidebar(preflight: :ok, root: "/Cellar/new", sb: nil, &on_exec)
       ENV["SWITCHBOARD_BIN"] = "/opt/sb/bin/switchboard"
-      sb = sidebar(nodes: [proj("app"), ws("a"), ws("b")], cursor: 2)
+      sb ||= sidebar(nodes: [proj("app"), ws("a"), ws("b")], cursor: 2)
       sb.instance_variable_set(:@visible, true)
       sb.instance_variable_set(:@reload_requested, true)
       tags = []
       sb.define_singleton_method(:exec) { |*argv| on_exec.call(argv) }
       flags = []
       calls = []
+      order = []
       stub_method(CodeReload, :preflight, ->(*args, **kw) { calls << [args, kw]; preflight }) do
-        stub_method(CodeReload, :current_root, ->(*) { "/Cellar/new" }) do
-          stub_method(Tmux, :flag_failed_reload, ->(_p, root) { flags << root }) do
-            stub_method(Tmux, :tag_sidebar_pane, ->(_p, v) { tags << v }) { capture_stdout { sb.send(:reexec) } }
+        stub_method(CodeReload, :current_root, ->(*) { root }) do
+          stub_method(Tmux, :flag_failed_reload, ->(_p, r) { flags << r; order << [:flag, r] }) do
+            stub_method(Tmux, :tag_sidebar_pane, ->(_p, v) { tags << v; order << [:tag, v] }) { capture_stdout { sb.send(:reexec) } }
           end
         end
       end
       @failure_flags = flags
       @preflight_calls = calls
+      @tmux_order = order
       [sb, tags]
     end
 
@@ -384,6 +396,15 @@ module Switchboard
       refute_equal "IGNORE", trap(CodeReload::SIGNAL, "DEFAULT"), "the handler is back"
       assert_equal "/Cellar/new", sb.instance_variable_get(:@reexec_blocked_root)
       refute sb.instance_variable_get(:@reload_requested)
+      assert_equal [[:tag, 0], [:tag, Process.pid], [:flag, "/Cellar/new"]], @tmux_order,
+                   "flagged AFTER the re-tag, which would otherwise clear it"
+    end
+
+    # Value: protects=the likeliest real failure (the bin no longer resolves) still flags the pane;
+    # fails_when=an unresolvable root writes an empty flag that reads as not failed; seam=none
+    def test_an_unresolvable_install_is_still_flagged
+      exec_sidebar(preflight: :failed, root: nil) { flunk "no exec" }
+      assert_equal ["/opt/sb/bin/switchboard"], @failure_flags
     end
 
     def test_a_failed_preflight_never_execs_and_blocks_that_root
@@ -394,17 +415,25 @@ module Switchboard
 
     # Value: protects=a slow disk right after brew upgrade doesn't strand a sidebar on old code;
     # fails_when=a timeout blocks the root for good; seam=none
-    def test_a_preflight_timeout_retries_later_instead_of_blocking
+    # Value: protects=a slow disk after brew upgrade retries whatever triggered the reload (a
+    # signal too, in a clone), and a check that keeps hanging is blocked, not retried forever;
+    # fails_when=the retry depends on the keg backstop, or there's no timeout cap; seam=none
+    def test_a_preflight_timeout_retries_later_then_blocks_a_hang
       sb, = exec_sidebar(preflight: :timeout) { flunk "never exec on a timeout" }
       assert_nil sb.instance_variable_get(:@reexec_blocked_root)
+      assert sb.instance_variable_get(:@reload_requested), "the reload stays requested"
       assert_operator sb.instance_variable_get(:@reexec_retry_at), :>, sb.send(:monotonic) + CodeReload::RETRY_AFTER - 5
-      stub_method(CodeReload, :stale?, ->(*) { true }) do
-        stub_method(CodeReload, :current_root, ->(*) { "/Cellar/new" }) do
-          refute sb.send(:code_moved?), "not before the retry time"
-          sb.instance_variable_set(:@reexec_retry_at, sb.send(:monotonic) - 1)
-          assert sb.send(:code_moved?), "then the backstop tries again"
-        end
-      end
+      assert_equal ["/Cellar/new"], @failure_flags, "flagged until it lands"
+      tries = 0
+      sb.define_singleton_method(:reexec) { tries += 1 }
+      sb.send(:maybe_reexec)
+      assert_equal 0, tries, "not before the retry time, even on screen"
+      sb.instance_variable_set(:@reexec_retry_at, sb.send(:monotonic) - 1)
+      sb.send(:maybe_reexec)
+      assert_equal 1, tries, "then it tries again"
+      sb.singleton_class.send(:remove_method, :reexec)
+      (CodeReload::TIMEOUTS_TO_BLOCK - 1).times { exec_sidebar(preflight: :timeout, sb: sb) { flunk "no exec" } }
+      assert_equal "/Cellar/new", sb.instance_variable_get(:@reexec_blocked_root), "a hang is blocked after the cap"
     end
 
     # Value: protects=the preflight proves the sidebar boots and resumes, not just loads
@@ -453,7 +482,7 @@ module Switchboard
 
     # --- sidebar --check (the exec preflight) and the zombie sweep -----------------
 
-    # Value: protects=the deep preflight passes for a sidebar that boots and resumes, and fails
+    # Value: protects=the deep preflight passes for a sidebar that builds and takes its payload, and fails
     # for one that can't (Red Team); fails_when=check swallows nothing or everything; seam=none
     def test_sidebar_check_builds_and_resumes_a_sidebar
       File.write(ENV["SWITCHBOARD_CONFIG"], "projects: []\n")
@@ -462,7 +491,20 @@ module Switchboard
       refute ENV.key?(CodeReload::RESUME_ENV)
       ENV[CodeReload::RESUME_ENV] = "{garbage"
       assert Sidebar.check, "an unreadable payload is a cold start, not a failure"
-      stub_method(Sidebar, :new, ->(*) { raise NameError, "boom" }) { refute Sidebar.check }
+      stub_new(->(*) { raise NameError, "boom" }) { refute Sidebar.check }
+      broken = Sidebar.new
+      broken.define_singleton_method(:apply_resume) { |_p| raise ArgumentError, "resume broke" }
+      ENV[CodeReload::RESUME_ENV] = CodeReload.encode
+      stub_new(->(*) { broken }) { refute Sidebar.check, "a release that can't take its payload fails" }
+    end
+
+    # Sidebar.new stubbed, then REMOVED (stub_method would leave a singleton `new` behind,
+    # which the class-surface pin in sidebar_test then sees).
+    def stub_new(impl)
+      Sidebar.define_singleton_method(:new, impl)
+      yield
+    ensure
+      Sidebar.singleton_class.send(:remove_method, :new)
     end
 
     def test_the_cli_exits_with_the_check_result
@@ -476,11 +518,32 @@ module Switchboard
 
     # Value: protects=children the old image left behind are reaped, not left as zombies
     # (Red Team); fails_when=the resumed tick never sweeps; seam=none
-    def test_a_resumed_image_reaps_children_it_inherited
+    def zombie
       pid = Process.spawn("true")
-      sleep 0.05 while ProcessIdentity.alive?(pid) && `ps -o stat= -p #{pid}`.strip !~ /Z/
-      sb = sidebar(nodes: [proj("app"), ws("a")])
-      sb.send(:reap_strays)
+      deadline = Time.now + 2
+      sleep 0.05 until `ps -o stat= -p #{pid}`.include?("Z") || Time.now > deadline
+      assert_includes `ps -o stat= -p #{pid}`, "Z", "the child exited unreaped"
+      pid
+    end
+
+    def idle_tick(sb)
+      sb.instance_variable_get(:@config).define_singleton_method(:prewarm?) { false }
+      stub_method(Tmux, :visible?, ->(*) { false }) do
+        stub_method(Tmux, :window_panes, ->(*) { 2 }) { sb.send(:tick) }
+      end
+    end
+
+    # Value: protects=children the old image left behind are reaped, not left as zombies, and a
+    # cold start never sweeps (Red Team); fails_when=the tick's `if @resume` gate changes; seam=none
+    def test_only_a_resumed_tick_reaps_inherited_children
+      pid = zombie
+      cold = sidebar(nodes: [proj("app"), ws("a")])
+      idle_tick(cold)
+      assert_equal pid, Process.wait(pid), "a cold start leaves its children to their waiters"
+      pid = zombie
+      resumed = sidebar(nodes: [proj("app"), ws("a")])
+      resumed.instance_variable_set(:@resume, { cursor: nil })
+      idle_tick(resumed)
       assert_raises(Errno::ECHILD) { Process.wait(pid) }
     end
 

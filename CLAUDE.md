@@ -31,7 +31,7 @@ here.
 ```sh
 bin/switchboard            # start: attach home from a shell, or toggle the sidebar inside tmux (alias: sb)
 bin/switchboard install    # symlinks (switchboard + sb) onto PATH (skipped under Homebrew) + wire tmux bindings + empty config (--no-tmux/--print-tmux/--tmux-conf)
-bin/switchboard upgrade    # fetch the newest version the way it was installed (brew / brew --HEAD / clone fetch + ff-only merge), then exec the NEW binary's `upgrade --finish`: refresh reporter + stale worktree hooks + codex block, run the tmux fragment in the live server from any shell, then reload every running sidebar in place (#48). Already current ⇒ says so, unless setup is stale (then finishes it)
+bin/switchboard upgrade    # fetch the newest version the way it was installed (brew / brew --HEAD / clone fetch + ff-only merge), then exec the NEW binary's `upgrade --finish`: refresh reporter + stale worktree hooks + codex block, run the tmux fragment in the live server from any shell, then reload every running sidebar in place (#48). Already current ⇒ says so, unless setup is stale (then finishes it, minus the sidebar reload, which needs new code)
 bin/switchboard uninstall  # reverse install (both symlinks — left to `brew uninstall` under Homebrew — + tmux marker block + live unbind)
 bin/switchboard doctor     # check that tmux/git/gh + config + install wiring exist
 bin/switchboard init       # create ~/.config/switchboard/config.yml (empty; grown by the add-project flow)
@@ -679,21 +679,28 @@ checkout. Nothing can repoint a sidebar at another install.
     once (`reload_and_refresh` skips its own reload then).
   - It's never due under `?`, QR or `/`, never mid-prompt (prompts block the loop), and
     never with half an escape sequence in `@pending`: the new image would read its tail
-    (`O`, from focus-out) as a key.
+    (`O`, from focus-out) as a key. All of these live in `reexec_allowed?`, which
+    `frame_timeout` also consults, so a held reload can't spin on an overdue deadline.
   - `frame_timeout` honors `@reexec_at` only while the reload is allowed, else a passed
     deadline would spin `IO.select`.
 - **`reexec`**:
   1. Preflight: `<bin> sidebar --check` with the resume payload in its env.
-     `Sidebar.check` builds a sidebar and resumes it, so it proves the new code can boot
-     and resume a sidebar, not just load. It's bounded to 3s, runs with
+     `Sidebar.check` builds a sidebar and runs `apply_resume` (shared with
+     `resume_start`) on the payload. It runs no rebuild, because rebuild writes. So it
+     proves the new code can construct a sidebar and take the payload, not just load. It's
+     bounded to 3s, runs with
      `{"SB_REEXEC"=>nil}` so a system-Ruby re-exec still happens, and with all stdio
      `/dev/null` since it keeps the pane as its ctty. Outcomes:
      - `:failed` blocks that root for the backstop (`@reexec_blocked_root`; a newer keg
        gets its own try).
-     - `:timeout` only defers it (`RETRY_AFTER`, 60s): a slow disk right after
-       `brew upgrade`.
+     - `:timeout` re-requests the reload `RETRY_AFTER` (60s) later, whatever triggered
+       it: a slow disk right after `brew upgrade`. The `@reexec_retry_at` gate holds it
+       even on screen. `TIMEOUTS_TO_BLOCK` (3) timeouts for one root block it like a
+       failure: a hang, not a slow disk.
 
-     Either one flags the pane `@sb_reload_failed=<root>`. `doctor` lists those panes, and
+     Either one flags the pane `@sb_reload_failed=<root>` (falling back to the bin path
+     when the root won't resolve, so the flag is never empty), after the failed exec's
+     re-tag, which would otherwise clear it. `doctor` lists those panes, and
      the next reload's summary reports them. A start with a real pid clears the flag, in
      the same tmux call as the tag.
   2. Write the resume payload, delete `SB_REEXEC`.

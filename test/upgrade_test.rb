@@ -394,7 +394,8 @@ module Switchboard
     end
 
     def test_a_sidebar_left_on_old_code_is_named
-      out, = finish_reloading("0.1.0", { signaled: 0, respawned: 0, left: 1 })
+      out, = finish_reloading("0.1.0", { signaled: 0, respawned: 0, left: 1, failed: 1 })
+      assert_includes out, "1 sidebar failed to reload last time", "Installer.note carries it too"
       assert_includes out, "1 sidebar left running old code: couldn't restart it safely"
       refute_includes out, "sidebars:", "nothing reloaded, so no success line"
     end

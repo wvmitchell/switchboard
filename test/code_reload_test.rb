@@ -280,7 +280,7 @@ module Switchboard
                    CodeReload.describe({ signaled: 3, respawned: 1, left: 0, failed: 0 })
       assert_equal [[:ok, "sidebars: 2 restarted"],
                     [:note, "2 sidebars left running old code: couldn't restart them safely (switchboard missing or won't start, or not a plain `switchboard sidebar`)"],
-                    [:note, "1 sidebar couldn't reload last time and still runs old code — `switchboard doctor` lists them"]],
+                    [:note, "1 sidebar failed to reload last time (asked again now) — `switchboard doctor` lists any still on old code"]],
                    CodeReload.describe({ signaled: 0, respawned: 2, left: 2, failed: 1 })
       assert_empty CodeReload.describe({ signaled: 0, respawned: 0, left: 0, failed: 0 })
     end

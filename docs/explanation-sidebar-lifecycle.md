@@ -238,10 +238,11 @@ off-screen one waits a random 0–30s so a fleet doesn't boot and rescan git at 
 switch-in makes it go right away.
 
 Before exec, the sidebar test-runs `<bin> sidebar --check` with its resume payload,
-stdio closed and the `SB_REEXEC` guard cleared, bounded at 3s. That builds and resumes a
-sidebar off screen. exec only fails safe when the exec call itself fails, and a new release
-that can't start or resume a sidebar would otherwise kill the pane. A failure keeps the old
-code and marks the pane for `doctor`, and a timeout is retried a minute later. Just
+stdio closed and the `SB_REEXEC` guard cleared, bounded at 3s. That builds a sidebar off
+screen and applies the payload (no rebuild: that writes). exec only fails safe when the
+exec call itself fails, and a new release that can't construct a sidebar or take its
+payload would otherwise kill the pane. A failure keeps the old code and marks the pane for
+`doctor`. A timeout is retried a minute later, up to 3 times. Just
 before exec it sets `SIGUSR1` to ignored and clears its tag: caught handlers reset across
 exec, an ignored signal stays ignored, and a second reload landing during the boot would
 otherwise kill the new image. The new image installs its handler, then re-tags.

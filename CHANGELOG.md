@@ -27,7 +27,8 @@ refer to the project's earlier, private repository; the public tracker starts at
   inside `switchboard sandbox` to see a sidebar code edit without detaching.
 
 ### Safety
-- A sidebar test-runs the new version (it builds and resumes a sidebar off screen) before
+- A sidebar test-runs the new version (it builds a sidebar off screen and applies its saved
+  state) before
   switching to it, so a release or checkout that can't start leaves the old sidebar
   running instead of an empty pane. `switchboard doctor` lists any sidebar left behind
   that way. Overlapping reloads can't kill a sidebar while it starts up. Only panes started

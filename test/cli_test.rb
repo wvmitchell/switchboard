@@ -2207,10 +2207,11 @@ module Switchboard
     end
 
     def test_reload_sidebars_reports_what_it_reached
-      out, calls = reload_sidebars_with({ signaled: 2, respawned: 1, left: 1 })
+      out, calls = reload_sidebars_with({ signaled: 2, respawned: 1, left: 1, failed: 1 })
       assert_equal 1, calls
       assert_includes out, "sidebars: 2 asked to reload in place, 1 restarted"
       assert_includes out, "1 sidebar left running old code"
+      assert_includes out, "1 sidebar failed to reload last time"
     end
 
     def test_reload_sidebars_with_nothing_to_reach_says_so

@@ -21,6 +21,7 @@ module Switchboard
     SPREAD = 30          # seconds an off-screen sidebar may wait, so a fleet doesn't boot + rescan at once
     PREFLIGHT_SECS = 3
     RETRY_AFTER = 60     # a preflight that timed out (a cold disk right after brew upgrade) is tried again after this
+    TIMEOUTS_TO_BLOCK = 3 # ...unless it keeps timing out: then it's a hang, and that root is blocked
     CURSOR_FIELDS = %w[kind project path branch].freeze # a row's identity across the exec
     PAYLOAD_MAX = 64 * 1024
     VERSION = 1
@@ -107,8 +108,8 @@ module Switchboard
                          "#{left == 1 ? 'it' : 'them'} safely (switchboard missing or won't start, or not a plain `switchboard sidebar`)"]
       end
       if (failed = counts.fetch(:failed, 0)).positive?
-        lines << [:note, "#{failed} sidebar#{'s' unless failed == 1} couldn't reload last time and still " \
-                         "run#{'s' if failed == 1} old code — `switchboard doctor` lists them"]
+        lines << [:note, "#{failed} sidebar#{'s' unless failed == 1} failed to reload last time (asked again now) — " \
+                         "`switchboard doctor` lists any still on old code"]
       end
       lines
     end

@@ -105,7 +105,9 @@ branch with no upstream):
 Already current, it prints `switchboard X is up to date` and exits 0, unless the setup
 is stale (old worktree hooks, hook slots or the toggle key not live, a `tmux_keys`
 change made by editing `config.yml` by hand, an old or missing reporter, or an old
-codex block), in which case it runs step 2. If `config.yml` won't parse, it finishes
+codex block), in which case it runs step 2, except the sidebar reload, which needs new code
+(under Homebrew each sidebar notices the new install itself; otherwise run
+`switchboard reload-sidebars`). If `config.yml` won't parse, it finishes
 whatever setup doesn't need the config, then prints the parse error and exits 1 rather
 than reporting "up to date". Exits 1 if a fetch or setup step fails,
 and also when `brew update` failed and nothing was upgraded (Homebrew may not have the
@@ -319,13 +321,14 @@ inside `switchboard sandbox` to see a sidebar code edit without detaching.
 
 - A sidebar from 0.59.0 on gets a signal (`SIGUSR1`). It waits for its next safe moment
   (no prompt, `?` overlay, QR code or filter open). Then it test-runs the new code
-  (`switchboard sidebar --check`, which builds and resumes a sidebar off screen, 3 seconds
+  (`switchboard sidebar --check`, which builds a sidebar off screen and applies the reload's
+  payload, 3 seconds
   at most) and execs it in place, keeping its pid, cursor and agent state.
   - One that's on screen goes at once. The rest are spread over 30 seconds
     (`SWITCHBOARD_RELOAD_SPREAD`), or go when you switch to them.
   - If the test run fails, the sidebar stays on its old code and marks its pane;
     `switchboard doctor` lists it. A test run that only timed out is retried a minute
-    later.
+    later, up to 3 times; a check that keeps hanging is treated as a broken release.
 - An older sidebar is restarted with `tmux respawn-pane`, rerunning the command that
   started it, after a test run (`version`) of that binary. Only a pane started as
   `<…/switchboard> sidebar` is restarted: a respawn kills whatever runs in the pane.

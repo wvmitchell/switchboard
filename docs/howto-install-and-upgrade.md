@@ -90,7 +90,9 @@ notices that the install moved and swaps itself within a few seconds. For a clon
 `switchboard reload-sidebars` after a `git pull`.
 
 If you're already on the newest release, `upgrade` says so and stops. If an earlier
-upgrade was interrupted before it finished, running `upgrade` again finishes it. The
+upgrade was interrupted before it finished, running `upgrade` again finishes it, except
+for reloading the sidebars, which happens only when new code arrives. Homebrew sidebars
+notice the new install by themselves; otherwise run `switchboard reload-sidebars`. The
 version that first ships `upgrade` (0.52.0) still has to be installed the old way:
 `brew upgrade switchboard` (or `git pull`), then `switchboard install`.
 
