@@ -31,7 +31,7 @@ module Switchboard
     KNOWN_KEYS = %w[
       worktree_root projects_root base branch_prefix session_command worktree_creation_command
       agent_state_hooks prune_on_launch auto_rename diff_counts prewarm background_presence
-      remote_link_stale_after update_check
+      remote_link_stale_after update_check sync_session_name
       sounds tmux_keys sidebar_keys projects
     ].freeze
 
@@ -82,6 +82,7 @@ module Switchboard
       # prewarm: true                              # keep off-screen sidebars warm so switching sessions doesn't flash a stale tree
       # remote_link_stale_after: 120               # minutes a /remote-control-linked session can sit idle before its ⇅ turns grey; false turns it off
       # update_check: true                        # Homebrew installs: a line under the wordmark when a newer release is out (one git ls-remote every few hours); false never checks
+      # sync_session_name: true                    # after a rename, type /rename <name> into the workspace's idle, off-screen Claude pane so its session (and phone list) shows the workspace name
 
       # Completion sounds (on by default): a built-in (train / chime / alert / failed,
       # or train_1..3 / chime_1..3), a file path, or a macOS system-sound name. enabled:
@@ -286,6 +287,22 @@ module Switchboard
       return node == true unless node.nil?
 
       background_presence?
+    end
+
+    # Whether a rename also renames the workspace's live Claude session (the name its
+    # resume picker and the phone's session list show): a detached worker types
+    # `/rename <name>` into the agent's pane once it's idle and off screen. On by
+    # default; `sync_session_name: false` (global or per project) leaves Claude's own name.
+    def sync_session_name?
+      @data.fetch("sync_session_name", true) != false
+    end
+
+    # Resolved sync_session_name for a project — per-project value wins, by VALUE.
+    def sync_session_name_for(project_name)
+      node = project_key(project_name, "sync_session_name")
+      return node == true unless node.nil?
+
+      sync_session_name?
     end
 
     # Whether the sidebar shows the +adds −dels diff count on each ws/br row.

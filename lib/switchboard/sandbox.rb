@@ -86,6 +86,7 @@ module Switchboard
           "SWITCHBOARD_MONITORING_DIR"      => File.join(state_dir, "monitoring"),
           "SWITCHBOARD_NOTIFY_DIR"          => File.join(state_dir, "notify"),
           "SWITCHBOARD_OFFSTAGE_HOLD_DIR"   => File.join(state_dir, "offstage_hold"),
+          "SWITCHBOARD_SESSION_NAME_DIR"    => File.join(state_dir, "session-name"),
           "SWITCHBOARD_CREATION_DIR"        => File.join(state_dir, "creation"),
           "SWITCHBOARD_COLLAPSE_DIR"        => File.join(state_dir, "collapse"),
           "SWITCHBOARD_FULL_HEADER_FILE"    => File.join(state_dir, "full_header"),
@@ -251,14 +252,15 @@ module Switchboard
     # Mark a worktree reachable from the phone (the ⇅ glyph). A real `claude /rc` inside the
     # sandbox writes the real ~/.claude (HOME is kept), so it deliberately doesn't show.
     def seed_link(worktree)
-      park_session(worktree, "_sandbox-link", "name" => "sandbox link", "status" => "idle",
+      # kind bg: a parked sleep has no prompt, so a rename's session-name worker skips it
+      park_session(worktree, "_sandbox-link", "kind" => "bg", "name" => "sandbox link", "status" => "idle",
                                               "bridgeSessionId" => SEED_LINK_ID)
     end
 
     # Mark a worktree as waiting on background work (the ◷ dot): its resting agent's
     # session still reads busy, as Claude's does while a background agent runs.
     def seed_offstage(worktree)
-      park_session(worktree, "_sandbox-offstage", "name" => "sandbox fan-out", "status" => "busy")
+      park_session(worktree, "_sandbox-offstage", "kind" => "bg", "name" => "sandbox fan-out", "status" => "busy")
     end
 
     # A Claude session file the sidebar will trust. ClaudeSessions only trusts a LIVE

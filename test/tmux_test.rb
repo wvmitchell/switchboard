@@ -76,6 +76,40 @@ module Switchboard
     # prune's orphaned-sidebar reap (a THIS-SERVER sidebar process whose tty is no live
     # pane — parse_sidebar_processes scopes to our server's children by parent pid).
 
+    # --- parse_panes_by_tty: SessionName's pane lookup + tri-state visibility ---
+
+    def test_parse_panes_by_tty_maps_each_tty_to_its_pane_and_visibility
+      raw = "%1\t/dev/ttys001\t1\t1\t0\t120\t0\n%2\t/dev/ttys002\t0\t1\t1\t80\t1\n%3\t/dev/ttys003\t1\t0\t0\t40\t0\n"
+      assert_equal({ "ttys001" => { pane: "%1", visible: true, in_mode: false, synchronized: false, width: 120 },
+                     "ttys002" => { pane: "%2", visible: false, in_mode: true, synchronized: true, width: 80 },
+                     "ttys003" => { pane: "%3", visible: false, in_mode: false, synchronized: false, width: 40 } },
+                   Tmux.parse_panes_by_tty(raw))
+    end
+
+    # Value: protects=an unreadable copy-mode flag or width never reads as "safe to type";
+    # fails_when=a garbled field becomes false/0; why_new=new fields; seam=none
+    def test_parse_panes_by_tty_reads_garbled_mode_and_width_as_unknown
+      row = Tmux.parse_panes_by_tty("%1\t/dev/ttys001\t0\t1\tx\t\n")["ttys001"]
+      assert_nil row[:in_mode]
+      assert_nil row[:width]
+      assert_nil row[:synchronized], "a missing synchronize-panes flag is unknown, not off"
+    end
+
+    # Value: protects=keys are never typed into a pane the user may be watching; fails_when=a
+    # garbled row reads as hidden (Tmux.visible?'s fail-open); why_new=new parser; seam=none
+    def test_parse_panes_by_tty_reads_a_garbled_row_as_unknown_not_hidden
+      raw = "%1\t/dev/ttys001\t\t\n%2\t/dev/ttys002\tx\t1\n"
+      assert_equal [nil, nil], Tmux.parse_panes_by_tty(raw).values_at("ttys001", "ttys002").map { |h| h[:visible] }
+      assert_empty Tmux.parse_panes_by_tty("junk\n\t/dev/ttys009\t1\t1\n"), "no %id, no row"
+    end
+
+    def test_parse_panes_by_tty_a_grouped_pane_is_visible_if_any_session_shows_it
+      shown = "%1\t/dev/ttys001\t0\t1\n%1\t/dev/ttys001\t1\t1\n%1\t/dev/ttys001\t0\t0\n"
+      assert Tmux.parse_panes_by_tty(shown)["ttys001"][:visible]
+      murky = "%1\t/dev/ttys001\t0\t1\n%1\t/dev/ttys001\t?\t1\n%1\t/dev/ttys001\t0\t1\n"
+      assert_nil Tmux.parse_panes_by_tty(murky)["ttys001"][:visible]
+    end
+
     def test_parse_ttys_strips_dev_prefix_and_dedupes
       raw = "/dev/ttys001\n/dev/ttys002\n/dev/ttys001\n"
       assert_equal Set["ttys001", "ttys002"], Tmux.parse_ttys(raw)

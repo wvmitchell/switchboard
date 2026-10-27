@@ -744,6 +744,67 @@ module Switchboard
       active == "1" && attached.to_i.positive?
     end
 
+    # { bare tty => { pane:, visible:, in_mode:, synchronized:, width: } } for every pane on the server,
+    # or nil when tmux is unreachable. SessionName finds an agent's pane by its process's
+    # tty — a dispatched agent is the launcher's child, a grandchild of the pane, so
+    # parent pids can't. `visible` is TRI-state, unlike `visible?` (which reads an empty
+    # reply as hidden): true = the pane's window is on screen in an attached session,
+    # false = it isn't, nil = the row didn't parse. A typist must treat nil as "maybe
+    # watching". `in_mode` (copy/view mode — keys go to tmux, not the program),
+    # `synchronized` (synchronize-panes — keys go to every pane in the window) and `width`
+    # are nil when unreadable, too.
+    def panes_by_tty
+      raw = IO.popen(["tmux", "list-panes", "-a", "-F",
+                      "\#{pane_id}\t\#{pane_tty}\t\#{window_active}\t\#{session_attached}\t\#{pane_in_mode}\t\#{pane_width}\t\#{pane_synchronized}"],
+                     err: File::NULL, &:read)
+      $?.success? ? parse_panes_by_tty(raw) : nil
+    rescue StandardError
+      nil
+    end
+
+    # Pure: the list-panes rows above → the map. A pane in several (grouped) sessions is
+    # listed once per session: visible if any row says so, else unknown if any row is.
+    def parse_panes_by_tty(raw)
+      raw.to_s.lines.each_with_object({}) do |line, out|
+        id, tty, active, attached, mode, width, synced = line.chomp.split("\t", -1)
+        tty = normalize_tty(tty)
+        next unless tty && id.to_s.start_with?("%")
+
+        seen = %w[0 1].include?(active) && attached.to_s.match?(/\A\d+\z/)
+        vis = seen ? active == "1" && attached.to_i.positive? : nil
+        prev = out[tty]
+        vis = true if prev && prev[:visible] == true
+        vis = nil if prev && prev[:visible].nil? && vis != true
+        out[tty] = { pane: id, visible: vis, in_mode: flag(mode), synchronized: flag(synced),
+                     width: width.to_s.match?(/\A\d+\z/) ? width.to_i : nil }
+      end
+    end
+
+    # A tmux 0/1 format flag as a boolean, or nil when it isn't one.
+    def flag(raw)
+      %w[0 1].include?(raw) ? raw == "1" : nil
+    end
+
+    # The pane's visible screen WITH its SGR escapes (SessionName tells a dim placeholder
+    # from typed text by them), or nil when the capture failed.
+    def capture_pane(pane)
+      out = IO.popen(["tmux", "capture-pane", "-p", "-e", "-t", pane], err: File::NULL, &:read)
+      $?.success? ? out.force_encoding(Encoding::UTF_8).scrub : nil
+    rescue StandardError
+      nil
+    end
+
+    # Type `text` into a pane as ONE literal send-keys — tmux runs it atomically, so a
+    # key the user presses lands before or after it, never inside.
+    def send_literal(pane, text)
+      system("tmux", "send-keys", "-t", pane, "-l", text, out: File::NULL, err: File::NULL)
+    end
+
+    # Named keys (Enter, BSpace, …) in one send-keys.
+    def send_keys(pane, *keys)
+      system("tmux", "send-keys", "-t", pane, *keys, out: File::NULL, err: File::NULL)
+    end
+
     # The pane's pseudo-terminal (e.g. /dev/ttys007) — tmux's stable per-pane
     # identity, fixed for the pane's whole life. nil if the pane is gone (a
     # dead/unresolved -t target prints empty). %ids, by contrast, get RECYCLED onto
