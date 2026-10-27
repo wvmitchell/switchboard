@@ -248,7 +248,7 @@ exec, an ignored signal stays ignored, and a second reload landing during the bo
 otherwise kill the new image. The new image installs its handler, then re-tags.
 
 The resume payload and the signal are a **cross-version contract**: newer code must read
-every older payload (anything it doesn't understand is a cold start), and the tag and the
+every older payload (one it can't read is a blank resume, still a reload; only an absent one is a cold start), and the tag and the
 signal never change meaning. The same holds for `Creation` records, because a launcher
 (`Creator.launch`) lives as long as its agent and keeps the code it started with.
 

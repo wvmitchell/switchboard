@@ -452,22 +452,24 @@ module Switchboard
     end
 
     # Value: protects=building the payload never raises out of reexec (that would close the
-    # pane), and only on-screen worktrees' baseline travels; fails_when=the rescue or the filter
-    # is dropped; seam=none
-    def test_the_payload_carries_only_tracked_worktrees_and_never_raises
+    # pane); fails_when=the rescue is dropped; seam=none
+    def test_the_payload_never_raises
       sb = sidebar(nodes: [proj("app"), ws("a", path: "/wt/a")])
-      sb.instance_variable_get(:@edges).restore_baseline(hook_states: { "/wt/a" => :done, "/wt/gone" => :done }, notify: {})
-      assert_equal({ "/wt/a" => :done }, CodeReload.decode(sb.send(:resume_payload))[:hook_states])
       sb.instance_variable_get(:@edges).define_singleton_method(:baseline) { raise "boom" }
       refute_nil CodeReload.decode(sb.send(:resume_payload)), "a minimal payload, not an exception"
     end
 
-    def test_a_clean_exit_untags_the_pane
-      ENV["TMUX_PANE"] = "%9"
-      untagged = []
-      sb = sidebar(nodes: [proj("app")])
-      stub_method(Tmux, :untag_sidebar_pane, ->(pane) { untagged << pane }) { capture_stdout { sb.send(:teardown) } }
-      assert_equal ["%9"], untagged, "a dead pane (remain-on-exit) keeps no pid a sender could signal"
+    # Value: protects=a pane reloaded twice before its first rebuild (off screen, inside the
+    # spread) passes on the cursor and baseline it was handed; fails_when=the payload is built
+    # from the still-empty tree; seam=none
+    def test_a_reload_before_the_first_rebuild_passes_its_state_on
+      sb = sidebar(nodes: [])
+      cursor = { "kind" => "ws", "project" => "app", "path" => "/wt/a", "branch" => "x" }
+      sb.instance_variable_set(:@resume_cursor, cursor)
+      sb.instance_variable_get(:@edges).restore_baseline(hook_states: { "/wt/a" => :done }, notify: {})
+      got = CodeReload.decode(sb.send(:resume_payload))
+      assert_equal "/wt/a", got[:cursor]["path"]
+      assert_equal({ "/wt/a" => :done }, got[:hook_states])
     end
 
     def test_an_unreadable_payload_still_starts_as_a_reload

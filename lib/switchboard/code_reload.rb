@@ -8,8 +8,8 @@ module Switchboard
   # per-process things worth keeping (cursor, the agent-edge baseline) to the new image
   # in one env var. Everything else is already on disk by design.
   #
-  # Cross-version contract: newer code must accept every older payload, and a missing
-  # or unreadable one is just a cold start.
+  # Cross-version contract: newer code must accept every older payload. An absent one is a
+  # cold start (a launch); one that won't decode is a blank resume, still a reload.
   module CodeReload
     module_function
 

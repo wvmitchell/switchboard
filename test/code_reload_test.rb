@@ -237,6 +237,7 @@ module Switchboard
       refute live.call("10\t\t0\tsb-sidebar\tvim notes.md\n"), "a different command"
       refute live.call("10\t\t1\tsb-sidebar\t/x/bin/switchboard sidebar\n"), "dead"
       refute live.call("10\t10\t0\tsb-sidebar\t/x/bin/switchboard sidebar\n"), "tagged since"
+      refute live.call("10\t4242\t0\tsb-sidebar\t/x/bin/switchboard sidebar\n"), "tagged by a child pid (fish) since"
     end
 
     def target(pane, tagged:, bin: nil, between: false, pid: 1, tag_pid: nil, failed: false)

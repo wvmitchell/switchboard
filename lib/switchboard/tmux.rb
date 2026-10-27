@@ -703,12 +703,6 @@ module Switchboard
       system(*cmd, out: File::NULL, err: File::NULL)
     end
 
-    def untag_sidebar_pane(pane)
-      return unless pane
-
-      system("tmux", "set-option", "-p", "-u", "-t", pane, CodeReload::TAG, out: File::NULL, err: File::NULL)
-    end
-
     # A reload this pane's sidebar couldn't make (doctor and the next reload report it).
     def flag_failed_reload(pane, root)
       return unless pane
@@ -716,7 +710,7 @@ module Switchboard
       system("tmux", "set-option", "-p", "-t", pane, CodeReload::FAILED_TAG, root.to_s, out: File::NULL, err: File::NULL)
     end
 
-    ReloadTarget = Struct.new(:pane, :pid, :tagged, :between, :tag_pid, :failed, :bin, keyword_init: true)
+    ReloadTarget = Struct.new(:pane, :pid, :tag, :tagged, :between, :tag_pid, :failed, :bin, keyword_init: true)
 
     # Every sidebar pane, split by whether it can reload itself. nil off a server.
     def sidebar_reload_targets
@@ -740,7 +734,7 @@ module Switchboard
         next unless id && dead != "1" && title.to_s.strip == SIDEBAR_TITLE && pid.to_s.match?(/\A\d+\z/)
 
         other = tag.to_s.match?(/\A[1-9]\d*\z/) && tag != pid ? tag.to_i : nil
-        ReloadTarget.new(pane: id, pid: pid.to_i, tagged: tag == pid, between: tag == "0", tag_pid: other,
+        ReloadTarget.new(pane: id, pid: pid.to_i, tag: tag.to_s, tagged: tag == pid, between: tag == "0", tag_pid: other,
                          failed: !failed.to_s.empty?, bin: start_bin(command))
       end
     end
@@ -776,7 +770,8 @@ module Switchboard
     end
 
     # Is the pane still what the listing saw? The preflights between the listing and a respawn
-    # take time, and `respawn-pane -k` kills whatever runs there now (an editor, say).
+    # take time, and `respawn-pane -k` kills whatever runs there now (an editor, or a sidebar
+    # that tagged itself meanwhile and should be signaled instead).
     def same_reload_target?(target)
       out = IO.popen(["tmux", "display-message", "-p", "-t", target.pane,
                       "\#{pane_pid}\t\#{#{CodeReload::TAG}}\t\#{pane_dead}\t\#{pane_title}\t\#{pane_start_command}"],
@@ -785,7 +780,7 @@ module Switchboard
 
       pid, tag, dead, title, command = out.chomp.split("\t", 5)
       dead != "1" && title.to_s.strip == SIDEBAR_TITLE && pid.to_i == target.pid &&
-        (tag == pid) == target.tagged && (tag == "0") == target.between && start_bin(command) == target.bin
+        tag.to_s == target.tag.to_s && start_bin(command) == target.bin # any tag change (a sidebar tagging itself) aborts
     rescue SystemCallError
       false
     end

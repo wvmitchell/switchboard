@@ -663,8 +663,8 @@ checkout. Nothing can repoint a sidebar at another install.
     own start command. The respawn adds `-e` for the resume marker, retried without `-e` on
     old tmux. The pane is re-read just before (`Tmux.same_reload_target?`: same pid, tag,
     liveness and command), because the preflights take time and `-k` kills whatever runs
-    there now. Dead panes (`#{pane_dead}`, under remain-on-exit) are never targets, and a
-    clean exit untags its pane. The respawn only happens when that start command is exactly `<…/switchboard> sidebar`
+    there now; any tag change aborts it. Dead panes (`#{pane_dead}`, under remain-on-exit)
+    are never targets. The respawn only happens when that start command is exactly `<…/switchboard> sidebar`
     (`Tmux.start_bin`: any program can title its pane `sb-sidebar`), and the binary is an
     executable file that passes `version` (checked once per distinct binary). Otherwise the
     pane is left running and counted: respawn kills first, so a broken or deleted checkout
@@ -722,8 +722,8 @@ checkout. Nothing can repoint a sidebar at another install.
   - `encode` never raises and never writes what `decode` would refuse. Names that aren't
     valid UTF-8 are scrubbed: git branch names can be any bytes, `JSON.generate` raises on
     them, and the whole fleet reloads at once. Past `PAYLOAD_MAX` the baseline is dropped
-    and the cursor kept. `resume_payload` carries only on-screen worktrees' baseline, and a
-    raise there hands over a minimal payload.
+    and the cursor kept. A cursor still waiting for its row travels as it came, and a raise
+    in `resume_payload` hands over a minimal payload.
   - A payload that was handed over but won't decode is `BLANK`, not nil, so it's still a
     reload: no clear, no launch-time prune.
   - It carries:
@@ -745,7 +745,7 @@ checkout. Nothing can repoint a sidebar at another install.
     the spread (`@warm_not_before`). The home sidebar skips its launch-time prune: a
     reload isn't a launch.
 - **Cross-version contract**: newer code accepts every older payload (lenient, per field;
-  anything unknown is a cold start; `code_reload_test` pins a frozen v1 string).
+  one that won't decode is a blank resume, still a reload; only an absent one is a cold start; `code_reload_test` pins a frozen v1 string).
   `@sb_reload`, `@sb_reload_failed` and `SIGUSR1` never change meaning. `Creation` records
   stay readable by older launchers (`Creator.launch` lives as long as its agent and keeps
   old code).
