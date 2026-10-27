@@ -132,7 +132,10 @@ contract was last verified against; the baselines track those lines, one per con
 - the Claude and Codex **hook contract** ("Agent-state dots"),
 - the sessions-file **⇅ remote link** (`bridgeSessionId`, `procStart`; "Remote-link
   glyph"),
-- the sessions-file **◷ `status`** field ("Waiting on background work").
+- the sessions-file **◷ `status`** field ("Waiting on background work"),
+- the **session-name sync**, which types `/rename` into Claude's pane after reading its
+  screen ("Session-name sync"). It was last verified against recorded 2.1.310 screens
+  in `test/fixtures/session_name`, not in a live run.
 
 Re-verifying one doesn't advance the others.
 
@@ -143,7 +146,7 @@ Re-verifying one doesn't advance the others.
   ```
 
   For every version past the reviewed baseline, grep its entries for:
-  `hook|SessionStart|SessionEnd|Stop|stop_hook_active|PermissionRequest|Notification|additionalContext|settings.local.json|sessions/|bridgeSessionId|procStart|remote.control|CLAUDECODE|CLAUDE_CODE_SESSION_ID|worktree|status|busy|background agent|background task`.
+  `hook|SessionStart|SessionEnd|Stop|stop_hook_active|PermissionRequest|Notification|additionalContext|settings.local.json|sessions/|bridgeSessionId|procStart|remote.control|CLAUDECODE|CLAUDE_CODE_SESSION_ID|worktree|status|busy|background agent|background task|rename|session name|prompt box|prompt input|input box|divider|placeholder|vim mode`.
   Skip `[VSCode]`, `[Cloud sessions]`, `[Claude Tag]`, `[Code Review]`, Windows,
   PowerShell, self-hosted runner and mod-only entries. Then advance the baseline.
 
@@ -163,7 +166,21 @@ Re-verifying one doesn't advance the others.
   An entry that touches any of these is a drift finding even when the grep terms only
   half match.
 
-  When the **installed** version moves, check both sessions-file readers live:
+  The terms from `rename` on cover the session-name sync. It depends on how Claude
+  draws its screen, which no changelog promises to keep. What it relies on:
+
+  - `/rename <name>` stays a local command that renames the session and records the
+    new `name` in the sessions file. The sync confirms the rename by that field.
+  - The main prompt box sits between the last two divider lines on screen, starts with
+    `❯` padded by an NBSP, and draws its placeholder dim. A vim-mode footer reads as no
+    box.
+  - `kind` keeps naming interactive sessions the way `RemoteLink::KINDS` expects.
+
+  A redesign of the prompt box or theme, a new input mode, or a change to `/rename` is a
+  drift finding even when its entry doesn't say "prompt box".
+
+  When the **installed** version moves, check the sessions-file readers and the
+  session-name sync live:
 
   - **⇅ remote link**: `switchboard doctor`'s "remote links (⇅)" line must still show
     `N linked` with no warning while a `/rc` session is open (`RemoteLink.health` is
@@ -176,6 +193,14 @@ Re-verifying one doesn't advance the others.
     hold.) There's no
     `doctor` canary for this yet; if one is added (a `status` health line like
     `RemoteLink.health`), check that instead of the manual run.
+  - **Session-name sync**: rename a workspace that has an idle Claude session, then
+    switch away so its pane is off screen. Within a minute the Claude session must
+    carry the new name (the `name` in its sessions file, or the `/resume` picker), and
+    `doctor` must show no `session name:` line. Any `session name:` line (`unrecognized`,
+    `unconfirmed`, `failed_send`, `ceiling`) means the screen contract moved. `doctor`'s
+    canaries for `status`, `name` and `kind` read only the sessions file, never the
+    screen, so this run is the only check on the screen. A placeholder workspace that's
+    due for a name is the natural one to use.
 - **Codex**: the installed version (`codex --version`) and
   `gh release list -R openai/codex -L 3 --exclude-pre-releases`. Grep release notes for
   `hook|trust|config.toml|worktree|linked|PermissionRequest|SessionStart|toml_edit|env snapshot`.
@@ -191,8 +216,10 @@ Re-verifying one doesn't advance the others.
 - **tmux**: `tmux -V` against the latest release. On a new release, read its CHANGES
   for the hooks switchboard sets (`client-session-changed`, `after-new-window`,
   `session-window-changed`), the format variables it reads (`#{config_files}`,
-  `#{pane_tty}`), and `split-window` / `resize-pane`. When the installed tmux moves,
-  run `bin/test-smoke`.
+  `#{pane_tty}`; for the session-name sync also `#{pane_in_mode}`,
+  `#{pane_synchronized}`, `#{pane_width}`, `#{session_attached}` and
+  `#{window_active}`), `split-window` / `resize-pane`, and `send-keys` /
+  `capture-pane -e`. When the installed tmux moves, run `bin/test-smoke`.
 
 A drift finding proposes the follow-up: "re-verify X live, then update the 'last
 verified' line in CLAUDE.md", or "open an issue".
