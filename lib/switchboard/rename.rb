@@ -1,12 +1,13 @@
 # frozen_string_literal: true
 
 module Switchboard
-  # Rename a workspace: move its worktree directory (the display name) and rename
-  # its tmux session in place. The shared core behind both front-ends — the
+  # Rename a workspace: move its worktree directory (the display name), rename its
+  # branch when that's safe (#94), rename its tmux session in place, and (inside tmux)
+  # start the worker that renames its live Claude session too. The shared core behind both front-ends — the
   # sidebar `r` key (Sidebar#rename) and the `switchboard rename` CLI verb
   # (issue #42) — so a running agent can (re)name its own live workspace.
   #
-  # The branch is left as-is so its PR link and git identity stay intact. No UI
+  # A pushed or diverged branch is left as-is so its PR link stays intact. No UI
   # here: callers own the prompt / reload / messages. The result is a status the
   # caller maps to output:
   #
@@ -17,15 +18,23 @@ module Switchboard
   #   :branch_exists a branch by the target name already exists (a lingering branch
   #              from a deleted workspace) — nothing moved; pick another name (#94)
   #   :failed    the git worktree move failed (or the project is unknown)
+  #   :building  the workspace is still being created; nothing moved
   #   :partial   the dir moved but a *reachable* session's rename failed — the
   #              dir is the source of truth, so this is recoverable (prune reaps
   #              the orphan), but the caller should say so rather than claim :ok
+  #
+  # `spawned` is true when a session-name worker was started (see SessionName).
   module Rename
     module_function
 
-    Result = Struct.new(:status, :dest)
+    Result = Struct.new(:status, :dest, :spawned)
 
     def perform(config, project_name, old_path, newname)
+      sync_session_name(config, project_name, move(config, project_name, old_path, newname))
+    end
+
+    # The rename itself; `perform` adds the session-name sync on top.
+    def move(config, project_name, old_path, newname)
       project = config.project(project_name)
       return Result.new(:failed) unless project
       # The worker still holds the old path for its session and launch line; renaming
@@ -45,7 +54,11 @@ module Switchboard
       # names ARE the same dir and git worktree move can't separate them — so it's
       # "unchanged", not a collision or a failure. (A case-only change therefore
       # also doesn't sync the branch — an accepted edge; see #94.)
-      return Result.new(:unchanged, dest) if dest == old_path || File.identical?(dest, old_path)
+      # old_path, not dest: on a case-only rename the dir keeps its old case, and the session
+      # name must match the dir.
+      # Not when `dest` is a symlink: renaming back onto the bridge an earlier rename left
+      # (A->B, then B->A) resolves to old_path too, but it's a real move.
+      return Result.new(:unchanged, old_path) if dest == old_path || (!File.symlink?(dest) && File.identical?(dest, old_path))
       # A real dir blocks the move; a stale rename-bridge symlink does not
       # (move_worktree clears it first), so only a non-symlink counts as taken.
       return Result.new(:exists, dest) if File.exist?(dest) && !File.symlink?(dest)
@@ -95,9 +108,30 @@ module Switchboard
       Monitoring.carry(old_real, new_real)
       OffstageHold.carry(old_real, new_real)
       Notify.clear(old_real)
+      SessionName::Outcome.forget(old_real) # about the old name; this rename's worker judges afresh
       Creation.repath(old_path, old_real, dest) # a dispatch the agent renamed on turn one still pings
 
       Result.new(rename_session(project_name, old_path, dest), dest)
+    end
+
+    # Start the detached worker that types `/rename <leaf>` into the workspace's live
+    # agent session once that's safe. Only inside tmux — the worker drives tmux, and the
+    # offline suite (no TMUX) can never launch a real switchboard from a rename test. A
+    # same-name rename spawns too: it's the retry doctor points at.
+    def sync_session_name(config, project_name, result)
+      return result unless %i[ok partial unchanged].include?(result.status)
+      return result unless ENV["TMUX"] && config.sync_session_name_for(project_name)
+      return result unless File.basename(result.dest).match?(SessionName::NAME) # the worker would refuse it
+
+      bin = ENV["SWITCHBOARD_BIN"] or return result
+      # Its own process group: an agent's tool runner that kills the rename command's group
+      # on return can't take the worker down before it daemonizes.
+      Process.detach(Process.spawn(bin, "sync-session-name", result.dest, File.basename(result.dest),
+                                   pgroup: true, in: File::NULL, out: File::NULL, err: File::NULL))
+      result.spawned = true
+      result
+    rescue SystemCallError
+      result
     end
 
     # File.realpath, degrading to the raw path on a vanished/odd path — a best-effort

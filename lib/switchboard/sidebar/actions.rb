@@ -555,8 +555,12 @@ module Switchboard
         # The CLI warns these to stderr; the sidebar can't (stderr would paint over
         # the TUI), so flash on the bottom row — a silent reload would leave a failed
         # rename looking like nothing happened.
-        msg = rename_error(Rename.perform(@config, node.project, node.path, newname))
+        result = Rename.perform(@config, node.project, node.path, newname)
+        msg = rename_error(result)
         flash(msg) if msg
+        # The agent there is about to see /rename appear; tell YOU it's switchboard's.
+        # The status line, not flash: flash waits for a key on every rename.
+        Tmux.notify("switchboard: any live Claude session there will be renamed too, #{SessionName::WHEN}") if result.spawned
         reload
       end
 

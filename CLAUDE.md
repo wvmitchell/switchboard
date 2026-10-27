@@ -37,7 +37,7 @@ bin/switchboard doctor     # check that tmux/git/gh + config + install wiring ex
 bin/switchboard init       # create ~/.config/switchboard/config.yml (empty; grown by the add-project flow)
 bin/switchboard config     # open config.yml in $EDITOR (sidebar `e` does the same)
 bin/switchboard sidebar    # run the persistent sidebar standalone (normally tmux-spawned)
-bin/switchboard rename NAME # rename the current workspace from inside it (dir move + bridge + session rename + Claude `/resume` history carry + the git branch when safe — see #94); for the agent to (re)name its own live workspace (#42). No NAME prints usage + the current name (switchboard doesn't guess one)
+bin/switchboard rename NAME # rename the current workspace from inside it (dir move + bridge + session rename + Claude `/resume` history carry + the git branch when safe — see #94; inside tmux it also spawns the session-name worker); for the agent to (re)name its own live workspace (#42). No NAME prints usage + the current name (switchboard doesn't guess one)
 bin/switchboard monitoring on|off # flag/unflag this workspace as running a background monitor/loop (steady ∞ dot; bare = status). Agent- or human-invoked; re-run `on` each cycle to keep it live (liveness = marker mtime within Monitoring::TTL). Layer-2 SessionStart/SessionEnd hooks (monitoring-nudge) clear it per-session + nudge, gated on config background_presence
 bin/switchboard monitoring notify # (from a MONITORED workspace) declare "come look — this cycle surfaced something": bold + a distinct `alert` sound + sparkle, the one exception to the silent routine ticks. Gated to monitored; writes an Attention bold (direct) + a Notify mtime marker (the sidebar's announce-gated ring). See the ∞ section.
 bin/switchboard prune      # kill orphaned sb/ sessions (reconcile vs git worktrees) + reap orphaned sidebar processes; --dry-run/-n previews
@@ -655,7 +655,7 @@ checkout. Nothing can repoint a sidebar at another install.
   - `SIGUSR1`, from `upgrade --finish` (installed binary only) and `switchboard
     reload-sidebars` (any binary). Senders read `list-panes -a` once
     (`Tmux.sidebar_reload_targets`) and signal only a sidebar pane whose `@sb_reload`
-    tag == `#{pane_pid}`. An untagged pane (older than 0.58, or tmux < 3.0, where SIGUSR1's
+    tag == `#{pane_pid}`. An untagged pane (older than 0.59, or tmux < 3.0, where SIGUSR1's
     default action would KILL it) is instead `respawn-pane -k`'d with NO command (it reruns
     the pane's own start command), plus `-e` for the resume marker, retried without `-e` on
     old tmux. That only happens when its start binary is an executable file that passes
@@ -1286,6 +1286,88 @@ sessions into `:offstage` (any busy/shell), `:idle` (every one idle for ≥ `SET
   session (batching measured no faster) and 15 Claudes = ~125ms per 3s scan (D10 — config roots
   would drop git-discovered worktrees outside `worktree_root`, Codex O4). Renames pass via the
   bridge symlink.
+
+### Session-name sync (typing `/rename` into the agent's pane)
+
+Claude names a session after the workspace's FIRST name and never follows a rename, so the
+phone's session list and the resume picker went stale after every `r`. There's no API (the
+session file is read-only to us; `/rename` is a local CLI command), so `Rename.perform` — on
+`:ok`/`:partial`/`:unchanged`, only with `ENV["TMUX"]` set (the offline suite's spawn gate)
+and `sync_session_name_for` on — spawns `switchboard sync-session-name <dest> <leaf>`, a
+daemonized `SessionName.work` (`session_name.rb`) that types `/rename <leaf>` into each live
+Claude session in the workspace. `Result#spawned` makes the CLI tell the agent the "session
+renamed" note it's about to see is ours. A same-name rename is the retry.
+
+The typing rule is the whole design; every step fails closed (wait, never guess), pinned by
+real 2.1.310 captures in `test/fixtures/session_name`:
+- **Between turns only** (`status` idle/shell). Mid-turn a permission modal can open in the
+  instant before our Enter, and Enter APPROVES it; from idle a modal needs a model round trip.
+  Every key send re-reads the pane (tmux), the box and the status after the slower checks, then
+  LAST the same Claude (pid + start time) holding the foreground — before typing (a turn starting during the slower checks could
+  open a prompt our characters answer: a digit picks an option), before Enter, and before backspaces.
+- **Off screen, tri-state, and Claude's terminal.** `Tmux.panes_by_tty` reads visibility as
+  true/false/nil (unparseable = maybe watched); `Tmux.visible?` reads an empty reply as hidden, so
+  it isn't reused. The pane is found by the process's tty — a dispatched agent is a grandchild of
+  the pane. The pane must not be in a tmux mode (copy mode eats keys) or synchronized
+  (synchronize-panes copies keys to every sibling), our line must fit its width, and Claude must
+  still be on the PANE's tty, running, and hold its foreground process group (one `ps` read of tty,
+  stat, pgid, tpgid: a ^Z'd Claude's last box can still be on screen, a Claude moved to another
+  terminal with reptyr owns THAT one's foreground while its old frame sits in our pane, and one
+  SIGSTOPped alone keeps its group in front while our keys queue for the next reader). Interactive sessions only (`kind` allowlist).
+- **Empty box.** `SessionName::Box` parses the region between the LAST two divider lines (the
+  upper one carries the name), tracking SGR across lines (tmux carries the placeholder's dim
+  over the break). Claude pads `❯` with an NBSP. A modal's cursor draws `❯` too, hence the
+  dividers.
+- **Enter only on an exact `❯ /rename <leaf>`**, every gate re-read first: the box + status after
+  the slower `ps`/tmux checks (a turn starting meanwhile could open a permission prompt that Enter
+  would approve; the tty must still name the same %id — tmux recycles them), then LAST the same
+  Claude (pid + start time) holding the foreground (a ^Z or crash hands Enter to a shell, and a dead
+  Claude's frame and session file both outlive it). Otherwise back out exactly our line with BSpace,
+  or leave it (`failed_send`): a prefix still showing after the settle is left too, since it can't
+  be told from someone's own `/re…`. An `ensure` backs out on a crash. A vim-mode footer reads as no box.
+- **Settling waits out an empty box.** Right after typing the box can still read empty (render
+  latency ~130 ms); settle and back-out keep polling through empty/prefix boxes (~1.2 s), and a
+  back-out only counts as clean once the box reads empty again.
+- **At most one Enter per session per worker.** Only a clean back-out may retry; `failed_send` or
+  an Enter Claude never confirms (`unconfirmed`) spends the session for that worker. A spent worker
+  keeps WATCHING (never typing) until the ceiling, so a late confirmation still ends as done, and a
+  spent session that exits stops counting. A retry YOU run (same-name rename) is a new worker and may try once more (by
+  decision). This rule is what ended the review's retry loops — don't add a retry around it.
+- **Known gap (dec-2679bd5a):** a Claude dialog with a text field drawn like the main prompt would
+  pass `Box.parse` — TODOS.md has the fix (capture one, anchor on the main prompt's footer).
+- Sessions come from `ClaudeSessions.sessions_in` (the ◷/⇅ reader, stricter): full pid+start-time check and the KERNEL cwd only
+  (no recorded-cwd fallback), rediscovered every poll; a per-pid flock keeps two workers apart.
+
+Polls every 2 s for 30 s, then doubles to 30 s, giving up after an hour. Latest wins: a newer
+rename leaves a bridge symlink at `dest` (`superseded?`, re-checked inside the per-pid lock), and a
+newer worker for the same workspace takes `SessionName::Owner`'s claim, so a retried rename
+replaces the running worker (claims are swept by pid liveness, never deleted by their owner — a
+check-then-delete raced the next claim — and a missing claim reads as still ours). A worker
+superseded mid-pass writes no outcome: its `dest` is a bridge to the new workspace's key. The pane
+snapshot is re-read right before typing (it can be seconds old in a multi-session workspace). A couldn't-tell answer (lsof answering for nobody, or missing a session whose
+recorded cwd is in this workspace; ps failing; an unwritable lock dir; a nil capture) waits; two
+empty scans in a row (or one at the ceiling) end the worker (`:gone`, which clears the marker —
+nobody left means nothing failed). `sessions_in` skips sessions in a worktree NESTED inside this
+one (a `.git` between the cwd and the root: `claude --worktree`). A back-out re-reads like the Enter gate — the pane (same %id on the tty, still OFF screen — someone
+who just switched in may be typing — no tmux mode, not synchronized), the box (anything typed meanwhile
+changes it), the status (idle/busy/shell — never a modal or an unknown one), then LAST the same Claude
+in the foreground; any miss leaves the text as `failed_send` — then takes back our line, and only a box
+read empty again counts as clean. Failures (`failed_send`, `unconfirmed`, `unrecognized`, `ceiling`) are
+`SessionName::Outcome` markers (KeyedMarkerStore, realpath-keyed) that `doctor` lists with the
+retry; a success clears them. A marker is the NEWEST worker's verdict (one per pass, failed_send first; the worker keys it by
+the realpath it started with and writes nothing once superseded or retired), decided by evidence — no
+ranking or carrying between workers (two review passes of sticky/carry rules each grew new
+corners): at the ceiling, a box still holding any `/rename …` is `failed_send` (a `:leftover`
+pass), so leftover text is reported by whichever worker finds it; a rename just forgets the old
+path's marker. Rename only spawns (in its own process group, so an agent's tool runner can't kill
+it before it daemonizes) for a leaf `SessionName::NAME` accepts, a case-only rename syncs the case
+the dir kept, and the public `sync-session-name` verb refuses any dest that isn't a non-primary
+switchboard worktree. `RemoteLink.health` `odd_status`/`unnamed`/`unknown_kind` are the
+canaries for Claude changing the `status`/`name`/`kind` fields. A crash in the worker records an
+`error` verdict (never a silent exit), and a worker whose `dest` was already renamed again when it
+booted exits before claiming (claiming through the bridge would take the newest worker's claim). The sidebar's `r` posts a status-line
+notice when it spawned a worker (the CLI prints one for the agent). Codex is a TODO (its app-server's `thread/name/set`). The smoke test drives a
+stand-in TUI (`test/smoke/fake_claude.rb`) — no test runs real Claude.
 
 ### Shared project collapse (the same multi-process trick)
 

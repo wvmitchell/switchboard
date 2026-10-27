@@ -232,6 +232,12 @@ non-zero — switchboard doesn't guess a name; you (or the agent) supply it.
 > hand. Set `auto_rename: false` to opt out. (`switchboard rename-nudge` is the internal
 > subcommand that hook runs; not for direct use.)
 
+> **The Claude session gets the name too.** Inside tmux, a rename starts a background
+> worker that types `/rename <name>` into the workspace's live Claude session once it's
+> idle and off screen, so the phone's session list and the resume picker follow. Renaming
+> to the current name retries it. See [`sync_session_name`](reference-config.md#sync_session_name).
+> (`switchboard sync-session-name` is that worker; not for direct use.)
+
 > **After a rename, `cd` into the new path.** The move leaves a symlink bridge at
 > the old path (so a running agent's hooks keep resolving), but your interactive
 > shell's `pwd` still reports the old name. The command prints the exact `cd` to
@@ -311,7 +317,7 @@ Every running sidebar on the tmux server swaps in its switchboard's current code
 its own pane. `upgrade` does this itself. Use it by hand after a clone's `git pull`, or
 inside `switchboard sandbox` to see a sidebar code edit without detaching.
 
-- A sidebar from 0.58.0 on gets a signal (`SIGUSR1`). At its next safe moment (no
+- A sidebar from 0.59.0 on gets a signal (`SIGUSR1`). At its next safe moment (no
   prompt, `?` overlay, QR code or filter open) it test-runs its binary (`version`,
   3 seconds at most) and then execs it in place, keeping its pid, cursor and agent
   state. One that's on screen goes at once. The rest are spread over 30 seconds

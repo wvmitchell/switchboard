@@ -328,5 +328,156 @@ module Switchboard
       refute File.exist?(path("wts", "proj", "x.lock")), "nothing moved"
       assert Git.branch_exists?(repo, "old")
     end
+
+    # --- the session-name worker spawn (SessionName) ---
+
+    # Records spawns instead of running them; TMUX points at a socket that doesn't exist,
+    # so the session-rename shell-out finds no server.
+    def spawns_for(env: { "TMUX" => path("no-server,1,0"), "SWITCHBOARD_BIN" => "/sb/bin/switchboard" })
+      spawned = []
+      env.each { |k, v| ENV[k] = v }
+      stub_method(Process, :spawn, ->(*args) { spawned << args.first(4) && 4242 }) do
+        stub_method(Process, :detach, ->(_) {}) { @result = yield }
+      end
+      spawned
+    end
+
+    # Value: protects=offline tests never launch the installed switchboard; fails_when=the
+    # TMUX gate is removed; why_new=D7; seam=none
+    def test_a_rename_outside_tmux_spawns_no_worker
+      repo = temp_git_repo("proj")
+      old = add_worktree(repo, "old")
+      spawned = spawns_for(env: { "SWITCHBOARD_BIN" => "/sb/bin/switchboard" }) { Rename.perform(config_for(repo), "proj", old, "new") }
+      assert_empty spawned
+      refute @result.spawned
+    end
+
+    def test_a_rename_inside_tmux_spawns_one_worker_for_the_new_leaf
+      repo = temp_git_repo("proj")
+      old = add_worktree(repo, "old")
+      spawned = spawns_for { Rename.perform(config_for(repo), "proj", old, "new") }
+      assert_equal [["/sb/bin/switchboard", "sync-session-name", path("wts", "proj", "new"), "new"]], spawned
+      assert @result.spawned
+    end
+
+    # Value: protects=the hour-long worker holds none of the rename's stdio and has its own group,
+    # so an agent's Bash tool returns at once and can't kill it; fails_when=out/err/in or pgroup are
+    # dropped from the spawn; why_new=spawns_for keeps only argv; seam=none; no_claim=real tool-runner pipes (spawn stubbed)
+    def test_the_worker_is_spawned_detached_from_the_renames_stdio_and_group
+      repo = temp_git_repo("proj")
+      old = add_worktree(repo, "old")
+      ENV["TMUX"] = path("no-server,1,0")
+      ENV["SWITCHBOARD_BIN"] = "/sb/bin/switchboard"
+      opts = nil
+      stub_method(Process, :spawn, ->(*_args, **o) { (opts = o) && 4242 }) do
+        stub_method(Process, :detach, ->(_) {}) { Rename.perform(config_for(repo), "proj", old, "new") }
+      end
+      assert_equal({ pgroup: true, in: File::NULL, out: File::NULL, err: File::NULL }, opts)
+    end
+
+    def test_the_knob_off_spawns_no_worker
+      repo = temp_git_repo("proj")
+      old = add_worktree(repo, "old")
+      File.write(Config.path, YAML.dump("projects" => [{ "name" => "proj", "path" => repo, "sync_session_name" => false }]))
+      assert_empty(spawns_for { Rename.perform(Config.new, "proj", old, "new") })
+    end
+
+    def test_a_failed_rename_spawns_no_worker
+      repo = temp_git_repo("proj")
+      old = add_worktree(repo, "old")
+      add_worktree(repo, "taken")
+      assert_empty(spawns_for { Rename.perform(config_for(repo), "proj", old, "taken") })
+      assert_equal :exists, @result.status
+    end
+
+    # D12: renaming to the same name is the retry doctor points at.
+    def test_a_same_name_rename_spawns_a_retry
+      repo = temp_git_repo("proj")
+      old = add_worktree(repo, "same")
+      spawned = spawns_for { Rename.perform(config_for(repo), "proj", old, "same") }
+      assert_equal :unchanged, @result.status
+      assert_equal [["/sb/bin/switchboard", "sync-session-name", old, "same"]], spawned
+    end
+
+    # Value: protects=a rename still succeeds when the worker can't be launched; fails_when=
+    # the SystemCallError rescue or the SWITCHBOARD_BIN guard is dropped; why_new=spawn was
+    # always stubbed to succeed; seam=none; no_claim=a real missing binary (Process.spawn stubbed)
+    def test_an_unlaunchable_worker_leaves_the_rename_intact
+      repo = temp_git_repo("proj")
+      old = add_worktree(repo, "old")
+      ENV["TMUX"] = path("no-server,1,0")
+      ENV.delete("SWITCHBOARD_BIN")
+      result = Rename.perform(config_for(repo), "proj", old, "new")
+      refute result.spawned, "no SWITCHBOARD_BIN, no worker"
+      ENV["SWITCHBOARD_BIN"] = "/gone/switchboard"
+      result = stub_method(Process, :spawn, ->(*) { raise Errno::ENOENT }) do
+        Rename.perform(config_for(repo), "proj", path("wts", "proj", "new"), "newer")
+      end
+      assert_equal path("wts", "proj", "newer"), result.dest
+      refute result.spawned
+      assert File.directory?(path("wts", "proj", "newer"))
+    end
+
+    def test_a_rename_clears_the_old_names_sync_outcome
+      repo = temp_git_repo("proj")
+      old = add_worktree(repo, "old")
+      SessionName::Outcome.record(old, :ceiling, "old")
+      Rename.perform(config_for(repo), "proj", old, "new")
+      assert_empty SessionName::Outcome.all
+    end
+
+    def test_a_rename_forgets_even_a_failed_send_the_new_worker_judges_afresh
+      repo = temp_git_repo("proj")
+      old = add_worktree(repo, "old")
+      SessionName::Outcome.record(old, :failed_send, "old")
+      Rename.perform(config_for(repo), "proj", old, "new")
+      assert_empty SessionName::Outcome.all
+    end
+
+    # Value: protects=no notice promises a rename the worker will refuse; fails_when=a leaf the
+    # worker's NAME rejects still spawns; why_new=pass-2 red team; seam=none
+    def test_a_leaf_the_worker_would_refuse_spawns_nothing
+      repo = temp_git_repo("proj")
+      old = add_worktree(repo, "old", branch: "feature-x") # branch left alone: a dir-only rename
+      assert_empty(spawns_for { Rename.perform(config_for(repo), "proj", old, "-dash") })
+      assert_equal :ok, @result.status
+      refute @result.spawned
+    end
+
+    def test_a_case_only_rename_syncs_the_name_the_dir_keeps
+      repo = temp_git_repo("proj")
+      old = add_worktree(repo, "Mixed")
+      skip "case-sensitive filesystem" unless File.identical?(old, path("wts", "proj", "mixed"))
+      spawned = spawns_for { Rename.perform(config_for(repo), "proj", old, "mixed") }
+      assert_equal :unchanged, @result.status
+      assert_equal [["/sb/bin/switchboard", "sync-session-name", old, "Mixed"]], spawned
+    end
+
+    # Value: protects=renaming back onto your own bridge moves the dir; fails_when=the identical
+    # check follows the bridge and reports :unchanged; why_new=run-2 native adversarial; seam=none
+    def test_renaming_back_onto_the_bridge_of_an_earlier_rename_moves_the_dir
+      repo = temp_git_repo("proj")
+      a = add_worktree(repo, "first")
+      config = config_for(repo)
+      assert_equal :ok, Rename.perform(config, "proj", a, "second").status
+      b = path("wts", "proj", "second")
+      result = Rename.perform(config, "proj", b, "first")
+      assert_equal :ok, result.status
+      assert File.directory?(a) && !File.symlink?(a), "the dir is back at its first name"
+    end
+
+    def test_a_partial_rename_still_spawns_and_an_invalid_one_does_not
+      repo = temp_git_repo("proj")
+      old = add_worktree(repo, "old")
+      spawned = stub_method(Tmux, :has_session?, ->(_) { true }) do
+        stub_method(Tmux, :rename_session, ->(*) { false }) { spawns_for { Rename.perform(config_for(repo), "proj", old, "new") } }
+      end
+      assert_equal :partial, @result.status
+      assert_equal 1, spawned.size
+      assert_empty(spawns_for { Rename.perform(config_for(repo), "proj", path("wts", "proj", "new"), "a/b") })
+      assert_equal :invalid, @result.status
+      assert_empty(spawns_for { Rename.perform(config_for(repo), "nope", path("wts", "proj", "new"), "x") })
+      assert_equal :failed, @result.status
+    end
   end
 end

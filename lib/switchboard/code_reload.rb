@@ -62,7 +62,7 @@ module Switchboard
 
     # Reload every sidebar on this tmux server (`upgrade` / `reload-sidebars`). A tagged
     # one gets the signal and swaps code itself, keeping its state. An untagged one (older
-    # than 0.58, or tmux < 3.0) is respawned by its own start command — but only when that
+    # than 0.59, or tmux < 3.0) is respawned by its own start command — but only when that
     # binary exists and loads (`version`, once per distinct binary): a respawn kills the old
     # process first, so a broken or deleted checkout would leave the window without a
     # sidebar. Those stay running and are counted. nil off a server.

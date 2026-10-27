@@ -80,7 +80,7 @@ module Switchboard
       wait_until("the new image re-tags its pane") { tag == @pid.to_s }
     end
 
-    # Value: protects=a 0.58+ sidebar swaps code in its own pane, keeping pane id, pid and
+    # Value: protects=a 0.59+ sidebar swaps code in its own pane, keeping pane id, pid and
     # cursor (R1, D1); fails_when=the trap, wake, exec, resume or setup-clear regress;
     # why_new=no test exec'd a sidebar before; seam=fake brew prefix;
     # no_claim=Homebrew's own install steps (fake Cellar/opt links stand in)
@@ -120,7 +120,7 @@ module Switchboard
     # paints (R1); fails_when=respawn passes a command, drops -e, or the restarted process
     # doesn't paint; seam=none; no_claim=real 0.57 code (an untagged copy stands in)
     def test_an_untagged_sidebar_is_restarted_by_its_own_command
-      tmux!("set-option", "-p", "-u", "-t", @pane, CodeReload::TAG) # what a pre-0.58 sidebar looks like
+      tmux!("set-option", "-p", "-u", "-t", @pane, CodeReload::TAG) # what a pre-0.59 sidebar looks like
       assert run_bin("reload-sidebars")
       wait_until("a new process in the same pane") { pane_pid.positive? && pane_pid != @pid }
       assert_equal [@pane], sidebar_pane_ids(HOME), "respawn keeps the pane and its title"

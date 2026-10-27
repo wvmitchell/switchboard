@@ -6,7 +6,8 @@ module Switchboard
   # The live Claude Code sessions in the tracked worktrees, read from the per-session
   # files Claude keeps at `<claude dir>/sessions/<pid>.json`. Two cues ride this one
   # read: the ⇅ phone link (RemoteLink, a `bridgeSessionId` in the file) and the ◷
-  # "waiting on background work" dot (`offstage`, the file's `status`).
+  # "waiting on background work" dot (`offstage`, the file's `status`). SessionName reads
+  # them too (`sessions_in`), stricter, because it types into the session's pane.
   #
   # The file is UNDOCUMENTED, so everything here fails closed: a shape we don't
   # recognize is no session, never a wrong one, and nothing raises (a raise inside the
@@ -90,6 +91,52 @@ module Switchboard
       nil
     end
 
+    # Every LIVE interactive session working in `ws_path`, linked or not — what
+    # SessionName renames — or nil when that can't be told. Stricter than `scan` on
+    # purpose, since the caller types keys: `kind: "interactive"` only (an allowlist: a
+    # background job or some other kind has no prompt of ours), the full pid + start-time
+    # check, and the KERNEL cwd only (no recorded-cwd fallback, which can name another
+    # workspace after a rename onto an old name). lsof placing none of the live sessions
+    # means lsof failed, not that none is here: nil — and so does one lsof couldn't place
+    # whose recorded cwd is in this workspace. One it couldn't place elsewhere (another
+    # user's Claude, a process exiting mid-scan) isn't ours to wait on. A session in a
+    # worktree NESTED inside this one (`claude --worktree` puts them under .claude/) is
+    # its own session, not this workspace's.
+    def sessions_in(ws_path)
+      live = records.select do |s|
+        s[:kind] == RemoteLink::INTERACTIVE && ProcessIdentity.alive?(s[:pid]) && ProcessIdentity.same?(s[:pid], s[:proc_start])
+      end
+      return [] if live.empty?
+
+      root = real(ws_path).b
+      cwds = Agents.cwds_of(live.map { |s| s[:pid] })
+      return nil if cwds.empty?
+
+      unplaced, placed = live.partition { |s| cwds[s[:pid]].nil? }
+      return nil if unplaced.any? { |s| inside?(real(s[:cwd]).b, root) }
+
+      placed.select { |s| own_session?(real(cwds[s[:pid]]).b, root) }
+    rescue StandardError
+      nil
+    end
+
+    def inside?(cwd, root)
+      cwd == root || cwd.start_with?("#{root}/")
+    end
+
+    # Inside `root`, and no other git checkout (a `.git` dir or file) sits between.
+    def own_session?(cwd, root)
+      return false unless inside?(cwd, root)
+
+      dir = cwd
+      while dir != root
+        return false if File.exist?(File.join(dir, ".git"))
+
+        dir = File.dirname(dir)
+      end
+      true
+    end
+
     # What a worktree's live sessions say about background work, for the scan's
     # `sessions` (one ws path's list): :offstage when any reads busy/shell, :idle when
     # every one reads an `idle` at least SETTLE old, else nil (no evidence either way —
@@ -153,9 +200,11 @@ module Switchboard
     def record(data)
       return nil unless shaped?(data)
 
+      name = data["name"]
       { pid: data["pid"], cwd: data["cwd"], bridge_id: data["bridgeSessionId"], kind: data["kind"].to_s,
         started_at: data["startedAt"], proc_start: data["procStart"].to_s,
-        status: data["status"].to_s, status_at: data["statusUpdatedAt"] }
+        status: data["status"].to_s, status_at: data["statusUpdatedAt"],
+        name: name.is_a?(String) ? name : nil } # SessionName confirms a rename by it
     end
 
     # UTF-8 whatever the locale: under tmux's C locale a default read is US-ASCII,

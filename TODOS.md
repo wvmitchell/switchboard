@@ -902,3 +902,102 @@ safe today; each is narrow).
   the bright-black branch rows), so audition candidates in Will's terminal before choosing.
   Check the reset codes inside `colored` (`\e[0m` would also clear the bar's bg mid-row; they'd
   need to re-assert it or use targeted resets like `\e[39m`). **Priority:** P2.
+
+## Agent session-name sync follow-ups
+
+- **A Codex adapter for session-name sync.** *Why:* v1 syncs only Claude sessions, by typing
+  `/rename` into the pane. Codex looks like it has a real API instead: codex-cli 0.164.0's
+  app-server protocol includes `thread/name/set` and a `thread/name/updated` event (found in
+  the binary's strings, not tested live), and Codex thread names live in
+  `~/.codex/session_index.jsonl` as `thread_name`. That would need no typing at all. *Start
+  in:* a spike answering one question: can switchboard reach the shared local app-server
+  daemon (`codex agents` / `codex remote-control`) for the thread running in a given
+  workspace, authenticate to it, and call `thread/name/set`? If yes, add a
+  `SessionName::Codex` adapter beside the Claude one. **Priority:** P3.
+
+- **Anchor the prompt box on the main prompt's footer.** *Why:* `SessionName::Box` accepts any
+  single-line `❯` input between the last two divider lines. If one of Claude's local dialogs with a
+  text field (config, feedback, agent creation) draws the same box while `status` stays idle, the
+  worker could submit `/rename <name>` into it (no shell runs it, nothing is approved; unverified).
+  Accepted at ship time (decision dec-2679bd5a, `gstack-shortcut` marker in `Box.parse`). *Start in:*
+  capture those dialogs on a private tmux server (no model call), add them as fixtures that must
+  parse `:unrecognized`, then require a footer line only the main prompt draws. **Priority:** P2.
+- **Session-name sync: small items deferred at ship time (decision 4827ff6d).** None changes what
+  gets typed or where; each was found by the /ship review and deferred by the owner. **Priority:** P2.
+  - A session spent as `failed_send` that later carries the name (the user pressed Enter on our
+    leftover) stays `failed_send`: drop any spent entry once the session carries the name.
+  - Doctor's verdict is written on the pass that spends a session, and a crash after a newer
+    worker's claim writes no verdict. Both are untested (worker tests read Outcome at the ceiling).
+  - `RemoteLink.health`'s docstring doesn't describe the session-name canary keys, and `doctor`
+    scans health twice (once per section). Compute it once and pass it to both.
+  - Outcome kinds are symbols in the worker and strings in `Outcome::MESSAGES`: key both the same
+    way, or test that every recordable verdict has a message.
+  - `test/cli_test.rb`'s unknown-kind test carries the name-canary's value header; the
+    zero-sessions check has a header nested in another test. `test/sandbox_test.rb` doesn't list
+    `SWITCHBOARD_SESSION_NAME_DIR`.
+  - One unreadable session file can read as "no session" (a false `:done` that clears the marker):
+    tell an unparseable live file apart from a confirmed absence.
+  - No subprocess (`lsof`, `ps`, `tmux`) has a timeout, so a hung one keeps the worker and its
+    typing lock past the ceiling. Bound them.
+  - The ceiling uses `CLOCK_MONOTONIC`, which pauses while a Mac sleeps: add a wall-clock cap.
+  - A verdict can point at the wrong cause: a too-narrow pane or an unreadable `#{pane_synchronized}`
+    ends as `ceiling`; a user's own `/rename …` draft reads as our leftover.
+  - Design call: a session name the user chose by hand is overwritten by every workspace rename.
+  - Run-3 review, none typing-safety: the session-file vocabulary (`INTERACTIVE`, `KINDS`,
+    `STATUSES`, the bare `"bg"` in `RemoteLink.bg_kind?`) belongs in `ClaudeSessions` beside
+    `OFFSTAGE_STATUSES`; `Sandbox.park_session` should default `kind` to `"bg"` (both callers
+    override it, and the interactive default is the one a worker would type into); `Owner.claim` /
+    `Owner.file` re-resolve an already-real path (key by it as given, like `Outcome.record_real`,
+    and fix the comment and CLAUDE.md's superseded-outcome reason) — Codex round C showed the cost:
+    a rename landing between `work`'s check and the claim lets the old worker overwrite the new
+    one's claim through the bridge, both retire, and the newest name is never synced; the state matrix's untested
+    verdict cells (`none`/`unrecognized`/`leftover`/`failed_send` × superseded or next pass).
+  - Hardening, unconfirmed risks (run-3 review, below the report bar): `sessions_in` trusts the
+    session file's pid without checking it runs Claude (`RemoteLink.claude_pids` could gate it); a
+    vim NORMAL mode with no footer label would read as an empty box (capture a real one); idle
+    overlays drawn above the box (the session survey) might take digit keys; whether a custom
+    `rename` command can shadow the built-in `/rename`.
+  - Run-3 adversarial, needs real captures before any fix: `foreground?` compares Claude's pgid
+    to the tty's, so a child sharing Claude's group (the ^G external editor without an alternate
+    screen, a nested interactive Claude) passes and an old frame can read `:empty` (check `ps -t`
+    for a sole `+` foreground process); a box whose content is all dim (a paste chip?) reads empty;
+    a whitespace-only draft reads empty and a user's trailing space reads as our exact line. Each
+    can only leave text behind (no Enter matches), never submit it.
+  - Run-3 adversarial, bookkeeping: the typing lock is per pid, but keys go to a tty (two sessions
+    on one tty could interleave lines — both are then left); `:skip` (a tty missing from a stale
+    pane snapshot, another tmux server) counts as done and clears doctor's marker; an `unconfirmed`
+    Enter never re-reads the box, so leftover text reads `unconfirmed`; a SystemCallError inside
+    `type_rename` discards the back-out's `failed_send`.
+  - Run-3 adversarial round B: `Tmux.parse_panes_by_tty` merges rows that share a tty, so a
+    `remain-on-exit` dead pane still listing a recycled pty mixes its flags with the live pane's
+    (keys would go to the dead pane and be dropped): add `#{pane_dead}` and skip dead rows, or read
+    two `%id`s on one tty as unknown. And a worker whose late gates keep flapping can type and back
+    out every 2–30 s for an hour: cap clean back-outs per session.
+  - Run-3 adversarial round C (not typing-safety): `sync_session_name?` (global, `!= false`) and
+    `sync_session_name_for` (per project, `== true`) read a quoted "false"/"true" oppositely — give
+    both one parse; `doctor_session_names` prints marker paths/names without stripping control
+    bytes; nothing caps concurrent hour-long workers across workspaces. (The Owner race above was re-raised by
+    Codex round D's structured review and deferred again, D2.)
+  - Run-3 final rounds F/G (none typing-safety): the Enter gate checks `superseded?` right after
+    the settle, before the pane/box/status re-reads (the typing gate checks it just before
+    `still_claude?`; a rename landing in between submits the stale name); keys aren't re-checked
+    against the session's kernel cwd, so a Claude whose cwd moved to another workspace mid-pass gets
+    this workspace's name; `ClaudeSessions.own_session?` treats a submodule's `.git` file as a nested
+    worktree, so a Claude started inside a submodule is never synced (and two empty scans clear the
+    marker); `Claude.current` trusts `<pid>.json` without matching its own pid/procStart.
+  - Captures to add as fixtures (verified live on Claude 2.1.311 during run 3, not yet pinned): the
+    background-tasks dialog REPLACES the prompt box (`Box.parse` → `:unrecognized`; it has an
+    `x to stop` key); typing while the footer task indicator is focused returns focus to the prompt;
+    a foreground `!cmd` reads `busy`. Still uncaptured: other focusable footer items, and an open
+    picker whose selected row is drawn dim.
+- **Treat tmux control mode (`tmux -CC`) windows as on screen.** *Why:* `Tmux.panes_by_tty` reads a
+  pane as visible only when its window is the session's active one; an iTerm2 control-mode client
+  shows every window as a native tab, so a non-active window can be on screen while the worker
+  types into it. *Start in:* `list-clients -F '#{client_session} #{client_control_mode}'`; mark every
+  pane of a session with a control-mode client `visible: nil`. **Priority:** P3.
+- **Check whether a typed `/rename` fires `UserPromptSubmit`.** *Why:* switchboard's Claude hook maps
+  `UserPromptSubmit` to `thinking`; a local slash command runs no model turn, so no `Stop` follows,
+  and the workspace dot could stick on thinking until `PRESENCE_TTL`. Unverified (the smoke uses a
+  stand-in). Deferred at ship time (decision dec-32768b9c, `gstack-shortcut` marker before the
+  Enter in `type_rename`). *Start in:* a hooked workspace in the sandbox: rename it, watch the state file. If it
+  fires, have the worker re-report the pre-type state once the rename is confirmed. **Priority:** P2.

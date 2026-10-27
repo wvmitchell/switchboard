@@ -76,7 +76,7 @@ Then the new version finishes the setup:
   tells you to run `/hooks` in codex once.
 
 - swaps the new code into every running sidebar, which keeps its pane and its place.
-  A sidebar from 0.58.0 on reloads itself in place, keeping your cursor, its folds and
+  A sidebar from 0.59.0 on reloads itself in place, keeping your cursor, its folds and
   what it knows about running agents. It waits until you close an open prompt, the `?`
   overlay, the QR code or the filter. Sidebars you aren't looking at reload over the next
   half minute, or as soon as you switch to them. An older sidebar is restarted in its
