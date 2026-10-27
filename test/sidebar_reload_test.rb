@@ -237,6 +237,19 @@ module Switchboard
       assert_equal "/wt/b", sb.send(:current).path
     end
 
+    # Value: protects=a cursor on a workspace's second branch row stays on that branch through a
+    # switch-in reload (sibling branch rows share the path); fails_when=row identity ignores the
+    # branch; seam=none
+    def test_the_switch_in_reload_keeps_the_cursor_on_its_branch_row
+      rows = [proj("app"), ws("a", path: "/wt/a"),
+              Tree::Node.new(kind: "br", project: "app", path: "/wt/a", branch: "one"),
+              Tree::Node.new(kind: "br", project: "app", path: "/wt/a", branch: "two")]
+      sb = sidebar(nodes: rows, cursor: 3)
+      sb.define_singleton_method(:reload) { |**| recompute_rows }
+      stub_method(Tmux, :visible?, ->(*) { true }) { sb.send(:reload_and_refresh) }
+      assert_equal "two", sb.send(:current).branch
+    end
+
     # Value: protects=a switch-in inside POKE_TTL with a reload pending hands the new image a
     # silent first scan (no catch-up re-baselined it); fails_when=the announce stamp survives;
     # seam=none

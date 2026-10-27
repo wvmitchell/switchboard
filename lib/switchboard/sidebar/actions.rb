@@ -218,10 +218,16 @@ module Switchboard
       # Run a reload without moving the selection off the row it's on, even when a new
       # row lands above it.
       def keep_cursor
-        here = current && [current.kind, current.path, current.project]
+        here = current && row_key(current)
         yield
-        i = here && @rows.index { |n| [n.kind, n.path, n.project] == here }
+        i = here && @rows.index { |n| row_key(n) == here }
         @cursor = i if i
+      end
+
+      # A workspace's branch rows share its path, so they're told apart by branch; a
+      # workspace row isn't (its branch can change between reloads).
+      def row_key(node)
+        [node.kind, node.path, node.project, (node.branch if node.kind == "br")]
       end
 
       # a: register a new project. n only makes worktrees *inside* a project, so
