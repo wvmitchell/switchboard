@@ -86,7 +86,8 @@ Then the new version finishes the setup:
   it stays on its old code, and `switchboard doctor` lists it.
 
 A plain `brew upgrade` (without `switchboard upgrade`) reloads the sidebars too: each one
-notices that the install moved and swaps itself within a few seconds. For a clone, run
+notices that the install moved. The one on screen swaps itself within a few seconds, the
+others within about 40 seconds or as soon as you switch to them. For a clone, run
 `switchboard reload-sidebars` after a `git pull`.
 
 If you're already on the newest release, `upgrade` says so and stops. If an earlier

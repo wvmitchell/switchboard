@@ -223,7 +223,9 @@ things worth keeping ride one env var (`SWITCHBOARD_SIDEBAR_RESUME`) into the ne
 Two things ask for it:
 
 - **A signal.** `upgrade` and `switchboard reload-sidebars` send `SIGUSR1`, but only to a
-  pane whose `@sb_reload` tag equals its `pane_pid`. A sidebar older than 0.59 has no tag,
+  pane whose `@sb_reload` tag equals its `pane_pid`, or names a direct child of it (a shell
+  like fish runs the sidebar as a child instead of exec'ing it). A tag of `0` means the
+  sidebar is between images, so it is left alone. A sidebar older than 0.59 has no tag,
   and the signal's default action would kill it, so instead it is restarted with
   `respawn-pane` (its own start command) after a test run of that binary.
 - **A moved install.** Each tick checks whether `SWITCHBOARD_BIN` still resolves to the

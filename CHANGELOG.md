@@ -21,18 +21,20 @@ refer to the project's earlier, private repository; the public tracker starts at
   sidebar from before this release is restarted in its pane instead. `upgrade` prints
   how many of each, and names any it left alone because their switchboard was removed or
   won't start (#48).
-- A plain `brew upgrade` reloads the sidebars too: each one notices the install moved
-  and swaps itself within a few seconds.
+- A plain `brew upgrade` reloads the sidebars too: each one notices the install moved.
+  The one you're looking at swaps itself within a few seconds, the rest within about
+  40 seconds or as soon as you switch to them.
 - `switchboard reload-sidebars` does the same by hand: after a `git pull` in a clone, or
   inside `switchboard sandbox` to see a sidebar code edit without detaching.
 
 ### Safety
 - A sidebar test-runs the new version (it builds a sidebar off screen and applies its saved
-  state) before
-  switching to it, so a release or checkout that can't start leaves the old sidebar
-  running instead of an empty pane. `switchboard doctor` lists any sidebar left behind
-  that way. Overlapping reloads can't kill a sidebar while it starts up. Only panes started
-  as a switchboard sidebar are ever restarted.
+  state) before switching to it, so a release or checkout that can't start, or a config
+  that's missing or won't parse, leaves the old sidebar running instead of an empty pane.
+  `switchboard doctor` lists any sidebar left behind that way. Overlapping reloads can't
+  kill a sidebar while it starts up. Only panes started as a switchboard sidebar are ever
+  restarted, and a pane is checked again right before, so one that now runs something
+  else is left alone.
 
 ## [0.58.0] — a rename renames the Claude session too (2026-10-27)
 
