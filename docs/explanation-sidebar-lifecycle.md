@@ -252,7 +252,11 @@ payload would otherwise kill the pane. A failure keeps the old code and marks th
 `doctor`. A timeout counts as a failure; the next `reload-sidebars` retries it. Just
 before exec it sets `SIGUSR1` to ignored and clears its tag: caught handlers reset across
 exec, an ignored signal stays ignored, and a second reload landing during the boot would
-otherwise kill the new image. The new image installs its handler, then re-tags.
+otherwise kill the new image. The new image installs its handler, then re-tags. If that
+tag doesn't land it retries on later ticks, a few times, because a `0` left behind would
+make every later reload skip a running sidebar. Only new code starting clears the pane's
+failure mark: the old code's re-tag after a failed exec never does, so `doctor` keeps
+listing a sidebar whose reload failed.
 
 The resume payload and the signal are a **cross-version contract**: newer code must read
 every older payload (one it can't read is a blank resume, still a reload; only an absent one is a cold start), and the tag and the
