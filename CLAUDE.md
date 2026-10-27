@@ -692,7 +692,9 @@ checkout. Nothing can repoint a sidebar at another install.
   - It carries the cursor (identity: kind/project/path/branch, restored after the first
     reload's `locate`, falling back to `cursor_to_current`), the offset, the Edges
     baseline (`Edges#baseline`/`restore_baseline`: the sticky hook states past
-    PRESENCE_TTL and the notify cursor), and `announce`.
+    PRESENCE_TTL and the notify cursor, its marker mtimes carried as exact `[sec, nsec]`:
+    `File.mtime` has nanoseconds, and a cursor that comes back a hair early re-rings the
+    alert it already rang), and `announce`.
   - `announce` is true only if the old image was visible with an announcing scan within
     REFRESH+1s. Otherwise the first reload is silent, so a switch-in reload never replays
     chimes another pane already rang. A missing field reads as silent.

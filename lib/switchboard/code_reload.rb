@@ -105,7 +105,7 @@ module Switchboard
     def encode(cursor: nil, offset: 0, hook_states: {}, notify: {}, announce: false)
       JSON.generate("v" => VERSION, "cursor" => cursor, "offset" => offset,
                     "hook_states" => hook_states.transform_keys(&:to_s).transform_values(&:to_s),
-                    "notify" => notify, "announce" => announce)
+                    "notify" => notify.transform_values { |t| [t.to_i, t.nsec] }, "announce" => announce)
     end
 
     # The payload as a symbol-keyed hash, or nil for anything not worth trusting (absent,
@@ -121,7 +121,7 @@ module Switchboard
         offset: data["offset"].is_a?(Integer) && data["offset"] >= 0 ? data["offset"] : 0,
         hook_states: hash_of(data["hook_states"]).select { |k, v| k.is_a?(String) && STATES.include?(v) }
                                                  .transform_values(&:to_sym),
-        notify: hash_of(data["notify"]).select { |k, v| k.is_a?(String) && v.is_a?(Numeric) },
+        notify: hash_of(data["notify"]).filter_map { |k, v| [k, mtime_from(v)] if k.is_a?(String) && mtime_from(v) }.to_h,
         announce: data["announce"] == true }
     rescue JSON::ParserError, EncodingError
       nil
@@ -137,6 +137,17 @@ module Switchboard
 
       cursor = value.slice("kind", "project", "path", "branch")
       cursor.values.all? { |v| v.nil? || v.is_a?(String) } && cursor["kind"].is_a?(String) ? cursor : nil
+    end
+
+    # A notify cursor is a marker mtime, carried as exact [seconds, nanoseconds]: a float
+    # can come back a hair early, and then the alert it already rang would ring again.
+    def mtime_from(value)
+      sec, nsec = value
+      return nil unless value.is_a?(Array) && value.size == 2 && sec.is_a?(Integer) && nsec.is_a?(Integer)
+
+      Time.at(sec, nsec, :nsec)
+    rescue ArgumentError, RangeError
+      nil
     end
 
     def hash_of(value)

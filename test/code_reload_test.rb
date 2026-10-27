@@ -78,12 +78,12 @@ module Switchboard
     def test_payload_round_trip
       raw = CodeReload.encode(cursor: { "kind" => "ws", "project" => "app", "path" => "/wt/a", "branch" => nil },
                               offset: 3, hook_states: { "/wt/a" => :done, "/wt/b" => :thinking },
-                              notify: { "/wt/a" => 12.5 }, announce: true)
+                              notify: { "/wt/a" => Time.at(12, 345_678_901, :nsec) }, announce: true)
       got = CodeReload.decode(raw)
       assert_equal({ "kind" => "ws", "project" => "app", "path" => "/wt/a", "branch" => nil }, got[:cursor])
       assert_equal 3, got[:offset]
       assert_equal({ "/wt/a" => :done, "/wt/b" => :thinking }, got[:hook_states])
-      assert_equal({ "/wt/a" => 12.5 }, got[:notify])
+      assert_equal({ "/wt/a" => Time.at(12, 345_678_901, :nsec) }, got[:notify], "exact to the nanosecond")
       assert got[:announce]
     end
 
@@ -100,11 +100,11 @@ module Switchboard
     def test_payload_drops_only_the_bad_fields
       got = CodeReload.decode(JSON.generate("v" => 1, "cursor" => { "kind" => 7 }, "offset" => -2,
                                             "hook_states" => { "/a" => "done", "/b" => "exploded", "/c" => 3 },
-                                            "notify" => { "/a" => "soon", "/b" => 4 }))
+                                            "notify" => { "/a" => "soon", "/b" => [4, 5], "/c" => 4.5, "/d" => [1, 2, 3] }))
       assert_nil got[:cursor]
       assert_equal 0, got[:offset]
       assert_equal({ "/a" => :done }, got[:hook_states])
-      assert_equal({ "/b" => 4 }, got[:notify])
+      assert_equal({ "/b" => Time.at(4, 5, :nsec) }, got[:notify])
     end
 
     # Value: protects=a switch-in reload never replays heard chimes (R7);
@@ -181,6 +181,24 @@ module Switchboard
       _, log = reload_with([target("%1", tagged: false, bin: bin), target("%2", tagged: false, bin: bin)])
       assert_equal 1, log.count { |e| e.first == :preflight }
       assert_equal 2, log.count { |e| e.first == :respawn }
+    end
+
+    # Value: protects=an untagged sidebar on tmux < 3.0 (no respawn-pane -e) is still restarted,
+    # by its own start command; fails_when=the no-(-e) retry is dropped, or a command is passed
+    # (repointing a checkout's sidebar at another binary); why_new=smoke runs a modern tmux, so
+    # only the -e call ever ran; seam=none; no_claim=a real tmux 2.x server
+    def test_respawn_falls_back_without_the_env_flag_on_old_tmux
+      calls = []
+      ok = stub_method(Tmux, :system, ->(*argv, **) { calls << argv; !argv.include?("-e") }) do
+        Tmux.respawn_sidebar(target("%7", tagged: false), "MARK")
+      end
+      assert ok
+      assert_equal [["tmux", "respawn-pane", "-k", "-e", "#{CodeReload::RESUME_ENV}=MARK", "-t", "%7"],
+                    ["tmux", "respawn-pane", "-k", "-t", "%7"]], calls,
+                   "-e first, then the bare retry; never a command (the pane reruns its own)"
+      calls.clear
+      stub_method(Tmux, :system, ->(*argv, **) { calls << argv; true }) { Tmux.respawn_sidebar(target("%7", tagged: false), "M") }
+      assert_equal 1, calls.size, "a modern tmux takes -e: no second respawn"
     end
 
     def test_a_failed_respawn_counts_as_left

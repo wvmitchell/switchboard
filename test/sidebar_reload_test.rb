@@ -80,9 +80,18 @@ module Switchboard
     def test_a_resume_on_screen_skips_the_clear_and_the_empty_paint
       out, log, sb = run_sidebar(visible: true, resume: CodeReload.encode(offset: 2, announce: true))
       refute_includes out, "\e[2J", "the old image's frame stays up until ours overwrites it"
-      assert_equal [:pin_if_resized, [:reload, { announce_sounds: true }], :render], untagged(log)
+      assert_equal [:pin_if_resized, [:reload, { announce_sounds: true }], :cursor_to_current, :render], untagged(log),
+                   "no carried cursor (a respawned old sidebar): start on the current workspace, like a fresh one"
       assert_equal 2, offset_of(sb)
       refute ENV.key?(CodeReload::RESUME_ENV), "taken, so no child inherits it"
+    end
+
+    # Value: protects=a reloaded sidebar keeps its own cursor row instead of jumping "here";
+    # fails_when=the fallback runs even with a carried cursor; seam=none
+    def test_a_resume_with_a_cursor_leaves_it_to_the_carried_row
+      cursor = { "kind" => "ws", "project" => "app", "path" => "/wt/b", "branch" => nil }
+      _, log, = run_sidebar(visible: true, resume: CodeReload.encode(cursor: cursor))
+      refute_includes log, :cursor_to_current, "restore_resumed_cursor owns it (with its own fallback)"
     end
 
     def test_a_resume_announces_only_when_the_payload_says_so
@@ -215,6 +224,60 @@ module Switchboard
       assert sb.instance_variable_get(:@reload_requested)
     end
 
+    # Value: protects=a resumed fleet's hidden panes don't all warm (git rescan) at once (P1);
+    # fails_when=tick's warm branch stops consulting warm_spread_over?; why_new=the existing test
+    # pins only the predicate, never that tick obeys it; seam=none
+    def test_tick_holds_a_resumed_hidden_panes_warm_until_its_spread_ends
+      sb, = reloading(visible: false)
+      warms = 0
+      sb.define_singleton_method(:warm_fingerprint) { "moved" }
+      sb.define_singleton_method(:warm_reload) { |*| warms += 1; false }
+      ENV["SWITCHBOARD_BIN"] = File.join(CodeReload::LOADED_ROOT, "bin", "switchboard")
+      tick = lambda do
+        stub_method(Tmux, :visible?, ->(*) { false }) do
+          stub_method(Tmux, :window_panes, ->(*) { 2 }) { sb.send(:tick) }
+        end
+      end
+      sb.instance_variable_set(:@warm_not_before, sb.send(:monotonic) + 30)
+      tick.call
+      assert_equal 0, warms, "inside its spread: no warm"
+      sb.instance_variable_set(:@warm_not_before, sb.send(:monotonic) - 1)
+      tick.call
+      assert_equal 1, warms, "spread over: the normal warm gate applies"
+    end
+
+    # Value: protects=repeated signals can't postpone a hidden pane's reload forever;
+    # fails_when=request_reload overwrites @reexec_at instead of keeping the earliest;
+    # why_new=only single requests were tested; seam=none
+    def test_a_second_request_never_pushes_the_deadline_back
+      ENV[CodeReload::SPREAD_ENV] = "30"
+      sb, = reloading(visible: false)
+      first = sb.send(:monotonic) + 1
+      sb.instance_variable_set(:@reexec_at, first)
+      sb.instance_variable_set(:@reload_requested, true)
+      stub_method(CodeReload, :spread_delay, ->(*) { 25.0 }) { sb.send(:request_reload) }
+      assert_equal first, sb.instance_variable_get(:@reexec_at)
+    end
+
+    # Value: protects=a reload of an on-screen sidebar keeps ringing (its first scan announces);
+    # fails_when=refresh_agents stops stamping @last_announce_scan, or stamps it on silent/hidden
+    # scans; why_new=the payload test sets the stamp by hand; seam=none
+    def test_an_announcing_on_screen_scan_is_what_lets_the_payload_announce
+      a = real_dir("a")
+      sb = sidebar(nodes: [ws("a", path: a)])
+      states = { a => :done }
+      as = Struct.new(:last_hook_states).new(states)
+      as.define_singleton_method(:scan) { |_paths, hooks_only: false| states }
+      sb.instance_variable_set(:@agent_state, as)
+      sb.instance_variable_set(:@visible, true)
+      stub_method(Sound, :play, ->(*) {}) do
+        sb.send(:refresh_agents, announce_sounds: false, refresh_prs: false)
+        refute CodeReload.decode(sb.send(:resume_payload))[:announce], "a silent catch-up scan doesn't count"
+        sb.send(:refresh_agents, refresh_prs: false)
+      end
+      assert CodeReload.decode(sb.send(:resume_payload))[:announce]
+    end
+
     def test_a_root_whose_preflight_failed_is_not_retried
       sb, = reloading(visible: false)
       sb.instance_variable_set(:@reexec_blocked_root, "/Cellar/broken")
@@ -331,6 +394,27 @@ module Switchboard
       edges = Sidebar::Edges.new
       edges.restore_baseline(hook_states: { "/wt/a" => :thinking }, notify: {})
       assert_equal ["/wt/a"], edges_scan(edges, { "/wt/a" => :done })
+    end
+
+    # Value: protects=an on-screen reload never replays a "come look" alert already heard (D1);
+    # fails_when=the notify cursor is lost or rounded in the payload (Notify.pending yields File.mtime
+    # Times, with nanoseconds); why_new=red at HEAD in the ship coverage audit; seam=none
+    def test_a_carried_notify_cursor_survives_the_payload
+      t = Time.at(1_000, 123_456_789, :nsec)
+      old = Sidebar::Edges.new
+      old.instance_variable_set(:@prev_hook_states, { "/wt/a" => :thinking }) # a scanned pane, not a first scan
+      old.instance_variable_get(:@prev_notify)["/wt/a"] = t
+      got = CodeReload.decode(CodeReload.encode(**old.baseline))
+      edges = Sidebar::Edges.new
+      edges.restore_baseline(hook_states: got[:hook_states], notify: got[:notify])
+      sounds = []
+      edges.define_singleton_method(:maybe_refresh_prs) { |_p| }
+      stub_method(Sound, :play, ->(spec, **) { sounds << spec }) do
+        edges.on_scan({ "/wt/a" => :thinking }, monitoring: Set.new(["/wt/a"]), nodes: [ws("a", path: "/wt/a")],
+                                                config: Config.new, current_path: nil, notify_pending: { "/wt/a" => t },
+                                                announce_sounds: true, refresh_prs: false)
+      end
+      assert_empty sounds, "the alert was heard before the reload"
     end
 
     def test_an_empty_baseline_is_a_first_scan
