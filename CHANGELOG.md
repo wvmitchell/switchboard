@@ -10,6 +10,17 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
+## [0.60.0] — Ruby 3.3 is the new minimum (2026-10-27)
+
+### Changed
+- **Clone installs now need Ruby 3.3 or newer** (was 3.0). Ruby 3.0, 3.1 and 3.2 no longer
+  get security fixes upstream; 3.3 is the oldest that does. Homebrew installs are unaffected:
+  the formula already brings a current Ruby. Check with `ruby -v`; if yours is older,
+  install a newer one (rbenv, `brew install ruby`) before running `switchboard upgrade`.
+- On a Ruby that's too old, `switchboard` still re-runs itself under a newer one it finds
+  (rbenv, Homebrew). If that one is too old as well, it now stops with a message saying so
+  instead of failing partway through loading.
+
 ## [0.59.0] — upgrading reloads the running sidebars (2026-10-27)
 
 ### Added

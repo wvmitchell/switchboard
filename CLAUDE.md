@@ -149,8 +149,8 @@ would otherwise walk zero projects and report success). A file that parses to
 anything but a map (a dropped colon makes one string, a bare `false`, a list) is
 malformed too; only an empty or comment-only file reads as `{}`.
 
-Ruby **>= 3.0** is required (`Config` uses `YAML.safe_load_file`, added in Psych
-3.3 / Ruby 3.0). `bin/switchboard` re-execs itself under a modern ruby if launched
+Ruby **>= 3.3** is required — the oldest Ruby still getting security fixes upstream
+(#35; CI runs 3.3 and 4.0). `bin/switchboard` re-execs itself under a modern ruby if launched
 on macOS system Ruby 2.6 — relevant because tmux panes run a non-interactive shell
 that skips rbenv.
 
