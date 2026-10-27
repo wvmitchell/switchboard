@@ -77,7 +77,7 @@ switchboard install                          # tmux wiring + starter config (ide
 switchboard                                  # launch — drops you in the sidebar
 ```
 
-Or from a clone (you'll need **tmux**, **git**, **gh**, and **Ruby ≥ 3.0**, no gems;
+Or from a clone (you'll need **tmux**, **git**, **gh**, and **Ruby ≥ 3.3**, no gems;
 on macOS: `brew install tmux git gh`):
 
 ```sh

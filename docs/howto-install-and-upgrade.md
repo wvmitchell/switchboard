@@ -7,7 +7,7 @@ clone install over to Homebrew, or remove it cleanly.
 
 - macOS or Linux with **tmux ≥ 3.0**, **git**, and **gh**. Homebrew installs all
   three (plus Ruby) for you; for a clone install on macOS, `brew install tmux git gh`.
-- For a clone install, **Ruby ≥ 3.0** (`ruby -v`). No gems.
+- For a clone install, **Ruby ≥ 3.3** (`ruby -v`). No gems.
 
 ## Install with Homebrew
 

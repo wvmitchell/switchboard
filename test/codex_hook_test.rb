@@ -1019,7 +1019,8 @@ module Switchboard
     def state_files = Dir.glob(File.join(AgentState.state_dir, "*"))
 
     def run_guard(cmd, dir, env)
-      system(env, "sh", "-c", cmd, chdir: dir, out: File::NULL, err: File::NULL)
+      # in: — the `thinking` reporter reads stdin; an inherited open pipe would hang it.
+      system(env, "sh", "-c", cmd, chdir: dir, in: File::NULL, out: File::NULL, err: File::NULL)
     end
 
     def test_guard_suppresses_the_reporter_under_a_claude_parent

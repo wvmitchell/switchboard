@@ -17,7 +17,7 @@ no build step.
 ## Non-negotiable constraints
 
 1. **Zero gems, stdlib only.** No Gemfile, no `bundle`. If you want a gem, don't.
-2. **Ruby ≥ 3.0.** CI runs 3.0 and 3.3. No newer syntax.
+2. **Ruby ≥ 3.3.** CI runs 3.3 and 4.0. No newer syntax.
 3. **Degrade, never crash.** Every shell-out escapes args with `Shellwords` and
    swallows stderr; failures return `[]`/`{}`/`nil`, never a backtrace into the
    TUI.

@@ -13,7 +13,7 @@ This is the learning path. Once you're comfortable, the
 
 - **tmux** ≥ 3.0, **git**, and **gh** (the GitHub CLI). On macOS:
   `brew install tmux git gh`.
-- **Ruby ≥ 3.0** (`ruby -v` to check). No gems — switchboard is stdlib only.
+- **Ruby ≥ 3.3** (`ruby -v` to check). No gems — switchboard is stdlib only.
 - A local git repo with a GitHub remote to play with. Any repo works; PR badges
   need a GitHub `origin`.
 
