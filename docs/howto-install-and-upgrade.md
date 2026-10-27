@@ -75,11 +75,25 @@ Then the new version finishes the setup:
 - refreshes the global codex hooks if you installed them. If their commands changed it
   tells you to run `/hooks` in codex once.
 
-Running sidebars keep the old code until they restart: press your sidebar toggle key
-(`prefix-s` unless you remapped it) twice in each switchboard session.
+- swaps the new code into every running sidebar, which keeps its pane and its place.
+  A sidebar from 0.59.0 on reloads itself in place, keeping your cursor, its folds and
+  what it knows about running agents. It waits until you close an open prompt, the `?`
+  overlay, the QR code or the filter. Sidebars you aren't looking at reload over the next
+  half minute, or as soon as you switch to them. An older sidebar is restarted in its
+  pane. It reports how many of each (`sidebars: 12 asked to reload in place, 3
+  restarted`). A sidebar whose switchboard was deleted, or won't start, is left running
+  its old code, and `upgrade` says so. If a sidebar's own test run of the new code fails,
+  it stays on its old code, and `switchboard doctor` lists it.
+
+A plain `brew upgrade` (without `switchboard upgrade`) reloads the sidebars too: each one
+notices that the install moved. The one on screen swaps itself within a few seconds, the
+others within about 40 seconds or as soon as you switch to them. For a clone, run
+`switchboard reload-sidebars` after a `git pull`.
 
 If you're already on the newest release, `upgrade` says so and stops. If an earlier
-upgrade was interrupted before it finished, running `upgrade` again finishes it. The
+upgrade was interrupted before it finished, running `upgrade` again finishes it, except
+for reloading the sidebars, which happens only when new code arrives. Homebrew sidebars
+notice the new install by themselves; otherwise run `switchboard reload-sidebars`. The
 version that first ships `upgrade` (0.52.0) still has to be installed the old way:
 `brew upgrade switchboard` (or `git pull`), then `switchboard install`.
 
@@ -134,8 +148,9 @@ goes stale when the old version is cleaned up. See
    your sidebar toggle key (`prefix-s` unless you remapped it) twice: once to
    dismiss its sidebars, once to bring them back from the new install. (If a
    session's sidebar was hidden, the first press brings back a new one, so press
-   it once more if you want it hidden again.) A running `claude` picks up the
-   hooks from step 3 on its own.
+   it once more if you want it hidden again.) `switchboard reload-sidebars` won't
+   move them: a sidebar reloads its OWN binary, which here is the clone. A running
+   `claude` picks up the hooks from step 3 on its own.
 
    To restart everything at once instead, `switchboard quit` closes every
    switchboard session. **This kills every agent, editor and shell running in

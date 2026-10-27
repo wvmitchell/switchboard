@@ -172,6 +172,20 @@ module Switchboard
         (@prev_hook_states || {})[path]
       end
 
+      # The baseline as a code reload hands it to the new process (#48, D1): the sticky
+      # hook states and the notify cursor. Without them a worktree quiet past PRESENCE_TTL
+      # would read as a first appearance, and its completion would ring nowhere.
+      def baseline
+        { hook_states: @prev_hook_states || {}, notify: @prev_notify.dup }
+      end
+
+      # Seed from a reload's carried baseline, before the first scan. An empty one stays
+      # nil, so the first scan still only baselines, as for a fresh process.
+      def restore_baseline(hook_states:, notify:)
+        @prev_hook_states = hook_states.dup unless hook_states.empty?
+        @prev_notify.merge!(notify)
+      end
+
       # One background-dispatch ping: the sound (your :done sound, or the soft falling
       # :failed for a ✘) and, for a success, the twinkle. The ring decision itself is the record's
       # compare-and-set (Sidebar#ring_creations); this only voices it.

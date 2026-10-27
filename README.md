@@ -100,8 +100,10 @@ switchboard upgrade
 
 It updates switchboard the way you installed it (Homebrew, or a fast-forward pull in
 a clone), then brings your setup up to date: tmux's key bindings and hooks, every
-existing worktree's agent hooks, and the codex hooks if you use them. Already on the
-newest release, it says so. On Homebrew the sidebar tells you when a new release is out
+existing worktree's agent hooks, and the codex hooks if you use them. Running sidebars
+swap in the new code where they sit, keeping your cursor and folds: no restart to do
+(`switchboard reload-sidebars` does the same by hand, say after a `git pull` in a clone).
+Already on the newest release, it says so. On Homebrew the sidebar tells you when a new release is out
 (a `↑ 0.58.0 available` line under the wordmark; `update_check: false` turns it off). Moving a clone install to Homebrew, or uninstalling, is covered in
 [How to install, upgrade, or move to Homebrew](docs/howto-install-and-upgrade.md).
 

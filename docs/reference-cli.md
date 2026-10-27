@@ -93,7 +93,9 @@ branch with no upstream):
      specific reason;
    - re-ensures the global codex block if it's installed (never adds one);
    - runs `switchboard.tmux` in the running tmux server, from any shell, when your
-     tmux.conf sources this install.
+     tmux.conf sources this install;
+   - reloads every running sidebar (only when the running binary is the `switchboard`
+     on your PATH), like `switchboard reload-sidebars`, and prints what it reached.
 
    The first three run only when the running binary is the `switchboard` on your PATH,
    because the hooks and the reporter call back into whichever binary wrote them; from
@@ -103,7 +105,9 @@ branch with no upstream):
 Already current, it prints `switchboard X is up to date` and exits 0, unless the setup
 is stale (old worktree hooks, hook slots or the toggle key not live, a `tmux_keys`
 change made by editing `config.yml` by hand, an old or missing reporter, or an old
-codex block), in which case it runs step 2. If `config.yml` won't parse, it finishes
+codex block), in which case it runs step 2, except the sidebar reload, which needs new code
+(under Homebrew each sidebar notices the new install itself; otherwise run
+`switchboard reload-sidebars`). If `config.yml` won't parse, it finishes
 whatever setup doesn't need the config, then prints the parse error and exits 1 rather
 than reporting "up to date". Exits 1 if a fetch or setup step fails,
 and also when `brew update` failed and nothing was upgraded (Homebrew may not have the
@@ -309,6 +313,30 @@ update firing in the throwaway can't repoint your global `~/.local/bin/claude` s
 into the tree teardown deletes (#145). If an older sandbox already dangled your launcher
 (`command not found: claude`), repoint it:
 `ln -sf ~/.local/share/claude/versions/<latest> ~/.local/bin/claude`.
+
+### `switchboard reload-sidebars`
+Every running sidebar on the tmux server swaps in its switchboard's current code, in
+its own pane. `upgrade` does this itself. Use it by hand after a clone's `git pull`, or
+inside `switchboard sandbox` to see a sidebar code edit without detaching.
+
+- A sidebar from 0.59.0 on gets a signal (`SIGUSR1`). It waits for its next safe moment
+  (no prompt, `?` overlay, QR code or filter open). Then it test-runs the new code
+  (`switchboard sidebar --check`, which builds a sidebar off screen and applies the reload's
+  payload, 3 seconds
+  at most) and execs it in place, keeping its pid, cursor and agent state.
+  - One that's on screen goes at once. The rest are spread over 30 seconds
+    (`SWITCHBOARD_RELOAD_SPREAD`), or go when you switch to them.
+  - If the test run fails, the sidebar stays on its old code and marks its pane;
+    `switchboard doctor` lists it. A test run that timed out counts as failed; run
+    `reload-sidebars` again to retry it.
+- An older sidebar is restarted with `tmux respawn-pane`, rerunning the command that
+  started it, after a test run (`version`) of that binary. Only a pane started as
+  `<…/switchboard> sidebar` is restarted: a respawn kills whatever runs in the pane.
+- A sidebar whose binary is missing or fails the test run is left as it is.
+
+Each sidebar reloads its OWN binary, so running this from another checkout never
+repoints a sidebar. Prints `sidebars: N asked to reload in place, M restarted`, plus a line
+for any left running and any whose last reload failed, or `no sidebars running`. Exits 0.
 
 ### `switchboard version` (aliases: `-v`, `--version`)
 Print the version (`switchboard X.Y.Z`).
