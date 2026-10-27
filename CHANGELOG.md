@@ -10,7 +10,7 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
-## [0.56.3] — failures that used to stay silent now say so (2026-10-26)
+## [0.56.3] — failures that used to stay silent now say so (2026-10-27)
 
 ### Fixed
 - A `config.yml` that won't parse no longer lets `install` and `upgrade` look successful.
@@ -32,7 +32,12 @@ refer to the project's earlier, private repository; the public tracker starts at
   one has it checked out. The failed row now names what it kept and why, and a tree that
   was someone else's isn't claimed by the failed build. A create that timed out halfway
   still cleans up, but a tree someone else locked is kept, and a deleted branch takes its
-  config (an upstream a hook set) with it.
+  config (an upstream a hook set) with it. A file git status would hide (your
+  `status.showUntrackedFiles=no`) still counts, and git itself refuses to remove a tree
+  that changed after the check.
+- `d` on a workspace now asks before deleting files your git config hides from
+  `git status` (untracked files under `status.showUntrackedFiles=no`, or a changed
+  submodule); it used to remove them without asking.
 - Reading git's output no longer depends on the locale: switchboard's own binary already
   read it as UTF-8 (since 0.52.0), and now every `Git` helper does, whoever loads it. A
   worktree whose path isn't valid UTF-8 (possible only on Linux) is now skipped in the

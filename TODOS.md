@@ -648,6 +648,22 @@ safe today; each is narrow).
   *Context:* ship 8 Claude adversarial review, deferred by the user. **Priority:** P3 for (c),
   P4 for the rest.
 
+- **Rollback and cancel paths still trust a status check.** *What:* (a) the cancel teardowns,
+  `Creator.discard` (`creator.rb` after `untouched?`) and `Sidebar#discard_built` (`d` on a
+  built ◌ row, via `reap_worktree!` and `branch -D`), check the tree clean and then remove it
+  with `--force`, so a file written between the check and the removal is deleted; remove
+  unforced under `-c status.showUntrackedFiles=all` the way `undo_add` now does, and delete
+  the branch with `delete_branch_at` at the base commit; (b) a tracked file flagged
+  `assume-unchanged` or `skip-worktree` (sparse checkout, or a hook that flags it) hides its
+  edits from `Git.clean?` and from git's own unforced `worktree remove`, so `undo_add` can
+  delete them; fail closed when `git ls-files -v` shows an `h`/`S` entry; (c) the new
+  `--ignore-submodules=none` in `Git.clean?` has no test (a submodule with
+  `diff.ignoreSubmodules=all`); (d) `test/git_test.rb`: the "point of the fail-closed twin"
+  comment now sits above the untracked-files test instead of the status-error one. *Why:*
+  (a) and (b) can still lose a file in a narrow race or an unusual setup; (c)-(d) are test
+  hygiene. *Context:* ship 8 reviews (security, red team, Codex adversarial), deferred by the
+  user. **Priority:** P2 for (a)-(b), P4 for (c)-(d).
+
 ## Agent CLI hooks (Claude 2.1.301 / Codex 0.163 compat review) follow-ups
 
 - **Remote-link glyph: rare edges deferred at ship review (v0.53.0).** *What, in priority
