@@ -452,7 +452,7 @@ module Switchboard
     # Value: protects=the tick is what retries an owed tag (one call while owed, none after),
     # and a tag that never lands stops costing ticks after TAG_TRIES (R3); fails_when=the tick
     # stops calling retry_tag, or keeps calling it past the cap; seam=none
-    def test_a_tick_retries_an_owed_tag_once
+    def test_a_tick_retries_an_owed_tag_until_it_lands_or_runs_out
       sb, = reloading(visible: false)
       sb.instance_variable_get(:@config).define_singleton_method(:prewarm?) { false }
       ENV["SWITCHBOARD_BIN"] = File.join(CodeReload::LOADED_ROOT, "bin", "switchboard")
@@ -558,19 +558,6 @@ module Switchboard
       end
       assert_equal [[Process.pid, true], [Process.pid, true], [Process.pid, true]], calls,
                    "a new image's first tag, retried, may still clear a failure flag"
-      assert_nil sb.instance_variable_get(:@tag_pending)
-    end
-
-    # Value: protects=a tag that can never land (tmux < 3.0) costs nothing after TAG_TRIES, so
-    # an idle tick stays at its usual cost; fails_when=the cap is dropped; seam=none
-    def test_a_tag_that_never_lands_stops_after_its_tries
-      sb = sidebar(nodes: [proj("app")])
-      calls = 0
-      stub_method(Tmux, :tag_sidebar_pane, ->(*, **) { calls += 1; false }) do
-        sb.send(:tag_pane)
-        10.times { sb.send(:retry_tag) }
-      end
-      assert_equal Sidebar::TAG_TRIES, calls
       assert_nil sb.instance_variable_get(:@tag_pending)
     end
 

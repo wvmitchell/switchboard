@@ -697,7 +697,8 @@ module Switchboard
     # its pane_pid (or a child of it), so a pane respawned or recycled since, or a sidebar
     # older than 0.59 (no tag; the signal's default action would kill it), is never
     # signaled. A new image's real pid also clears an earlier failed reload's flag: this is
-    # new code. A re-tag by the old code (a failed exec, a retry) passes clear_failed: false.
+    # new code. The old code's re-tag after a failed exec (and any retry of it) passes
+    # clear_failed: false; a retry keeps the clear_failed of the tag it retries.
     # Whether the tag landed, so the sidebar can retry one that didn't.
     def tag_sidebar_pane(pane, value, clear_failed: true)
       return false unless pane
