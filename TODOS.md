@@ -85,7 +85,7 @@ safe today; each is narrow).
   attach to an unrelated tree later renamed (or clash-relabeled) onto its path, and then
   `unfinished_at?` lets a confirmed `d` force past that tree's lock. *Start in:*
   `Creation.renamable?` (refuse an `unfinished?` record) and `Rename.perform` (refuse a
-  destination a record claims). The same check closes a newer case (v0.56.3 review): a
+  destination a record claims). The same check closes a newer case (v0.57.1 review): a
   workspace renamed onto the exact placeholder an in-flight build reserved makes that
   build's `worktree add` fail with "already exists" over a tree on its branch, so the
   build fails and keeps it (nothing is lost, but the renamed workspace wears the build's
@@ -100,11 +100,6 @@ safe today; each is narrow).
   `upgrade`; a sidebar replacing ITSELF on a version change is this item). *Start in:*
   compare `VERSION` (or the bin's mtime) with the value at startup in
   `tick`, then exit and let `reconcile_sidebars` respawn. **Priority:** P2.
-- **"Update available" cue in the home header.** *Why:* `doctor` and `upgrade` say when
-  a release is out, but nothing tells you unprompted. *Start in:* `LatestRelease.latest`
-  (bounded, 5s) run off the paint loop and cached on disk like the PR badges, read in
-  `Sidebar#header`; add the cache file to `warm_fingerprint`. Deferred from the 0.52.0
-  upgrade-command review (D6). **Priority:** P3.
 - **Input edges in the task prompt and modals.** *Why:* an unpaired paste-start marker
   wedges the task prompt in paste mode (Esc/^C/↵ all become text; `prefix-s` escapes); a
   literal paste-end inside pasted text ends the paste early; a 1 KB read split on a
@@ -432,6 +427,15 @@ safe today; each is narrow).
   `client-attached[99]` poke in `switchboard.tmux` + clear it in
   `Installer.teardown_live`. Low priority — measure whether either is felt in practice
   first.
+- **The warm fingerprint can record a file rebuild never drew.** `reload` runs `rebuild`
+  (which reads config, collapse, full header, branch fold, width) BEFORE it samples
+  `warm_fingerprint`, so a peer's write landing between the two is baselined as drawn,
+  and a hidden pane then skips the warm that would show it until that file moves again
+  or you switch in. *Why deferred:* nobody has seen it (the window is milliseconds and a
+  switch-in reload heals it); #47 fixed it only for its own two entries (the update cache
+  and the installed `version.rb`). *Start in:* `Sidebar#reload` / `#warm_fingerprint` —
+  #47's rule (fingerprint each rebuild-read file by the mtime `rebuild` captured when it
+  read it, one look per file) is the template. Depends on #47 landing. **Priority:** P3.
 
 ## Sidebar `O` open-repo (issue #63) follow-ups
 
@@ -512,7 +516,7 @@ safe today; each is narrow).
   ever fire, this entry is correctly ignored forever.
 
 
-## Silent failures (v0.56.3) follow-ups
+## Silent failures (v0.57.1) follow-ups
 
 - **State-dir globs break on a path with glob characters.** *What:* ten `Dir.glob` calls
   build their pattern from a state dir (`creation.rb` `all`, `agent_state.rb`, `notify.rb`,
@@ -522,17 +526,17 @@ safe today; each is narrow).
   or `?` makes them match nothing; worst is `Creation.all` coming back empty, which drops a
   failed build's guard (`certified?(nil)` lets re-entry start the agent un-set-up).
   *Pros:* mechanical, one test per store. *Cons:* touches every store. *Context:* found in
-  the TODO triage that produced v0.56.3. **Priority:** P2.
+  the TODO triage that produced v0.57.1. **Priority:** P2.
 
 - **A C-locale tmux client mangles `-F` output.** *What:* with `LC_ALL=C`, tmux replaces
   the tab and any non-ASCII byte in `-F` formats with `_`, so `Tmux.sessions` misparses and
   `quit`/`kill_all` can't match names (prune is saved only because `created` reads as 0,
   inside the grace window). Use a printable ASCII separator (or one field per call) in the
   formats switchboard parses. *Why:* teardown silently does nothing under a C-locale client.
-  *Pros:* small. *Cons:* every `-F` parser changes at once. *Context:* v0.56.3 triage.
+  *Pros:* small. *Cons:* every `-F` parser changes at once. *Context:* v0.57.1 triage.
   **Priority:** P2.
 
-- **The rest of `Git`'s readers on a non-UTF-8 path.** *What:* v0.56.3 made
+- **The rest of `Git`'s readers on a non-UTF-8 path.** *What:* v0.57.1 made
   `Git.worktrees` skip an undecodable entry; `current_branch`, `commits_since` and the diff
   readers (with `core.quotePath=false`) can still raise on one. Audit each caller and either
   scrub or compare as bytes. Also `parse_worktrees` itself: it drops a whole entry when ANY
@@ -541,14 +545,14 @@ safe today; each is narrow).
   listing (rollback then keeps everything, prune skips the project: safe, but silent).
   Validate only the `worktree` line and drop or scrub just the bad field. *Why:* a
   Linux-only crash path in the sidebar's helpers, and an invisible row.
-  *Context:* v0.56.3 item 3 caller audit; ship 4 red team. **Priority:** P3.
+  *Context:* v0.57.1 item 3 caller audit; ship 4 red team. **Priority:** P3.
 
 - **`keep_branch`'s listing and its delete aren't one step.** *What:* between
   `Git.worktrees(strict: true)` and `update-ref --no-deref -d`, another process could check
   the branch out. *Why:* at worst a worktree is left on a deleted branch at base (no commits
   lost, the old-value guard holds). *Pros:* closes the last race on the rollback. *Cons:*
   git offers no atomic "delete unless checked out"; it needs a lock switchboard doesn't
-  have. *Context:* v0.56.3 review, accepted as theoretical. **Priority:** P4.
+  have. *Context:* v0.57.1 review, accepted as theoretical. **Priority:** P4.
 
 - **`ours?` misses a bin path containing `$`, `"` or `\`.** *What:* `tmux list-keys`
   prints the run-shell argument double-quoted and backslash-escapes those characters, so the
@@ -556,7 +560,7 @@ safe today; each is narrow).
   (doctor then warns about itself). Unescape the binding before matching. The key column has
   the same problem: `list-keys` prints a `;` key as `\;`, so `foreign_binding` can't find a
   user's own binding on `;` (tmux's default last-pane) and the clobber goes unrecorded. *Why:* a false
-  warning, not a lost key; pre-existing. *Context:* v0.56.3 pass-3 red team. **Priority:** P4.
+  warning, not a lost key; pre-existing. *Context:* v0.57.1 pass-3 red team. **Priority:** P4.
 
 - **`uninstall` says Done over a codex config it can't read from the start.**
   *What:* `step_codex_unhooks` returns early when `CodexHook.installed?` is false, and that
@@ -575,7 +579,7 @@ safe today; each is narrow).
   leaves a worktree git lists as detached, so `keep_branch` finds no holder and
   `delete_branch_at` deletes a branch the rebase still needs (the old `branch -D` refused
   it). Check rebase/bisect state before deleting. *Why:* each can kill a session or delete
-  a branch; neither trigger was reproducible in normal use. *Context:* v0.56.3 ship 5
+  a branch; neither trigger was reproducible in normal use. *Context:* v0.57.1 ship 5
   adversarial review (Claude + Codex structured P2), deferred by the user. **Priority:** P3.
 
 - **Rollback and key-tracking design notes.** *What:* (a) `undo_add` assumes git cuts the
@@ -589,10 +593,10 @@ safe today; each is narrow).
   doctor doesn't name why; (f) on a tmux too old for `list-keys -- KEY`, the whole-table
   fallback reads a bound `C-;` as unbound (its regex allows a backslash only before the
   whole key). *Why:* all fail safe or say so in the ✘ text; worth a pass once (a)-(b) of
-  the entry above land. *Context:* v0.56.3 ship 5 adversarial + state-machine reviews.
+  the entry above land. *Context:* v0.57.1 ship 5 adversarial + state-machine reviews.
   **Priority:** P4.
 
-- **Small cleanups from the v0.56.3 review.** *What:* the `rebind_ops` header doesn't
+- **Small cleanups from the v0.57.1 review.** *What:* the `rebind_ops` header doesn't
   mention `taken:`; `Upgrade.tmux_stale?` and `CLI#doctor_key_drift` hard-code
   `%w[toggle home]` instead of `Installer::ROLE_SUBCOMMANDS.keys`; the
   `@switchboard-<role>-rejected` name is hand-built at 7 sites (route it through
@@ -604,7 +608,7 @@ safe today; each is narrow).
   `PLACEHOLDER_TRIES`. *Why:* no behavior change today; each is a place a later edit can
   drift. *Context:* ship 5 and 6 maintainability reviews, deferred by the user. **Priority:** P4.
 
-- **Rollback edges from the v0.56.3 lock and config fixes.** *What:* (a) `delete_branch_at`
+- **Rollback edges from the v0.57.1 lock and config fixes.** *What:* (a) `delete_branch_at`
   ignores a failed `git config --remove-section` (a held `config.lock`), so a hook-set
   upstream can survive onto the next branch cut under that name; (b) `d` on a ✘ row whose
   tree the rollback kept "(it's locked)" still double-forces after the confirm, and the prompt
@@ -673,7 +677,7 @@ safe today; each is narrow).
   row's columns — let `fit_plain` report whether the cues were kept and share it with
   `colored` (the cursor-bar grey half of this went away in v0.53.1); (4) a stale comment:
   `Agents.lsof_path`'s encoding rationale predates the byte compares.
-  *Why:* none hits a normal setup (the one verified user-visible item, the glob, shipped in v0.56.3). *Pros:*
+  *Why:* none hits a normal setup (the one verified user-visible item, the glob, shipped in v0.57.1). *Pros:*
   small, testable changes. *Cons:* each touches a reviewed path, so give it its own short
   review. *Context:* ship review of v0.53.0 (D2/D3 — deferred to keep the release from
   reopening its review loop). *Depends on:* v0.53.0.

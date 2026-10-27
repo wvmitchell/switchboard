@@ -29,6 +29,7 @@ module Switchboard
       when "refresh"           then refresh(*refresh_args(argv))
       when "reap-worktree"     then reap_worktree(argv[1], argv[2], argv[3], force_branch: argv[4] == "--force-branch")
       when "create-workspace"  then create_workspace(argv[1])
+      when "check-update"      then check_update
       when "launch"            then exit(launch(argv[1]))
       when "enable-hooks"      then exit(1) if enable_hooks(argv[1]) == false
       when "disable-hooks"     then disable_hooks(argv[1])
@@ -135,6 +136,18 @@ module Switchboard
 
       Process.daemon(true, true) # new session, no ctty; keep the already-/dev/null'd stdio
       reap_worktree!(repo, path, branch, force_branch: force_branch)
+    end
+
+    # Background update check (#47; a visible sidebar spawns it when the cache is
+    # stale). Daemonized FIRST, so it has no controlling terminal: nothing it runs (git,
+    # ssh, a credential helper) can open /dev/tty and prompt into the sidebar pane.
+    def check_update
+      return if UpdateCheck.disabled_by_env?
+
+      Process.daemon(true, true)
+      UpdateCheck.run_child
+    rescue StandardError
+      nil
     end
 
     # Background dispatch worker (Sidebar#create spawns it). Daemonized like the reaper:

@@ -75,6 +75,8 @@ module Switchboard
       ENV["SWITCHBOARD_CLAUDE_PROJECTS_DIR"] = path("claude-projects") # ClaudeHistory (rename carries /resume history)
       ENV["SWITCHBOARD_CLAUDE_SESSIONS_DIR"] = path("claude-sessions") # RemoteLink (Claude's live session files, /rc links)
       ENV["SWITCHBOARD_RELEASES_URL"] = path("no-releases") # LatestRelease: never GitHub from a test
+      ENV["SWITCHBOARD_UPDATE_CACHE"] = path("update", "latest.json") # UpdateCheck's cache (#47)
+      ENV["SWITCHBOARD_NO_UPDATE_CHECK"] = "1" # ...and no background check, smoke sidebars included
       ENV.delete("SWITCHBOARD_BIN") # else installed_bin? answers differently in a switchboard pane than in CI
 
       # Anything that reads $HOME / XDG / git-global must land in the sandbox —

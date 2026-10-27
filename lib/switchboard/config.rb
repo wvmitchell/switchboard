@@ -31,7 +31,7 @@ module Switchboard
     KNOWN_KEYS = %w[
       worktree_root projects_root base branch_prefix session_command worktree_creation_command
       agent_state_hooks prune_on_launch auto_rename diff_counts prewarm background_presence
-      remote_link_stale_after
+      remote_link_stale_after update_check
       sounds tmux_keys sidebar_keys projects
     ].freeze
 
@@ -81,6 +81,7 @@ module Switchboard
       # diff_counts: true                          # show +adds −dels of each branch vs base on the workspace row
       # prewarm: true                              # keep off-screen sidebars warm so switching sessions doesn't flash a stale tree
       # remote_link_stale_after: 120               # minutes a /remote-control-linked session can sit idle before its ⇅ turns grey; false turns it off
+      # update_check: true                        # Homebrew installs: a line under the wordmark when a newer release is out (one git ls-remote every few hours); false never checks
 
       # Completion sounds (on by default): a built-in (train / chime / alert / failed,
       # or train_1..3 / chime_1..3), a file path, or a macOS system-sound name. enabled:
@@ -293,6 +294,13 @@ module Switchboard
     # override is a deliberate non-goal for now (#88).
     def diff_counts?
       @data.fetch("diff_counts", true) != false
+    end
+
+    # Whether a Homebrew install checks for a newer release in the background and
+    # shows the "↑ x.y.z available" line under the wordmark (#47). On by default;
+    # `update_check: false` stops both the check and the line. Global only.
+    def update_check?
+      @data.fetch("update_check", true) != false
     end
 
     # Whether an off-screen sidebar keeps its pane buffer warm (a change-gated,

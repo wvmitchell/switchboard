@@ -15,6 +15,7 @@ module Switchboard
          SWITCHBOARD_MONITORING_DIR SWITCHBOARD_NOTIFY_DIR SWITCHBOARD_CREATION_DIR
          SWITCHBOARD_COLLAPSE_DIR SWITCHBOARD_FULL_HEADER_FILE SWITCHBOARD_BRANCH_FOLD_FILE
          SWITCHBOARD_WIDTH_FILE SWITCHBOARD_CACHE_DIR SWITCHBOARD_CLAUDE_PROJECTS_DIR SWITCHBOARD_CLAUDE_SESSIONS_DIR
+         SWITCHBOARD_UPDATE_CACHE
          XDG_STATE_HOME XDG_DATA_HOME XDG_CONFIG_HOME XDG_CACHE_HOME
          GIT_CONFIG_GLOBAL GH_CONFIG_DIR].each do |k|
         assert set[k].start_with?("/tmp/sbx9-x/state"), "#{k} escaped the throwaway tree: #{set[k]}"
@@ -29,6 +30,7 @@ module Switchboard
       # so asserted here, outside the throwaway-path loop above.
       assert_equal "1", set["DISABLE_AUTOUPDATER"], "claude's background auto-updater must be off in the sandbox (#145)"
       assert_equal "1", set["DISABLE_UPDATES"], "manual `claude update` must be off too — same symlink-repoint footgun (#145)"
+      assert_equal "1", set["SWITCHBOARD_NO_UPDATE_CHECK"], "the sandbox never fetches a release (#47); its line is seeded"
     end
 
     def test_sandbox_env_keeps_home_and_clears_tmux_and_gh_token
@@ -69,6 +71,9 @@ module Switchboard
       # dots seeded for two worktrees, in the throwaway state dir
       dots = Dir.glob(File.join(AgentState.state_dir, "*"))
       assert_operator dots.size, :>=, 2
+
+      # the update line (#47): a cached release newer than this checkout
+      assert_equal 1, LatestRelease.compare(UpdateCheck.read, VERSION), "seeded above VERSION, so the line shows"
     end
 
     # --- D11: the SWITCHBOARD_SANDBOX guards ---------------------------------

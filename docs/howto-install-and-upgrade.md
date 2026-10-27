@@ -51,6 +51,12 @@ cd switchboard && bin/switchboard install
 switchboard upgrade
 ```
 
+On a Homebrew install the sidebar tells you when to: a line under the wordmark reads
+`↑ 0.58.0 available · switchboard upgrade` once a newer release is out. To find that out,
+a sidebar runs one `git ls-remote` of switchboard's public release tags every 4 hours,
+in the background; nothing else is sent. Set `update_check: false` in your config to turn
+it off. Clone installs don't check: `git` already tells you when your branch moved.
+
 `upgrade` fetches the new version the way you installed it:
 
 - **Homebrew:** `brew update`, then `brew upgrade switchboard`. A `--HEAD` install

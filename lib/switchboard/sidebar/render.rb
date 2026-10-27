@@ -35,6 +35,8 @@ module Switchboard
       LINK_STALE_FG = "\e[90m"    # ...and grey when idle past remote_link_stale_after (bold read identical; the theme-relative dim branch rows use)
       WS_PREFIX_COLS = 4          # a ws row's "<pointer> <dot> " before its name: fit_plain and colored must agree on it
       NOTE_FG  = "\e[2m"          # the dim task label / failure reason in the right region (DR3/DR8)
+      UPDATE_FG = "\e[33m"        # the update line's message: BUILDING's yellow at normal weight, so it reads on light themes (#47)
+      UPDATE_HINT = " · switchboard upgrade" # the update line's dim tail, the first thing a narrow pane drops
       NAME_UNSAFE = /[\p{Cc}\p{Cf}]/ # dropped from a drawn name: controls and bidi/zero-width, not accents
       NOTE_INVISIBLE = /[\p{Cc}\p{Cf}\p{Mn}\p{Me}]/ # dropped from a task label: controls, bidi/zero-width, combining
       NOTE_ZERO = /[\p{Mn}\p{Me}]/ # combining marks draw on the char before them: no column of their own
@@ -166,17 +168,30 @@ module Switchboard
       # greeting, a one-line console of what the board is handling, and a rule — and
       # the `H` toggle (@full_header, shared on disk) extends that same full header to
       # every other session. Each line carries its own ANSI and is fit to `cols`; only
-      # the wordmark wears the accent.
+      # the wordmark wears the accent. A newer release (#47) adds one line right under
+      # the wordmark, on every session, while it's pending.
       def header(cols)
-        wordmark = "#{BRAND}#{trunc(WORDMARK, cols)}\e[0m"
-        return [wordmark] unless @home || @full_header
+        top = ["#{BRAND}#{trunc(WORDMARK, cols)}\e[0m", *update_line(cols)]
+        return top unless @home || @full_header
 
         [
-          wordmark,
+          *top,
           "\e[2m#{trunc(greeting, cols)}\e[0m",
           "\e[2m#{trunc(console(cols), cols)}\e[0m",
           "\e[2m#{'─' * cols}\e[0m"
         ]
+      end
+
+      # `↑ 0.57.0 available · switchboard upgrade` (exactly 40 cols), or [] when there's
+      # nothing newer. Fit on the plain text: a narrow pane drops the dim command half
+      # first, then cuts the message, so an escape is never split.
+      def update_line(cols)
+        return [] unless @update_cue
+
+        message = "↑ #{@update_cue} available"
+        return ["#{UPDATE_FG}#{trunc(message, cols)}\e[0m"] if message.length + UPDATE_HINT.length > cols
+
+        ["#{UPDATE_FG}#{message}\e[0m#{NOTE_FG}#{UPDATE_HINT}\e[0m"]
       end
 
       # First name for the home greeting, from git's global identity (falling back to
