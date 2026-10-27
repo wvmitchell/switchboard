@@ -703,6 +703,12 @@ module Switchboard
       system(*cmd, out: File::NULL, err: File::NULL)
     end
 
+    def untag_sidebar_pane(pane)
+      return unless pane
+
+      system("tmux", "set-option", "-p", "-u", "-t", pane, CodeReload::TAG, out: File::NULL, err: File::NULL)
+    end
+
     # A reload this pane's sidebar couldn't make (doctor and the next reload report it).
     def flag_failed_reload(pane, root)
       return unless pane
@@ -716,7 +722,7 @@ module Switchboard
     def sidebar_reload_targets
       out = IO.popen(["tmux", "list-panes", "-a", "-F",
                       "\#{pane_id}\t\#{pane_pid}\t\#{#{CodeReload::TAG}}\t\#{#{CodeReload::FAILED_TAG}}\t" \
-                      "\#{pane_title}\t\#{pane_start_command}"],
+                      "\#{pane_dead}\t\#{pane_title}\t\#{pane_start_command}"],
                      err: File::NULL, &:read)
       $?.success? ? parse_reload_targets(out) : nil
     rescue SystemCallError
@@ -726,11 +732,12 @@ module Switchboard
     # Pure: the rows of that list-panes. `between` is a sidebar mid-exec (its tag reads 0
     # until the new image is up): it's reloading already, and a respawn would kill the boot.
     # `tag_pid` is a tag that isn't the pane's pid: a sidebar under a shell that didn't exec
-    # it, if that pid's parent turns out to be the pane (the caller checks, in one ps).
+    # it, if that pid's parent turns out to be the pane (the caller checks, in one ps). A dead
+    # pane (remain-on-exit) is skipped: its pid may already belong to something else.
     def parse_reload_targets(raw)
       raw.to_s.lines.filter_map do |line|
-        id, pid, tag, failed, title, command = line.chomp.split("\t", 6)
-        next unless id && title.to_s.strip == SIDEBAR_TITLE && pid.to_s.match?(/\A\d+\z/)
+        id, pid, tag, failed, dead, title, command = line.chomp.split("\t", 7)
+        next unless id && dead != "1" && title.to_s.strip == SIDEBAR_TITLE && pid.to_s.match?(/\A\d+\z/)
 
         other = tag.to_s.match?(/\A[1-9]\d*\z/) && tag != pid ? tag.to_i : nil
         ReloadTarget.new(pane: id, pid: pid.to_i, tagged: tag == pid, between: tag == "0", tag_pid: other,
@@ -764,6 +771,21 @@ module Switchboard
     def signal_sidebar(pid)
       Process.kill(CodeReload::SIGNAL, pid)
       true
+    rescue SystemCallError
+      false
+    end
+
+    # Is the pane still what the listing saw? The preflights between the listing and a respawn
+    # take time, and `respawn-pane -k` kills whatever runs there now (an editor, say).
+    def same_reload_target?(target)
+      out = IO.popen(["tmux", "display-message", "-p", "-t", target.pane,
+                      "\#{pane_pid}\t\#{#{CodeReload::TAG}}\t\#{pane_dead}\t\#{pane_title}\t\#{pane_start_command}"],
+                     err: File::NULL, &:read)
+      return false unless $?.success?
+
+      pid, tag, dead, title, command = out.chomp.split("\t", 5)
+      dead != "1" && title.to_s.strip == SIDEBAR_TITLE && pid.to_i == target.pid &&
+        (tag == pid) == target.tagged && (tag == "0") == target.between && start_bin(command) == target.bin
     rescue SystemCallError
       false
     end

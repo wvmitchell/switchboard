@@ -451,6 +451,30 @@ module Switchboard
       refute CodeReload.decode(sb.send(:resume_payload))[:announce], "off screen: silent"
     end
 
+    # Value: protects=building the payload never raises out of reexec (that would close the
+    # pane), and only on-screen worktrees' baseline travels; fails_when=the rescue or the filter
+    # is dropped; seam=none
+    def test_the_payload_carries_only_tracked_worktrees_and_never_raises
+      sb = sidebar(nodes: [proj("app"), ws("a", path: "/wt/a")])
+      sb.instance_variable_get(:@edges).restore_baseline(hook_states: { "/wt/a" => :done, "/wt/gone" => :done }, notify: {})
+      assert_equal({ "/wt/a" => :done }, CodeReload.decode(sb.send(:resume_payload))[:hook_states])
+      sb.instance_variable_get(:@edges).define_singleton_method(:baseline) { raise "boom" }
+      refute_nil CodeReload.decode(sb.send(:resume_payload)), "a minimal payload, not an exception"
+    end
+
+    def test_a_clean_exit_untags_the_pane
+      ENV["TMUX_PANE"] = "%9"
+      untagged = []
+      sb = sidebar(nodes: [proj("app")])
+      stub_method(Tmux, :untag_sidebar_pane, ->(pane) { untagged << pane }) { capture_stdout { sb.send(:teardown) } }
+      assert_equal ["%9"], untagged, "a dead pane (remain-on-exit) keeps no pid a sender could signal"
+    end
+
+    def test_an_unreadable_payload_still_starts_as_a_reload
+      out, = run_sidebar(visible: false, resume: "{garbage")
+      refute_includes out, "\e[2J", "handed a payload, so no clear even if it won't decode"
+    end
+
     # --- the trap -----------------------------------------------------------------
 
     # Value: protects=a reload asked mid-prompt waits for the prompt (a half-typed task survives);
@@ -482,12 +506,23 @@ module Switchboard
       assert Sidebar.check
       refute ENV.key?(CodeReload::RESUME_ENV)
       ENV[CodeReload::RESUME_ENV] = "{garbage"
-      assert Sidebar.check, "an unreadable payload is a cold start, not a failure"
+      assert Sidebar.check, "an unreadable payload is a blank resume, not a failure"
       stub_new(->(*) { raise NameError, "boom" }) { refute Sidebar.check }
       broken = Sidebar.new
       broken.define_singleton_method(:apply_resume) { |_p| raise ArgumentError, "resume broke" }
       ENV[CodeReload::RESUME_ENV] = CodeReload.encode
       stub_new(->(*) { broken }) { refute Sidebar.check, "a release that can't take its payload fails" }
+    end
+
+    # Value: protects=a reload never swaps a working sidebar for one with no config (the pane
+    # closes) or a malformed one (the tree blanks); fails_when=check ignores the config; seam=none
+    def test_sidebar_check_refuses_a_missing_or_malformed_config
+      File.delete(ENV["SWITCHBOARD_CONFIG"]) if File.exist?(ENV["SWITCHBOARD_CONFIG"])
+      refute Sidebar.check, "no config: the new image would exit and close the pane"
+      File.write(ENV["SWITCHBOARD_CONFIG"], "projects: [\n  - name: : :\n")
+      refute Sidebar.check, "malformed: this image keeps its last-good config, the new one wouldn't"
+      File.write(ENV["SWITCHBOARD_CONFIG"], "projects: []\n")
+      assert Sidebar.check
     end
 
     # Sidebar.new stubbed, then REMOVED (stub_method would leave a singleton `new` behind,

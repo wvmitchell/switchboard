@@ -661,7 +661,10 @@ checkout. Nothing can repoint a sidebar at another install.
     boot. An untagged pane (older than 0.59, or tmux < 3.0, where SIGUSR1's default action
     would KILL it) is instead `respawn-pane -k`'d with NO command, so it reruns the pane's
     own start command. The respawn adds `-e` for the resume marker, retried without `-e` on
-    old tmux. It only happens when that start command is exactly `<…/switchboard> sidebar`
+    old tmux. The pane is re-read just before (`Tmux.same_reload_target?`: same pid, tag,
+    liveness and command), because the preflights take time and `-k` kills whatever runs
+    there now. Dead panes (`#{pane_dead}`, under remain-on-exit) are never targets, and a
+    clean exit untags its pane. The respawn only happens when that start command is exactly `<…/switchboard> sidebar`
     (`Tmux.start_bin`: any program can title its pane `sb-sidebar`), and the binary is an
     executable file that passes `version` (checked once per distinct binary). Otherwise the
     pane is left running and counted: respawn kills first, so a broken or deleted checkout
@@ -685,7 +688,9 @@ checkout. Nothing can repoint a sidebar at another install.
     deadline would spin `IO.select`.
 - **`reexec`**:
   1. Preflight: `<bin> sidebar --check` with the resume payload in its env.
-     `Sidebar.check` builds a sidebar and runs `apply_resume` (shared with
+     `Sidebar.check` refuses a missing config (the new image would exit and close the
+     pane) or one with a `load_error` (this image keeps its last-good config; the new one
+     would blank the tree). It then builds a sidebar and runs `apply_resume` (shared with
      `resume_start`) on the payload. It runs no rebuild, because rebuild writes. So it
      proves the new code can construct a sidebar and take the payload, not just load. It's
      bounded to 3s, runs with
@@ -714,6 +719,13 @@ checkout. Nothing can repoint a sidebar at another install.
   shell-outs wait inline.
 - **Resume** (`SWITCHBOARD_SIDEBAR_RESUME`, JSON v1, ≤64 KiB, read AND deleted by
   `take_resume` before anything spawns):
+  - `encode` never raises and never writes what `decode` would refuse. Names that aren't
+    valid UTF-8 are scrubbed: git branch names can be any bytes, `JSON.generate` raises on
+    them, and the whole fleet reloads at once. Past `PAYLOAD_MAX` the baseline is dropped
+    and the cursor kept. `resume_payload` carries only on-screen worktrees' baseline, and a
+    raise there hands over a minimal payload.
+  - A payload that was handed over but won't decode is `BLANK`, not nil, so it's still a
+    reload: no clear, no launch-time prune.
   - It carries:
     - the cursor (identity: `CodeReload::CURSOR_FIELDS`, restored after the first
       reload's `locate`, falling back to `cursor_to_current`; a respawn's marker carries

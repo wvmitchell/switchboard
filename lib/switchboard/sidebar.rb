@@ -71,6 +71,10 @@ module Switchboard
     # a release that loads but can't construct a sidebar or take its payload fails here
     # instead of closing every pane it reaches.
     def self.check
+      # A config the new image can't use would close the pane (none) or blank the tree
+      # (malformed, where this image keeps its last-good one): refuse, and stay.
+      return false unless Config.exist? && Config.new.load_error.nil?
+
       sb = new
       payload = CodeReload.take_resume
       sb.send(:apply_resume, payload) if payload
@@ -966,6 +970,7 @@ module Switchboard
 
     def teardown
       restore_reload_trap
+      Tmux.untag_sidebar_pane(ENV["TMUX_PANE"]) # a pane left dead (remain-on-exit) keeps no stale pid to signal
       $stdin.cooked!
       print "\e[?1004l\e[?25h" # stop focus events, show cursor
     rescue StandardError
@@ -1088,9 +1093,16 @@ module Switchboard
     # What the new image needs that isn't on disk: where the cursor was, the agent-edge
     # baseline (D1), and whether its first scan may ring — only if we were on screen and
     # announcing just now; otherwise it owes a silent catch-up like any switch-in (R7).
+    # Only the baseline of worktrees still on screen travels: the sticky one also remembers
+    # every worktree this process ever saw. Never raises (a reload that can't build its
+    # payload hands over none rather than closing the pane).
     def resume_payload
       announce = @visible && !@last_announce_scan.nil? && monotonic - @last_announce_scan <= REFRESH + ANNOUNCE_GRACE
-      CodeReload.encode(cursor: cursor_identity, offset: @offset, announce: announce, **@edges.baseline)
+      tracked = @nodes.select { |n| n.kind == "ws" }.to_set(&:path)
+      baseline = @edges.baseline.transform_values { |h| h.select { |path, _| tracked.include?(path) } }
+      CodeReload.encode(cursor: cursor_identity, offset: @offset, announce: announce, **baseline)
+    rescue StandardError
+      CodeReload.encode
     end
 
     def cursor_identity

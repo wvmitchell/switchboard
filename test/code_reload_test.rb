@@ -122,6 +122,34 @@ module Switchboard
       refute CodeReload.decode(JSON.generate("v" => 1))[:announce]
     end
 
+    # Value: protects=one non-UTF-8 name never crashes the fleet's reload (JSON.generate raises
+    # on it); fails_when=encode stops scrubbing; seam=none
+    def test_encode_survives_names_that_are_not_utf8
+      bad = "/wt/caf\xE9".dup.force_encoding("UTF-8")
+      raw = CodeReload.encode(cursor: { "kind" => "ws", "project" => "app", "path" => bad, "branch" => "x\xff".b },
+                              hook_states: { bad => :done }, notify: { bad => Time.at(1) })
+      got = CodeReload.decode(raw)
+      assert got[:cursor]["path"].valid_encoding?
+      assert_equal 1, got[:hook_states].size
+    end
+
+    # Value: protects=the payload always fits what decode accepts, keeping the cursor; fails_when=
+    # encode stops bounding it; seam=none
+    def test_an_oversized_baseline_is_dropped_but_the_cursor_kept
+      huge = (1..2000).to_h { |i| ["/a/very/long/path/to/a/worktree/number-#{i}" * 2, :done] }
+      raw = CodeReload.encode(cursor: { "kind" => "ws", "path" => "/wt/a" }, hook_states: huge)
+      assert_operator raw.bytesize, :<=, CodeReload::PAYLOAD_MAX
+      got = CodeReload.decode(raw)
+      assert_equal "/wt/a", got[:cursor]["path"]
+      assert_empty got[:hook_states]
+    end
+
+    def test_an_unreadable_payload_is_still_a_reload
+      ENV[CodeReload::RESUME_ENV] = "{garbage"
+      assert_equal CodeReload::BLANK, CodeReload.take_resume, "handed over, so not a launch (no clear, no prune)"
+      refute ENV.key?(CodeReload::RESUME_ENV)
+    end
+
     def test_take_resume_removes_the_variable
       ENV[CodeReload::RESUME_ENV] = CodeReload.encode(offset: 1)
       assert_equal 1, CodeReload.take_resume[:offset]
@@ -132,13 +160,14 @@ module Switchboard
     # --- reaching every sidebar (R1, R2, R5) -----------------------------------
 
     def test_parse_reload_targets_splits_tagged_from_old
-      raw = "%1\t101\t101\t\tsb-sidebar\t/opt/sb/bin/switchboard sidebar\n" \
-            "%2\t102\t\t\tsb-sidebar\t\"/my dir/bin/switchboard\" sidebar\n" \
-            "%3\t103\t99\t\tsb-sidebar\t/opt/sb/bin/switchboard sidebar\n" \
-            "%4\t104\t104\t\tzsh\tzsh\n" \
-            "%5\t105\t\t\tsb-sidebar\t\"unbalanced\n" \
-            "%6\t106\t0\t\tsb-sidebar\t/opt/sb/bin/switchboard sidebar\n" \
-            "%7\t107\t107\t/Cellar/b\tsb-sidebar\t/opt/sb/bin/switchboard sidebar\n"
+      raw = "%1\t101\t101\t\t\tsb-sidebar\t/opt/sb/bin/switchboard sidebar\n" \
+            "%2\t102\t\t\t\tsb-sidebar\t\"/my dir/bin/switchboard\" sidebar\n" \
+            "%3\t103\t99\t\t\tsb-sidebar\t/opt/sb/bin/switchboard sidebar\n" \
+            "%4\t104\t104\t\t\tzsh\tzsh\n" \
+            "%5\t105\t\t\t\tsb-sidebar\t\"unbalanced\n" \
+            "%6\t106\t0\t\t\tsb-sidebar\t/opt/sb/bin/switchboard sidebar\n" \
+            "%7\t107\t107\t/Cellar/b\t\tsb-sidebar\t/opt/sb/bin/switchboard sidebar\n" \
+            "%8\t108\t108\t\t1\tsb-sidebar\t/opt/sb/bin/switchboard sidebar\n"
       got = Tmux.parse_reload_targets(raw).map { |t| [t.pane, t.pid, t.tagged, t.between, t.tag_pid, t.failed, t.bin] }
       assert_equal [["%1", 101, true, false, nil, false, "/opt/sb/bin/switchboard"],
                     ["%2", 102, false, false, nil, false, "/my dir/bin/switchboard"],
@@ -146,6 +175,7 @@ module Switchboard
                     ["%5", 105, false, false, nil, false, nil],
                     ["%6", 106, false, true, nil, false, "/opt/sb/bin/switchboard"], # mid-exec: neither signaled nor respawned
                     ["%7", 107, true, false, nil, true, "/opt/sb/bin/switchboard"]], # a failed reload, recorded
+                                                                                          # %8: a dead pane (remain-on-exit) is skipped
                    got, "only sidebar panes; a tag must equal the pane's pid"
     end
 
@@ -173,9 +203,10 @@ module Switchboard
       assert got[:announce]
     end
 
-    def reload_with(targets, preflight: ->(_bin) { :ok }, respawn_ok: true, parents: {})
+    def reload_with(targets, preflight: ->(_bin) { :ok }, respawn_ok: true, parents: {}, unchanged: true)
       log = []
       counts = stub_method(Tmux, :sidebar_reload_targets, -> { targets }) do
+       stub_method(Tmux, :same_reload_target?, ->(_t) { unchanged }) do
         stub_method(Tmux, :parent_pids, ->(_pids) { parents }) do
           stub_method(Tmux, :signal_sidebar, ->(pid) { log << [:signal, pid]; true }) do
             stub_method(Tmux, :respawn_sidebar, ->(t, marker) { log << [:respawn, t.pane, CodeReload.decode(marker).nil?]; respawn_ok }) do
@@ -183,8 +214,29 @@ module Switchboard
             end
           end
         end
+       end
       end
       [counts, log]
+    end
+
+    # Value: protects=a pane that changed since the listing (respawned into an editor while
+    # preflights ran) is never respawn-pane -k'd; fails_when=the recheck is dropped; seam=none
+    def test_a_pane_that_changed_since_the_listing_is_left_alone
+      counts, log = reload_with([target("%1", tagged: false, bin: install("c"))], unchanged: false)
+      assert_equal 1, counts[:left]
+      assert_empty log.select { |e| e.first == :respawn }
+    end
+
+    def test_same_reload_target_compares_the_live_pane
+      t = Tmux::ReloadTarget.new(pane: "%1", pid: 10, tagged: false, between: false, bin: "/x/bin/switchboard")
+      live = lambda do |line|
+        stub_method(IO, :popen, ->(*_a, **_k, &_b) { system("true"); line }) { Tmux.same_reload_target?(t) }
+      end
+      assert live.call("10\t\t0\tsb-sidebar\t/x/bin/switchboard sidebar\n")
+      refute live.call("11\t\t0\tsb-sidebar\t/x/bin/switchboard sidebar\n"), "a new process"
+      refute live.call("10\t\t0\tsb-sidebar\tvim notes.md\n"), "a different command"
+      refute live.call("10\t\t1\tsb-sidebar\t/x/bin/switchboard sidebar\n"), "dead"
+      refute live.call("10\t10\t0\tsb-sidebar\t/x/bin/switchboard sidebar\n"), "tagged since"
     end
 
     def target(pane, tagged:, bin: nil, between: false, pid: 1, tag_pid: nil, failed: false)

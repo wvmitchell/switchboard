@@ -86,7 +86,7 @@ module Switchboard
           counts[:signaled] += 1 # mid-exec from another reload: already on its way
         elsif signal_pid
           counts[:signaled] += 1 if Tmux.signal_sidebar(signal_pid)
-        elsif t.bin && loads[t.bin] && Tmux.respawn_sidebar(t, marker)
+        elsif t.bin && loads[t.bin] && Tmux.same_reload_target?(t) && Tmux.respawn_sidebar(t, marker)
           counts[:respawned] += 1
         else
           counts[:left] += 1
@@ -119,11 +119,23 @@ module Switchboard
       bound.positive? ? rng.rand * bound : 0.0
     end
 
+    # Never raises and never exceeds what decode accepts: a name that isn't valid UTF-8 (git
+    # branch names can be any bytes) is scrubbed, since JSON.generate would raise on it and the
+    # whole fleet reloads at once; past PAYLOAD_MAX the baseline is dropped, keeping the cursor.
     def encode(cursor: nil, offset: 0, hook_states: {}, notify: {}, announce: false)
-      JSON.generate("v" => VERSION, "cursor" => cursor, "offset" => offset,
-                    "hook_states" => hook_states.transform_keys(&:to_s).transform_values(&:to_s),
-                    "notify" => notify.transform_values { |t| [t.to_i, t.nsec] }, "announce" => announce)
+      data = { "v" => VERSION, "cursor" => cursor&.transform_values { |v| v && utf8(v) }, "offset" => offset,
+               "hook_states" => hook_states.to_h { |k, v| [utf8(k), v.to_s] },
+               "notify" => notify.to_h { |k, t| [utf8(k), [t.to_i, t.nsec]] }, "announce" => announce }
+      raw = JSON.generate(data)
+      raw.bytesize <= PAYLOAD_MAX ? raw : JSON.generate(data.merge("hook_states" => {}, "notify" => {}))
     end
+
+    def utf8(value)
+      value.to_s.dup.force_encoding(Encoding::UTF_8).scrub
+    end
+
+    # A payload that was handed over but couldn't be read is still a reload, not a launch.
+    BLANK = { cursor: nil, offset: 0, hook_states: {}, notify: {}, announce: false }.freeze
 
     # The payload as a symbol-keyed hash, or nil for anything not worth trusting (absent,
     # oversized, unparseable, an unknown version). Fields are filtered one by one, so a
@@ -145,9 +157,13 @@ module Switchboard
       nil
     end
 
-    # Read and REMOVE the payload, so nothing this process spawns inherits it.
+    # Read and REMOVE the payload, so nothing this process spawns inherits it. nil only when
+    # none was handed over (a launch); an unreadable one is BLANK, so a reload still skips the
+    # clear and the launch-time prune.
     def take_resume(env = ENV)
-      decode(env.delete(RESUME_ENV))
+      return nil unless env.key?(RESUME_ENV)
+
+      decode(env.delete(RESUME_ENV)) || BLANK
     end
 
     def cursor_from(value)
