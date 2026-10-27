@@ -177,19 +177,6 @@ module Switchboard
       assert_equal [:exec], execs, "D2: switch in before it reloaded, see it within a second"
     end
 
-    # Value: protects=a switch-in with a code reload pending catches up silently BEFORE the swap,
-    # so batched keys see the entered session, a failed swap leaves nothing stale, and the new
-    # image baselines against it (no replayed chimes); fails_when=the pending-reload skip comes
-    # back, or the swap runs first; seam=none
-    def test_the_switch_poke_catches_up_silently_before_the_swap
-      sb, execs = reloading(visible: false)
-      sb.send(:request_reload)
-      sb.define_singleton_method(:reload) { |**kw| execs << [:reload, kw] }
-      stub_method(Tmux, :visible?, ->(*) { true }) { sb.send(:reload_and_refresh) }
-      sb.send(:maybe_reexec)
-      assert_equal [[:reload, { announce_sounds: false }], :exec], execs
-    end
-
     # Value: protects=a turn that finished while this pane was away rings nowhere across a switch-in
     # swap: the payload carries the silent catch-up's baseline; fails_when=the swap runs before the
     # switch-in scan, or that scan stops advancing the baseline; why_new=the ordering test stubs
@@ -236,8 +223,9 @@ module Switchboard
       assert_equal [:locate], log, "inside POKE_TTL the poke only locates, reload pending or not"
     end
 
-    # Value: protects=a key read in the same batch as the switch poke acts on the caught-up tree;
-    # fails_when=the catch-up moves to the loop top (after handle dispatches the batch); seam=none
+    # Value: protects=a switch-in with a code reload pending catches up silently BEFORE the swap,
+    # and a key read in the same batch as the poke acts on that caught-up tree; fails_when=the
+    # pending-reload skip comes back, or the catch-up moves to the loop top or after exec; seam=none
     def test_keys_batched_with_the_switch_poke_see_the_caught_up_tree
       sb, execs = reloading(visible: false)
       sb.send(:request_reload)
