@@ -30,7 +30,7 @@ module Switchboard
       w.close
       stdin.define_singleton_method(:raw!) { nil }
       stdin.define_singleton_method(:cooked!) { nil }
-      tag = ->(_pane, value) { log << [:tag, value, sb.instance_variable_get(:@wake_r) ? :trap_first : :tag_first] }
+      tag = ->(_pane, value, **) { log << [:tag, value, sb.instance_variable_get(:@wake_r) ? :trap_first : :tag_first] }
       out = with_stdin(stdin) do
         stub_method(Tmux, :enable_focus_events, -> {}) do
           stub_method(Tmux, :session_of, ->(*) { session }) do
@@ -449,6 +449,34 @@ module Switchboard
       refute sb.instance_variable_get(:@reload_requested)
     end
 
+    # Value: protects=the tick is what retries an owed tag (one call while owed, none after),
+    # and a tag that never lands stops costing ticks after TAG_TRIES (R3); fails_when=the tick
+    # stops calling retry_tag, or keeps calling it past the cap; seam=none
+    def test_a_tick_retries_an_owed_tag_until_it_lands_or_runs_out
+      sb, = reloading(visible: false)
+      sb.instance_variable_get(:@config).define_singleton_method(:prewarm?) { false }
+      ENV["SWITCHBOARD_BIN"] = File.join(CodeReload::LOADED_ROOT, "bin", "switchboard")
+      sb.instance_variable_set(:@tag_pending, Process.pid)
+      sb.instance_variable_set(:@tag_tries, 1)
+      tags = []
+      stub_method(Tmux, :visible?, ->(*) { false }) do
+        stub_method(Tmux, :window_panes, ->(*) { 2 }) do
+          stub_method(Tmux, :tag_sidebar_pane, ->(_p, v, **) { tags << v; true }) { 2.times { sb.send(:tick) } }
+        end
+      end
+      assert_equal [Process.pid], tags, "retried on the next tick, then nothing once it landed"
+
+      sb.instance_variable_set(:@tag_pending, Process.pid)
+      sb.instance_variable_set(:@tag_tries, 1)
+      tries = 0
+      stub_method(Tmux, :visible?, ->(*) { false }) do
+        stub_method(Tmux, :window_panes, ->(*) { 2 }) do
+          stub_method(Tmux, :tag_sidebar_pane, ->(*, **) { tries += 1; false }) { (Sidebar::TAG_TRIES + 3).times { sb.send(:tick) } }
+        end
+      end
+      assert_equal Sidebar::TAG_TRIES - 1, tries, "a tag that never lands (tmux < 3.0) stops costing ticks"
+    end
+
     # --- the exec itself ----------------------------------------------------------
 
     def exec_sidebar(preflight: :ok, root: "/Cellar/new", sb: nil, &on_exec)
@@ -461,10 +489,11 @@ module Switchboard
       flags = []
       calls = []
       order = []
+      lands = @tag_lands.nil? || @tag_lands # a local: the stub runs with Tmux as self
       stub_method(CodeReload, :preflight, ->(*args, **kw) { calls << [args, kw]; preflight }) do
         stub_method(CodeReload, :current_root, ->(*) { root }) do
           stub_method(Tmux, :flag_failed_reload, ->(_p, r) { flags << r; order << [:flag, r] }) do
-            stub_method(Tmux, :tag_sidebar_pane, ->(_p, v) { tags << v; order << [:tag, v] }) { capture_stdout { sb.send(:reexec) } }
+            stub_method(Tmux, :tag_sidebar_pane, ->(_p, v, clear_failed: true) { tags << v; order << [:tag, v, clear_failed]; lands }) { capture_stdout { sb.send(:reexec) } }
           end
         end
       end
@@ -499,8 +528,55 @@ module Switchboard
       refute_equal "IGNORE", trap(CodeReload::SIGNAL, "DEFAULT"), "the handler is back"
       assert_equal "/Cellar/new", sb.instance_variable_get(:@reexec_blocked_root)
       refute sb.instance_variable_get(:@reload_requested)
-      assert_equal [[:tag, 0], [:tag, Process.pid], [:flag, "/Cellar/new"]], @tmux_order,
-                   "flagged AFTER the re-tag, which would otherwise clear it"
+      assert_equal [[:tag, 0, true], [:tag, Process.pid, false], [:flag, "/Cellar/new"]], @tmux_order,
+                   "the old code's re-tag leaves the failure flag alone, and the flag lands last"
+    end
+
+    # Value: protects=a failed exec whose re-tag also failed still reports the failure after the
+    # retry lands (old code is still running); fails_when=a retry clears the flag; seam=none
+    def test_a_retried_re_tag_after_a_failed_exec_keeps_the_failure_flag
+      @tag_lands = false
+      sb, = exec_sidebar { raise Errno::ENOENT, "gone" }
+      assert_equal Process.pid, sb.instance_variable_get(:@tag_pending), "the re-tag didn't land: owed"
+      calls = []
+      stub_method(Tmux, :tag_sidebar_pane, ->(_p, v, clear_failed: true) { calls << [v, clear_failed]; true }) { sb.send(:retry_tag) }
+      assert_equal [[Process.pid, false]], calls
+      assert_nil sb.instance_variable_get(:@tag_pending)
+    end
+
+    # Value: protects=a startup tag that didn't land is retried on later ticks, so later reloads
+    # can reach this sidebar, and stops once it lands; fails_when=the result is ignored again;
+    # seam=none
+    def test_a_startup_tag_that_fails_is_retried_until_it_lands
+      sb = sidebar(nodes: [proj("app")])
+      calls = []
+      results = [false, false, true]
+      stub_method(Tmux, :tag_sidebar_pane, ->(_p, v, clear_failed: true) { calls << [v, clear_failed]; results.shift }) do
+        refute sb.send(:tag_pane)
+        2.times { sb.send(:retry_tag) }
+        sb.send(:retry_tag) # landed: nothing owed
+      end
+      assert_equal [[Process.pid, true], [Process.pid, true], [Process.pid, true]], calls,
+                   "a new image's first tag, retried, may still clear a failure flag"
+      assert_nil sb.instance_variable_get(:@tag_pending)
+    end
+
+    # Value: protects=a boot tag still owed can't erase a failure flag a later failed reload
+    # wrote; fails_when=reload_failed leaves the owed retry's clear right; seam=none
+    def test_a_failed_reload_revokes_an_owed_boot_tags_clear
+      @tag_lands = true
+      sb = sidebar(nodes: [proj("app"), ws("a"), ws("b")], cursor: 2)
+      stub_method(Tmux, :tag_sidebar_pane, ->(*, **) { false }) { sb.send(:tag_pane) } # boot tag owed, may clear
+      exec_sidebar(preflight: :failed, sb: sb) { flunk "no exec" }
+      calls = []
+      stub_method(Tmux, :tag_sidebar_pane, ->(_p, v, clear_failed: true) { calls << [v, clear_failed]; true }) { sb.send(:retry_tag) }
+      assert_equal [[Process.pid, false]], calls, "the flag the failed check just wrote stands"
+    end
+
+    def test_a_mid_exec_tag_that_fails_owes_nothing
+      sb = sidebar(nodes: [proj("app")])
+      stub_method(Tmux, :tag_sidebar_pane, ->(*, **) { false }) { sb.send(:tag_pane, 0) }
+      assert_nil sb.instance_variable_get(:@tag_pending), "exec replaces us right after"
     end
 
     # Value: protects=the likeliest real failure (the bin no longer resolves) still flags the pane;

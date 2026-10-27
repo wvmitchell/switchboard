@@ -407,10 +407,12 @@ safe today; each is narrow).
 Found by the /ship reviews after the 3-cycle fix limit; deferred with Will's OK (D4).
 *Start in:* the reload section of `lib/switchboard/sidebar.rb`, `CodeReload.reload_all`.
 
-- **A `0` tag is trusted forever.** *Why:* if the new image's one re-tag `set-option` fails (or the
-  process dies mid-exec under remain-on-exit), every later reload counts the pane "asked to reload"
-  and never signals or respawns it; no failure flag is written. *Fix:* write `0:<epoch>` and treat a
-  stale one (or a dead pid) as untagged. **Priority:** P2.
+- **A `0` tag whose replacement never lands still strands the pane.** *Why:* since 0.60.3 a
+  new image retries its pid tag (`retry_tag`) up to `TAG_TRIES`; if every attempt fails, the
+  `0` from the exec stays and later reloads skip the pane, with no failure flag for `doctor`.
+  Rarer than before (five failures in a row, or tmux < 3.0, where the exec path can't tag at
+  all). *Fix:* on give-up, flag the pane best-effort, or stamp the `0` with its time beside the
+  tag (`@sb_reload_boot`) so senders can treat an old one as stuck. **Priority:** P3.
 - **Exec isn't pinned to the keg the preflight checked.** *Why:* `current_root`, the preflight and
   exec each resolve `SWITCHBOARD_BIN`; a `brew upgrade` landing between them execs an unchecked keg.
   *Fix:* exec the realpath the preflight ran. **Priority:** P2.

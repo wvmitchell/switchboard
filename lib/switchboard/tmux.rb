@@ -696,13 +696,16 @@ module Switchboard
     # Our pid on our own pane (CodeReload::TAG): a sender signals only a pane whose tag is
     # its pane_pid (or a child of it), so a pane respawned or recycled since, or a sidebar
     # older than 0.59 (no tag; the signal's default action would kill it), is never
-    # signaled. A real pid also clears an earlier failed reload's flag: this is new code.
-    def tag_sidebar_pane(pane, value)
-      return unless pane
+    # signaled. A new image's real pid also clears an earlier failed reload's flag: this is
+    # new code. The old code's re-tag after a failed exec (and any retry of it) passes
+    # clear_failed: false; a retry keeps the clear_failed of the tag it retries.
+    # Whether the tag landed, so the sidebar can retry one that didn't.
+    def tag_sidebar_pane(pane, value, clear_failed: true)
+      return false unless pane
 
       cmd = ["tmux", "set-option", "-p", "-t", pane, CodeReload::TAG, value.to_s]
-      cmd += [";", "set-option", "-p", "-u", "-t", pane, CodeReload::FAILED_TAG] unless value.to_s == "0"
-      system(*cmd, out: File::NULL, err: File::NULL)
+      cmd += [";", "set-option", "-p", "-u", "-t", pane, CodeReload::FAILED_TAG] if clear_failed && value.to_s != "0"
+      system(*cmd, out: File::NULL, err: File::NULL) == true
     end
 
     # A reload this pane's sidebar couldn't make (doctor and the next reload report it).

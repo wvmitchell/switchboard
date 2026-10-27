@@ -51,7 +51,7 @@ module Switchboard
     def test_sidebar_core_constants_and_singletons_are_pinned
       expected = %i[
         ANNOUNCE_GRACE Actions Edges IDLE Input NAV_TTL POKE_TTL PULSE Prompt REFRESH Render
-        Rows TREE_TICKS UPDATE_SPAWN_TTL VIS_POLL WARM_TTL
+        Rows TAG_TRIES TREE_TICKS UPDATE_SPAWN_TTL VIS_POLL WARM_TTL
       ]
       assert_equal expected, Sidebar.constants(false).sort,
                    "the core constant set moved — if deliberate, update this pin"

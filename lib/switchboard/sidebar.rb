@@ -61,6 +61,7 @@ module Switchboard
     NAV_TTL = 45             # refresh-on-switch only if the cache is older than this
     UPDATE_SPAWN_TTL = 60    # min seconds between this pane's own update due? checks (#47; the attempt file gates the rest)
     ANNOUNCE_GRACE = 1       # seconds past REFRESH a scan still counts as "just now" for a reload's first ring (#48)
+    TAG_TRIES = 5            # attempts at a pane tag that didn't land (#48): a one-off tmux failure, not tmux < 3.0's every-time one
 
     def self.run
       new.run
@@ -201,6 +202,9 @@ module Switchboard
       @last_announce_scan = nil # monotonic of the last announcing on-screen scan: a reload's first scan may ring only after a recent one
       @wake_r = @wake_w = nil # self-pipe the trap writes, so IO.select wakes for it
       @prev_reload_trap = nil
+      @tag_pending = nil   # the pid tag owed when one didn't land, retried by tick (retry_tag)
+      @tag_tries = 0
+      @tag_clears = false  # whether that owed tag may clear a failed-reload flag (a new image's first)
       @pending = +""       # an incomplete escape sequence split across reads, carried
                            # to the next one and reassembled by tokenize (see handle) —
                            # so a sequence's final byte is never read alone as a key
@@ -346,6 +350,7 @@ module Switchboard
       return false if lone_pane_handled # #64: work sibling died -> don't wedge (workspace exits, home self-heals)
 
       request_reload if code_moved? # a `brew upgrade` nobody signaled us about (#48)
+      retry_tag
       reap_strays if @resume
       visible = Tmux.visible?(ENV["TMUX_PANE"])
       # Off screen we're never focused, so skip the focused? shell-out entirely —
@@ -1019,9 +1024,25 @@ module Switchboard
       nil
     end
 
-    # Our pane's tag: our pid, or "0" while we're between images (R4).
-    def tag_pane(value = Process.pid)
-      Tmux.tag_sidebar_pane(ENV["TMUX_PANE"], value)
+    # Our pane's tag: our pid, or "0" while we're between images (R4). A pid tag that didn't
+    # land is owed: a "0" left by our own exec would make every later reload skip us.
+    def tag_pane(value = Process.pid, clear_failed: true)
+      landed = Tmux.tag_sidebar_pane(ENV["TMUX_PANE"], value, clear_failed: clear_failed)
+      return landed if value.to_s == "0" # exec replaces us right after: nothing to retry
+
+      @tag_pending, @tag_tries, @tag_clears = landed ? [nil, 0, false] : [value, 1, clear_failed]
+      landed
+    end
+
+    # Retry an owed tag as it was asked, TAG_TRIES attempts in all, then give up (the pane
+    # keeps whatever tag it had). A new image's first tag may clear a failed-reload flag; the
+    # old code's re-tag after a failed exec never does, so a retry can't hide that failure.
+    def retry_tag
+      return unless @tag_pending
+
+      @tag_tries += 1
+      landed = Tmux.tag_sidebar_pane(ENV["TMUX_PANE"], @tag_pending, clear_failed: @tag_clears)
+      @tag_pending = nil if landed || @tag_tries >= TAG_TRIES
     end
 
     # The keg SWITCHBOARD_BIN resolves to isn't the one we loaded, and it isn't one whose
@@ -1076,6 +1097,7 @@ module Switchboard
     # `reload-sidebars`, not from a clock of its own.
     def reload_failed(root)
       @reexec_blocked_root = root
+      @tag_clears = false # a boot tag still owed must not erase the flag written below
       Tmux.flag_failed_reload(ENV["TMUX_PANE"], root)
     end
 
@@ -1092,7 +1114,7 @@ module Switchboard
       ENV.delete(CodeReload::RESUME_ENV)
       ENV["SB_REEXEC"] = reexec_guard if reexec_guard
       install_reload_trap
-      tag_pane # before the flag: a real-pid tag clears it
+      tag_pane(clear_failed: false) # still old code: the failure flag below must stand
       reload_failed(root || bin)
     end
 
