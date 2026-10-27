@@ -151,7 +151,7 @@ module Switchboard
 
     # A genuinely attached client (stdlib PTY, zero-gem) so the sidebar isn't dormant.
     def attach_client
-      @pty, @pty_pid = PTY.spawn("tmux", "attach", "-t", HOME)
+      @pty, @pty_in, @pty_pid = PTY.spawn("tmux", "attach", "-t", HOME) # @pty_in: keystrokes, as a person types
       @pty.winsize = [50, 220] # pin the client size: openpty can come up 0x0 (esp. on CI), which would
       start_drain              # leave the session unsized and the render/split waits stuck
       wait_until("the PTY client attaches") { session_attached?(HOME) }
@@ -191,6 +191,7 @@ module Switchboard
     ensure
       begin
         @pty&.close
+        @pty_in&.close
       rescue StandardError
         nil
       end

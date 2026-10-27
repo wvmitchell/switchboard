@@ -82,7 +82,7 @@ module Switchboard
       # prewarm: true                              # keep off-screen sidebars warm so switching sessions doesn't flash a stale tree
       # remote_link_stale_after: 120               # minutes a /remote-control-linked session can sit idle before its ⇅ turns grey; false turns it off
       # update_check: true                        # Homebrew installs: a line under the wordmark when a newer release is out (one git ls-remote every few hours); false never checks
-      # sync_session_name: true                    # after a rename, type /rename <name> into the workspace's idle, off-screen Claude pane so its session (and phone list) shows the workspace name
+      # sync_session_name: true                    # after a rename, type /rename <name> into the workspace's Claude pane, between turns and while nobody is at it (not focused, untouched for 2 s), so its session (and phone list) shows the workspace name
 
       # Completion sounds (on by default): a built-in (train / chime / alert / failed,
       # or train_1..3 / chime_1..3), a file path, or a macOS system-sound name. enabled:
@@ -291,7 +291,7 @@ module Switchboard
 
     # Whether a rename also renames the workspace's live Claude session (the name its
     # resume picker and the phone's session list show): a detached worker types
-    # `/rename <name>` into the agent's pane once it's idle and off screen. On by
+    # `/rename <name>` into the agent's pane once it's idle and nobody is at it. On by
     # default; `sync_session_name: false` (global or per project) leaves Claude's own name.
     def sync_session_name?
       @data.fetch("sync_session_name", true) != false

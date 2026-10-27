@@ -246,9 +246,9 @@ Re-verifying one doesn't advance the others.
     hold.) There's no
     `doctor` canary for this yet; if one is added (a `status` health line like
     `RemoteLink.health`), check that instead of the manual run.
-  - **Session-name sync**: rename a workspace that has an idle Claude session, then
-    switch away so its pane is off screen. Within a minute the Claude session must
-    carry the new name (the `name` in its sessions file, or the `/resume` picker), and
+  - **Session-name sync**: rename a workspace that has an idle Claude session with the
+    sidebar's `r`, then keep the pane in view without typing. Within a few seconds the
+    Claude session must carry the new name (the `name` in its sessions file, or the `/resume` picker), and
     `doctor` must show no `session name:` line. Any `session name:` line (`unrecognized`,
     `unconfirmed`, `failed_send`, `ceiling`) means the screen contract moved. `doctor`'s
     canaries for `status`, `name` and `kind` read only the sessions file, never the

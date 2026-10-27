@@ -1020,14 +1020,33 @@ Found by the /ship reviews after the 3-cycle fix limit; deferred with Will's OK 
     `x to stop` key); typing while the footer task indicator is focused returns focus to the prompt;
     a foreground `!cmd` reads `busy`. Still uncaptured: other focusable footer items, and an open
     picker whose selected row is drawn dim.
-- **Treat tmux control mode (`tmux -CC`) windows as on screen.** *Why:* `Tmux.panes_by_tty` reads a
-  pane as visible only when its window is the session's active one; an iTerm2 control-mode client
-  shows every window as a native tab, so a non-active window can be on screen while the worker
-  types into it. *Start in:* `list-clients -F '#{client_session} #{client_control_mode}'`; mark every
-  pane of a session with a control-mode client `visible: nil`. **Priority:** P3.
 - **Check whether a typed `/rename` fires `UserPromptSubmit`.** *Why:* switchboard's Claude hook maps
   `UserPromptSubmit` to `thinking`; a local slash command runs no model turn, so no `Stop` follows,
   and the workspace dot could stick on thinking until `PRESENCE_TTL`. Unverified (the smoke uses a
   stand-in). Deferred at ship time (decision dec-32768b9c, `gstack-shortcut` marker before the
   Enter in `type_rename`). *Start in:* a hooked workspace in the sandbox: rename it, watch the state file. If it
   fires, have the worker re-report the pre-type state once the rename is confirmed. **Priority:** P2.
+- **Session-name focus gate (v0.60.1): items deferred at ship time.** None lets our keys land
+  anywhere but our own empty prompt; each was found by the /ship reviews and deferred under the
+  owner's rule that only a reachable typing-safety bug blocks. **Priority:** P2.
+  - Accepted residual (decision 76a1b9be): inside the ~1.5 s of checks after our send, a script
+    that creates a session linked to Claude's window, attaches, types and destroys that session
+    leaves no trace tmux exposes (its `session_activity` dies with it), so Enter or the backspaces
+    could follow that key. Same capability as the accepted `send-keys` race. Close it if tmux ever
+    exposes a monotonic server-wide input stamp or its next session id.
+  - Input from a `/remote-control` phone session never goes through tmux, so the input gates can't
+    see it; it can't touch the local box or approve a modal without a model round trip.
+  - No notice when a session waits as `:unrecognized` or behind a modal; doctor only reports it at
+    the ceiling.
+  - Held-phase cost: each held poll is one `list-panes` + `list-clients` + `list-sessions` read for
+    up to an hour; and a held pass can hide another worker's leftover line.
+  - `doctor` wording for a `tmux -CC` (control-mode) client, which makes its session read unknown
+    and so holds the worker indefinitely.
+  - `display-message` gets no `--` before the notice text, and `Tmux.display_time` is read on every
+    notice instead of memoized.
+  - A truncated `list-panes` row (a session name holding a tab) is skipped, not read as unknown.
+  - A clean back-out caused by a stall (Claude stays busy for seconds) still costs a visible
+    type-and-erase before the back-off; and the back-off counts passes, so near minute 5 it can
+    last ~15 min.
+  - Test quality: a few FakeClaude tests assert call counts rather than outcomes, and the smoke
+    typing test paces keys with sleeps.

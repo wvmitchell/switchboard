@@ -18,7 +18,8 @@ module Switchboard
   #     needs a model round trip first.
   #   • Claude owns its terminal (foreground process group — not suspended, nothing in
   #     front of it), the pane isn't in a tmux mode (copy mode would eat the keys), and
-  #     its window is provably off screen (an unparseable reply = maybe watched).
+  #     nobody is at its keyboard: no client has the pane focused, and no tmux client on the
+  #     server had input in the last INPUT_QUIET seconds (an unparseable reply = maybe).
   #   • the prompt box is provably empty (bare `❯`, or only the dim placeholder),
   #     parsed between its divider lines — a modal's cursor draws `❯` too — and our
   #     line fits on one row of it.
@@ -32,8 +33,8 @@ module Switchboard
   # takes its claim; either way the older worker exits.
   module SessionName
     FAST = 2        # seconds between polls at first…
-    FAST_FOR = 30   # …for this long, then doubling…
-    SLOW_CAP = 30   # …up to this
+    FAST_FOR = 300  # …for this long (a switch away is often what lets it land), then doubling…
+    SLOW_CAP = 30   # …up to this (and how often a held worker still runs a full pass)
     CEILING = 3600  # give up (and tell doctor) after an hour
     DELIVERABLE = %w[idle shell].freeze
     # Backspaces may go to a box that's mid-turn (that's usually why we back out), never to a
@@ -43,7 +44,7 @@ module Switchboard
     # What an hour of waiting means, from what the last pass saw: an unreadable box, or
     # a `/rename` of ours (any worker's) still sitting in it.
     CEILING_VERDICT = { unrecognized: :unrecognized, leftover: :failed_send }.freeze
-    WHEN = "once it's idle and off screen" # the notices' promise, shared so they can't drift
+    WHEN = "once Claude is between turns and nobody is at its pane" # the notices' promise, shared so they can't drift
     NAME = /\A\w[\w.-]*\z/ # what Rename hands us (Creator.sanitize); anything else never reaches a pane
 
     module_function
@@ -77,11 +78,23 @@ module Switchboard
       start = clock.call
       delay = FAST
       spent = {}
+      cooldown = {} # [pid, procStart] => { n: clean back-outs, skip: passes left } (see Claude.sync)
+      held = [] # ttys of sessions blocked only by someone at the keyboard, from the last full pass
+      last_full = nil
       empty_scans = 0
       loop do
         return :superseded if superseded?(dest, name) || !Owner.mine?(real, token)
 
-        state = Claude.sync(dest, name, spent)
+        # While every pending session is held only by someone at the keyboard (its pane
+        # focused, or input just now), one pane read (list-panes + list-clients) says whether
+        # that's still so, instead of a full pass of ps and lsof per session every poll. A full pass still runs every
+        # SLOW_CAP: a session can exit or start meanwhile.
+        state = if held.any? && clock.call - last_full < SLOW_CAP && Claude.still_held?(held)
+                  :held
+                else
+                  last_full = clock.call
+                  Claude.sync(dest, name, spent, held, cooldown)
+                end
         # Renamed again, or a newer worker took over, mid-pass (a pass can take seconds
         # per session): the verdict isn't ours to write any more.
         return :superseded if superseded?(dest, name) || !Owner.mine?(real, token)
@@ -109,7 +122,7 @@ module Switchboard
           return verdict || :ceiling
         end
         delay = [delay * 2, SLOW_CAP].min if elapsed >= FAST_FOR
-        sleeper.call(delay)
+        sleeper.call(state == :held ? FAST : delay) # a held poll is cheap, and it's what notices you leave
       end
     end
 
@@ -132,6 +145,8 @@ module Switchboard
       SETTLE_TRIES = 8    # ~1.2 s for the box to show what we typed (the spike saw ~130 ms)
       CONFIRM_POLL = 0.25
       CONFIRM_TRIES = 40  # ~10 s for the session file to show the new name
+      BACKOFF_CAP = 30    # full passes a backed-off session skips at most (~1 min at 2 s polls, longer once polls slow)
+      LEFTOVER_MS = 10_000 # how long the leftover notice holds (a key still clears it, like any notice)
       BOX_CHROME = 5      # `❯`, its NBSP pad, the cursor cell, and a 2-column margin against a wrap
 
       module_function
@@ -140,30 +155,63 @@ module Switchboard
       # maps [pid, procStart] => the attempt that spent it. :none when there's no session;
       # :done when every session is named or not ours to type into; a SPENT state once
       # nothing is left to try; else :unrecognized, :leftover (a /rename already sits in a
-      # box) or :waiting.
-      def sync(dest, name, spent = {})
+      # box), :waiting, or :held (only someone at the keyboard stands in the way; `held`
+      # gets their ttys, for the worker's cheap re-checks).
+      def sync(dest, name, spent = {}, held = [], cooldown = {})
+        held.clear
         sessions = ClaudeSessions.sessions_in(dest) or return :waiting # couldn't tell: wait, don't quit
+        live = ->(key, _) { sessions.any? { |s| key == [s[:pid], s[:proc_start]] } }
+        spent.select!(&live) # exited ones say nothing now
+        cooldown.select!(&live)
         return :none if sessions.empty?
 
-        spent.select! { |key, _| sessions.any? { |s| key == [s[:pid], s[:proc_start]] } } # exited ones say nothing now
         panes = Tmux.panes_by_tty
         states = sessions.map do |s|
           key = [s[:pid], s[:proc_start]]
           spent.delete(key) if spent[key] == :unconfirmed && s[:name] == name # Claude caught up late
           next spent[key] if spent.key?(key)
 
-          state = panes ? deliver(s, name, panes, dest) : :waiting
-          spent[key] = state if SPENT.include?(state)
-          state
-        end
-        %i[unrecognized leftover waiting].each { |st| return st if states.include?(st) }
+          # Backing off, unless it was renamed meanwhile (by hand, or Claude caught up).
+          next(s[:name] == name ? :done : cool(cooldown, key)) if cooldown[key] && cooldown[key][:skip].positive?
 
-        SPENT.find { |st| states.include?(st) } || :done
+          state = panes ? deliver(s, name, panes, dest, held) : :waiting
+          spent[key] = state if SPENT.include?(state)
+          state == :backed_out ? back_off(cooldown, key) : state
+        end
+        result = %i[unrecognized leftover waiting held].find { |st| states.include?(st) } ||
+                 SPENT.find { |st| states.include?(st) } || :done
+        held.clear unless result == :held # anything else pending needs a full pass
+        result
       end
 
-      # One session: :done (named), :skip (not ours to type into), :waiting,
-      # :unrecognized, :leftover, or a SPENT state.
-      def deliver(session, name, panes, dest)
+      # After a clean back-out (someone touched a key somewhere in the second after our line
+      # landed), skip that session for 2, 4, 8… full passes, capped at BACKOFF_CAP: a burst of typing
+      # elsewhere then costs one visible try, not a type-and-erase every poll. Nothing is spent.
+      def back_off(cooldown, key)
+        n = (cooldown[key]&.[](:n) || 0) + 1
+        cooldown[key] = { n: n, skip: [2**n, BACKOFF_CAP].min }
+        :waiting
+      end
+
+      def cool(cooldown, key)
+        cooldown[key][:skip] -= 1
+        :waiting
+      end
+
+      # Every held pane still reads focused or freshly touched: nothing to try this poll.
+      def still_held?(held)
+        panes = Tmux.panes_by_tty or return false
+        held.all? { |tty| (row = panes[tty]) && hands_on?(row) }
+      end
+
+      # Someone may be keying into this pane (unknown counts).
+      def hands_on?(row)
+        row[:focused] != false || row[:recent_input] != false
+      end
+
+      # One session: :done (named), :skip (not ours to type into), :waiting, :held (its tty
+      # pushed onto `held`), :unrecognized, :leftover, or a SPENT state.
+      def deliver(session, name, panes, dest, held = [])
         return :done if session[:name] == name
 
         locked(session[:pid]) do
@@ -178,22 +226,35 @@ module Switchboard
           tty = Tmux.normalize_tty(raw) or next :skip # no terminal at all
           pane = panes[tty] or next :skip # a terminal tmux doesn't own
           text = "#{COMMAND} #{name}"
+          if hands_on?(pane)
+            # Reading the screen sends no keys, so our own line left in the box still gets
+            # reported (doctor's failed_send, not a ceiling) while someone sits at the pane. Only
+            # our exact line: a /rename they're typing themselves is theirs.
+            box = (screen = Tmux.capture_pane(pane[:pane])) && Box.parse(screen)
+            next :leftover if box == [:text, text]
+
+            held << tty
+            next :held
+          end
+
           next :waiting unless typeable?(pane, text) && foreground?(session[:pid], tty)
 
           screen = Tmux.capture_pane(pane[:pane]) or next :waiting
           box = Box.parse(screen)
           next :unrecognized if box == :unrecognized
-          next :leftover if box.is_a?(Array) && box[1].start_with?("#{COMMAND} ")
+          next :leftover if rename_line?(box)
           next :waiting unless box == :empty
           # The pass's snapshot can be seconds old in a multi-session workspace, and the checks
           # above take a moment: a turn can start meanwhile and open a permission prompt that our
           # keys would answer (a digit picks an option). So re-read like the Enter gate — pane,
           # box, then the status (after the capture: tmux can hand back the last frame while the
-          # file already says `waiting`), not renamed again since the lock, then LAST the same
-          # Claude holding the terminal.
+          # file already says `waiting`), not renamed again since the lock, the same Claude
+          # holding the terminal, then the pane once more: focus is the gate most likely to move
+          # (one key or a click), so it's read again after the slow ps checks.
           next :waiting unless still_typeable?(pane[:pane], tty, text) && box_empty?(pane[:pane]) &&
                                deliverable?(session[:pid]) && !SessionName.superseded?(dest, name) &&
-                               still_claude?(session[:pid], session[:proc_start], tty)
+                               still_claude?(session[:pid], session[:proc_start], tty) &&
+                               still_typeable?(pane[:pane], tty, text)
 
           type_rename(session[:pid], session[:proc_start], pane[:pane], tty, text, name, dest)
         end || :waiting # the lock is held: another worker is typing into this session
@@ -201,10 +262,12 @@ module Switchboard
         :waiting # the lock dir is unwritable; the ceiling reports it
       end
 
-      # Off screen, not in a tmux mode, not synchronized (tmux would copy our keys into
-      # every sibling pane), and our line fits on one row of the box.
+      # Nobody at the keyboard (focus, not visibility: after the sidebar's `r` the pane is in
+      # view but the keyboard is on the sidebar; and no client input just now), not in a tmux
+      # mode, not synchronized (tmux would copy our keys into every sibling pane), and our line
+      # fits on one row of the box.
       def typeable?(pane, text)
-        pane[:visible] == false && pane[:in_mode] == false && pane[:synchronized] == false &&
+        !hands_on?(pane) && pane[:in_mode] == false && pane[:synchronized] == false &&
           pane[:width].is_a?(Integer) && text.length + BOX_CHROME <= pane[:width]
       end
 
@@ -212,17 +275,24 @@ module Switchboard
       # and Enter still cleans up.
       def type_rename(pid, start, pane, tty, text, name, dest)
         settled = false
-        unless Tmux.send_literal(pane, text)
+        sent_at = Time.now.to_i # whole seconds, like tmux's client_activity
+        # The sessions as we send: a key in one that's killed afterwards takes its activity with it,
+        # so untouched? also needs every one of these still here.
+        here = Tmux.panes_by_tty&.dig(tty, :sessions)
+        unless here.is_a?(Array) && Tmux.send_literal(pane, text)
           settled = true # send-keys failed: nothing was typed, so nothing to back out
           return :waiting
         end
         # Every gate is re-read: the box and status after the slower checks (a turn could start
-        # and open a permission prompt that Enter would approve), then — last — that the same
-        # Claude still holds the terminal (a ^Z or crash would hand Enter to a shell, and a dead
-        # Claude's frame and file both outlive it).
+        # and open a permission prompt that Enter would approve), that the same Claude still
+        # holds the terminal (a ^Z or crash would hand Enter to a shell, and a dead Claude's
+        # frame and file both outlive it), then the pane once more, after those ps checks, and nobody
+        # having touched a key since the send (a key Box.parse can't see, like a trailing space, would
+        # otherwise go in with our Enter).
         if settled_box(pane, text) == [:text, text] && !SessionName.superseded?(dest, name) &&
            safe_to_key?(pid, pane, tty, text) && box_reads?(pane, text) && deliverable?(pid) &&
-           still_claude?(pid, start, tty)
+           still_claude?(pid, start, tty) && still_typeable?(pane, tty, text) && deliverable?(pid) &&
+           untouched?(pane, tty, sent_at, here)
           settled = true
           # gstack-shortcut(dec-32768b9c): if Claude fires UserPromptSubmit for this local command,
           # the hooked dot reads "thinking" until PRESENCE_TTL; upgrade when a sandbox rename shows it.
@@ -230,12 +300,12 @@ module Switchboard
           return confirmed?(pid, name) ? :done : :unconfirmed
         end
         settled = true # before, not after: a raise once the backspaces are out must not send a second round
-        back_out(pid, start, pane, tty, text)
+        back_out(pid, start, pane, tty, text, sent_at, here)
       ensure
-        back_out(pid, start, pane, tty, text) unless settled
+        back_out(pid, start, pane, tty, text, sent_at, here) unless settled
       end
 
-      # The recipient is still Claude's own pane: off screen, no tmux mode, not
+      # The recipient is still Claude's own pane: nobody at its keyboard, no tmux mode, not
       # synchronized, the same %id on its tty, and Claude holding the foreground.
       def safe_to_key?(pid, pane, tty, text)
         still_typeable?(pane, tty, text) && foreground?(pid, tty)
@@ -245,13 +315,18 @@ module Switchboard
         ProcessIdentity.same?(pid, start) && foreground?(pid, tty)
       end
 
-      # Backspaces would reach this pane only: the same %id on its tty, off screen (someone
-      # looking may be typing), no tmux mode, not synchronized. Unreadable is no. Width
-      # doesn't matter: the line is already in.
-      def recipient_ok?(pane, tty)
+      # Backspaces may go only where nobody has touched a key since our line went in: the same %id
+      # on its tty, no tmux mode, not synchronized, not focused, and no client input (keys or
+      # mouse, anywhere) since `sent_at`. One rule closes every way backspaces could eat a key: a
+      # key drawn late, a trailing space Box.parse can't see, focus moving in and out during the
+      # checks. A key in the same second as our send counts (whole seconds; it fails closed), and
+      # unreadable is no. last_input counts session activity, which outlives a client that typed and
+      # detached; every session there at the send must still be. Anything else leaves our line and says so.
+      def untouched?(pane, tty, sent_at, here)
         row = Tmux.panes_by_tty&.[](tty)
-        !row.nil? && row[:pane] == pane && row[:visible] == false && row[:in_mode] == false &&
-          row[:synchronized] == false
+        !row.nil? && row[:pane] == pane && row[:in_mode] == false && row[:synchronized] == false &&
+          row[:focused] == false && row[:last_input].is_a?(Integer) && row[:last_input] < sent_at &&
+          here.is_a?(Array) && row[:sessions].is_a?(Array) && (here - row[:sessions]).empty?
       end
 
       def backspaceable?(pid)
@@ -285,19 +360,38 @@ module Switchboard
       # after the full settle can't be told from someone's own `/re…` typed during a visit,
       # nor can the user's edits, keys that never reached the box, or backspaces that didn't
       # clear it.
-      def back_out(pid, start, pane, tty, text)
+      def back_out(pid, start, pane, tty, text, sent_at, here)
+        result = take_back(pid, start, pane, tty, text, sent_at, here)
+        warn_leftover(pane, text) if result == :failed_send
+        result
+      end
+
+      # Text we couldn't take back sits in a prompt someone may be about to send — with their
+      # own words appended, Enter would run `/rename <name><their text>`. doctor is too late for
+      # that, so say it on the status line now, whoever is looking.
+      def warn_leftover(pane, text)
+        screen = Tmux.capture_pane(pane) or return
+        region = Box.region_text(screen)
+        return unless region&.include?("#{COMMAND} ") || typed_prefix?(Box.parse(screen), text)
+
+        Tmux.notify_everyone("switchboard: '#{text}' is still in a Claude prompt; clear it before you send",
+                             display_time: LEFTOVER_MS.to_s)
+      end
+
+      def take_back(pid, start, pane, tty, text, sent_at, here)
         box = poll_box(pane) { |b| settled?(b, text) }
         return :failed_send unless box == [:text, text]
-        # Backspaces are keys too, re-read like the Enter gate: the pane (copy mode or
-        # synchronize-panes would send them elsewhere, and someone who just switched in may be
-        # typing), the box (anything typed meanwhile changes it), the status (never a modal or
-        # an unknown one), then LAST the same Claude holding the terminal (a ^Z leaves its
-        # frame above a shell). Any miss leaves the text.
-        return :failed_send unless recipient_ok?(pane, tty) && box_reads?(pane, text) &&
-                                   backspaceable?(pid) && still_claude?(pid, start, tty)
+        # Backspaces are keys too, re-read like the Enter gate: nobody has touched a key since our
+        # send (untouched?: the pane unfocused, no client input since sent_at), the box (exactly
+        # our line), the status (never a modal or an unknown one), the same Claude holding the
+        # terminal (a ^Z leaves its frame above a shell), then untouched? again, last. Any miss
+        # leaves the text (and warn_leftover says so).
+        return :failed_send unless untouched?(pane, tty, sent_at, here) && box_reads?(pane, text) &&
+                                   backspaceable?(pid) && still_claude?(pid, start, tty) &&
+                                   untouched?(pane, tty, sent_at, here)
 
         Tmux.send_keys(pane, *Array.new(text.length, "BSpace"))
-        poll_box(pane) { |b| b == :empty } == :empty ? :waiting : :failed_send
+        poll_box(pane) { |b| b == :empty } == :empty ? :backed_out : :failed_send
       end
 
       # Re-capture every SETTLE until `done` holds for the parsed box (or the tries run
@@ -312,6 +406,11 @@ module Switchboard
         box
       end
 
+      # A `/rename …` (any worker's, any name) sits in the box.
+      def rename_line?(box)
+        box.is_a?(Array) && box[1].start_with?("#{COMMAND} ")
+      end
+
       def typed_prefix?(box, text)
         box.is_a?(Array) && box[0] == :text && !box[1].empty? && text.start_with?(box[1])
       end
@@ -321,7 +420,7 @@ module Switchboard
         !s.nil? && DELIVERABLE.include?(s[:status])
       end
 
-      # Re-read before Enter: the user may have switched to the pane or scrolled it into
+      # Re-read before Enter: the user may have moved into the pane or scrolled it into
       # copy mode, and tmux recycles %ids, so the tty must still name the same pane.
       def still_typeable?(pane, tty, text)
         row = Tmux.panes_by_tty&.[](tty)
@@ -427,6 +526,19 @@ module Switchboard
         [:text, content.map(&:first).join]
       end
 
+      # The prompt box's typed text, every row joined (a wrapped or multi-line prompt too), dim
+      # placeholder cells dropped; nil when there's no box. For the leftover warning only — the
+      # back-out itself still needs parse's exact one-line read.
+      def region_text(screen)
+        lines = cells(screen)
+        plain = lines.map { |l| l.map(&:first).join.rstrip }
+        dividers = plain.each_index.select { |i| plain[i].match?(DIVIDER) }
+        return nil if dividers.size < 2
+
+        top, bottom = dividers.last(2)
+        lines[(top + 1)...bottom].map { |l| l.reject { |_, dim| dim }.map(&:first).join }.join.delete(PROMPT).delete(NBSP)
+      end
+
       # Each line as [[char, dim?], …], tracking SGR state ACROSS lines: tmux carries
       # attributes over a line break (the placeholder's dim is reset at the START of
       # the next line).
@@ -478,7 +590,7 @@ module Switchboard
                          "(did Claude change /rename?)",
         "unrecognized" => "couldn't read Claude's prompt box (its screen layout may have changed)",
         "ceiling" => "never found a safe moment within #{CEILING / 60} minutes " \
-                     "(Claude idle, off screen, its prompt empty)",
+                     "(Claude between turns, nobody at its pane, its prompt empty)",
         "error" => "the sync worker stopped on an unexpected error"
       }.freeze
 

@@ -178,12 +178,18 @@ background worker types `/rename <name>` into the agent's pane, under a strict r
 - only between turns (Claude's status is idle, or shell: the turn is over with a
   background shell still running), never mid-turn, so the Enter can't answer a
   permission prompt;
-- only while the pane's window is off screen, not scrolled into tmux copy mode, not
+- only while no tmux client has the pane focused (it can be in view: after the
+  sidebar's `r` your keyboard is on the sidebar, not on the agent) and no tmux client
+  anywhere has had keyboard or mouse input in the last 2 seconds (a click or scroll lands on
+  the pane under the pointer; a `send-keys` binding can type in from another session), never
+  while a client that can type into any pane (`tmux -CC`, or one with its own active pane) is
+  attached to its session, not scrolled into tmux copy mode, not
   in a `synchronize-panes` window, and only while Claude itself owns the terminal (not
   suspended with `^Z`);
 - only into an empty prompt, so your draft is never touched (and not in vim mode);
-- Enter only if the prompt then reads exactly `/rename <name>`; otherwise it removes
-  what it typed, or leaves it and says so;
+- Enter only if the prompt then reads exactly `/rename <name>`; otherwise it removes what it
+  typed only if nobody has touched a key since (the pane isn't focused, and no tmux client had
+  input), or leaves it and says so on the status line right away;
 - at most one Enter per session: if Claude never shows the new name, or text was
   left behind, it stops and `doctor` says why. Running the same `switchboard rename`
   again is the retry (clear any leftover text in the prompt first).
