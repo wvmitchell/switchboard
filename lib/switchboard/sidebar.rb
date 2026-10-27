@@ -193,8 +193,6 @@ module Switchboard
       @reload_signal = false # set by the SIGUSR1 trap; the loop turns it into a request
       @reexec_at = nil     # monotonic when a requested reload is due (off screen: spread out)
       @reexec_blocked_root = nil # a root whose preflight failed: the backstop won't retry it
-      @reexec_retry_at = nil # after a preflight timeout: when to try again
-      @reexec_timeouts = Hash.new(0) # root => preflight timeouts: a hang, not a slow disk, blocks it
       @warm_not_before = nil # a reloaded off-screen pane's first warm waits out the spread
       @last_announce_scan = nil # monotonic of the last announcing on-screen scan: a reload's first scan may ring only after a recent one
       @wake_r = @wake_w = nil # self-pipe the trap writes, so IO.select wakes for it
@@ -1020,7 +1018,6 @@ module Switchboard
     # preflight already failed (a broken release mustn't cost a boot every tick).
     def code_moved?
       return false if @reload_requested || !CodeReload.stale?
-      return false if @reexec_retry_at && monotonic < @reexec_retry_at
 
       CodeReload.current_root != @reexec_blocked_root
     end
@@ -1044,7 +1041,6 @@ module Switchboard
         request_reload
       end
       return unless @reload_requested && reexec_allowed?
-      return if @reexec_retry_at && monotonic < @reexec_retry_at # after a timeout, even on screen
       return unless @visible || monotonic >= @reexec_at
 
       reexec
@@ -1053,29 +1049,20 @@ module Switchboard
     # Preflight, then exec. Every failure keeps this process running its current code.
     def reexec
       @reload_requested = false
-      @reexec_at = @reexec_retry_at = nil
+      @reexec_at = nil
       bin = ENV["SWITCHBOARD_BIN"] or return
       root = CodeReload.current_root(bin)
       payload = resume_payload
       case CodeReload.preflight(bin, "sidebar", "--check", env: { CodeReload::RESUME_ENV => payload })
       when :ok then exec_in_place(bin, root, payload)
-      when :timeout then reload_timed_out(root || bin)
-      else reload_failed(root || bin)
+      else reload_failed(root || bin) # a timeout too: flagged, and `reload-sidebars` asks again on demand
       end
     end
 
-    # A slow disk right after `brew upgrade`: ask again in RETRY_AFTER, whatever triggered
-    # it. A check that keeps hanging is a broken release, not a slow disk: block it.
-    def reload_timed_out(root)
-      return reload_failed(root) if (@reexec_timeouts[root] += 1) >= CodeReload::TIMEOUTS_TO_BLOCK
-
-      @reload_requested = true
-      @reexec_retry_at = @reexec_at = monotonic + CodeReload::RETRY_AFTER
-      Tmux.flag_failed_reload(ENV["TMUX_PANE"], root)
-    end
-
     # Stay on this code, say so on the pane (doctor, the next reload), and keep the backstop
-    # off this root until a different one appears.
+    # off this root until a different one appears. A signal still asks again: a test run that
+    # only timed out (a cold disk right after `brew upgrade`) gets its retry from the next
+    # `reload-sidebars`, not from a clock of its own.
     def reload_failed(root)
       @reexec_blocked_root = root
       Tmux.flag_failed_reload(ENV["TMUX_PANE"], root)

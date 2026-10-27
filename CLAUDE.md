@@ -691,14 +691,12 @@ checkout. Nothing can repoint a sidebar at another install.
      bounded to 3s, runs with
      `{"SB_REEXEC"=>nil}` so a system-Ruby re-exec still happens, and with all stdio
      `/dev/null` since it keeps the pane as its ctty. Outcomes:
-     - `:failed` blocks that root for the backstop (`@reexec_blocked_root`; a newer keg
-       gets its own try).
-     - `:timeout` re-requests the reload `RETRY_AFTER` (60s) later, whatever triggered
-       it: a slow disk right after `brew upgrade`. The `@reexec_retry_at` gate holds it
-       even on screen. `TIMEOUTS_TO_BLOCK` (3) timeouts for one root block it like a
-       failure: a hang, not a slow disk.
+     - `:failed` or `:timeout` blocks that root for the backstop (`@reexec_blocked_root`;
+       a newer keg gets its own try). A signal (`reload-sidebars`) still asks again, which
+       is a timed-out check's retry. There's deliberately no retry clock: a second wake
+       time that every gate had to honor produced a spin and a stale tree in review.
 
-     Either one flags the pane `@sb_reload_failed=<root>` (falling back to the bin path
+     Either way it flags the pane `@sb_reload_failed=<root>` (falling back to the bin path
      when the root won't resolve, so the flag is never empty), after the failed exec's
      re-tag, which would otherwise clear it. `doctor` lists those panes, and
      the next reload's summary reports them. A start with a real pid clears the flag, in

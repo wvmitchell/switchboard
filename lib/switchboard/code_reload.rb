@@ -20,8 +20,6 @@ module Switchboard
     SIGNAL = "USR1"
     SPREAD = 30          # seconds an off-screen sidebar may wait, so a fleet doesn't boot + rescan at once
     PREFLIGHT_SECS = 3
-    RETRY_AFTER = 60     # a preflight that timed out (a cold disk right after brew upgrade) is tried again after this
-    TIMEOUTS_TO_BLOCK = 3 # ...unless it keeps timing out: then it's a hang, and that root is blocked
     CURSOR_FIELDS = %w[kind project path branch].freeze # a row's identity across the exec
     PAYLOAD_MAX = 64 * 1024
     VERSION = 1
@@ -50,7 +48,8 @@ module Switchboard
     # :ok, :failed or :timeout: does `<bin> <args>` (default `version`) exit 0 within the
     # bound? exec only fails safe when the exec call itself fails; new code that raises while
     # loading would kill the pane. A sidebar's own reload checks `sidebar --check` with its
-    # payload, which also proves the sidebar boots and resumes. Run in the env the exec will
+    # payload, which proves the new code can construct a sidebar and apply that payload. Run
+    # in the env the exec will
     # use (SB_REEXEC cleared, else a system-Ruby re-exec is skipped and a working binary reads
     # as broken), with no stdio: it keeps the pane as its controlling tty, so nothing it does
     # may read keys or paint.

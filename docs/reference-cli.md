@@ -327,8 +327,8 @@ inside `switchboard sandbox` to see a sidebar code edit without detaching.
   - One that's on screen goes at once. The rest are spread over 30 seconds
     (`SWITCHBOARD_RELOAD_SPREAD`), or go when you switch to them.
   - If the test run fails, the sidebar stays on its old code and marks its pane;
-    `switchboard doctor` lists it. A test run that only timed out is retried a minute
-    later, up to 3 times; a check that keeps hanging is treated as a broken release.
+    `switchboard doctor` lists it. A test run that timed out counts as failed; run
+    `reload-sidebars` again to retry it.
 - An older sidebar is restarted with `tmux respawn-pane`, rerunning the command that
   started it, after a test run (`version`) of that binary. Only a pane started as
   `<…/switchboard> sidebar` is restarted: a respawn kills whatever runs in the pane.

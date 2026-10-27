@@ -415,28 +415,20 @@ module Switchboard
 
     # Value: protects=a slow disk right after brew upgrade doesn't strand a sidebar on old code;
     # fails_when=a timeout blocks the root for good; seam=none
-    # Value: protects=a slow disk after brew upgrade retries whatever triggered the reload (a
-    # signal too, in a clone), and a check that keeps hanging is blocked, not retried forever;
-    # fails_when=the retry depends on the keg backstop, or there's no timeout cap; seam=none
-    def test_a_preflight_timeout_retries_later_then_blocks_a_hang
+    # Value: protects=a timed-out check is handled like a failure: no exec, flagged, the
+    # backstop stays off that root, and an explicit reload still asks again; fails_when=a
+    # timeout is exec'd, silently dropped, or blocks signals too; seam=none
+    def test_a_preflight_timeout_is_handled_like_a_failure
       sb, = exec_sidebar(preflight: :timeout) { flunk "never exec on a timeout" }
-      assert_nil sb.instance_variable_get(:@reexec_blocked_root)
-      assert sb.instance_variable_get(:@reload_requested), "the reload stays requested"
-      assert_operator sb.instance_variable_get(:@reexec_retry_at), :>, sb.send(:monotonic) + CodeReload::RETRY_AFTER - 5
-      assert_equal ["/Cellar/new"], @failure_flags, "flagged until it lands"
-      tries = 0
-      sb.define_singleton_method(:reexec) { tries += 1 }
-      sb.send(:maybe_reexec)
-      assert_equal 0, tries, "not before the retry time, even on screen"
-      sb.instance_variable_set(:@reexec_retry_at, sb.send(:monotonic) - 1)
-      sb.send(:maybe_reexec)
-      assert_equal 1, tries, "then it tries again"
-      sb.singleton_class.send(:remove_method, :reexec)
-      (CodeReload::TIMEOUTS_TO_BLOCK - 1).times { exec_sidebar(preflight: :timeout, sb: sb) { flunk "no exec" } }
-      assert_equal "/Cellar/new", sb.instance_variable_get(:@reexec_blocked_root), "a hang is blocked after the cap"
+      assert_equal "/Cellar/new", sb.instance_variable_get(:@reexec_blocked_root)
+      refute sb.instance_variable_get(:@reload_requested), "no clock of its own: nothing is left pending"
+      assert_equal ["/Cellar/new"], @failure_flags
+      assert_equal 1, @preflight_calls.size
+      exec_sidebar(preflight: :ok, sb: sb) { |_argv| raise Errno::ENOENT, "stop" }
+      assert_equal 1, @preflight_calls.size, "a signal (reload-sidebars) tries again despite the blocked root"
     end
 
-    # Value: protects=the preflight proves the sidebar boots and resumes, not just loads
+    # Value: protects=the preflight proves the new code can build a sidebar and take its payload, not just load
     # (Red Team); fails_when=the exec preflight goes back to `version`; seam=none
     def test_the_exec_preflight_checks_the_sidebar_with_its_payload
       payload = nil

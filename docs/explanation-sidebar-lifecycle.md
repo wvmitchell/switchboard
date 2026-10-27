@@ -242,7 +242,7 @@ stdio closed and the `SB_REEXEC` guard cleared, bounded at 3s. That builds a sid
 screen and applies the payload (no rebuild: that writes). exec only fails safe when the
 exec call itself fails, and a new release that can't construct a sidebar or take its
 payload would otherwise kill the pane. A failure keeps the old code and marks the pane for
-`doctor`. A timeout is retried a minute later, up to 3 times. Just
+`doctor`. A timeout counts as a failure; the next `reload-sidebars` retries it. Just
 before exec it sets `SIGUSR1` to ignored and clears its tag: caught handlers reset across
 exec, an ignored signal stays ignored, and a second reload landing during the boot would
 otherwise kill the new image. The new image installs its handler, then re-tags.
