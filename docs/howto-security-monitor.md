@@ -68,15 +68,17 @@ monitor's workspace, run a check by hand instead of assuming one ran.
 1. `switchboard monitoring on 25200`, silently, at the top. That is a bit more than
    the 6-hour interval, so the workspace reads as monitoring between checks.
 2. Re-arm the schedule if it's due ([Keep it armed](#keep-it-armed)).
-3. Read the state file. **If it's missing or unreadable, rebuild it**: run every check,
+3. Fast-forward the workspace's checkout to `main` ([Sync the
+   checkout](#sync-the-checkout)).
+4. Read the state file. **If it's missing or unreadable, rebuild it**: run every check,
    record what you see as the new baselines, and report nothing except that state was
    rebuilt. A lost state file must never turn into a wall of false alarms.
-4. Run the checks below and **compare against the baselines**. Report what changed, not
+5. Run the checks below and **compare against the baselines**. Report what changed, not
    absolute state.
-5. **Stay silent** if nothing crossed a threshold. Routine checks are silent by design.
-6. If something needs the maintainer: write it up in the workspace, each item with a
+6. **Stay silent** if nothing crossed a threshold. Routine checks are silent by design.
+7. If something needs the maintainer: write it up in the workspace, each item with a
    proposed next step (never a bare metric), then run `switchboard monitoring notify`.
-7. **Write the state file BEFORE reporting.** The report is gone when the session is;
+8. **Write the state file BEFORE reporting.** The report is gone when the session is;
    the state file is the memory.
 
 Escalate by time of day and week:
@@ -88,6 +90,33 @@ Escalate by time of day and week:
 Use **`gh` for all repo state, never `git fetch`.** An SSH remote can need interactive
 auth (a hardware key, a password-manager agent) that fails unattended, and git then
 silently serves the cached ref: a monitor that reports a stale `main` as current.
+The one exception is the sync below, which fetches over HTTPS and checks the result
+against `gh`.
+
+### Sync the checkout
+
+The monitor's session is long-lived, so its workspace's checkout falls behind `main`
+with every merge. The checks read the playbook and repo state through `gh`, so they
+don't depend on the checkout. But the smoke runs (`bin/test-smoke`, the real-Codex
+smoke) run the checkout's code, and a stale checkout would pass an old switchboard as
+the current one. So every check fast-forwards it:
+
+```sh
+main=$(gh api repos/wvmitchell/switchboard/commits/main --jq .sha)
+GIT_TERMINAL_PROMPT=0 git fetch -q https://github.com/wvmitchell/switchboard.git main
+[ "$(git rev-parse FETCH_HEAD)" = "$main" ] && git merge -q --ff-only FETCH_HEAD
+```
+
+- **Fetch over HTTPS, never the `origin` remote.** The repo is public, so the fetch
+  needs no credentials and can't hang on SSH auth. It also leaves `origin/main`
+  untouched.
+- **Trust `gh`.** If `FETCH_HEAD` isn't the `main` that `gh` reports, or the fetch
+  fails, record "couldn't sync" in `last_error` and skip the smoke runs this check. The
+  other checks still run.
+- **Only a fast-forward.** Sync only on the monitor's own branch, with a clean working
+  tree and no commits of its own. Anything else (local changes, a diverged branch, a
+  different branch checked out) is a finding: report it and leave the checkout alone.
+  Never reset, stash or force anything.
 
 ## The checks
 
@@ -207,7 +236,7 @@ Re-verifying one doesn't advance the others.
   The crux (CLAUDE.md, "Codex is global"): codex must keep firing the global `[hooks]`
   block inside a **linked** worktree and keep filing approvals as
   `[hooks.state."…"]` tables. When the installed codex moves, run the real-Codex smoke
-  from a checkout synced to `origin/main`:
+  from the [synced](#sync-the-checkout) checkout:
 
   ```sh
   SWITCHBOARD_CODEX_SMOKE=1 bin/test-smoke test/smoke/codex_hook_smoke_test.rb
@@ -296,4 +325,5 @@ schedule, scope or cost, or two defensible options.
 - **Never touch the maintainer's real tmux server.** `bin/test-smoke` boots its own
   isolated server and is safe; the monitor never runs `switchboard quit` or `prune`.
 - **A check doesn't change the repo.** Findings become a write-up and a notify (then an
-  issue or PR if the maintainer agrees). A check writes only the state file.
+  issue or PR if the maintainer agrees). A check writes only the state file, plus the
+  fast-forward of its own checkout ([Sync the checkout](#sync-the-checkout)).
