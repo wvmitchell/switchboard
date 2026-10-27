@@ -35,6 +35,7 @@ or `e` in the sidebar — both reload on save.
 | `prewarm` | bool | `true` | Keep off-screen sidebars warm so switching sessions doesn't flash a stale tree. `false` restores full dormancy (no off-screen work). See [`prewarm`](#prewarm). |
 | `remote_link_stale_after` | minutes or `false` | `120` | How long a `/remote-control`-linked Claude session can sit idle before its `⇅` turns grey and it counts as an **idle link**. `false` or `0` turns that off; anything else invalid uses 120. Global only. See [`remote_link_stale_after`](#remote_link_stale_after). |
 | `update_check` | bool | `true` | Homebrew installs: check for a newer release in the background (one `git ls-remote` of switchboard's public release tags every 4 hours, nothing else sent) and show `↑ 0.58.0 available · switchboard upgrade` under the wordmark. `false` stops the check and hides the line; `SWITCHBOARD_NO_UPDATE_CHECK=1` in the environment stops the check too. Clone and `--HEAD` installs never check. Global only. |
+| `sync_session_name` | bool | `true` | After a rename, give the workspace's live Claude session the new name too (what the phone's session list and the resume picker show). Per-project override wins. See [`sync_session_name`](#sync_session_name). |
 | `session_command` | string | _(none)_ | The agent a new workspace runs, after its setup. The task typed after `n` is appended when the command is plain words starting with `claude`/`codex` (no quotes, `#`, `&`, `;`, `|` or redirects); anywhere else, write `{task}` where it goes — bare, in quotes, or inside a quoted string (`aider --message {task}`, `claude "fix: {task}"`) — and it arrives as one argument, byte-exact. Inside a command that hands its text to another shell (`bash -c '…'`, `ssh host …`), use `"$SWITCHBOARD_TASK"` directly instead: that inner shell would read a substituted task as code. Otherwise the pane says "task not sent". `false` turns it off. Per-project override wins. |
 | `worktree_creation_command` | string or list | _(none)_ | Setup script run **once in a new worktree**, before `session_command` — the `.env` / `bundle install` a fresh checkout needs. Per-project override wins; a per-project `false` turns it off. See [`worktree_creation_command`](#worktree_creation_command). |
 | `sounds` | map or `false` | _(on, built-ins)_ | Completion sounds. See [`sounds`](#sounds). |
@@ -58,6 +59,7 @@ diff_counts: true                        # show +adds −dels on each row (false
 prewarm: true                            # keep off-screen sidebars warm (false = full dormancy)
 remote_link_stale_after: 120             # minutes before an idle /rc link's ⇅ turns grey
 update_check: true                       # Homebrew: a line under the wordmark when a newer release is out
+sync_session_name: true                  # a rename renames the live Claude session too
 session_command: claude                  # run this on a worktree's first session
 worktree_creation_command:               # run ONCE in a new worktree, before the agent
   - cp "$SWITCHBOARD_PROJECT_PATH/.env" .
@@ -158,6 +160,39 @@ row says whether Claude's session files moved or changed shape.
 If you set `CLAUDE_CONFIG_DIR`, export it where tmux sees it (`.zshenv`, or
 `tmux set-environment -g CLAUDE_CONFIG_DIR …`): sidebars are started by tmux, which
 never reads your `.zshrc`. `doctor` warns when the two disagree.
+
+---
+
+## `sync_session_name`
+
+```yaml
+sync_session_name: true    # default
+```
+
+Claude names a session after the workspace's **first** name and never follows a
+rename, so after `r` or `switchboard rename` the phone's session list and the resume
+picker would still show the old one. With this on, a rename also gives every live
+Claude session in that workspace the new name. Claude has no rename API, so a
+background worker types `/rename <name>` into the agent's pane, under a strict rule:
+
+- only between turns (Claude's status is idle, or shell: the turn is over with a
+  background shell still running), never mid-turn, so the Enter can't answer a
+  permission prompt;
+- only while the pane's window is off screen, not scrolled into tmux copy mode, not
+  in a `synchronize-panes` window, and only while Claude itself owns the terminal (not
+  suspended with `^Z`);
+- only into an empty prompt, so your draft is never touched (and not in vim mode);
+- Enter only if the prompt then reads exactly `/rename <name>`; otherwise it removes
+  what it typed, or leaves it and says so;
+- at most one Enter per session: if Claude never shows the new name, or text was
+  left behind, it stops and `doctor` says why. Running the same `switchboard rename`
+  again is the retry (clear any leftover text in the prompt first).
+
+It waits up to an hour for that moment (only inside tmux; sessions started later name
+themselves). The rename output tells the agent that the "session renamed" note it's
+about to see came from switchboard. Anything it couldn't do shows up in
+`switchboard doctor` with the retry: run the same `switchboard rename` again. Codex
+sessions aren't renamed yet. `false` (globally or per project) leaves Claude's own name.
 
 ---
 

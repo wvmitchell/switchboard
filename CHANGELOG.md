@@ -10,6 +10,19 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
+## [0.58.0] — a rename renames the Claude session too (2026-10-27)
+
+### Added
+- Renaming a workspace (`r` or `switchboard rename`) now gives its live Claude session the
+  new name too, so the phone's session list and Claude's resume picker stop showing the
+  workspace's first name. Switchboard types `/rename <name>` into the agent's pane, and only
+  between turns, while the pane is off screen, into an empty prompt. It never presses Enter
+  unless the prompt reads exactly that command. It works inside tmux, waits up to an hour for
+  a safe moment, and tells the agent that the "session renamed" note that follows came from
+  switchboard. On by default; `sync_session_name: false` (global or per project) turns it off.
+- `switchboard doctor` lists a rename it couldn't pass to Claude, with the retry (rename to the
+  same name again), and warns if Claude's session files stop reporting a kind, status or name it knows.
+
 ## [0.57.1] — failures that used to stay silent now say so (2026-10-27)
 
 ### Fixed
