@@ -190,6 +190,41 @@ module Switchboard
       assert_equal [[:reload, { announce_sounds: false }], :exec], execs
     end
 
+    # Value: protects=a turn that finished while this pane was away rings nowhere across a switch-in
+    # swap: the payload carries the silent catch-up's baseline; fails_when=the swap runs before the
+    # switch-in scan, or that scan stops advancing the baseline; why_new=the ordering test stubs
+    # reload, so no real scan feeds a real payload; seam=none; no_claim=the new image's real boot
+    # (payload decoded into a fresh Edges; rebuild, diffs, PR/update spawns stubbed)
+    def test_a_switch_in_swap_carries_the_catch_up_baseline_so_nothing_replays
+      a = real_dir("a")
+      sb, = reloading(visible: false)
+      sb.instance_variable_set(:@nodes, [proj("app"), ws("a", path: a)])
+      sb.instance_variable_get(:@edges).restore_baseline(hook_states: { a => :thinking }, notify: {}) # left mid-turn
+      as = Struct.new(:last_hook_states).new({ a => :done })                                          # finished while away
+      as.define_singleton_method(:scan) { |_paths, hooks_only: false| { a => :done } }
+      sb.instance_variable_set(:@agent_state, as)
+      %i[rebuild locate refresh_diffs maybe_check_update].each { |m| sb.define_singleton_method(m) { |*| nil } }
+      sb.instance_variable_get(:@edges).define_singleton_method(:refresh_stale_prs) { |*| nil }
+      sb.instance_variable_get(:@edges).define_singleton_method(:maybe_refresh_prs) { |*| nil }
+      payload = nil
+      sb.define_singleton_method(:reexec) { payload = CodeReload.decode(resume_payload) }
+      sounds = []
+      stub_method(Sound, :play, ->(spec, **) { sounds << spec }) do
+        sb.send(:request_reload)
+        stub_method(Tmux, :visible?, ->(*) { true }) { sb.send(:reload_and_refresh) }
+        sb.send(:maybe_reexec)
+        refute_nil payload, "the swap still happens after the catch-up"
+        assert_equal({ a => :done }, payload[:hook_states], "the payload is the catch-up's baseline")
+        refute payload[:announce], "a silent catch-up doesn't license the new image's first scan to ring"
+        fresh = Sidebar::Edges.new
+        fresh.restore_baseline(hook_states: payload[:hook_states], notify: payload[:notify])
+        assert_empty fresh.on_scan({ a => :done }, monitoring: Set.new, nodes: [ws("a", path: a)], config: Config.new,
+                                                   current_path: nil, announce_sounds: true, refresh_prs: false),
+                     "the new image sees no edge for a turn the old one already caught up on"
+      end
+      assert_empty sounds, "rung by the pane on screen when it finished, never again here"
+    end
+
     def test_a_switch_storm_still_coalesces_with_a_reload_pending
       sb, = reloading(visible: false)
       sb.send(:request_reload)
@@ -199,6 +234,18 @@ module Switchboard
       sb.define_singleton_method(:locate) { log << :locate }
       stub_method(Tmux, :visible?, ->(*) { true }) { sb.send(:reload_and_refresh) }
       assert_equal [:locate], log, "inside POKE_TTL the poke only locates, reload pending or not"
+    end
+
+    # Value: protects=a key read in the same batch as the switch poke acts on the caught-up tree;
+    # fails_when=the catch-up moves to the loop top (after handle dispatches the batch); seam=none
+    def test_keys_batched_with_the_switch_poke_see_the_caught_up_tree
+      sb, execs = reloading(visible: false)
+      sb.send(:request_reload)
+      sb.define_singleton_method(:reload) { |**kw| execs << [:reload, kw] }
+      sb.define_singleton_method(:move) { |*| execs << :move }
+      stub_method(Tmux, :visible?, ->(*) { true }) { sb.send(:handle, "\fj") }
+      sb.send(:maybe_reexec)
+      assert_equal [[:reload, { announce_sounds: false }], :move, :exec], execs
     end
 
     def test_an_overlay_or_the_filter_holds_the_reload
