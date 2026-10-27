@@ -1097,6 +1097,7 @@ module Switchboard
     # `reload-sidebars`, not from a clock of its own.
     def reload_failed(root)
       @reexec_blocked_root = root
+      @tag_clears = false # a boot tag still owed must not erase the flag written below
       Tmux.flag_failed_reload(ENV["TMUX_PANE"], root)
     end
 

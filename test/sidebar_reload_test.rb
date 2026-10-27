@@ -561,6 +561,18 @@ module Switchboard
       assert_nil sb.instance_variable_get(:@tag_pending)
     end
 
+    # Value: protects=a boot tag still owed can't erase a failure flag a later failed reload
+    # wrote; fails_when=reload_failed leaves the owed retry's clear right; seam=none
+    def test_a_failed_reload_revokes_an_owed_boot_tags_clear
+      @tag_lands = true
+      sb = sidebar(nodes: [proj("app"), ws("a"), ws("b")], cursor: 2)
+      stub_method(Tmux, :tag_sidebar_pane, ->(*, **) { false }) { sb.send(:tag_pane) } # boot tag owed, may clear
+      exec_sidebar(preflight: :failed, sb: sb) { flunk "no exec" }
+      calls = []
+      stub_method(Tmux, :tag_sidebar_pane, ->(_p, v, clear_failed: true) { calls << [v, clear_failed]; true }) { sb.send(:retry_tag) }
+      assert_equal [[Process.pid, false]], calls, "the flag the failed check just wrote stands"
+    end
+
     def test_a_mid_exec_tag_that_fails_owes_nothing
       sb = sidebar(nodes: [proj("app")])
       stub_method(Tmux, :tag_sidebar_pane, ->(*, **) { false }) { sb.send(:tag_pane, 0) }
