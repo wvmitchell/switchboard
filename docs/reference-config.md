@@ -30,6 +30,7 @@ or `e` in the sidebar — both reload on save.
 | `diff_counts` | bool | `true` | Show the `+adds −dels` diff count on each workspace/branch row. `false` hides it and skips the per-worktree `git diff` entirely. |
 | `prewarm` | bool | `true` | Keep off-screen sidebars warm so switching sessions doesn't flash a stale tree. `false` restores full dormancy (no off-screen work). See [`prewarm`](#prewarm). |
 | `remote_link_stale_after` | minutes or `false` | `120` | How long a `/remote-control`-linked Claude session can sit idle before its `⇅` turns grey and it counts as an **idle link**. `false` or `0` turns that off; anything else invalid uses 120. Global only. See [`remote_link_stale_after`](#remote_link_stale_after). |
+| `update_check` | bool | `true` | Homebrew installs: check for a newer release in the background (one `git ls-remote` of switchboard's public release tags every 4 hours, nothing else sent) and show `↑ 0.58.0 available · switchboard upgrade` under the wordmark. `false` stops the check and hides the line; `SWITCHBOARD_NO_UPDATE_CHECK=1` in the environment stops the check too. Clone and `--HEAD` installs never check. Global only. |
 | `session_command` | string | _(none)_ | The agent a new workspace runs, after its setup. The task typed after `n` is appended when the command is plain words starting with `claude`/`codex` (no quotes, `#`, `&`, `;`, `|` or redirects); anywhere else, write `{task}` where it goes — bare, in quotes, or inside a quoted string (`aider --message {task}`, `claude "fix: {task}"`) — and it arrives as one argument, byte-exact. Inside a command that hands its text to another shell (`bash -c '…'`, `ssh host …`), use `"$SWITCHBOARD_TASK"` directly instead: that inner shell would read a substituted task as code. Otherwise the pane says "task not sent". `false` turns it off. Per-project override wins. |
 | `worktree_creation_command` | string or list | _(none)_ | Setup script run **once in a new worktree**, before `session_command` — the `.env` / `bundle install` a fresh checkout needs. Per-project override wins; a per-project `false` turns it off. See [`worktree_creation_command`](#worktree_creation_command). |
 | `sounds` | map or `false` | _(on, built-ins)_ | Completion sounds. See [`sounds`](#sounds). |
@@ -52,6 +53,7 @@ auto_rename: true                        # let the agent name a placeholder work
 diff_counts: true                        # show +adds −dels on each row (false skips the git diff)
 prewarm: true                            # keep off-screen sidebars warm (false = full dormancy)
 remote_link_stale_after: 120             # minutes before an idle /rc link's ⇅ turns grey
+update_check: true                       # Homebrew: a line under the wordmark when a newer release is out
 session_command: claude                  # run this on a worktree's first session
 worktree_creation_command:               # run ONCE in a new worktree, before the agent
   - cp "$SWITCHBOARD_PROJECT_PATH/.env" .

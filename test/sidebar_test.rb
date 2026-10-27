@@ -51,7 +51,7 @@ module Switchboard
     def test_sidebar_core_constants_and_singletons_are_pinned
       expected = %i[
         Actions Edges IDLE Input NAV_TTL POKE_TTL PULSE Prompt REFRESH Render
-        Rows TREE_TICKS VIS_POLL WARM_TTL
+        Rows TREE_TICKS UPDATE_SPAWN_TTL VIS_POLL WARM_TTL
       ]
       assert_equal expected, Sidebar.constants(false).sort,
                    "the core constant set moved — if deliberate, update this pin"
@@ -143,7 +143,7 @@ module Switchboard
       sb.define_singleton_method(:rebuild) {}
       sb.define_singleton_method(:locate) {}
       sb.define_singleton_method(:refresh_diffs) {}
-      sb.define_singleton_method(:warm_fingerprint) { nil }
+      sb.define_singleton_method(:warm_fingerprint) { |**| nil }
       sb.define_singleton_method(:refresh_agents) { |announce_sounds: true, hooks_only: false| got = hooks_only }
       sb.instance_variable_get(:@edges).define_singleton_method(:refresh_stale_prs) { |_| }
       sb.send(:reload, hooks_only: true)
