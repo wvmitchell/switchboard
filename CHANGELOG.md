@@ -10,6 +10,15 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
+## [0.59.1] — switching in during a sidebar reload catches up first (2026-10-27)
+
+### Fixed
+- Switching into a session while its sidebar was about to reload skipped the usual refresh.
+  If the reload then failed, the sidebar showed the session you'd left for up to 15
+  seconds. Flipping away and back within a few seconds could also replay completion
+  chimes another sidebar had already played, and keys you typed right after switching
+  acted on the old tree. The sidebar now refreshes quietly first, then reloads.
+
 ## [0.59.0] — upgrading reloads the running sidebars (2026-10-27)
 
 ### Added

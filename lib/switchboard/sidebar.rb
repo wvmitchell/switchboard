@@ -925,10 +925,11 @@ module Switchboard
       # (paint + reload) and reintroduce the off-screen work this change removes.
       set_visible(Tmux.visible?(ENV["TMUX_PANE"]))
       return locate unless @visible    # hidden background poke: badges are cached, nothing to paint
-      # A reload is due now that we're on screen: the new code's first reload replaces
-      # this one, so don't rescan just before exec (#48, D2).
-      return if @reload_requested && reexec_allowed?
       return locate unless reload_due? # coalesce a rapid switch storm into one heavy reload
+
+      # Even with a code reload due, catch up here first: keys read with this poke act on
+      # the tree before the loop top swaps, the swap may not happen, and the new image's
+      # first scan must baseline against this reload, or it replays chimes (#48 follow-up).
 
       # Marking @visible=true above also consumes the off->on edge: the next tick sees
       # @visible already true, so its catch-up branch won't reload a second time.

@@ -177,13 +177,28 @@ module Switchboard
       assert_equal [:exec], execs, "D2: switch in before it reloaded, see it within a second"
     end
 
-    def test_the_switch_poke_skips_its_reload_when_one_is_due
+    # Value: protects=a switch-in with a code reload pending catches up silently BEFORE the swap,
+    # so batched keys see the entered session, a failed swap leaves nothing stale, and the new
+    # image baselines against it (no replayed chimes); fails_when=the pending-reload skip comes
+    # back, or the swap runs first; seam=none
+    def test_the_switch_poke_catches_up_silently_before_the_swap
+      sb, execs = reloading(visible: false)
+      sb.send(:request_reload)
+      sb.define_singleton_method(:reload) { |**kw| execs << [:reload, kw] }
+      stub_method(Tmux, :visible?, ->(*) { true }) { sb.send(:reload_and_refresh) }
+      sb.send(:maybe_reexec)
+      assert_equal [[:reload, { announce_sounds: false }], :exec], execs
+    end
+
+    def test_a_switch_storm_still_coalesces_with_a_reload_pending
       sb, = reloading(visible: false)
       sb.send(:request_reload)
-      reloads = 0
-      sb.define_singleton_method(:reload) { |**| reloads += 1 }
+      sb.instance_variable_set(:@last_reload, sb.send(:monotonic)) # reloaded just now
+      log = []
+      sb.define_singleton_method(:reload) { |**| log << :reload }
+      sb.define_singleton_method(:locate) { log << :locate }
       stub_method(Tmux, :visible?, ->(*) { true }) { sb.send(:reload_and_refresh) }
-      assert_equal 0, reloads, "the new image's first reload replaces this one"
+      assert_equal [:locate], log, "inside POKE_TTL the poke only locates, reload pending or not"
     end
 
     def test_an_overlay_or_the_filter_holds_the_reload

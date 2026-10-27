@@ -407,12 +407,6 @@ safe today; each is narrow).
 Found by the /ship reviews after the 3-cycle fix limit; deferred with Will's OK (D4).
 *Start in:* the reload section of `lib/switchboard/sidebar.rb`, `CodeReload.reload_all`.
 
-- **A failed reload at a switch-in skips that switch-in's catch-up.** *Why:* `reload_and_refresh`
-  returns early when a reload is due, but if the preflight or exec then fails nothing makes up the
-  skipped reload: for ~15s (`TREE_TICKS`) the » marker is stale, a completion in the workspace you
-  just entered can bold/chime, and the next tick announces against the old baseline. *Fix:* keep
-  `locate` in that early return, and `reload(announce_sounds: false)` on screen in `reload_failed`
-  and the `bin or return` exit. **Priority:** P2.
 - **A `0` tag is trusted forever.** *Why:* if the new image's one re-tag `set-option` fails (or the
   process dies mid-exec under remain-on-exit), every later reload counts the pane "asked to reload"
   and never signals or respawns it; no failure flag is written. *Fix:* write `0:<epoch>` and treat a
