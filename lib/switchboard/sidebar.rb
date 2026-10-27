@@ -1078,6 +1078,7 @@ module Switchboard
       if @visible
         pin_if_resized
         reload(announce_sounds: @resume[:announce])
+        cursor_to_current unless @resume[:cursor] # a respawned old sidebar carries none: start "here", as a fresh one does
       else
         @warm_not_before = monotonic + CodeReload.spread_delay
       end
