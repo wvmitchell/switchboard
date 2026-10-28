@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "json"
+require_relative "stable_path"
 
 module Switchboard
   # A running sidebar swapping in new code without a restart (#48). The sidebar execs
@@ -44,11 +45,13 @@ module Switchboard
 
     def root_of(real_bin) = File.expand_path("../..", real_bin)
 
-    # The file SWITCHBOARD_BIN resolves to right now (a keg's bin under Homebrew), or nil.
+    # The file SWITCHBOARD_BIN resolves to right now (a keg's bin under Homebrew), or nil. A
+    # keg path goes through its opt/ twin first: an image that booted while opt/ was missing
+    # kept the keg path, and would otherwise never follow another upgrade.
     def real_bin(bin = ENV["SWITCHBOARD_BIN"])
       return nil if bin.nil? || bin.empty?
 
-      File.realpath(bin)
+      File.realpath(StablePath.resolve(bin))
     rescue SystemCallError
       nil
     end

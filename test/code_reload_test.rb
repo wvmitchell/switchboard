@@ -374,6 +374,28 @@ module Switchboard
       FileUtils.rm_rf(dir) if dir
     end
 
+    # Value: protects=a sidebar that booted while opt/ was missing (so its SWITCHBOARD_BIN is a
+    # keg path) still follows the next upgrade, even once that keg is cleaned up;
+    # fails_when=real_bin realpaths the keg path as given; seam=none
+    def test_real_bin_follows_opt_for_a_keg_path
+      dir = Dir.mktmpdir
+      %w[1.0 2.0].each do |v|
+        FileUtils.mkdir_p(File.join(dir, "Cellar", "switchboard", v, "libexec", "bin"))
+        FileUtils.touch(File.join(dir, "Cellar", "switchboard", v, "libexec", "bin", "switchboard"))
+      end
+      FileUtils.mkdir_p(File.join(dir, "opt"))
+      File.symlink(File.join(dir, "Cellar", "switchboard", "2.0"), File.join(dir, "opt", "switchboard"))
+      stranded = File.join(dir, "Cellar", "switchboard", "1.0", "libexec", "bin", "switchboard")
+      newest = File.realpath(File.join(dir, "Cellar", "switchboard", "2.0", "libexec", "bin", "switchboard"))
+      assert_equal newest, CodeReload.real_bin(stranded)
+      FileUtils.rm_rf(File.join(dir, "Cellar", "switchboard", "1.0")) # brew cleanup
+      assert_equal newest, CodeReload.real_bin(stranded)
+      FileUtils.rm_f(File.join(dir, "opt", "switchboard"))
+      assert_nil CodeReload.real_bin(stranded), "no opt/ and the keg is gone: nothing to run"
+    ensure
+      FileUtils.rm_rf(dir) if dir
+    end
+
     def test_parent_pids_reads_live_processes
       assert_equal({ Process.pid => Process.ppid }, Tmux.parent_pids([Process.pid]))
       assert_equal({}, Tmux.parent_pids([]))

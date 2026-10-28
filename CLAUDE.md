@@ -697,8 +697,11 @@ checkout. Nothing can repoint a sidebar at another install.
      file, so a `brew upgrade` repointing opt/ mid-check can't make the sidebar exec a keg
      the check never ran. A bin that won't resolve (brew mid-relink) fails the reload, with
      no check; a signal retries. The new image still exports the opt path
-     (`bin/switchboard` runs its realpath through `StablePath`). Not covered: brew cleanup
-     deleting the checked keg after the exec, mid-boot (it needs a second upgrade mid-reload).
+     (`bin/switchboard` runs its realpath through `StablePath`), unless opt/ is missing at that
+     boot: then it keeps the keg path, so `real_bin` runs a keg path through `StablePath`
+     first and that sidebar follows opt/ again at the next upgrade. Not covered: brew cleanup
+     deleting the checked keg after the exec, mid-boot (an upgrade landing during a reload,
+     e.g. a `reload-sidebars` run while `brew upgrade` is going).
   1. Preflight: `<bin> sidebar --check` with the resume payload in its env.
      `Sidebar.check` refuses a missing config (the new image would exit and close the
      pane) or one with a `load_error` (this image keeps its last-good config; the new one
