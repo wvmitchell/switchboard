@@ -334,9 +334,12 @@ inside `switchboard sandbox` to see a sidebar code edit without detaching.
     resolve (brew mid-relink, a deleted checkout), that reload is skipped and the pane is
     marked the same way, until a later reload lands.
 - An older sidebar is restarted with `tmux respawn-pane`, rerunning the command that
-  started it, after a test run (`version`) of that binary. Only a pane started as
+  started it, after a test run of that binary: `sidebar --check` for 0.59 and later,
+  `version` alone for older releases. If brew repoints the binary after the test run, that
+  sidebar is left for the next reload. Only a pane started as
   `<…/switchboard> sidebar` is restarted: a respawn kills whatever runs in the pane.
-- A sidebar whose binary is missing or fails the test run is left as it is.
+- A sidebar whose binary is missing, isn't switchboard (its `version` doesn't print
+  `switchboard X.Y.Z`), or fails the test run is left as it is.
 
 Each sidebar reloads its OWN binary, so running this from another checkout never
 repoints a sidebar. Prints `sidebars: N asked to reload in place, M restarted`, plus a line

@@ -665,10 +665,17 @@ checkout. Nothing can repoint a sidebar at another install.
     liveness and command), because the preflights take time and `-k` kills whatever runs
     there now; any tag change aborts it. Dead panes (`#{pane_dead}`, under remain-on-exit)
     are never targets. The respawn only happens when that start command is exactly `<…/switchboard> sidebar`
-    (`Tmux.start_bin`: any program can title its pane `sb-sidebar`), and the binary is an
-    executable file that passes `version` (checked once per distinct binary). Otherwise the
-    pane is left running and counted: respawn kills first, so a broken or deleted checkout
-    would cost the window its sidebar.
+    (`Tmux.start_bin`: any program can title its pane `sb-sidebar`), and the binary passes
+    `CodeReload.restartable` (once per distinct binary): resolved once (`start_file`: an
+    absolute path, realpath'd with no opt/ rewrite, since tmux reruns the pane's own command, so
+    a keg path runs that keg, gone after cleanup or not), an
+    executable file, `version` prints `switchboard X.Y.Z`, and from 0.59 on, `sidebar --check`
+    with the resume marker passes on that same file. Older releases get `version` only: they'd
+    run `sidebar --check` as a full hidden sidebar, and a home one prunes. Just before the
+    respawn the link must still resolve to the checked file (a brew relink since then leaves
+    the pane). Otherwise the pane is left running and counted: respawn kills first, so a broken
+    or deleted checkout would cost the window its sidebar. The check runs in the sender's env,
+    which can resolve a different config than the tmux server the pane restarts in.
   - The backstop in `tick`: `CodeReload.stale?`, which checks whether `SWITCHBOARD_BIN`'s
     realpath root is still `LOADED_ROOT` (captured at require time). Only a Homebrew keg
     move changes it (so a plain `brew upgrade` reloads too). It's inert for clones, and
