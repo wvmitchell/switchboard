@@ -751,8 +751,10 @@ checkout. Nothing can repoint a sidebar at another install.
   - `encode` never raises and never writes what `decode` would refuse. Names that aren't
     valid UTF-8 are scrubbed: git branch names can be any bytes, `JSON.generate` raises on
     them, and the whole fleet reloads at once. Past `PAYLOAD_MAX` the baseline is dropped
-    and the cursor kept. A cursor still waiting for its row travels as it came, and a raise
-    in `resume_payload` hands over a minimal payload.
+    and the cursor kept, and `announce` goes false: with no notify cursor left, an announcing
+    first scan would re-ring every alert (so that scan's pings wait a tick). A cursor still
+    waiting for its row travels as it came, and a raise in `resume_payload` hands over a
+    minimal payload.
   - A payload that was handed over but won't decode is `BLANK`, not nil, so it's still a
     reload: no clear, no launch-time prune.
   - It carries:
@@ -768,7 +770,10 @@ checkout. Nothing can repoint a sidebar at another install.
   - `announce` is true only if the old image was visible with an announcing scan within
     REFRESH + `ANNOUNCE_GRACE`. Otherwise the first reload is silent, so a switch-in
     reload never replays chimes another pane already rang. A missing field reads as
-    silent.
+    silent. It also tells `restore_baseline` the old image scanned (only an announcing scan
+    licenses it): a pane with no hooked worktree carries an empty baseline, which would
+    otherwise restore as "never scanned" and swallow a `monitoring notify` that landed
+    mid-reload.
   - On resume, `setup` skips its `\e[2J`, and `run` skips the empty first paint: the old
     frame stays up until the new one overwrites it. Off screen, the first warm waits out
     the spread (`@warm_not_before`). The home sidebar skips its launch-time prune: a

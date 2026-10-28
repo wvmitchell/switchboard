@@ -860,6 +860,38 @@ module Switchboard
       assert_empty sounds, "the alert was heard before the reload"
     end
 
+    # Value: protects=a "come look" alert that lands mid-reload rings on the new image even with
+    # no hooked worktree; fails_when=announce stops implying a real scan, apply_resume drops it,
+    # or restore_baseline ignores scanned; why_new=the test above fakes a non-empty baseline;
+    # seam=none; no_claim=a real exec (Sound stubbed; unit only)
+    def test_an_empty_baseline_that_scanned_still_rings_a_new_alert
+      a = real_dir("a")
+      t = Time.at(1_000, 123_456_789, :nsec)
+      scan = lambda do |sb, notify, announce: true|
+        as = Struct.new(:last_hook_states).new({}) # nothing hooked: the baseline stays {}
+        as.define_singleton_method(:scan) { |_paths, hooks_only: false| {} }
+        sb.instance_variable_set(:@agent_state, as)
+        sb.instance_variable_set(:@visible, true)
+        stub_method(Notify, :pending, ->(_paths) { notify }) do
+          sb.send(:refresh_agents, announce_sounds: announce, refresh_prs: false)
+        end
+      end
+      old = sidebar(nodes: [ws("a", path: a)])
+      sounds = []
+      stub_method(Sound, :play, ->(spec, **) { sounds << spec }) do
+        scan.call(old, { a => t })
+        payload = CodeReload.decode(old.send(:resume_payload))
+        assert payload[:announce], "an announcing scan ran"
+        { t => 0, t + 1 => 1 }.each do |mtime, rings|
+          sounds.clear
+          fresh = sidebar(nodes: [ws("a", path: a)])
+          fresh.send(:apply_resume, payload)
+          scan.call(fresh, { a => mtime })
+          assert_equal rings, sounds.size, "an alert at #{mtime == t ? 'the carried cursor' : 'a newer mtime'}"
+        end
+      end
+    end
+
     def test_an_empty_baseline_is_a_first_scan
       edges = Sidebar::Edges.new
       edges.restore_baseline(hook_states: {}, notify: {})

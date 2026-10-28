@@ -133,15 +133,17 @@ module Switchboard
       assert_equal 1, got[:hook_states].size
     end
 
-    # Value: protects=the payload always fits what decode accepts, keeping the cursor; fails_when=
-    # encode stops bounding it; seam=none
+    # Value: protects=the payload always fits what decode accepts, keeping the cursor, and an
+    # oversized resume never re-rings every alert (its notify cursor is gone); fails_when=encode
+    # stops bounding it, or the fallback keeps announce; seam=none
     def test_an_oversized_baseline_is_dropped_but_the_cursor_kept
       huge = (1..2000).to_h { |i| ["/a/very/long/path/to/a/worktree/number-#{i}" * 2, :done] }
-      raw = CodeReload.encode(cursor: { "kind" => "ws", "path" => "/wt/a" }, hook_states: huge)
+      raw = CodeReload.encode(cursor: { "kind" => "ws", "path" => "/wt/a" }, hook_states: huge, announce: true)
       assert_operator raw.bytesize, :<=, CodeReload::PAYLOAD_MAX
       got = CodeReload.decode(raw)
       assert_equal "/wt/a", got[:cursor]["path"]
       assert_empty got[:hook_states]
+      refute got[:announce], "a silent first scan: no cursor to compare alerts against"
     end
 
     def test_an_unreadable_payload_is_still_a_reload

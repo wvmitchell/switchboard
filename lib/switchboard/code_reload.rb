@@ -178,13 +178,17 @@ module Switchboard
 
     # Never raises and never exceeds what decode accepts: a name that isn't valid UTF-8 (git
     # branch names can be any bytes) is scrubbed, since JSON.generate would raise on it and the
-    # whole fleet reloads at once; past PAYLOAD_MAX the baseline is dropped, keeping the cursor.
+    # whole fleet reloads at once; past PAYLOAD_MAX the baseline is dropped, keeping the cursor,
+    # and so is announce: an empty notify cursor on an announcing first scan would re-ring
+    # every alert.
     def encode(cursor: nil, offset: 0, hook_states: {}, notify: {}, announce: false)
       data = { "v" => VERSION, "cursor" => cursor&.transform_values { |v| v && utf8(v) }, "offset" => offset,
                "hook_states" => hook_states.to_h { |k, v| [utf8(k), v.to_s] },
                "notify" => notify.to_h { |k, t| [utf8(k), [t.to_i, t.nsec]] }, "announce" => announce }
       raw = JSON.generate(data)
-      raw.bytesize <= PAYLOAD_MAX ? raw : JSON.generate(data.merge("hook_states" => {}, "notify" => {}))
+      return raw if raw.bytesize <= PAYLOAD_MAX
+
+      JSON.generate(data.merge("hook_states" => {}, "notify" => {}, "announce" => false))
     end
 
     def utf8(value)

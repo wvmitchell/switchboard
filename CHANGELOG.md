@@ -10,6 +10,15 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
+## [0.60.6] — a reload no longer swallows a "come look" alert (2026-10-28)
+
+### Fixed
+- A `switchboard monitoring notify` that landed while an on-screen sidebar was reloading was
+  never rung when none of your workspaces had a hooked agent: the new code took the empty
+  hand-over as "never scanned" and skipped the alert check. It now rings once, including on
+  the reload from 0.60.5. (One rare case remains on that first hop: a hand-over too large to
+  carry, over 64 KiB, from a 0.60.5 sidebar can ring an alert you already heard.)
+
 ## [0.60.5] — an older sidebar is restarted only into a release that can run it (2026-10-28)
 
 ### Fixed

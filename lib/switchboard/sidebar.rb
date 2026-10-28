@@ -1158,7 +1158,7 @@ module Switchboard
 
     # What the payload carries over, applied before the first scan (also `sidebar --check`).
     def apply_resume(payload)
-      @edges.restore_baseline(hook_states: payload[:hook_states], notify: payload[:notify])
+      @edges.restore_baseline(hook_states: payload[:hook_states], notify: payload[:notify], scanned: payload[:announce])
       @resume_cursor = payload[:cursor]
       @offset = payload[:offset]
     end

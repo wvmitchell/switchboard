@@ -435,10 +435,6 @@ Found by the /ship reviews after the 3-cycle fix limit; deferred with Will's OK 
   remember the unresolved state and, once `real_bin` resolves to `LOADED_ROOT`, clear the flag
   (or request a same-code reexec); treat `""` like nil; block on a failed exec only when the file
   is gone. **Priority:** P3.
-- **An empty-but-real baseline is restored as "never scanned".** *Why:* `restore_baseline` leaves
-  `@prev_hook_states` nil for `{}`, so the first scan skips notify delivery while advancing the
-  cursor: an alert in between is swallowed. *Fix:* carry an `initialized` bit in the payload.
-  **Priority:** P2.
 - **A reload's `announce` is judged on a possibly stale `@visible`.** *Why:* a key batched with
   the switch poke can move you away (`↵` to another session); `@visible` stays true until the
   next tick, so a swap in between hands over `announce: true` from a hidden pane. The new
