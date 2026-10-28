@@ -10,6 +10,15 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
+## [0.60.7] — a reload no longer swallows a "come look" alert (2026-10-28)
+
+### Fixed
+- A `switchboard monitoring notify` that landed while an on-screen sidebar was reloading was
+  never rung when none of your workspaces had a hooked agent: the new code took the empty
+  hand-over as "never scanned" and skipped the alert check. It now rings once, including on
+  the reload from an older release. (One rare case remains on that first hop: a hand-over
+  too large to carry, over 64 KiB, from an older sidebar re-rings every pending alert once.)
+
 ## [0.60.6] — status-line notices hold 2.5 seconds (2026-10-28)
 
 ### Changed

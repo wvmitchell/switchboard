@@ -179,10 +179,16 @@ module Switchboard
         { hook_states: @prev_hook_states || {}, notify: @prev_notify.dup }
       end
 
-      # Seed from a reload's carried baseline, before the first scan. An empty one stays
-      # nil, so the first scan still only baselines, as for a fresh process.
-      def restore_baseline(hook_states:, notify:)
-        @prev_hook_states = hook_states.dup unless hook_states.empty?
+      # Seed from a reload's carried baseline, before the first scan. An empty one stays nil
+      # (the first scan only baselines, as for a fresh process) unless the old image had
+      # `scanned`: a pane with no hooked worktree carries `{}`, and its first scan must still
+      # ring a `monitoring notify` newer than the carried cursor. The caller passes the
+      # payload's announce: it's set only after an announcing scan, which also advanced the
+      # notify cursor, so a first scan that announces always has a cursor to compare against.
+      # Seeding on every resume wouldn't guarantee that. It lasts one hop: a reload before
+      # this image's first scan hands over announce false.
+      def restore_baseline(hook_states:, notify:, scanned: false)
+        @prev_hook_states = hook_states.dup if scanned || !hook_states.empty?
         @prev_notify.merge!(notify)
       end
 

@@ -219,7 +219,10 @@ holds). The few per-process things worth keeping ride one env var
   nowhere, and the ◷ would drop;
 - **whether the first scan may ring.** It may only if the old process was on screen and
   scanning a moment ago. Otherwise the first scan is a silent catch-up, like any
-  switch-in.
+  switch-in. The same bit tells the new image the old one had scanned, so an empty
+  baseline (no hooked workspace) still counts, and a `monitoring notify` that lands
+  during the swap rings instead of being taken as a first look. A hand-over too big to
+  carry (over 64 KiB) drops the baseline and this bit together.
 
 Two things ask for it:
 
