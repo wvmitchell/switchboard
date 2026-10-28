@@ -207,10 +207,11 @@ dispatch workers) re-invokes the binary, so it picks up new code by itself. The 
 can't, and upgrades used to end with "press the toggle key twice in each session".
 
 Now a sidebar **execs itself in place**. The pane runs the binary directly (no shell in
-between), so `exec(SWITCHBOARD_BIN, "sidebar")` keeps the pid, the pty and the pane id:
-from tmux's side nothing changed, and `owns_pane?` stays true. Most of what the sidebar
-knows is already on disk (folds, width, header, attention, holds). The few per-process
-things worth keeping ride one env var (`SWITCHBOARD_SIDEBAR_RESUME`) into the new image:
+between), so exec'ing the file `SWITCHBOARD_BIN` resolves to (`<bin> sidebar`) keeps the
+pid, the pty and the pane id: from tmux's side nothing changed, and `owns_pane?` stays
+true. Most of what the sidebar knows is already on disk (folds, width, header, attention,
+holds). The few per-process things worth keeping ride one env var
+(`SWITCHBOARD_SIDEBAR_RESUME`) into the new image:
 
 - **the cursor row**, found again by identity;
 - **the agent-edge baseline.** It's sticky past `PRESENCE_TTL` on purpose, and without
@@ -244,8 +245,12 @@ reload, or it would replay chimes another sidebar already rang. A switch-in insi
 reload throttle skips that reload, so the swap's first scan is silent instead.
 
 Before exec, an on-screen sidebar repaints, so the caught-up tree shows during the check.
-Then it test-runs `<bin> sidebar --check` with its resume payload,
-stdio closed and the `SB_REEXEC` guard cleared, bounded at 3s. That builds a sidebar off
+It resolves `SWITCHBOARD_BIN` once (under Homebrew, through `opt/` to the current keg's
+file), then test-runs and execs that same file, so a `brew upgrade` landing during the
+check can't swap in a release the check never ran. An install that won't resolve (brew
+mid-relink, a deleted checkout) skips that reload and marks the pane for `doctor`; a later
+signal or the moved-install check tries again. Otherwise it test-runs
+`<bin> sidebar --check` with its resume payload, stdio closed and the `SB_REEXEC` guard cleared, bounded at 3s. That builds a sidebar off
 screen and applies the payload (no rebuild: that writes). exec only fails safe when the
 exec call itself fails, and a new release that can't construct a sidebar or take its
 payload would otherwise kill the pane. A failure keeps the old code and marks the pane for

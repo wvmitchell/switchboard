@@ -329,6 +329,10 @@ inside `switchboard sandbox` to see a sidebar code edit without detaching.
   - If the test run fails, the sidebar stays on its old code and marks its pane;
     `switchboard doctor` lists it. A test run that timed out counts as failed; run
     `reload-sidebars` again to retry it.
+  - The test run and the exec use the same file: the one the sidebar's binary resolves
+    to when the reload starts (under Homebrew, the keg `opt/` points at). If it can't
+    resolve (brew mid-relink, a deleted checkout), that reload is skipped and the pane is
+    marked the same way, until a later reload lands.
 - An older sidebar is restarted with `tmux respawn-pane`, rerunning the command that
   started it, after a test run (`version`) of that binary. Only a pane started as
   `<…/switchboard> sidebar` is restarted: a respawn kills whatever runs in the pane.

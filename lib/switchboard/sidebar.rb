@@ -1083,25 +1083,32 @@ module Switchboard
       @reexec_at = nil
       bin = ENV["SWITCHBOARD_BIN"] or return
       render if @visible # the loop top runs before its paint: show the caught-up tree during the check
-      root = CodeReload.current_root(bin)
+      # One resolution for the check and the exec: a `brew upgrade` can repoint opt/ during the
+      # check, and exec'ing the link again would run a keg the check never saw. A link that
+      # won't resolve fails this reload rather than guess. Flagged (a checkout or keg that's gone
+      # for good must show; after a brief relink, the next reload that lands clears it), but no
+      # root is blocked: the known-broken one stands; a signal or the backstop retries.
+      real = CodeReload.real_bin(bin) or return reload_failed(bin, block: false)
+      root = CodeReload.root_of(real)
       payload = resume_payload
-      case CodeReload.preflight(bin, "sidebar", "--check", env: { CodeReload::RESUME_ENV => payload })
-      when :ok then exec_in_place(bin, root, payload)
-      else reload_failed(root || bin) # a timeout too: flagged, and `reload-sidebars` asks again on demand
+      case CodeReload.preflight(real, "sidebar", "--check", env: { CodeReload::RESUME_ENV => payload })
+      when :ok then exec_in_place(real, root, payload)
+      else reload_failed(root) # a timeout too: flagged, and `reload-sidebars` asks again on demand
       end
     end
 
-    # Stay on this code, say so on the pane (doctor, the next reload), and keep the backstop
-    # off this root until a different one appears. A signal still asks again: a test run that
+    # Stay on this code, say so on the pane (doctor, the next reload), and (with `block:`) keep
+    # the backstop off this root until a different one appears; an install that won't resolve
+    # only flags, leaving the blocked root as it was. A signal still asks again: a test run that
     # only timed out (a cold disk right after `brew upgrade`) gets its retry from the next
     # `reload-sidebars`, not from a clock of its own.
-    def reload_failed(root)
-      @reexec_blocked_root = root
+    def reload_failed(root, block: true)
+      @reexec_blocked_root = root if block
       @tag_clears = false # a boot tag still owed must not erase the flag written below
       Tmux.flag_failed_reload(ENV["TMUX_PANE"], root)
     end
 
-    def exec_in_place(bin, root, payload)
+    def exec_in_place(real, root, payload)
       reexec_guard = ENV.delete("SB_REEXEC") # bin/switchboard's one-shot guard (Upgrade.handoff clears it too)
       ENV[CodeReload::RESUME_ENV] = payload
       # A second signal before the new image installs its trap would kill it (handlers
@@ -1109,13 +1116,13 @@ module Switchboard
       trap(CodeReload::SIGNAL, "IGNORE")
       tag_pane(0)
       $stdout.flush
-      exec(bin, "sidebar")
+      exec(real, "sidebar")
     rescue SystemCallError
       ENV.delete(CodeReload::RESUME_ENV)
       ENV["SB_REEXEC"] = reexec_guard if reexec_guard
       install_reload_trap
       tag_pane(clear_failed: false) # still old code: the failure flag below must stand
-      reload_failed(root || bin)
+      reload_failed(root)
     end
 
     # What the new image needs that isn't on disk: where the cursor was, the agent-edge

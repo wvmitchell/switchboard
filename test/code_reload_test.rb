@@ -359,6 +359,49 @@ module Switchboard
                    "old code re-tagging itself leaves the failure flag"
     end
 
+    def test_real_bin_resolves_the_link_and_current_root_rides_it
+      dir = Dir.mktmpdir
+      FileUtils.mkdir_p(File.join(dir, "keg", "bin"))
+      FileUtils.touch(File.join(dir, "keg", "bin", "switchboard"))
+      File.symlink(File.join(dir, "keg"), File.join(dir, "opt"))
+      link = File.join(dir, "opt", "bin", "switchboard")
+      assert_equal File.realpath(File.join(dir, "keg", "bin", "switchboard")), CodeReload.real_bin(link)
+      assert_equal File.realpath(File.join(dir, "keg")), CodeReload.current_root(link)
+      assert_nil CodeReload.real_bin(File.join(dir, "gone", "bin", "switchboard"))
+      assert_nil CodeReload.real_bin("")
+      assert_nil CodeReload.current_root(nil)
+    ensure
+      FileUtils.rm_rf(dir) if dir
+    end
+
+    # Value: protects=a sidebar that booted while opt/ was missing (so its SWITCHBOARD_BIN is a
+    # keg path) still follows the next upgrade, even once that keg is cleaned up;
+    # fails_when=real_bin realpaths the keg path as given; seam=none
+    def test_real_bin_follows_opt_for_a_keg_path
+      dir = Dir.mktmpdir
+      %w[1.0 2.0].each do |v|
+        FileUtils.mkdir_p(File.join(dir, "Cellar", "switchboard", v, "libexec", "bin"))
+        FileUtils.touch(File.join(dir, "Cellar", "switchboard", v, "libexec", "bin", "switchboard"))
+      end
+      FileUtils.mkdir_p(File.join(dir, "opt"))
+      File.symlink(File.join(dir, "Cellar", "switchboard", "2.0"), File.join(dir, "opt", "switchboard"))
+      stranded = File.join(dir, "Cellar", "switchboard", "1.0", "libexec", "bin", "switchboard")
+      newest = File.realpath(File.join(dir, "Cellar", "switchboard", "2.0", "libexec", "bin", "switchboard"))
+      assert_equal newest, CodeReload.real_bin(stranded)
+      assert_equal CodeReload.root_of(newest), CodeReload.current_root(stranded), "the backstop compares opt/'s keg"
+      assert CodeReload.stale?(stranded)
+      FileUtils.rm_f(File.join(dir, "opt", "switchboard")) # brew mid-relink, keg still there
+      assert_equal File.realpath(stranded), CodeReload.real_bin(stranded), "no opt/: the keg as given"
+      File.symlink(File.join(dir, "Cellar", "switchboard", "2.0"), File.join(dir, "opt", "switchboard"))
+      FileUtils.rm_rf(File.join(dir, "Cellar", "switchboard", "1.0")) # brew cleanup
+      assert_equal newest, CodeReload.real_bin(stranded)
+      assert CodeReload.stale?(stranded), "a cleaned-up keg doesn't strand it"
+      FileUtils.rm_f(File.join(dir, "opt", "switchboard"))
+      assert_nil CodeReload.real_bin(stranded), "no opt/ and the keg is gone: nothing to run"
+    ensure
+      FileUtils.rm_rf(dir) if dir
+    end
+
     def test_parent_pids_reads_live_processes
       assert_equal({ Process.pid => Process.ppid }, Tmux.parent_pids([Process.pid]))
       assert_equal({}, Tmux.parent_pids([]))
