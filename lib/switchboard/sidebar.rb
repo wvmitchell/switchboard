@@ -1119,7 +1119,7 @@ module Switchboard
       ENV["SB_REEXEC"] = reexec_guard if reexec_guard
       install_reload_trap
       tag_pane(clear_failed: false) # still old code: the failure flag below must stand
-      reload_failed(root || bin)
+      reload_failed(root)
     end
 
     # What the new image needs that isn't on disk: where the cursor was, the agent-edge

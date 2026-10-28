@@ -582,13 +582,6 @@ module Switchboard
       assert_nil sb.instance_variable_get(:@tag_pending), "exec replaces us right after"
     end
 
-    # Value: protects=the likeliest real failure (the bin no longer resolves) still flags the pane;
-    # fails_when=an unresolvable root writes an empty flag that reads as not failed; seam=none
-    def test_an_unresolvable_install_is_still_flagged
-      exec_sidebar(preflight: :failed, root: nil) { flunk "no exec" }
-      assert_equal ["/opt/sb/bin/switchboard"], @failure_flags
-    end
-
     def test_a_failed_preflight_never_execs_and_blocks_that_root
       sb, = exec_sidebar(preflight: :failed) { flunk "a binary that won't load is never exec'd" }
       assert_equal "/Cellar/new", sb.instance_variable_get(:@reexec_blocked_root)
@@ -641,6 +634,9 @@ module Switchboard
       FileUtils.rm_rf(dir) if dir
     end
 
+    # Value: protects=the likeliest real failure (the bin no longer resolves) flags the pane with a
+    # non-empty value and runs nothing unchecked; fails_when=it guesses the link, or writes an empty
+    # flag that reads as not failed; seam=none
     def test_an_install_that_will_not_resolve_fails_the_reload_without_a_check
       sb, = exec_sidebar(root: nil) { flunk "never exec a path nobody checked" }
       assert_empty @preflight_calls, "no check either: there's nothing pinned to check"
