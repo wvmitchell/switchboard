@@ -634,13 +634,16 @@ module Switchboard
       FileUtils.rm_rf(dir) if dir
     end
 
-    # Value: protects=the likeliest real failure (the bin no longer resolves) flags the pane with a
-    # non-empty value and runs nothing unchecked; fails_when=it guesses the link, or writes an empty
-    # flag that reads as not failed; seam=none
-    def test_an_install_that_will_not_resolve_fails_the_reload_without_a_check
-      sb, = exec_sidebar(root: nil) { flunk "never exec a path nobody checked" }
+    # Value: protects=a brew relink mid-reload runs nothing unchecked, isn't reported as a failed
+    # reload, and doesn't unblock a release already known broken; fails_when=it guesses the link,
+    # flags the pane, or overwrites the blocked root; seam=none
+    def test_an_install_that_will_not_resolve_skips_the_reload
+      sb = sidebar(nodes: [proj("app"), ws("a")])
+      sb.instance_variable_set(:@reexec_blocked_root, "/Cellar/broken")
+      sb, = exec_sidebar(root: nil, sb: sb) { flunk "never exec a path nobody checked" }
       assert_empty @preflight_calls, "no check either: there's nothing pinned to check"
-      assert_equal ["/opt/sb/bin/switchboard"], @failure_flags
+      assert_empty @failure_flags, "brew relinking isn't a failed reload"
+      assert_equal "/Cellar/broken", sb.instance_variable_get(:@reexec_blocked_root)
       refute sb.instance_variable_get(:@reload_requested), "no clock of its own: a signal retries"
     end
 

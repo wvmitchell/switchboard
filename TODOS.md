@@ -413,6 +413,19 @@ Found by the /ship reviews after the 3-cycle fix limit; deferred with Will's OK 
   Rarer than before (five failures in a row, or tmux < 3.0, where the exec path can't tag at
   all). *Fix:* on give-up, flag the pane best-effort, or stamp the `0` with its time beside the
   tag (`@sb_reload_boot`) so senders can treat an old one as stuck. **Priority:** P3.
+- **A keg-path sidebar spawns from that keg until it reloads.** *Why:* an image that booted
+  while opt/ was missing keeps the keg path in `SWITCHBOARD_BIN`. Since 0.60.4 its reload
+  follows opt/ (`real_bin`), but the env var itself doesn't, so until the swap (up to the
+  spread off screen, or never if the check fails) new-window sidebars, PR refreshes, the
+  pane's own respawn and other `SWITCHBOARD_BIN` spawners run that keg, which `brew upgrade`'s
+  cleanup deletes. *Fix:* re-point `ENV["SWITCHBOARD_BIN"] = StablePath.resolve(bin)` in `tick`
+  once opt/ resolves. **Priority:** P3.
+- **Reload doc and backstop nits from the 0.60.4 review.** *Why:* `code_moved?` resolves the bin
+  twice (`stale?`, then `current_root`), so opt/ dangling in between requests a reload that then
+  skips; and CLAUDE.md's "Nothing can repoint a sidebar at another install" is no longer strict,
+  since a keg-path sidebar now follows opt/ (a `--HEAD` keg included, after a channel switch).
+  *Fix:* resolve once in `code_moved?`; reword the guarantee to "its own install's opt/ link".
+  **Priority:** P3.
 - **Legacy respawns only check `version`.** *Why:* an untagged sidebar is respawned after
   `<bin> version`, not `sidebar --check`, so a release that loads but can't construct a sidebar
   kills the working old one (the one-time 0.58→0.59 hop). *Fix:* preflight `sidebar --check` when
