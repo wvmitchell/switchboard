@@ -17,7 +17,7 @@ refer to the project's earlier, private repository; the public tracker starts at
   never rung when none of your workspaces had a hooked agent: the new code took the empty
   hand-over as "never scanned" and skipped the alert check. It now rings once, including on
   the reload from an older release. (One rare case remains on that first hop: a hand-over
-  too large to carry, over 64 KiB, from an older sidebar can ring an alert you already heard.)
+  too large to carry, over 64 KiB, from an older sidebar re-rings every pending alert once.)
 
 ## [0.60.6] — status-line notices hold 2.5 seconds (2026-10-28)
 
