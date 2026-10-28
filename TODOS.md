@@ -435,10 +435,6 @@ Found by the /ship reviews after the 3-cycle fix limit; deferred with Will's OK 
   remember the unresolved state and, once `real_bin` resolves to `LOADED_ROOT`, clear the flag
   (or request a same-code reexec); treat `""` like nil; block on a failed exec only when the file
   is gone. **Priority:** P3.
-- **Legacy respawns only check `version`.** *Why:* an untagged sidebar is respawned after
-  `<bin> version`, not `sidebar --check`, so a release that loads but can't construct a sidebar
-  kills the working old one (the one-time 0.58→0.59 hop). *Fix:* preflight `sidebar --check` when
-  the binary supports it. **Priority:** P2.
 - **An empty-but-real baseline is restored as "never scanned".** *Why:* `restore_baseline` leaves
   `@prev_hook_states` nil for `{}`, so the first scan skips notify delivery while advancing the
   cursor: an alert in between is swallowed. *Fix:* carry an `initialized` bit in the payload.

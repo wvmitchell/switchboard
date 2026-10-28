@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
 require "json"
+require "tempfile"
+require_relative "latest_release"
 require_relative "stable_path"
 
 module Switchboard
@@ -25,6 +27,8 @@ module Switchboard
     PAYLOAD_MAX = 64 * 1024
     VERSION = 1
     STATES = %w[thinking done waiting].freeze
+    CHECK_SINCE = "0.59.0" # the first release with `sidebar --check`
+    VERSION_LINE = /\Aswitchboard (\d+\.\d+\.\d+)\s*\z/
 
     # The install this process loaded: <root>/lib/switchboard/.. — a keg's realpath under
     # Homebrew, the checkout otherwise. Captured at require time, before any upgrade moves opt/.
@@ -62,12 +66,12 @@ module Switchboard
     # payload, which proves the new code can construct a sidebar and apply that payload. Run
     # in the env the exec will
     # use (SB_REEXEC cleared, else a system-Ruby re-exec is skipped and a working binary reads
-    # as broken), with no stdio: it keeps the pane as its controlling tty, so nothing it does
-    # may read keys or paint.
-    def preflight(bin, *args, env: {}, secs: PREFLIGHT_SECS)
+    # as broken), with stdio off the pane (stdout only to `out`): it keeps the pane as its
+    # controlling tty, so nothing it does may read keys or paint.
+    def preflight(bin, *args, env: {}, secs: PREFLIGHT_SECS, out: File::NULL)
       args = ["version"] if args.empty?
       pid = Process.spawn({ "SB_REEXEC" => nil }.merge(env), bin, *args,
-                          in: File::NULL, out: File::NULL, err: File::NULL, pgroup: true)
+                          in: File::NULL, out: out, err: File::NULL, pgroup: true)
       status = ProcessIdentity.wait_within(pid, secs)
       return status.success? ? :ok : :failed if status
 
@@ -81,29 +85,71 @@ module Switchboard
     # one gets the signal and swaps code itself, keeping its state — tagged meaning the pane
     # tag is the pane's pid, or a child of it (a shell like fish that doesn't exec its
     # command). An untagged one (older than 0.59, or tmux < 3.0) is respawned by its own
-    # start command — but only when that binary exists and loads (`version`, once per
-    # distinct binary): a respawn kills the old process first, so a broken or deleted
-    # checkout would leave the window without a sidebar. Those stay running and are counted,
-    # and so are sidebars a previous reload couldn't switch. nil off a server.
+    # start command — but only when that binary passes `restartable` (once per distinct
+    # binary): a respawn kills the old process first, so a broken or deleted checkout would
+    # leave the window without a sidebar. Those stay running and are counted, and so are
+    # sidebars a previous reload couldn't switch. nil off a server.
     def reload_all
       targets = Tmux.sidebar_reload_targets or return nil
       counts = { signaled: 0, respawned: 0, left: 0, failed: targets.count(&:failed) }
-      loads = Hash.new { |memo, bin| memo[bin] = File.file?(bin) && File.executable?(bin) && preflight(bin) == :ok }
-      parents = Tmux.parent_pids(targets.filter_map(&:tag_pid))
       marker = encode
+      checked = Hash.new { |memo, bin| memo[bin] = restartable(bin, marker) }
+      parents = Tmux.parent_pids(targets.filter_map(&:tag_pid))
       targets.each do |t|
         signal_pid = t.tagged ? t.pid : (t.tag_pid if t.tag_pid && parents[t.tag_pid] == t.pid)
         if t.between
           counts[:signaled] += 1 # mid-exec from another reload: already on its way
         elsif signal_pid
           counts[:signaled] += 1 if Tmux.signal_sidebar(signal_pid)
-        elsif t.bin && loads[t.bin] && Tmux.same_reload_target?(t) && Tmux.respawn_sidebar(t, marker)
+        elsif t.bin && (real = checked[t.bin]) && Tmux.same_reload_target?(t) &&
+              start_file(t.bin) == real && # a link that moved since the check: leave it
+              Tmux.respawn_sidebar(t, marker)
           counts[:respawned] += 1
         else
           counts[:left] += 1
         end
       end
       counts
+    end
+
+    # The file a restart of `bin` would run, if it's safe to: nil unless it resolves, prints
+    # its version, and — 0.59+, the releases with `sidebar --check` — builds a sidebar from
+    # `marker`. Older ones get `version` only: they'd run `sidebar --check` as a full hidden
+    # sidebar (a home one prunes). Both runs use the one resolved file, so a brew relink
+    # between them can't hand the check to an older keg. The check runs in this process's
+    # env, which can resolve a different config, or (a clone's `env ruby`) a different Ruby,
+    # than the tmux server the pane restarts in.
+    def restartable(bin, marker)
+      real = start_file(bin) or return nil
+      return nil unless File.file?(real) && File.executable?(real)
+
+      version = version_of(real) or return nil # an exit 0 that isn't ours: don't kill-first on it
+      return real if LatestRelease.compare(version, CHECK_SINCE).negative?
+
+      preflight(real, "sidebar", "--check", env: { RESUME_ENV => marker }) == :ok ? real : nil
+    end
+
+    # The file a respawn of `bin` execs, or nil. Unlike real_bin, no opt/ rewrite: tmux reruns
+    # the pane's own command, so a keg path runs that keg even after an upgrade. Absolute only:
+    # a relative one resolves against the pane's cwd and PATH, not ours.
+    def start_file(bin)
+      return nil unless bin.to_s.start_with?("/")
+
+      File.realpath(bin)
+    rescue SystemCallError
+      nil
+    end
+
+    # "0.60.5" from `<bin> version`, or nil when it fails or prints anything else.
+    def version_of(bin)
+      Tempfile.create("sb-version") do |out|
+        next nil unless preflight(bin, out: out) == :ok
+
+        out.rewind
+        out.read.to_s.scrub[VERSION_LINE, 1]
+      end
+    rescue SystemCallError
+      nil
     end
 
     # [[:ok | :note, line], ...] for reload_all's counts; empty with no sidebars. A signaled
@@ -115,7 +161,7 @@ module Switchboard
       lines = done.empty? ? [] : [[:ok, "sidebars: #{done.join(', ')}"]]
       if (left = counts[:left]).positive?
         lines << [:note, "#{left} sidebar#{'s' unless left == 1} left running old code: couldn't restart " \
-                         "#{left == 1 ? 'it' : 'them'} safely (switchboard missing or won't start, or not a plain `switchboard sidebar`)"]
+                         "#{left == 1 ? 'it' : 'them'} safely (switchboard missing, won't start or just moved, or not a plain `switchboard sidebar`)"]
       end
       if (failed = counts.fetch(:failed, 0)).positive?
         lines << [:note, "#{failed} sidebar#{'s' unless failed == 1} failed to reload last time (asked again now) — " \

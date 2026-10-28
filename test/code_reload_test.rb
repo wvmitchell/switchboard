@@ -203,14 +203,22 @@ module Switchboard
       assert got[:announce]
     end
 
-    def reload_with(targets, preflight: ->(_bin) { :ok }, respawn_ok: true, parents: {}, unchanged: true)
+    # `preflight` answers each run as ->(bin, args) (args empty: `version`); a version run
+    # also prints `version` to its out, as a real binary would.
+    def reload_with(targets, preflight: ->(_bin, _args) { :ok }, version: "switchboard 0.60.5\n", respawn_ok: true,
+                    parents: {}, unchanged: true)
       log = []
+      fake = lambda do |bin, *args, out: File::NULL, **|
+        log << [:preflight, bin, *args]
+        out.write(version) if args.empty? && out.respond_to?(:write)
+        preflight.call(bin, args)
+      end
       counts = stub_method(Tmux, :sidebar_reload_targets, -> { targets }) do
        stub_method(Tmux, :same_reload_target?, ->(_t) { unchanged }) do
         stub_method(Tmux, :parent_pids, ->(_pids) { parents }) do
           stub_method(Tmux, :signal_sidebar, ->(pid) { log << [:signal, pid]; true }) do
             stub_method(Tmux, :respawn_sidebar, ->(t, marker) { log << [:respawn, t.pane, CodeReload.decode(marker).nil?]; respawn_ok }) do
-              stub_method(CodeReload, :preflight, ->(bin) { log << [:preflight, bin]; preflight.call(bin) }) { CodeReload.reload_all }
+              stub_method(CodeReload, :preflight, fake) { CodeReload.reload_all }
             end
           end
         end
@@ -282,23 +290,152 @@ module Switchboard
     end
 
     # Value: protects=no sidebar vanishes on upgrade (R2, R5); fails_when=a missing, unparseable
-    # or broken start binary is respawned; seam=none
+    # or broken start binary is respawned, or a relative one is run from our cwd (the pane
+    # resolves it against its own); seam=none
     def test_reload_all_leaves_a_sidebar_whose_binary_is_gone_or_broken
-      broken = install("broken")
+      broken = File.realpath(install("broken"))
       counts, log = reload_with([target("%1", tagged: false, bin: path("gone/bin/switchboard")),
                                  target("%2", tagged: false, bin: nil),
-                                 target("%3", tagged: false, bin: broken)],
-                                preflight: ->(bin) { bin == broken ? :failed : :ok })
-      assert_equal({ signaled: 0, respawned: 0, left: 3, failed: 0 }, counts)
+                                 target("%3", tagged: false, bin: broken),
+                                 target("%4", tagged: false, bin: "switchboard"),
+                                 target("%5", tagged: false, bin: "bin/switchboard")],
+                                preflight: ->(bin, _args) { bin == broken ? :failed : :ok })
+      assert_equal({ signaled: 0, respawned: 0, left: 5, failed: 0 }, counts)
       assert_empty log.select { |e| e.first == :respawn }
-      refute_includes log, [:preflight, path("gone/bin/switchboard")], "a missing file isn't even run"
+      assert_equal [[:preflight, broken]], log, "a missing or relative file isn't even run; a broken one stops at `version`"
+    end
+
+    # Value: protects=a sidebar whose start command names a keg (it booted while opt/ was
+    # missing) is checked on that keg, which is what respawn-pane reruns, not on opt/'s newer
+    # one; fails_when=the check follows opt/, so a cleaned-up keg is killed into a dead pane;
+    # seam=none; no_claim=a real brew cleanup (rm stands in)
+    def test_a_keg_path_sidebar_is_checked_on_its_own_keg
+      old = install("Cellar/switchboard/0.58.0")
+      install("Cellar/switchboard/0.60.5")
+      FileUtils.mkdir_p(path("opt"))
+      File.symlink(path("Cellar/switchboard/0.60.5"), path("opt/switchboard"))
+      counts, log = reload_with([target("%1", tagged: false, bin: old)], version: "switchboard 0.58.0\n")
+      assert_equal 1, counts[:respawned]
+      assert_equal [[:preflight, File.realpath(old)]], log.select { |e| e.first == :preflight }, "its own keg, `version` only"
+      FileUtils.rm_rf(path("Cellar/switchboard/0.58.0"))
+      counts, log = reload_with([target("%1", tagged: false, bin: old)])
+      assert_equal 1, counts[:left], "the keg is gone: respawn would rerun a missing file"
+      assert_empty log
     end
 
     def test_reload_all_preflights_a_shared_binary_once
       bin = install("shared")
+      real = File.realpath(bin)
       _, log = reload_with([target("%1", tagged: false, bin: bin), target("%2", tagged: false, bin: bin)])
-      assert_equal 1, log.count { |e| e.first == :preflight }
+      assert_equal [[:preflight, real], [:preflight, real, "sidebar", "--check"]], log.select { |e| e.first == :preflight },
+                   "one version run and one check for both panes"
       assert_equal 2, log.count { |e| e.first == :respawn }
+    end
+
+    # Value: protects=a release that answers `version` but can't build a sidebar never
+    # replaces a working old one; fails_when=the check result is ignored, or
+    # a hung check reads as passed; why_new=only `version` was checked; seam=none
+    # A `version` that prints its line and then hangs is left too, without a check.
+    def test_a_release_that_fails_the_sidebar_check_is_left_running
+      %i[failed timeout].each do |outcome|
+        counts, log = reload_with([target("%1", tagged: false, bin: install("bad"))],
+                                  preflight: ->(_bin, args) { args.empty? ? :ok : outcome })
+        assert_equal 1, counts[:left], "a #{outcome} check"
+        assert_empty log.select { |e| e.first == :respawn }
+      end
+      counts, log = reload_with([target("%1", tagged: false, bin: install("hung"))],
+                                preflight: ->(_bin, args) { args.empty? ? :timeout : :ok })
+      assert_equal 1, counts[:left], "a timed-out `version`"
+      assert_equal 1, log.size, "no check, no respawn"
+    end
+
+    # Value: protects=the version gate never sends `sidebar --check` to a release older than
+    # 0.59 (it would run a full hidden sidebar), and an exit 0 we can't read is never
+    # restarted (D1); fails_when=the gate is dropped, inverted or off by one, or an unreadable
+    # version falls through to a restart; seam=none
+    # Value (the "\xFF" row): protects=a `version` that prints bytes that aren't UTF-8 leaves
+    # the pane instead of crashing upgrade/reload-sidebars; fails_when=the read isn't scrubbed
+    # (the regex raises ArgumentError, which nothing rescues); why_new=every other row is
+    # valid UTF-8; seam=none; no_claim=other encodings of the version line
+    def test_the_check_is_gated_on_the_release_version
+      bin = install("v")
+      checks = ->(log) { log.count { |e| e[2] == "sidebar" } }
+      { "switchboard 0.58.9\n" => [1, 0], "switchboard 0.59.0\n" => [1, 1], "switchboard 1.0.0" => [1, 1],
+        "not switchboard\n" => [0, 0], "" => [0, 0], "switchboard 0.60\n" => [0, 0],
+        "\xFFswitchboard 0.60.5\n" => [0, 0] }.each do |out, (restarted, checked)|
+        counts, log = reload_with([target("%1", tagged: false, bin: bin)], version: out)
+        assert_equal restarted, counts[:respawned], out.inspect
+        assert_equal checked, checks.call(log), "checks sent for #{out.inspect}"
+      end
+    end
+
+    # Value: protects=a respawn never runs a keg no check saw (D5); fails_when=the
+    # pre-respawn recheck is dropped; why_new=new guard; seam=none; no_claim=the ms between
+    # the recheck and tmux's own exec
+    def test_a_link_that_moved_after_the_check_is_left
+      install("Cellar/a")
+      install("Cellar/b")
+      FileUtils.mkdir_p(path("opt"))
+      File.symlink(path("Cellar/a"), path("opt/switchboard"))
+      relink = lambda do |_bin, args|
+        unless args.empty?
+          File.unlink(path("opt/switchboard"))
+          File.symlink(path("Cellar/b"), path("opt/switchboard"))
+        end
+        :ok
+      end
+      counts, log = reload_with([target("%1", tagged: false, bin: path("opt/switchboard/bin/switchboard"))], preflight: relink)
+      assert_equal 1, counts[:left]
+      assert_empty log.select { |e| e.first == :respawn }
+    end
+
+    # Value: protects=the version run and the check really reach the child: a pre-0.59
+    # binary is never handed `sidebar --check`, a 0.59+ one gets it with the resume marker,
+    # both through one resolved file (D3, D4); fails_when=preflight drops the args, env or
+    # out, or the check re-resolves the link; why_new=every other row stubs preflight;
+    # seam=none; no_claim=real releases (scripts stand in) or a real tmux respawn
+    def test_real_binaries_get_the_check_only_from_0_59_on_the_file_their_version_came_from
+      calls = path("calls")
+      script = lambda do |version|
+        "#!/bin/sh\necho \"$0 $* ${#{CodeReload::RESUME_ENV}:+marker}\" >> #{calls}\n" \
+          "[ \"$1\" = version ] && echo 'switchboard #{version}'\nexit 0\n"
+      end
+      old = install("Cellar/old", script.call("0.58.0"))
+      new = install("Cellar/new", script.call("0.60.5"))
+      FileUtils.mkdir_p(path("opt"))
+      File.symlink(path("Cellar/new"), path("opt/switchboard"))
+      run = lambda do |bin|
+        File.write(calls, "")
+        targets = [target("%1", tagged: false, bin: bin)] # outside the stub: its body runs as Tmux
+        stub_method(Tmux, :sidebar_reload_targets, -> { targets }) do
+          stub_method(Tmux, :same_reload_target?, ->(_t) { true }) do
+            stub_method(Tmux, :parent_pids, ->(_pids) { {} }) do
+              stub_method(Tmux, :respawn_sidebar, ->(_t, _m) { true }) { CodeReload.reload_all }
+            end
+          end
+        end
+      end
+
+      assert_equal 1, run.call(old)[:respawned]
+      assert_equal ["#{File.realpath(old)} version"], File.readlines(calls, chomp: true).map(&:strip),
+                   "0.58 gets `version` only"
+      assert_equal 1, run.call(new)[:respawned]
+      assert_equal ["#{File.realpath(new)} version", "#{File.realpath(new)} sidebar --check marker"],
+                   File.readlines(calls, chomp: true).map(&:strip), "0.60 gets the check, with the marker"
+
+      # The link moves to the 0.58 keg after the version run: the check stays on the keg whose
+      # version was read (and the restart is then left: the link no longer names it).
+      relink = <<~SH
+        #!/bin/sh
+        echo "$0 $*" >> #{calls}
+        [ "$1" = version ] && { rm #{path('opt/switchboard')}; ln -s #{path('Cellar/old')} #{path('opt/switchboard')}; echo 'switchboard 0.60.5'; }
+        exit 0
+      SH
+      File.write(new, relink)
+      counts = run.call(path("opt/switchboard/bin/switchboard"))
+      assert_equal ["#{File.realpath(new)} version", "#{File.realpath(new)} sidebar --check"],
+                   File.readlines(calls, chomp: true).map(&:strip), "the check never reaches the 0.58 keg"
+      assert_equal 1, counts[:left]
     end
 
     # Value: protects=an untagged sidebar on tmux < 3.0 (no respawn-pane -e) is still restarted,
@@ -332,7 +469,7 @@ module Switchboard
       assert_equal [[:ok, "sidebars: 3 asked to reload in place, 1 restarted"]],
                    CodeReload.describe({ signaled: 3, respawned: 1, left: 0, failed: 0 })
       assert_equal [[:ok, "sidebars: 2 restarted"],
-                    [:note, "2 sidebars left running old code: couldn't restart them safely (switchboard missing or won't start, or not a plain `switchboard sidebar`)"],
+                    [:note, "2 sidebars left running old code: couldn't restart them safely (switchboard missing, won't start or just moved, or not a plain `switchboard sidebar`)"],
                     [:note, "1 sidebar failed to reload last time (asked again now) — `switchboard doctor` lists any still on old code"]],
                    CodeReload.describe({ signaled: 0, respawned: 2, left: 2, failed: 1 })
       assert_empty CodeReload.describe({ signaled: 0, respawned: 0, left: 0, failed: 0 })

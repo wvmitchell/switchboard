@@ -228,7 +228,9 @@ Two things ask for it:
   like fish runs the sidebar as a child instead of exec'ing it). A tag of `0` means the
   sidebar is between images, so it is left alone. A sidebar older than 0.59 has no tag,
   and the signal's default action would kill it, so instead it is restarted with
-  `respawn-pane` (its own start command) after a test run of that binary.
+  `respawn-pane` (its own start command) after a test run of that binary: the same
+  `sidebar --check` a signalled sidebar runs, when the binary is 0.59 or later (older ones
+  only answer `version`, since they would run the check as a whole sidebar).
 - **A moved install.** Each tick checks whether `SWITCHBOARD_BIN` still resolves to the
   code it loaded. Under Homebrew a plain `brew upgrade` repoints `opt/` at a new keg, so
   the sidebar notices without being told. It's a stat or two, no subprocess. A clone's
