@@ -10,6 +10,15 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
+## [0.60.4] — a reload runs the release it checked (2026-10-27)
+
+### Fixed
+- A sidebar test-runs new code before it swaps it in. If a `brew upgrade` landed during
+  that test run, the sidebar could swap in the newer release that nobody tested, and one
+  that couldn't start would close the pane. It now swaps in exactly the release it
+  tested. If brew is mid-relink so the install can't be found, that reload is skipped,
+  and the next `switchboard upgrade` or `reload-sidebars` tries again.
+
 ## [0.60.3] — a sidebar whose reload tag didn't stick gets reloaded next time (2026-10-27)
 
 ### Fixed

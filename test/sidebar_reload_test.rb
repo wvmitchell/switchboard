@@ -271,7 +271,9 @@ module Switchboard
       sb.define_singleton_method(:render) { order << :render }
       exec_sidebar(preflight: :failed, sb: sb) { flunk "no exec" }
       stub_method(CodeReload, :preflight, ->(*, **) { order << :preflight; :failed }) do
-        stub_method(Tmux, :flag_failed_reload, ->(*) {}) { sb.send(:reexec) }
+        stub_method(CodeReload, :real_bin, ->(*) { "/Cellar/new/bin/switchboard" }) do
+          stub_method(Tmux, :flag_failed_reload, ->(*) {}) { sb.send(:reexec) }
+        end
       end
       assert_equal %i[render preflight], order.last(2)
     end
@@ -491,7 +493,7 @@ module Switchboard
       order = []
       lands = @tag_lands.nil? || @tag_lands # a local: the stub runs with Tmux as self
       stub_method(CodeReload, :preflight, ->(*args, **kw) { calls << [args, kw]; preflight }) do
-        stub_method(CodeReload, :current_root, ->(*) { root }) do
+        stub_method(CodeReload, :real_bin, ->(*) { root && "#{root}/bin/switchboard" }) do
           stub_method(Tmux, :flag_failed_reload, ->(_p, r) { flags << r; order << [:flag, r] }) do
             stub_method(Tmux, :tag_sidebar_pane, ->(_p, v, clear_failed: true) { tags << v; order << [:tag, v, clear_failed]; lands }) { capture_stdout { sb.send(:reexec) } }
           end
@@ -513,7 +515,8 @@ module Switchboard
                  reexec: ENV.key?("SB_REEXEC"), usr1: trap(CodeReload::SIGNAL, "IGNORE") }
         raise Errno::ENOENT, "stop here"
       end
-      assert_equal ["/opt/sb/bin/switchboard", "sidebar"], seen[:argv]
+      assert_equal ["/Cellar/new/bin/switchboard", "sidebar"], seen[:argv], "the keg the check ran, not the opt link"
+      assert_equal "/opt/sb/bin/switchboard", ENV["SWITCHBOARD_BIN"], "the stable path stays the env the new image inherits"
       assert_equal "/wt/b", seen[:payload][:cursor]["path"]
       refute seen[:reexec], "a system-Ruby re-exec must still happen in the new image"
       assert_equal "IGNORE", seen[:usr1], "ignored across exec (R4)"
@@ -607,13 +610,51 @@ module Switchboard
       assert_equal 1, @preflight_calls.size, "a signal (reload-sidebars) tries again despite the blocked root"
     end
 
+    # Value: protects=a `brew upgrade` repointing opt/ during the check can't make the reload
+    # exec a keg the check never ran; fails_when=the check or the exec re-resolves the link;
+    # seam=none
+    def test_the_check_and_the_exec_run_the_same_keg_when_opt_moves_mid_check
+      dir = Dir.mktmpdir
+      %w[old new].each { |k| FileUtils.mkdir_p(File.join(dir, k, "bin")); FileUtils.touch(File.join(dir, k, "bin", "switchboard")) }
+      opt = File.join(dir, "opt")
+      File.symlink(File.join(dir, "old"), opt)
+      ENV["SWITCHBOARD_BIN"] = File.join(opt, "bin", "switchboard")
+      sb = sidebar(nodes: [proj("app"), ws("a")])
+      sb.instance_variable_set(:@reload_requested, true)
+      checked = ran = nil
+      sb.define_singleton_method(:exec) { |path, *| ran = path; raise Errno::ENOENT, "stop" }
+      repoint = lambda do |path, *, **|
+        checked = path
+        File.unlink(opt)
+        File.symlink(File.join(dir, "new"), opt) # brew upgrade lands mid-check
+        :ok
+      end
+      stub_method(CodeReload, :preflight, repoint) do
+        stub_method(Tmux, :flag_failed_reload, ->(*) {}) do
+          stub_method(Tmux, :tag_sidebar_pane, ->(*, **) { true }) { capture_stdout { sb.send(:reexec) } }
+        end
+      end
+      old = File.realpath(File.join(dir, "old", "bin", "switchboard"))
+      assert_equal old, checked
+      assert_equal old, ran, "exec'd what was checked, not the keg opt/ points at now"
+    ensure
+      FileUtils.rm_rf(dir) if dir
+    end
+
+    def test_an_install_that_will_not_resolve_fails_the_reload_without_a_check
+      sb, = exec_sidebar(root: nil) { flunk "never exec a path nobody checked" }
+      assert_empty @preflight_calls, "no check either: there's nothing pinned to check"
+      assert_equal ["/opt/sb/bin/switchboard"], @failure_flags
+      refute sb.instance_variable_get(:@reload_requested), "no clock of its own: a signal retries"
+    end
+
     # Value: protects=the preflight proves the new code can build a sidebar and take its payload, not just load
     # (Red Team); fails_when=the exec preflight goes back to `version`; seam=none
     def test_the_exec_preflight_checks_the_sidebar_with_its_payload
       payload = nil
       exec_sidebar { |_argv| payload = ENV[CodeReload::RESUME_ENV]; raise Errno::ENOENT, "stop" }
       args, kw = @preflight_calls.first
-      assert_equal ["/opt/sb/bin/switchboard", "sidebar", "--check"], args
+      assert_equal ["/Cellar/new/bin/switchboard", "sidebar", "--check"], args, "the same file the exec runs"
       assert_equal payload, kw[:env][CodeReload::RESUME_ENV], "the same payload the exec hands over"
     end
 

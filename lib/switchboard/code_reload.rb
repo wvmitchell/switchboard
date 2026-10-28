@@ -38,9 +38,15 @@ module Switchboard
     end
 
     def current_root(bin = ENV["SWITCHBOARD_BIN"])
+      real = real_bin(bin) or return nil
+      File.expand_path("../..", real)
+    end
+
+    # The file SWITCHBOARD_BIN resolves to right now (a keg's bin under Homebrew), or nil.
+    def real_bin(bin = ENV["SWITCHBOARD_BIN"])
       return nil if bin.nil? || bin.empty?
 
-      File.expand_path("../..", File.realpath(bin))
+      File.realpath(bin)
     rescue SystemCallError
       nil
     end

@@ -413,9 +413,6 @@ Found by the /ship reviews after the 3-cycle fix limit; deferred with Will's OK 
   Rarer than before (five failures in a row, or tmux < 3.0, where the exec path can't tag at
   all). *Fix:* on give-up, flag the pane best-effort, or stamp the `0` with its time beside the
   tag (`@sb_reload_boot`) so senders can treat an old one as stuck. **Priority:** P3.
-- **Exec isn't pinned to the keg the preflight checked.** *Why:* `current_root`, the preflight and
-  exec each resolve `SWITCHBOARD_BIN`; a `brew upgrade` landing between them execs an unchecked keg.
-  *Fix:* exec the realpath the preflight ran. **Priority:** P2.
 - **Legacy respawns only check `version`.** *Why:* an untagged sidebar is respawned after
   `<bin> version`, not `sidebar --check`, so a release that loads but can't construct a sidebar
   kills the working old one (the one-time 0.58→0.59 hop). *Fix:* preflight `sidebar --check` when

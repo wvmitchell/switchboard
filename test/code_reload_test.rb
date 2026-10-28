@@ -359,6 +359,21 @@ module Switchboard
                    "old code re-tagging itself leaves the failure flag"
     end
 
+    def test_real_bin_resolves_the_link_and_current_root_rides_it
+      dir = Dir.mktmpdir
+      FileUtils.mkdir_p(File.join(dir, "keg", "bin"))
+      FileUtils.touch(File.join(dir, "keg", "bin", "switchboard"))
+      File.symlink(File.join(dir, "keg"), File.join(dir, "opt"))
+      link = File.join(dir, "opt", "bin", "switchboard")
+      assert_equal File.realpath(File.join(dir, "keg", "bin", "switchboard")), CodeReload.real_bin(link)
+      assert_equal File.realpath(File.join(dir, "keg")), CodeReload.current_root(link)
+      assert_nil CodeReload.real_bin(File.join(dir, "gone", "bin", "switchboard"))
+      assert_nil CodeReload.real_bin("")
+      assert_nil CodeReload.current_root(nil)
+    ensure
+      FileUtils.rm_rf(dir) if dir
+    end
+
     def test_parent_pids_reads_live_processes
       assert_equal({ Process.pid => Process.ppid }, Tmux.parent_pids([Process.pid]))
       assert_equal({}, Tmux.parent_pids([]))

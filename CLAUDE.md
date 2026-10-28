@@ -693,6 +693,12 @@ checkout. Nothing can repoint a sidebar at another install.
   - `frame_timeout` honors `@reexec_at` only while the reload is allowed, else a passed
     deadline would spin `IO.select`.
 - **`reexec`**:
+  0. Resolve the bin once (`CodeReload.real_bin`): the check and the exec both run that
+     file, so a `brew upgrade` repointing opt/ mid-check can't make the sidebar exec a keg
+     the check never ran. A bin that won't resolve (brew mid-relink) fails the reload, with
+     no check; a signal retries. The new image still exports the opt path
+     (`bin/switchboard` runs its realpath through `StablePath`). Not covered: brew cleanup
+     deleting the checked keg after the exec, mid-boot (it needs a second upgrade mid-reload).
   1. Preflight: `<bin> sidebar --check` with the resume payload in its env.
      `Sidebar.check` refuses a missing config (the new image would exit and close the
      pane) or one with a `load_error` (this image keeps its last-good config; the new one

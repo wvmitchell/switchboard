@@ -1083,11 +1083,15 @@ module Switchboard
       @reexec_at = nil
       bin = ENV["SWITCHBOARD_BIN"] or return
       render if @visible # the loop top runs before its paint: show the caught-up tree during the check
-      root = CodeReload.current_root(bin)
+      # One resolution for the check and the exec: a `brew upgrade` can repoint opt/ during the
+      # check, and exec'ing the link again would run a keg the check never saw. A link that
+      # won't resolve (brew mid-relink) fails this reload rather than guess; a signal retries.
+      real = CodeReload.real_bin(bin) or return reload_failed(bin)
+      root = File.expand_path("../..", real)
       payload = resume_payload
-      case CodeReload.preflight(bin, "sidebar", "--check", env: { CodeReload::RESUME_ENV => payload })
-      when :ok then exec_in_place(bin, root, payload)
-      else reload_failed(root || bin) # a timeout too: flagged, and `reload-sidebars` asks again on demand
+      case CodeReload.preflight(real, "sidebar", "--check", env: { CodeReload::RESUME_ENV => payload })
+      when :ok then exec_in_place(real, root, payload)
+      else reload_failed(root) # a timeout too: flagged, and `reload-sidebars` asks again on demand
       end
     end
 
