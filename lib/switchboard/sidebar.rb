@@ -1085,9 +1085,10 @@ module Switchboard
       render if @visible # the loop top runs before its paint: show the caught-up tree during the check
       # One resolution for the check and the exec: a `brew upgrade` can repoint opt/ during the
       # check, and exec'ing the link again would run a keg the check never saw. A link that
-      # won't resolve (brew mid-relink) skips this reload rather than guess: nothing failed, so
-      # no flag and the blocked root stands; a signal or the backstop retries.
-      real = CodeReload.real_bin(bin) or return
+      # won't resolve fails this reload rather than guess. Flagged (a brief brew relink clears
+      # on the next good boot; a checkout or keg that's gone for good must show), but no root
+      # is blocked: the known-broken one stands; a signal or the backstop retries.
+      real = CodeReload.real_bin(bin) or return reload_failed(bin, block: false)
       root = CodeReload.root_of(real)
       payload = resume_payload
       case CodeReload.preflight(real, "sidebar", "--check", env: { CodeReload::RESUME_ENV => payload })
@@ -1100,13 +1101,13 @@ module Switchboard
     # off this root until a different one appears. A signal still asks again: a test run that
     # only timed out (a cold disk right after `brew upgrade`) gets its retry from the next
     # `reload-sidebars`, not from a clock of its own.
-    def reload_failed(root)
-      @reexec_blocked_root = root
+    def reload_failed(root, block: true)
+      @reexec_blocked_root = root if block
       @tag_clears = false # a boot tag still owed must not erase the flag written below
       Tmux.flag_failed_reload(ENV["TMUX_PANE"], root)
     end
 
-    def exec_in_place(bin, root, payload)
+    def exec_in_place(real, root, payload)
       reexec_guard = ENV.delete("SB_REEXEC") # bin/switchboard's one-shot guard (Upgrade.handoff clears it too)
       ENV[CodeReload::RESUME_ENV] = payload
       # A second signal before the new image installs its trap would kill it (handlers
@@ -1114,7 +1115,7 @@ module Switchboard
       trap(CodeReload::SIGNAL, "IGNORE")
       tag_pane(0)
       $stdout.flush
-      exec(bin, "sidebar")
+      exec(real, "sidebar")
     rescue SystemCallError
       ENV.delete(CodeReload::RESUME_ENV)
       ENV["SB_REEXEC"] = reexec_guard if reexec_guard

@@ -695,8 +695,10 @@ checkout. Nothing can repoint a sidebar at another install.
 - **`reexec`**:
   0. Resolve the bin once (`CodeReload.real_bin`): the check and the exec both run that
      file, so a `brew upgrade` repointing opt/ mid-check can't make the sidebar exec a keg
-     the check never ran. A bin that won't resolve (brew mid-relink) skips the reload: no
-     check, no failure flag, the blocked root left as it was; a signal or the backstop retries. The new image still exports the opt path
+     the check never ran. A bin that won't resolve (brew mid-relink) fails the reload: no
+     check, the pane flagged with the bin path (a brief relink clears on the next good boot; a
+     deleted checkout must show), the blocked root left as it was; a signal or the backstop
+     retries. The new image still exports the opt path
      (`bin/switchboard` runs its realpath through `StablePath`), unless opt/ is missing at that
      boot: then it keeps the keg path, so `real_bin` runs a keg path through `StablePath`
      first and that sidebar follows opt/ again at the next upgrade. Not covered: brew cleanup
@@ -716,8 +718,7 @@ checkout. Nothing can repoint a sidebar at another install.
        is a timed-out check's retry. There's deliberately no retry clock: a second wake
        time that every gate had to honor produced a spin and a stale tree in review.
 
-     Either way it flags the pane `@sb_reload_failed=<root>` (falling back to the bin path
-     when the root won't resolve, so the flag is never empty), after the failed exec's
+     Either way it flags the pane `@sb_reload_failed=<root>`, after the failed exec's
      re-tag. `doctor` lists those panes, and the next reload's summary reports them. Only a
      new image's first tag clears the flag, in the same tmux call as the tag
      (`clear_failed:`), retries of it included (`@tag_clears`), until a later failed reload

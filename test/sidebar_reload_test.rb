@@ -606,6 +606,34 @@ module Switchboard
     # Value: protects=a `brew upgrade` repointing opt/ during the check can't make the reload
     # exec a keg the check never ran; fails_when=the check or the exec re-resolves the link;
     # seam=none
+    # Value: protects=a check that fails while opt/ moves blocks and flags the keg it checked, so
+    # the newer keg still gets its own try; fails_when=the failure path re-resolves the link;
+    # seam=none
+    def test_a_failed_check_blocks_the_keg_it_checked_when_opt_moves_mid_check
+      dir = Dir.mktmpdir
+      %w[old new].each { |k| FileUtils.mkdir_p(File.join(dir, k, "bin")); FileUtils.touch(File.join(dir, k, "bin", "switchboard")) }
+      opt = File.join(dir, "opt")
+      File.symlink(File.join(dir, "old"), opt)
+      ENV["SWITCHBOARD_BIN"] = File.join(opt, "bin", "switchboard")
+      sb = sidebar(nodes: [proj("app"), ws("a")])
+      sb.instance_variable_set(:@reload_requested, true)
+      flags = []
+      repoint = lambda do |*, **|
+        File.unlink(opt)
+        File.symlink(File.join(dir, "new"), opt)
+        :failed
+      end
+      stub_method(CodeReload, :preflight, repoint) do
+        stub_method(Tmux, :flag_failed_reload, ->(_pane, value) { flags << value }) { sb.send(:reexec) }
+      end
+      old_root = File.realpath(File.join(dir, "old"))
+      assert_equal old_root, sb.instance_variable_get(:@reexec_blocked_root)
+      assert_equal [old_root], flags
+      assert_equal File.realpath(File.join(dir, "new")), CodeReload.current_root, "the newer keg isn't the blocked one"
+    ensure
+      FileUtils.rm_rf(dir) if dir
+    end
+
     def test_the_check_and_the_exec_run_the_same_keg_when_opt_moves_mid_check
       dir = Dir.mktmpdir
       %w[old new].each { |k| FileUtils.mkdir_p(File.join(dir, k, "bin")); FileUtils.touch(File.join(dir, k, "bin", "switchboard")) }
@@ -634,15 +662,16 @@ module Switchboard
       FileUtils.rm_rf(dir) if dir
     end
 
-    # Value: protects=a brew relink mid-reload runs nothing unchecked, isn't reported as a failed
-    # reload, and doesn't unblock a release already known broken; fails_when=it guesses the link,
-    # flags the pane, or overwrites the blocked root; seam=none
-    def test_an_install_that_will_not_resolve_skips_the_reload
+    # Value: protects=an install that won't resolve runs nothing unchecked, still shows in doctor
+    # (a deleted checkout must not fail silently), and doesn't unblock a release already known
+    # broken; fails_when=it guesses the link, skips the flag, or overwrites the blocked root;
+    # seam=none
+    def test_an_install_that_will_not_resolve_fails_the_reload_without_a_check
       sb = sidebar(nodes: [proj("app"), ws("a")])
       sb.instance_variable_set(:@reexec_blocked_root, "/Cellar/broken")
       sb, = exec_sidebar(root: nil, sb: sb) { flunk "never exec a path nobody checked" }
       assert_empty @preflight_calls, "no check either: there's nothing pinned to check"
-      assert_empty @failure_flags, "brew relinking isn't a failed reload"
+      assert_equal ["/opt/sb/bin/switchboard"], @failure_flags, "never an empty flag"
       assert_equal "/Cellar/broken", sb.instance_variable_get(:@reexec_blocked_root)
       refute sb.instance_variable_get(:@reload_requested), "no clock of its own: a signal retries"
     end
