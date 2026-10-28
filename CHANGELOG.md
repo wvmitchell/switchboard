@@ -17,7 +17,8 @@ refer to the project's earlier, private repository; the public tracker starts at
   that test run, the sidebar could swap in the newer release that nobody tested, and one
   that couldn't start would close the pane. It now swaps in exactly the release it
   tested. If brew is mid-relink so the install can't be found, that reload is skipped,
-  and the next `switchboard upgrade` or `reload-sidebars` tries again.
+  and the sidebar tries again once the new release is in place, or on the next
+  `reload-sidebars`.
 
 ## [0.60.3] — a sidebar whose reload tag didn't stick gets reloaded next time (2026-10-27)
 

@@ -39,8 +39,10 @@ module Switchboard
 
     def current_root(bin = ENV["SWITCHBOARD_BIN"])
       real = real_bin(bin) or return nil
-      File.expand_path("../..", real)
+      root_of(real)
     end
+
+    def root_of(real_bin) = File.expand_path("../..", real_bin)
 
     # The file SWITCHBOARD_BIN resolves to right now (a keg's bin under Homebrew), or nil.
     def real_bin(bin = ENV["SWITCHBOARD_BIN"])
