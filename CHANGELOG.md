@@ -10,6 +10,16 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
+## [0.60.5] — an older sidebar is restarted only into a release that can run it (2026-10-28)
+
+### Fixed
+- `switchboard upgrade` restarts sidebars that can't swap code in place (from before 0.59,
+  or on tmux older than 3.0). It only checked that the new release answered `version`, so
+  a release that started but couldn't build a sidebar would replace a working one with an
+  empty pane. It now runs the same sidebar test a newer sidebar runs on itself, on the
+  exact file the pane restarts into, and leaves the old one running if that fails, or if
+  brew repoints the install between the test and the restart.
+
 ## [0.60.4] — a reload runs the release it checked (2026-10-27)
 
 ### Fixed
