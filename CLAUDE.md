@@ -752,7 +752,8 @@ checkout. Nothing can repoint a sidebar at another install.
     valid UTF-8 are scrubbed: git branch names can be any bytes, `JSON.generate` raises on
     them, and the whole fleet reloads at once. Past `PAYLOAD_MAX` the baseline is dropped
     and the cursor kept, and `announce` goes false: with no notify cursor left, an announcing
-    first scan would re-ring every alert (so that scan's pings wait a tick). A cursor still
+    first scan would re-ring every alert (so a chime or alert landing during that reload is
+    baselined silently; dispatch pings, being durable, ring on the next scan). A cursor still
     waiting for its row travels as it came, and a raise in `resume_payload` hands over a
     minimal payload.
   - A payload that was handed over but won't decode is `BLANK`, not nil, so it's still a

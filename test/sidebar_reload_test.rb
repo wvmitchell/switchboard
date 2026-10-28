@@ -861,19 +861,19 @@ module Switchboard
     end
 
     # Value: protects=a "come look" alert that lands mid-reload rings on the new image even with
-    # no hooked worktree; fails_when=announce stops implying a real scan, apply_resume drops it,
-    # or restore_baseline ignores scanned; why_new=the test above fakes a non-empty baseline;
+    # no hooked worktree; fails_when=apply_resume drops announce, or restore_baseline ignores
+    # scanned; why_new=the test above fakes a non-empty baseline;
     # seam=none; no_claim=a real exec (Sound stubbed; unit only)
     def test_an_empty_baseline_that_scanned_still_rings_a_new_alert
       a = real_dir("a")
       t = Time.at(1_000, 123_456_789, :nsec)
-      scan = lambda do |sb, notify, announce: true|
+      scan = lambda do |sb, notify|
         as = Struct.new(:last_hook_states).new({}) # nothing hooked: the baseline stays {}
         as.define_singleton_method(:scan) { |_paths, hooks_only: false| {} }
         sb.instance_variable_set(:@agent_state, as)
         sb.instance_variable_set(:@visible, true)
         stub_method(Notify, :pending, ->(_paths) { notify }) do
-          sb.send(:refresh_agents, announce_sounds: announce, refresh_prs: false)
+          sb.send(:refresh_agents, refresh_prs: false)
         end
       end
       old = sidebar(nodes: [ws("a", path: a)])
