@@ -696,9 +696,9 @@ checkout. Nothing can repoint a sidebar at another install.
   0. Resolve the bin once (`CodeReload.real_bin`): the check and the exec both run that
      file, so a `brew upgrade` repointing opt/ mid-check can't make the sidebar exec a keg
      the check never ran. A bin that won't resolve (brew mid-relink) fails the reload: no
-     check, the pane flagged with the bin path (a brief relink clears on the next good boot; a
-     deleted checkout must show), the blocked root left as it was; a signal or the backstop
-     retries. The new image still exports the opt path
+     check, the pane flagged with the bin path (a deleted checkout must show; after a brief
+     relink the next reload that lands clears it, which a same-keg relink needs a
+     `reload-sidebars` for), the blocked root left as it was; a signal or the backstop retries. The new image still exports the opt path
      (`bin/switchboard` runs its realpath through `StablePath`), unless opt/ is missing at that
      boot: then it keeps the keg path, so `real_bin` runs a keg path through `StablePath`
      first and that sidebar follows opt/ again at the next upgrade. Not covered: brew cleanup

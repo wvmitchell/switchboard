@@ -1085,9 +1085,9 @@ module Switchboard
       render if @visible # the loop top runs before its paint: show the caught-up tree during the check
       # One resolution for the check and the exec: a `brew upgrade` can repoint opt/ during the
       # check, and exec'ing the link again would run a keg the check never saw. A link that
-      # won't resolve fails this reload rather than guess. Flagged (a brief brew relink clears
-      # on the next good boot; a checkout or keg that's gone for good must show), but no root
-      # is blocked: the known-broken one stands; a signal or the backstop retries.
+      # won't resolve fails this reload rather than guess. Flagged (a checkout or keg that's gone
+      # for good must show; after a brief relink, the next reload that lands clears it), but no
+      # root is blocked: the known-broken one stands; a signal or the backstop retries.
       real = CodeReload.real_bin(bin) or return reload_failed(bin, block: false)
       root = CodeReload.root_of(real)
       payload = resume_payload
@@ -1097,8 +1097,9 @@ module Switchboard
       end
     end
 
-    # Stay on this code, say so on the pane (doctor, the next reload), and keep the backstop
-    # off this root until a different one appears. A signal still asks again: a test run that
+    # Stay on this code, say so on the pane (doctor, the next reload), and (with `block:`) keep
+    # the backstop off this root until a different one appears; an install that won't resolve
+    # only flags, leaving the blocked root as it was. A signal still asks again: a test run that
     # only timed out (a cold disk right after `brew upgrade`) gets its retry from the next
     # `reload-sidebars`, not from a clock of its own.
     def reload_failed(root, block: true)

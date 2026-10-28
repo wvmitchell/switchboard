@@ -603,9 +603,6 @@ module Switchboard
       assert_equal 1, @preflight_calls.size, "a signal (reload-sidebars) tries again despite the blocked root"
     end
 
-    # Value: protects=a `brew upgrade` repointing opt/ during the check can't make the reload
-    # exec a keg the check never ran; fails_when=the check or the exec re-resolves the link;
-    # seam=none
     # Value: protects=a check that fails while opt/ moves blocks and flags the keg it checked, so
     # the newer keg still gets its own try; fails_when=the failure path re-resolves the link;
     # seam=none
@@ -634,6 +631,9 @@ module Switchboard
       FileUtils.rm_rf(dir) if dir
     end
 
+    # Value: protects=a `brew upgrade` repointing opt/ during the check can't make the reload
+    # exec a keg the check never ran; fails_when=the check or the exec re-resolves the link;
+    # seam=none
     def test_the_check_and_the_exec_run_the_same_keg_when_opt_moves_mid_check
       dir = Dir.mktmpdir
       %w[old new].each { |k| FileUtils.mkdir_p(File.join(dir, k, "bin")); FileUtils.touch(File.join(dir, k, "bin", "switchboard")) }

@@ -426,6 +426,15 @@ Found by the /ship reviews after the 3-cycle fix limit; deferred with Will's OK 
   since a keg-path sidebar now follows opt/ (a `--HEAD` keg included, after a channel switch).
   *Fix:* resolve once in `code_moved?`; reword the guarantee to "its own install's opt/ link".
   **Priority:** P3.
+- **An unresolved-bin flag can outlive a same-keg relink.** *Why:* since 0.60.4 a reload that
+  can't resolve the install flags the pane with the bin path, and only a reload that lands
+  clears it. If opt/ comes back on the keg the sidebar already runs (`brew reinstall`, a
+  same-version relink), the backstop never fires, so `doctor` and every reload summary report a
+  failure until a `reload-sidebars`. Also: an empty `SWITCHBOARD_BIN` writes an empty flag (reads
+  as not failed), and a transient exec errno (ETXTBSY) blocks a keg that still exists. *Fix:*
+  remember the unresolved state and, once `real_bin` resolves to `LOADED_ROOT`, clear the flag
+  (or request a same-code reexec); treat `""` like nil; block on a failed exec only when the file
+  is gone. **Priority:** P3.
 - **Legacy respawns only check `version`.** *Why:* an untagged sidebar is respawned after
   `<bin> version`, not `sidebar --check`, so a release that loads but can't construct a sidebar
   kills the working old one (the one-time 0.58→0.59 hop). *Fix:* preflight `sidebar --check` when

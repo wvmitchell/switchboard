@@ -17,7 +17,7 @@ module Switchboard
     RESUME_ENV = "SWITCHBOARD_SIDEBAR_RESUME"
     SPREAD_ENV = "SWITCHBOARD_RELOAD_SPREAD" # tests and smoke runs set 0
     TAG = "@sb_reload"   # pane option: this pane's sidebar pid, so a sender knows it can take the signal
-    FAILED_TAG = "@sb_reload_failed" # pane option: the root a reload couldn't switch to (doctor, the next reload)
+    FAILED_TAG = "@sb_reload_failed" # pane option: the root a reload couldn't switch to, or the bin when it wouldn't resolve (doctor, the next reload)
     SIGNAL = "USR1"
     SPREAD = 30          # seconds an off-screen sidebar may wait, so a fleet doesn't boot + rescan at once
     PREFLIGHT_SECS = 3
@@ -43,7 +43,7 @@ module Switchboard
       root_of(real)
     end
 
-    def root_of(real_bin) = File.expand_path("../..", real_bin)
+    def root_of(real) = File.expand_path("../..", real)
 
     # The file SWITCHBOARD_BIN resolves to right now (a keg's bin under Homebrew), or nil. A
     # keg path goes through its opt/ twin first: an image that booted while opt/ was missing
