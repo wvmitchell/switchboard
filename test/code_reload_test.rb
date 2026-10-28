@@ -388,8 +388,11 @@ module Switchboard
       stranded = File.join(dir, "Cellar", "switchboard", "1.0", "libexec", "bin", "switchboard")
       newest = File.realpath(File.join(dir, "Cellar", "switchboard", "2.0", "libexec", "bin", "switchboard"))
       assert_equal newest, CodeReload.real_bin(stranded)
+      assert_equal CodeReload.root_of(newest), CodeReload.current_root(stranded), "the backstop compares opt/'s keg"
+      assert CodeReload.stale?(stranded)
       FileUtils.rm_rf(File.join(dir, "Cellar", "switchboard", "1.0")) # brew cleanup
       assert_equal newest, CodeReload.real_bin(stranded)
+      assert CodeReload.stale?(stranded), "a cleaned-up keg doesn't strand it"
       FileUtils.rm_f(File.join(dir, "opt", "switchboard"))
       assert_nil CodeReload.real_bin(stranded), "no opt/ and the keg is gone: nothing to run"
     ensure

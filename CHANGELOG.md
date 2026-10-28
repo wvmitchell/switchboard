@@ -19,6 +19,8 @@ refer to the project's earlier, private repository; the public tracker starts at
   tested. If brew is mid-relink so the install can't be found, that reload is skipped,
   and the sidebar tries again once the new release is in place, or on the next
   `reload-sidebars`.
+- A sidebar that restarted while brew was relinking could stay on that release for good,
+  even after brew cleaned it up. It now picks up the next upgrade.
 
 ## [0.60.3] — a sidebar whose reload tag didn't stick gets reloaded next time (2026-10-27)
 
