@@ -30,7 +30,7 @@ module Switchboard
     # same editor pane; once it's :q'd (pane closed) the id is retired and the
     # stash goes stale — live_editor_pane then reports nil and `e` spawns fresh.
     EDITOR_PANE_OPT = "@sb_editor_pane"
-    NOTIFY_MS = 4000 # the shortest a status-line notice stays up (see notify)
+    NOTIFY_MS = 2500 # the shortest a status-line notice stays up (see notify)
     INPUT_QUIET = 2  # seconds without input from any client before keys go to a pane (see panes_by_tty)
 
     module_function

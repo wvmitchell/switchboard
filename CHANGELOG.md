@@ -10,6 +10,12 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
+## [0.60.6] — status-line notices hold 2.5 seconds (2026-10-28)
+
+### Changed
+- Switchboard's status-line notices now stay up for at least 2.5 seconds (was 4), or your
+  tmux `display-time` if that's longer. Four seconds lingered after you'd read them.
+
 ## [0.60.5] — an older sidebar is restarted only into a release that can run it (2026-10-28)
 
 ### Fixed
