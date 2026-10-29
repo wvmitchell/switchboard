@@ -11,11 +11,25 @@ This is the learning path. Once you're comfortable, the
 
 ## What you'll need
 
-- **tmux** ≥ 3.0, **git**, and **gh** (the GitHub CLI). On macOS:
-  `brew install tmux git gh`.
-- **Ruby ≥ 3.3** (`ruby -v` to check). No gems — switchboard is stdlib only.
+- **Homebrew** (macOS or Linux). It brings tmux, git, gh, and Ruby along with
+  switchboard, so there's nothing else to install first.
 - A local git repo with a GitHub remote to play with. Any repo works; PR badges
   need a GitHub `origin`.
+
+## Step 1: Install switchboard
+
+Install it from the tap, then wire it into tmux:
+
+```sh
+brew tap wvmitchell/switchboard
+brew trust wvmitchell/switchboard   # Homebrew 7+ asks you to trust a tap
+brew install switchboard
+switchboard install
+```
+
+`switchboard install` adds one line to your tmux.conf and writes a starter config.
+Homebrew already put `switchboard` (and the short `sb` alias) on your PATH, so it
+reports `on PATH via Homebrew`.
 
 Authenticate `gh` if you haven't (this powers the PR badges):
 
@@ -23,34 +37,20 @@ Authenticate `gh` if you haven't (this powers the PR badges):
 gh auth login
 ```
 
-## Step 1: Install switchboard
-
-Clone it and run the installer:
-
-```sh
-git clone https://github.com/wvmitchell/switchboard
-cd switchboard && bin/switchboard install
-```
-
-(Prefer Homebrew? `brew tap wvmitchell/switchboard`, `brew trust
-wvmitchell/switchboard`, `brew install switchboard`, then `switchboard install`; brew provides the PATH entries, so you'll see `on PATH via
-Homebrew` instead of the symlinks. Details in
-[How to install, upgrade, or move to Homebrew](howto-install-and-upgrade.md).)
-
-You'll see it do three things: symlink `switchboard` (and the `sb` alias) onto
-your PATH, add one line to your tmux.conf, and write a starter config. If it
-warns that `~/.local/bin` isn't on your `$PATH`, add the line it prints to your
-shell profile and open a new shell.
-
 Confirm it's healthy:
 
 ```sh
 switchboard doctor
 ```
 
-You want green checks for `tmux`, `git`, `gh`, the config, and the PATH symlink.
+You want green checks for `tmux`, `git`, `gh`, the config, and the PATH entries.
 A couple of items will be yellow notes (no projects yet, hooks not enabled here) —
 that's expected on a fresh install.
+
+> Installing from a git clone instead (to hack on switchboard itself)? You'll need
+> tmux ≥ 3.0, git, gh, and Ruby ≥ 3.3; then `git clone` the repo and run
+> `bin/switchboard install`, which symlinks `switchboard` into `~/.local/bin`.
+> See [How to install, upgrade, or move to Homebrew](howto-install-and-upgrade.md#install-from-a-git-clone).
 
 ## Step 2: Launch into the home session
 
