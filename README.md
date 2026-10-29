@@ -186,7 +186,10 @@ organized by the [Diataxis](https://diataxis.fr/) framework:
 - **Explanation** — [architecture](docs/explanation-architecture.md) ·
   [agent presence](docs/explanation-agent-presence.md) ·
   [sidebar lifecycle](docs/explanation-sidebar-lifecycle.md) ·
-  [distribution](docs/explanation-distribution.md).
+  [distribution](docs/explanation-distribution.md) ·
+  [background dispatch](docs/explanation-background-dispatch.md) ·
+  [session-name sync](docs/explanation-session-name-sync.md) ·
+  [sidebar views](docs/explanation-sidebar-views.md).
 
 ## Contributing
 

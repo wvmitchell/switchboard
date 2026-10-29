@@ -192,7 +192,7 @@ still recomputes — `R` forces a refresh if origin fast-forwarded past it.
 
 The counts refresh off the paint loop (on switch-in, idle, and right after an
 agent finishes a turn — a finished turn likely just committed), never blocking
-the render. See [issue #79 / #118 in CLAUDE.md](../CLAUDE.md) for the column math.
+the render. See [workspace diff counts](explanation-sidebar-views.md#drawing-the-counts) (issues #79 / #118) for the column math.
 
 ---
 

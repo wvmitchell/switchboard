@@ -179,16 +179,19 @@ Alert on high or critical advisories that reach a version a user could run.
 ### 2. Upstream contract drift
 
 The highest-value check. Switchboard's subtle parts sit on agent behavior that is
-lightly documented or not documented at all. CLAUDE.md records the exact version each
-contract was last verified against; the baselines track those lines, one per contract:
+lightly documented or not documented at all. CLAUDE.md's "Upstream contracts, last
+verified" list records the exact version each contract was last verified against; the
+baselines track those lines, one per contract. How each works is in the explanation docs:
 
-- the Claude and Codex **hook contract** ("Agent-state dots"),
-- the sessions-file **⇅ remote link** (`bridgeSessionId`, `procStart`; "Remote-link
-  glyph"),
-- the sessions-file **◷ `status`** field ("Waiting on background work"),
+- the Claude and Codex **hook contract** ([agent presence § Hook delivery](explanation-agent-presence.md#hook-delivery-splits-by-agent-claude-per-worktree-codex-global)),
+- the sessions-file **⇅ remote link** (`bridgeSessionId`, `procStart`;
+  [agent presence § Remote links](explanation-agent-presence.md#remote-links-the-)),
+- the sessions-file **◷ `status`** field
+  ([agent presence § Waiting on background work](explanation-agent-presence.md#waiting-on-background-work-the-)),
 - the **session-name sync**, which types `/rename` into Claude's pane after reading its
-  screen ("Session-name sync"). Its tests replay recorded 2.1.310 screens in
-  `test/fixtures/session_name`; it was first checked live on 2.1.312.
+  screen ([explanation-session-name-sync](explanation-session-name-sync.md)). Its tests replay recorded Claude screens in
+  `test/fixtures/session_name`; the versions those came from, and the last live check,
+  are in CLAUDE.md's list.
 
 Re-verifying one doesn't advance the others.
 
@@ -203,8 +206,8 @@ Re-verifying one doesn't advance the others.
   Skip `[VSCode]`, `[Cloud sessions]`, `[Claude Tag]`, `[Code Review]`, Windows,
   PowerShell, self-hosted runner and mod-only entries. Then advance the baseline.
 
-  The last four terms cover the sessions-file `status` contract the ◷ reads (CLAUDE.md,
-  "Waiting on background work"). It's undocumented, and a changelog entry about it may
+  The last four terms cover the sessions-file `status` contract the ◷ reads
+  ([agent presence § Waiting on background work](explanation-agent-presence.md#waiting-on-background-work-the-)). It's undocumented, and a changelog entry about it may
   not name the file ("background agents now report their status"). What switchboard
   relies on, in `~/.claude/sessions/<pid>.json`:
 
@@ -257,7 +260,7 @@ Re-verifying one doesn't advance the others.
 - **Codex**: the installed version (`codex --version`) and
   `gh release list -R openai/codex -L 3 --exclude-pre-releases`. Grep release notes for
   `hook|trust|config.toml|worktree|linked|PermissionRequest|SessionStart|toml_edit|env snapshot`.
-  The crux (CLAUDE.md, "Codex is global"): codex must keep firing the global `[hooks]`
+  The crux ([agent presence § Hook delivery](explanation-agent-presence.md#hook-delivery-splits-by-agent-claude-per-worktree-codex-global), where Codex is global): codex must keep firing the global `[hooks]`
   block inside a **linked** worktree and keep filing approvals as
   `[hooks.state."…"]` tables. When the installed codex moves, run the real-Codex smoke
   from the [synced](#sync-the-checkout) checkout:
