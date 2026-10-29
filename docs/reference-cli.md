@@ -343,7 +343,9 @@ inside `switchboard sandbox` to see a sidebar code edit without detaching.
 
 Each sidebar reloads its OWN binary, so running this from another checkout never
 repoints a sidebar. Prints `sidebars: N asked to reload in place, M restarted`, plus a line
-for any left running and any whose last reload failed, or `no sidebars running`. Exits 0.
+for any left running, any that closed before the reload reached them, and any whose last
+reload failed that were asked again now (or are already mid-reload), or `no sidebars
+running`. Exits 0.
 
 ### `switchboard version` (aliases: `-v`, `--version`)
 Print the version (`switchboard X.Y.Z`).

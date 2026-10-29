@@ -441,6 +441,12 @@ Found by the /ship reviews after the 3-cycle fix limit; deferred with Will's OK 
   image re-samples visibility before its first scan, so it doesn't ring off screen today.
   *Fix:* re-sample `Tmux.visible?` in `resume_payload`. **Priority:** P3. Found by the 0.60.2
   adversarial review.
+- **A reload signal can reach a recycled pid.** *Why:* `reload_all` reads every pane's pid at
+  the start, then can spend seconds in `restartable` preflights for untagged panes before it
+  signals later ones. A sidebar that exits in that gap, its pid reused by another process of
+  yours, gets SIGUSR1 (default action: quit) on that process instead. *Fix:* signal every
+  tagged and fish-child pane in a first pass, before any preflight; or check pid + start time
+  (`ProcessIdentity.same?`). **Priority:** P2. Found by the 0.60.8 adversarial review.
 
 ## Sidebar off-screen-work (architecture-review) follow-ups
 

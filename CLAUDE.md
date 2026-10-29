@@ -658,7 +658,8 @@ checkout. Nothing can repoint a sidebar at another install.
     its `#{pane_pid}`, or a child of it (checked in one `ps`): a shell like fish doesn't
     exec its command. Tagged panes get the signal, sent to the tagged pid; one whose signal
     fails (it closed after the listing) is counted `unreached`, and "failed last
-    time (asked again now)" counts only panes actually asked again. A tag of `0`
+    time (asked again now)" counts only flagged panes whose signal landed or that are
+    already mid-reload (tag `0`), never a respawned or left one. A tag of `0`
     means mid-exec from another reload: it's left alone, because a respawn would kill the
     boot. An untagged pane (older than 0.59, or tmux < 3.0, where SIGUSR1's default action
     would KILL it) is instead `respawn-pane -k`'d with NO command, so it reruns the pane's
@@ -730,7 +731,7 @@ checkout. Nothing can repoint a sidebar at another install.
        time that every gate had to honor produced a spin and a stale tree in review.
 
      Either way it flags the pane `@sb_reload_failed=<root>`, after the failed exec's
-     re-tag. `doctor` lists those panes, and the next reload's summary reports those it asks again. Only a
+     re-tag. `doctor` lists those panes, and the next reload's summary reports those it signals again or finds mid-reload. Only a
      new image's first tag clears the flag, in the same tmux call as the tag
      (`clear_failed:`), retries of it included (`@tag_clears`), until a later failed reload
      revokes that (`reload_failed` drops `@tag_clears` before it flags); the failed exec's
