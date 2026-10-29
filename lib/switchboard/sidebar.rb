@@ -357,6 +357,7 @@ module Switchboard
       # Off screen we're never focused, so skip the focused? shell-out entirely —
       # that's half the per-tick tmux cost of a dormant pane.
       @focused = visible && Tmux.focused?(ENV["TMUX_PANE"]) # authoritative if focus-events are off
+      @count = nil unless @focused # a half-typed 3j left behind; focus-out may never have arrived
       reappeared = visible && !@visible
       set_visible(visible)
       if reappeared
