@@ -295,8 +295,9 @@ module Switchboard
     # seam=none; no_claim=real tmux (Tmux stubbed; the smoke test runs it)
     def test_reload_all_signals_new_sidebars_and_respawns_old_ones
       good = install("good")
-      counts, log = reload_with([target("%1", tagged: true), target("%2", tagged: false, bin: good)])
-      assert_equal({ signaled: 1, respawned: 1, left: 0, unreached: 0, failed: 0 }, counts)
+      counts, log = reload_with([target("%1", tagged: true), target("%2", tagged: false, bin: good, failed: true)])
+      assert_equal({ signaled: 1, respawned: 1, left: 0, unreached: 0, failed: 0 }, counts,
+                   "a flagged pane that's restarted wasn't asked again (D2)")
       assert_includes log, [:signal, 1]
       assert_includes log, [:respawn, "%2", false], "with a decodable resume marker"
       refute_includes log, [:preflight, nil]
@@ -307,7 +308,7 @@ module Switchboard
     # resolves it against its own); seam=none
     def test_reload_all_leaves_a_sidebar_whose_binary_is_gone_or_broken
       broken = File.realpath(install("broken"))
-      counts, log = reload_with([target("%1", tagged: false, bin: path("gone/bin/switchboard")),
+      counts, log = reload_with([target("%1", tagged: false, bin: path("gone/bin/switchboard"), failed: true),
                                  target("%2", tagged: false, bin: nil),
                                  target("%3", tagged: false, bin: broken),
                                  target("%4", tagged: false, bin: "switchboard"),
