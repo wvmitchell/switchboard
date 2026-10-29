@@ -10,6 +10,15 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
+## [0.60.9] — a reload signals sidebars before its slow checks (2026-10-29)
+
+### Fixed
+- `switchboard upgrade` and `reload-sidebars` could, in a rare race, quit an unrelated program
+  of yours. They read every sidebar's process id up front, then could spend seconds checking
+  older sidebars' releases before signaling the rest; a sidebar that closed in that gap could
+  have its id reused, and the reload signal would land on the new process. Every sidebar that
+  takes the signal is now signaled before any of those checks run.
+
 ## [0.60.8] — the reload summary counts every sidebar (2026-10-29)
 
 ### Fixed
