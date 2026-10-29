@@ -467,6 +467,16 @@ at that moment isn't broken), while the sound
 WAVs carry `ASSET_VERSION` in their filename — a version bump writes new files and
 the stale ones are simply never referenced again.
 
+A few more files and behaviors can be redirected the same way:
+
+| What | Default | Override |
+|------|---------|----------|
+| Update-line cache | `$XDG_CACHE_HOME/switchboard/latest.json` → `~/.cache/switchboard/latest.json` | `$SWITCHBOARD_UPDATE_CACHE` (a file path) |
+| Global codex config (the codex hooks block) | `~/.codex/config.toml` | `$CODEX_HOME` |
+| Where release tags are read from | the switchboard GitHub repo | `$SWITCHBOARD_RELEASES_URL` (the test suite points it at a dead path, so nothing reaches GitHub) |
+| Background update check | on, for a Homebrew install | `$SWITCHBOARD_NO_UPDATE_CHECK` set to anything but empty or `0` turns it off (the test suite, smoke runs and the sandbox set it) |
+| How long an off-screen sidebar may wait before a code reload | up to 30 seconds | `$SWITCHBOARD_RELOAD_SPREAD` (seconds; the reload smoke test sets 0) |
+
 These env overrides also make it safe to run switchboard locally against throwaway
 state without touching your real config — the same walls the test suite uses (see
 [CONTRIBUTING](../CONTRIBUTING.md)).

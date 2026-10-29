@@ -15,6 +15,11 @@ because tmux panes run a non-interactive shell that skips rbenv.
 Diataxis set). Before you change an area, read the doc the table below names for it, and
 keep that doc current in the same PR. Don't grow this file back into a manual: new detail
 goes in the docs, and this file gets at most a pointer or a one-line invariant.
+`test/docs_test.rb` holds the shape: links and anchors resolve, quoted CLAUDE.md sections
+exist, every doc is a Diataxis kind indexed under that kind, contract versions live only
+in the list below, section pointers are anchor links, and no doc references TODOs or the
+gitignored `thoughts/`. The docs are for humans as much as agents:
+write them as readable explanation, not this file's compressed style.
 
 ## Commands
 
@@ -26,8 +31,7 @@ bin/switchboard doctor     # check tmux/git/gh, config, install wiring, hooks, l
 bin/switchboard reload-sidebars # swap every running sidebar to its own binary's current code
 ```
 
-Every command and flag: [docs/reference-cli.md](docs/reference-cli.md) (and the annotated
-command map in [docs/explanation-architecture.md](docs/explanation-architecture.md#the-command-map-in-detail)).
+Every command and flag: [docs/reference-cli.md](docs/reference-cli.md).
 
 **Tests.** Every `bin/test` test runs **offline**: `SandboxTest` (`test/test_helper.rb`)
 walls off config, XDG dirs, git global, `HOME` and `TMUX` into a tmpdir, and
@@ -36,22 +40,22 @@ walls off config, XDG dirs, git global, `HOME` and `TMUX` into a tmpdir, and
 isolated tmux socket through a PTY client — the bug class the stubs can't reach. It stays
 out of `bin/test` so the offline suite is the inner loop. Env overrides for running
 locally without touching real state:
-[docs/explanation-architecture.md](docs/explanation-architecture.md#environment-overrides-for-local-runs).
+[docs/reference-config.md](docs/reference-config.md#filesystem-locations).
 
 ## Where the detail lives
 
 | Area | Read |
 |---|---|
-| Git as runtime truth, the model/tree, the worktree ⇆ `sb/` session mapping, `session_command` | [explanation-architecture](docs/explanation-architecture.md) (§ The runtime model, in detail) |
-| `install` / `uninstall` / `doctor` / `prune`, the tmux fragment and its three hooks | [explanation-architecture](docs/explanation-architecture.md) (§ Install, doctor and prune) |
-| Configurable tmux keys (`tmux_keys`, #15) | [explanation-architecture](docs/explanation-architecture.md) (§ Configurable tmux keys), [howto-keybindings](docs/howto-keybindings.md) |
-| `switchboard sandbox`, `IsolatedServer` | [explanation-architecture](docs/explanation-architecture.md) (§ The sandbox) |
+| Git as runtime truth, the model/tree, the worktree ⇆ `sb/` session mapping, `session_command` | [explanation-architecture](docs/explanation-architecture.md) |
+| `install` / `uninstall` / `doctor` / `prune`, the tmux fragment and its three hooks | [explanation-architecture § Install, doctor and prune](docs/explanation-architecture.md#install-doctor-and-prune) |
+| Configurable tmux keys (`tmux_keys`, #15) | [explanation-architecture § Configurable tmux keys](docs/explanation-architecture.md#configurable-tmux-keys), [howto-keybindings](docs/howto-keybindings.md) |
+| `switchboard sandbox`, `IsolatedServer` | [explanation-architecture § The sandbox](docs/explanation-architecture.md#the-sandbox) |
 | `n` → task → ↵ background dispatch, `Creation` records, the setup script, deferred naming | [explanation-background-dispatch](docs/explanation-background-dispatch.md) |
 | Per-session visibility, off-screen dormancy, pre-warming, warm broadcasts, recycled pane ids | [explanation-sidebar-lifecycle](docs/explanation-sidebar-lifecycle.md) |
-| Hot reload of running sidebars (#48), the resume payload | [explanation-sidebar-lifecycle](docs/explanation-sidebar-lifecycle.md) (§ The code reload, in detail) |
-| Agent-state dots, Claude/Codex hook delivery, the global codex block | [explanation-agent-presence](docs/explanation-agent-presence.md) |
-| The rename nudge, completion sounds, bold until viewed, `KeyedMarkerStore` | [explanation-agent-presence](docs/explanation-agent-presence.md) (§ Implementation detail) |
-| ∞ monitoring + `monitoring notify`, ⇅ remote links + QR, ◷ background work | [explanation-agent-presence](docs/explanation-agent-presence.md) (§ Implementation detail) |
+| Hot reload of running sidebars (#48), the resume payload | [explanation-sidebar-lifecycle § Swapping in new code](docs/explanation-sidebar-lifecycle.md#swapping-in-new-code-without-a-restart-48) |
+| Agent-state dots, Claude/Codex hook delivery, the global codex block | [explanation-agent-presence](docs/explanation-agent-presence.md), [§ Inside the global codex block](docs/explanation-agent-presence.md#inside-the-global-codex-block) |
+| The rename nudge, completion sounds, bold until viewed, `KeyedMarkerStore` | [explanation-agent-presence § One edge, four consumers](docs/explanation-agent-presence.md#one-edge-four-consumers), [§ The self-naming nudge](docs/explanation-agent-presence.md#the-self-naming-nudge-issue-92) |
+| ∞ monitoring + `monitoring notify`, ⇅ remote links + QR, ◷ background work | [explanation-agent-presence § Background monitors](docs/explanation-agent-presence.md#background-monitors-the-), [§ ◷](docs/explanation-agent-presence.md#waiting-on-background-work-the-), [§ ⇅](docs/explanation-agent-presence.md#remote-links-the-) |
 | Session-name sync (typing `/rename` into Claude's pane) | [explanation-session-name-sync](docs/explanation-session-name-sync.md) |
 | Folds, full header, width, diff counts, `/` filter, `?` overlay, `sidebar_keys` | [explanation-sidebar-views](docs/explanation-sidebar-views.md) |
 | Baked paths (`StablePath`), releases, the update line, `switchboard upgrade` | [explanation-distribution](docs/explanation-distribution.md), [reference-release](docs/reference-release.md) |
