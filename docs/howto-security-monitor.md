@@ -187,8 +187,8 @@ contract was last verified against; the baselines track those lines, one per con
   glyph"),
 - the sessions-file **◷ `status`** field ("Waiting on background work"),
 - the **session-name sync**, which types `/rename` into Claude's pane after reading its
-  screen ("Session-name sync"). It was last verified against recorded 2.1.310 screens
-  in `test/fixtures/session_name`, not in a live run.
+  screen ("Session-name sync"). Its tests replay recorded 2.1.310 screens in
+  `test/fixtures/session_name`; it was first checked live on 2.1.312.
 
 Re-verifying one doesn't advance the others.
 
@@ -271,7 +271,8 @@ Re-verifying one doesn't advance the others.
   `session-window-changed`), the format variables it reads (`#{config_files}`,
   `#{pane_tty}`; for the session-name sync also `#{pane_in_mode}`,
   `#{pane_synchronized}`, `#{pane_width}`, `#{session_attached}` and
-  `#{window_active}`), `split-window` / `resize-pane`, and `send-keys` /
+  `#{window_active}`), `split-window` / `resize-pane`, `respawn-pane -k` and pane
+  options (`set-option -p`; the sidebar code reload), and `send-keys` /
   `capture-pane -e`. When the installed tmux moves, run `bin/test-smoke`.
 
 A drift finding proposes the follow-up: "re-verify X live, then update the 'last
