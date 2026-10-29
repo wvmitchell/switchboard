@@ -236,7 +236,7 @@ module Switchboard
       def console(cols = nil)
         trees  = @nodes.count { |n| n.kind == "ws" }
         active = @agents.values.count(:thinking)
-        prs    = @nodes.count { |n| n.pr.is_a?(Hash) && View.pr_state(n.pr) == "OPEN" }
+        prs    = @nodes.count { |n| View.pr_open?(n.pr) }
         links  = @links.values.flatten
         idle   = links.count(&:stale)
         parts  = { trees: "#{trees} #{trees == 1 ? 'worktree' : 'worktrees'}" }

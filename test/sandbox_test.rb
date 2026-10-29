@@ -60,6 +60,10 @@ module Switchboard
       entry = cache["sandbox/auth-token-refresh"]
       assert_equal "#12", View.pr_identifier(entry)
       assert_equal "OPEN", entry["status"]
+      # ...plus one badge per other open color, to eyeball side by side
+      assert_equal "OPEN", View.pr_state(entry)
+      assert_equal "REVIEW", View.pr_state(cache["sandbox/bulk-import"])
+      assert_equal "DRAFT", View.pr_state(cache["sandbox/fan-out-review"])
 
       # 2. big diff is non-trivial vs base main
       adds, = Git.diff_counts(File.join(wt, "bulk-import"), "main")

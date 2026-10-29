@@ -203,11 +203,18 @@ its **`#number`, colored by state**:
 
 | Badge | Color | State |
 |-------|-------|-------|
-| `#128` | green | **open** |
-| `#128` | yellow | **draft** |
+| `#128` | green | **open**, and approved (or the repo doesn't require reviews) |
+| `#128` | yellow | **open, held by review**: waiting on a reviewer, or changes were requested |
+| `#128` | grey | **draft** |
 | `#128` | magenta | **merged** |
 | `#128` | red | **closed** |
 | _(blank)_ | — | no PR |
+
+Across open PRs it reads like a traffic light: green is clear to merge as far as review goes,
+yellow is held by review, and red is closed. Yellow only appears in repos with a
+required-review rule; elsewhere every open PR stays green. A draft is grey even though GitHub
+also marks it as needing review. The header's "PRs open" count includes the yellow ones and
+leaves drafts out.
 
 Badges come from `gh`, cached on disk so the UI never blocks on the network. They
 refresh automatically (on agent completion, on switch-in, and on a ~2-minute idle

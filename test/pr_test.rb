@@ -182,7 +182,7 @@ module Switchboard
 
       map = stub_gh_pr_list("all" => recent, "open" => open) { Pr.fetch("/whatever") }
 
-      assert_equal({ "identifier" => "#8853", "status" => "OPEN", "is_draft" => 1 },
+      assert_equal({ "identifier" => "#8853", "status" => "OPEN", "is_draft" => 1, "review" => "" },
                    map["feat-4207-part-3"],
                    "an open PR below the recent-window cutoff must still get a badge")
       assert_equal "#9000", map["old-merged"]["identifier"] # sweep still badges merged/closed
@@ -196,7 +196,7 @@ module Switchboard
 
       map = stub_gh_pr_list("all" => recent, "open" => open) { Pr.fetch("/whatever") }
 
-      assert_equal({ "identifier" => "#42", "status" => "OPEN", "is_draft" => 0 }, map["reused"])
+      assert_equal({ "identifier" => "#42", "status" => "OPEN", "is_draft" => 0, "review" => "" }, map["reused"])
     end
 
     def test_fetch_returns_nil_when_the_all_states_query_fails
@@ -254,7 +254,7 @@ module Switchboard
       results = { "lost-branch" => [pr(15_434, "MERGED", "lost-branch")] }
       stub_backfill(["lost-branch"], results) { Pr.backfill(data, "/whatever") }
 
-      assert_equal({ "identifier" => "#15434", "status" => "MERGED", "is_draft" => 0 },
+      assert_equal({ "identifier" => "#15434", "status" => "MERGED", "is_draft" => 0, "review" => "" },
                    data["lost-branch"],
                    "a worktree branch absent from every window gets a targeted query")
     end
@@ -298,7 +298,7 @@ module Switchboard
     end
 
     def test_backfill_trusts_an_open_badge_the_fresh_fetch_still_lists
-      entry = { "identifier" => "#5", "status" => "OPEN", "is_draft" => 0 }
+      entry = { "identifier" => "#5", "status" => "OPEN", "is_draft" => 0, "review" => "" }
       data = { "wt" => entry.dup }
       calls = []
 
@@ -312,12 +312,34 @@ module Switchboard
     # OPEN badge on each refresh.
     def test_backfill_skips_the_stale_open_requery_when_the_open_window_is_full
       full = (1..Pr::OPEN_LIMIT).to_h { |i| ["b#{i}", { "identifier" => "##{i}", "status" => "OPEN", "is_draft" => 0 }] }
-      data = { "wt" => { "identifier" => "#5", "status" => "OPEN", "is_draft" => 0 } }
+      data = { "wt" => { "identifier" => "#5", "status" => "OPEN", "is_draft" => 0, "review" => "" } }
       calls = []
 
       stub_backfill(["wt"], {}, calls) { Pr.backfill(data, "/whatever", full) }
 
       assert_empty calls, "absence from a FULL open window proves nothing"
+    end
+
+    # Value: protects=an OPEN badge cached before "review" existed gets its review state on a
+    # 500+-open repo; fails_when=backfill ignores entries missing the key (they'd stay green
+    # forever); why_new=the full-window gate above would otherwise skip it; seam=none
+    def test_backfill_requeries_a_legacy_open_entry_with_no_review_even_past_a_full_window
+      full = (1..Pr::OPEN_LIMIT).to_h { |i| ["b#{i}", { "identifier" => "##{i}", "status" => "OPEN", "is_draft" => 0 }] }
+      data = { "wt" => { "identifier" => "#5", "status" => "OPEN", "is_draft" => 0 } }
+      results = { "wt" => [pr(5, "OPEN", "wt", review: "REVIEW_REQUIRED")] }
+
+      stub_backfill(["wt"], results) { Pr.backfill(data, "/whatever", full) }
+
+      assert_equal "REVIEW_REQUIRED", data["wt"]["review"], "the legacy entry is re-asked once"
+    end
+
+    def test_backfill_leaves_a_legacy_merged_entry_with_no_review_alone
+      data = { "wt" => { "identifier" => "#5", "status" => "MERGED", "is_draft" => 0 } }
+      calls = []
+
+      stub_backfill(["wt"], {}, calls) { Pr.backfill(data, "/whatever", {}) }
+
+      assert_empty calls, "review only colors OPEN PRs, so a resting badge needs no re-query"
     end
 
     def test_backfill_caps_the_query_fanout
@@ -344,6 +366,19 @@ module Switchboard
     end
 
     # --- pr_list_cmd: the sort/head wiring, testable without gh ---
+
+    def test_pr_list_cmd_asks_for_the_review_decision
+      assert_includes Pr.pr_list_cmd("owner/repo", "open", 500), "reviewDecision"
+    end
+
+    def test_fetch_carries_the_review_decision_into_the_entry
+      open = [pr(7, "OPEN", "held", review: "REVIEW_REQUIRED"), pr(8, "OPEN", "plain", review: nil)]
+
+      map = stub_gh_pr_list("all" => [], "open" => open) { Pr.fetch("/whatever") }
+
+      assert_equal "REVIEW_REQUIRED", map["held"]["review"]
+      assert_equal "", map["plain"]["review"], "a missing reviewDecision still writes the key"
+    end
 
     def test_pr_list_cmd_sorts_via_search
       cmd = Pr.pr_list_cmd("owner/repo", "all", 200, sort: "updated-desc")
@@ -414,8 +449,8 @@ module Switchboard
 
     private
 
-    def pr(number, state, head, draft: false)
-      { "number" => number, "state" => state, "isDraft" => draft, "headRefName" => head }
+    def pr(number, state, head, draft: false, review: "")
+      { "number" => number, "state" => state, "isDraft" => draft, "reviewDecision" => review, "headRefName" => head }
     end
 
     def seed(name, data)

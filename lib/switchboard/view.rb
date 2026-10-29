@@ -7,7 +7,12 @@ module Switchboard
   module View
     module_function
 
-    PR_COLORS = { "OPEN" => 32, "DRAFT" => 33, "MERGED" => 35, "CLOSED" => 31 }.freeze
+    # Yellow = open but held by review; grey = draft (GitHub's own draft styling).
+    PR_COLORS = { "OPEN" => 32, "REVIEW" => 33, "DRAFT" => 90, "MERGED" => 35, "CLOSED" => 31 }.freeze
+
+    # reviewDecision values that hold a PR. "" (no required-review rule) and
+    # APPROVED stay plain OPEN.
+    REVIEW_BLOCKED = %w[REVIEW_REQUIRED CHANGES_REQUESTED].freeze
 
     # The bare identifier ("#12"), or "" when there's no PR. Used for width math
     # before color is applied, so the sidebar can right-align it. Guards on Hash
@@ -30,11 +35,20 @@ module Switchboard
     def pr_state(pr)
       return "" unless pr.is_a?(Hash)
 
-      # Draft only applies while open — a draft that's been closed is CLOSED (and a
-      # draft can't be merged). Without the OPEN gate a closed draft keeps
-      # isDraft=true and renders DRAFT (yellow), indistinguishable from a live draft.
+      # Draft and review only apply while open — a closed draft keeps isDraft=true
+      # and a closed PR can keep REVIEW_REQUIRED, but both are just CLOSED. Draft
+      # wins over review: drafts almost always report REVIEW_REQUIRED too. A cache
+      # row written before "review" existed reads as plain OPEN.
       status = pr["status"].to_s.upcase
-      status == "OPEN" && pr["is_draft"].to_i == 1 ? "DRAFT" : status
+      return status unless status == "OPEN"
+      return "DRAFT" if pr["is_draft"].to_i == 1
+
+      REVIEW_BLOCKED.include?(pr["review"].to_s.upcase) ? "REVIEW" : "OPEN"
+    end
+
+    # Open for counting purposes: a review-blocked PR is still open, a draft isn't.
+    def pr_open?(pr)
+      %w[OPEN REVIEW].include?(pr_state(pr))
     end
 
     # Diff-count badge (issue #79). Additions green, deletions red — the universal
