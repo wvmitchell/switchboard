@@ -2,10 +2,10 @@
 
 Guidance for AI coding agents working in this repository. This is the
 tool-neutral entry point ([agents.md](https://agents.md) convention);
-[CLAUDE.md](CLAUDE.md) is the canonical, in-depth version and the two are kept in
-sync. **Read CLAUDE.md before making changes** — it holds the full architecture,
-the subtle invariants (agent-state TTLs, the recycled-pane-id orphan bug,
-multi-process state), and the conventions. This file is the short orientation.
+[CLAUDE.md](CLAUDE.md) is the canonical agent map and the two are kept in sync.
+**Read CLAUDE.md before making changes** — it holds the invariants that bite, the
+conventions, and which doc in `docs/` holds the full detail for each area (read that doc
+before changing the area). This file is the short orientation.
 
 ## What this is
 
@@ -60,7 +60,7 @@ no build step.
 
 ## Further reading
 
-- [CLAUDE.md](CLAUDE.md) — the canonical deep map (read this first).
+- [CLAUDE.md](CLAUDE.md) — the canonical agent map (read this first; it points into `docs/`).
 - [CONTRIBUTING.md](CONTRIBUTING.md) — tests, conventions, release process.
 - [docs/](docs/) — the full documentation set (tutorial, how-tos, reference, explanation).
 - [docs/explanation-architecture.md](docs/explanation-architecture.md) — the design rationale.

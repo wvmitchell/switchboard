@@ -153,6 +153,109 @@ modes are quiet:
   private tarball, so the tap step skips until the repo is public and
   `HOMEBREW_TAP_TOKEN` is set.
 
+## Baked paths, in detail
+
+This is the full implementation detail [CLAUDE.md](../CLAUDE.md) points to; keep it current with the code.
+
+**Baked paths must survive `brew upgrade`** (issue #9). The install path gets
+written into long-lived wiring — the tmux.conf marker line, the tmux hooks/bindings,
+per-worktree Claude hooks, the global codex block. A clone's realpath is stable; a
+Homebrew keg's (`<prefix>/Cellar/switchboard/<ver>/…`) is deleted by upgrade+cleanup,
+and a changed path also re-hashes the codex commands, voiding their `/hooks` trust.
+So both sources of that path — `SWITCHBOARD_BIN` (`bin/switchboard`) and
+`Installer.repo_root` — run through `StablePath.resolve` (`stable_path.rb`), which
+rewrites a switchboard keg path to its `opt/switchboard` twin (fails safe to the
+realpath when no opt link exists). Under brew (`Installer.homebrew?`) install/uninstall
+skip the `~/.local/bin` symlinks and `doctor` checks the brew PATH entry instead.
+
+## The release job, in detail
+
+This is the full implementation detail [CLAUDE.md](../CLAUDE.md) points to; keep it current with the code.
+
+**Releases are automated after merge** (`.github/workflows/release.yml`; issue #9 —
+#8, assigning the version after merge, is still open). The PR still picks the version (`version.rb` + CHANGELOG entry, `vX.Y.Z` title);
+once `test` AND `formula` (macOS: formula installed from a local tap, `brew audit
+--strict` + `brew test`) are green on main, a `workflow_run` job tags it, creates the
+GitHub Release from the CHANGELOG entry, and pushes the formula to
+`wvmitchell/homebrew-switchboard`. Every run judges main's CURRENT tip (GitHub keeps one
+pending run per group, and gates finish out of order), never moves the tap backwards,
+trusts an existing tag only if its exact ref's commit passed the gates and carries the version, pins that commit so later steps fail if the tag moves, renders the formula from it, and fails loudly on any lookup error (a
+missing `actions: read` once made every run a silent no-op). All decisions live in the
+pure, table-tested `Release.plan` (`packaging/release.rb`); the YAML only gathers facts.
+The tap step skips while the repo is private or `HOMEBREW_TAP_TOKEN` is unset. Full
+detail: `docs/reference-release.md`, `docs/howto-release.md`.
+
+## The update line and upgrade, in detail
+
+This is the full implementation detail [CLAUDE.md](../CLAUDE.md) points to; keep it current with the code.
+
+### The update line (#47 — Homebrew only)
+
+A Homebrew install's sidebars show `↑ 0.58.0 available · switchboard upgrade` right
+under the wordmark, on every session, while a newer release is out (`UpdateCheck`,
+`update_check.rb`). A visible sidebar's `reload` spawns `switchboard check-update`
+when the cache (`latest.json`, `$XDG_CACHE_HOME/switchboard`) is older than 4h and the
+last attempt older than 1h; the sidebar touches the attempt file itself before
+spawning, so twenty panes start one child, and the child's non-blocking flock keeps one
+lookup at a time. The child daemonizes FIRST (no controlling terminal, so nothing it
+runs can prompt into a pane), reads the newest tag through `LatestRelease` (bounded,
+config-stripped) and writes only a real answer, so offline keeps the last one.
+`rebuild` compares the cached tag against the INSTALLED `version.rb`
+(`Installer.repo_root` follows the opt link to the new keg), never the `VERSION` this
+process loaded: after `switchboard upgrade` a running sidebar still has the old code,
+and comparing against that would keep the line up after you upgraded. Both files ride
+`warm_fingerprint`, and `reload` baselines them with the mtimes `rebuild` READ
+(`@update_seen`), not a fresh stat — a write between the two would otherwise be
+marked drawn and a hidden pane would skip the warm that shows it. Gates: only the
+installed Homebrew binary checks or draws (`applies?`: clone and `--HEAD` installs
+don't; a dogfood checkout would compare against its own branch); `update_check:
+false` stops both; `SWITCHBOARD_NO_UPDATE_CHECK` stops the check. The sandbox draws a
+seeded line (`Sandbox.seed_update`) without the Homebrew match and never fetches.
+There's no dismiss: the line shows until you upgrade.
+
+### Upgrading (`switchboard upgrade`, #10)
+
+`Upgrade` (`upgrade.rb`) fetches the newest version the way switchboard was installed —
+the install method IS the channel: Homebrew (`brew update` + `brew upgrade`), a `--HEAD`
+keg (`brew upgrade --fetch-HEAD`), or a clone (`Upgrade.clone_pull`: refused over tracked
+changes, then `git fetch` + `git merge --no-overwrite-ignore --ff-only @{upstream}`, so
+git itself refuses an update that would overwrite an untracked OR ignored local file —
+a plain pull silently overwrites ignored ones). A failed `brew update` is only a note,
+unless nothing moved: then `update_blocked` exits 1 instead of claiming "nothing newer"
+(switchboard's own tap may be the one that failed). "Up to date" is per method: the
+newest release tag for brew (`LatestRelease`, `latest_release.rb`: one `git ls-remote`
+bounded to 5s, with the user's global/system git config AND any repo config kept OUT —
+`GIT_CONFIG_GLOBAL=/dev/null`, `GIT_CONFIG_NOSYSTEM`, run from the tmpdir — so an
+`insteadOf` can't hijack it), HEAD vs its upstream
+for a clone (bounded `Git.fetch_base`, ssh in BatchMode). A stamp (keg realpath / HEAD
+commit) taken before and after decides whether anything moved. Then it **execs the new
+binary** with `upgrade --finish <old>` — the old process has the old code loaded — and
+clears `SB_REEXEC` so a clone's new binary can still re-exec under a modern Ruby. Finish
+= `Installer.refresh_wiring` (the reporter + every hooked worktree of every configured
+project, primaries too, via `HookFile.refresh`) + the codex block if installed + running
+the tmux fragment in the live server from any shell (`reload_fragment`, only when
+tmux.conf sources THIS install). An up-to-date run still finishes leftover setup
+(`leftovers?`, which includes tmux key drift), so re-running repairs an interrupted
+upgrade; with a config.yml that won't parse it finishes what doesn't need the config,
+then exits 1 naming the parse error instead of saying "up to date". A hand-off (new code)
+ends by reloading every running sidebar (`Upgrade.reload_sidebars` → `CodeReload.reload_all`,
+installed binary only; see the hot-reload section) and prints the counts. The old "press
+prefix-s twice" hint is gone.
+
+Two guards carry the design. **Only the installed binary rewrites anything shared**
+(`Installer.installed_bin?`: the running `SWITCHBOARD_BIN` is the `switchboard` on PATH):
+hook commands, the reporter and the codex block all call back into whichever binary wrote
+them, so a dogfood checkout would otherwise repoint every worktree at a path that
+vanishes. **`HookFile.refresh` only updates, never adds or clobbers**: it skips a file
+without our hooks, compares order-insensitively (`same_hooks?` / `canonical`), re-reads
+before the atomic write and returns `:conflict` if Claude saved the file meanwhile, and
+treats an unparseable file as ours (`:corrupt`, reported with `HookFile.corrupt_reason`'s
+specific cause — invalid JSON/UTF-8, a malformed hooks section, unreadable, not a regular
+file under 4 MiB — as `doctor` does) only when it carries one of our
+marks — an unreadable or foreign file is never touched. `install` runs the same
+`refresh_wiring`, so the manual route converges too.
+
+
 ## Related
 
 - [Reference: the release pipeline](reference-release.md)

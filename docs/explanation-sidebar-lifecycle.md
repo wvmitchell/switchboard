@@ -296,6 +296,281 @@ signal never change meaning. The same holds for `Creation` records, because a la
   frame, state carried, and a release that won't load is caught before anything is
   replaced. Respawn stays the fallback for sidebars too old to take the signal.
 
+## The code reload, in detail
+
+This is the full implementation detail [CLAUDE.md](../CLAUDE.md) summarizes; keep the two in step.
+
+A running sidebar **execs its own `SWITCHBOARD_BIN` in place** (`CodeReload`,
+`code_reload.rb`, plus the reload section of `sidebar.rb`). The pane runs the binary with
+no shell (`Tmux.spawn_sidebar`), so exec keeps the pid, pty and `%pane` id, and
+`owns_pane?` holds. Each sidebar re-execs its OWN bin: under brew that's the opt path
+(StablePath), so it lands in the new keg, and a dogfood checkout's sidebar stays on its
+checkout. Nothing can repoint a sidebar at another install.
+
+- **Triggers.**
+  - `SIGUSR1`, from `upgrade --finish` (installed binary only) and `switchboard
+    reload-sidebars` (any binary). Senders read `list-panes -a` once
+    (`Tmux.sidebar_reload_targets`). A pane counts as tagged when its `@sb_reload` tag is
+    its `#{pane_pid}`, or a child of it (checked in one `ps`): a shell like fish doesn't
+    exec its command. Tagged panes get the signal, sent to the tagged pid. A tag of `0`
+    means mid-exec from another reload: it's left alone, because a respawn would kill the
+    boot. An untagged pane (older than 0.59, or tmux < 3.0, where SIGUSR1's default action
+    would KILL it) is instead `respawn-pane -k`'d with NO command, so it reruns the pane's
+    own start command. The respawn adds `-e` for the resume marker, retried without `-e` on
+    old tmux. The pane is re-read just before (`Tmux.same_reload_target?`: same pid, tag,
+    liveness and command), because the preflights take time and `-k` kills whatever runs
+    there now; any tag change aborts it. Dead panes (`#{pane_dead}`, under remain-on-exit)
+    are never targets. The respawn only happens when that start command is exactly `<…/switchboard> sidebar`
+    (`Tmux.start_bin`: any program can title its pane `sb-sidebar`), and the binary passes
+    `CodeReload.restartable` (once per distinct binary): resolved once (`start_file`: an
+    absolute path, realpath'd with no opt/ rewrite, since tmux reruns the pane's own command, so
+    a keg path runs that keg, gone after cleanup or not), an
+    executable file, `version` prints `switchboard X.Y.Z`, and from 0.59 on, `sidebar --check`
+    with the resume marker passes on that same file. Older releases get `version` only: they'd
+    run `sidebar --check` as a full hidden sidebar, and a home one prunes. Just before the
+    respawn the link must still resolve to the checked file (a brew relink since then leaves
+    the pane). Otherwise the pane is left running and counted: respawn kills first, so a broken
+    or deleted checkout would cost the window its sidebar. The check runs in the sender's env,
+    which can resolve a different config than the tmux server the pane restarts in.
+  - The backstop in `tick`: `CodeReload.stale?`, which checks whether `SWITCHBOARD_BIN`'s
+    realpath root is still `LOADED_ROOT` (captured at require time). Only a Homebrew keg
+    move changes it (so a plain `brew upgrade` reloads too). It's inert for clones, and
+    costs stats only, no tmux call: the R3 contract pins that an idle tick costs what it did.
+- **The trap** only sets `@reload_signal` and writes a self-pipe (`@wake_r` is in
+  `IO.select`). It's installed in `run`, restored in `teardown`, and installed BEFORE the
+  tag goes on.
+- **`maybe_reexec`, at the loop top**, turns the flag into a request.
+  - On screen the request is due now. Off screen it's due after `CodeReload.spread_delay`
+    (0–30s) so a fleet doesn't boot plus rescan at once, and a switch-in makes it due at
+    once. The switch-in still runs its usual silent reload first (throttled by `reload_due?`,
+    like any switch-in): keys read with the poke act on the tree before the loop top swaps,
+    the swap may fail, and the new image must baseline against that reload or it replays
+    chimes. Inside POKE_TTL there is no catch-up scan, so the switch-in drops
+    `@last_announce_scan` and the swap's first scan is silent. That reload keeps the cursor
+    by row identity (`keep_cursor`), and `reexec` paints before its preflight, so the
+    caught-up tree is on screen during the check.
+  - It's never due under `?`, QR or `/`, never mid-prompt (prompts block the loop), and
+    never with half an escape sequence in `@pending`: the new image would read its tail
+    (`O`, from focus-out) as a key. All of these live in `reexec_allowed?`, which
+    `frame_timeout` also consults, so a held reload can't spin on an overdue deadline.
+  - `frame_timeout` honors `@reexec_at` only while the reload is allowed, else a passed
+    deadline would spin `IO.select`.
+- **`reexec`**:
+  0. Resolve the bin once (`CodeReload.real_bin`): the check and the exec both run that
+     file, so a `brew upgrade` repointing opt/ mid-check can't make the sidebar exec a keg
+     the check never ran. A bin that won't resolve (brew mid-relink) fails the reload: no
+     check, the pane flagged with the bin path (a deleted checkout must show; after a brief
+     relink the next reload that lands clears it, which a same-keg relink needs a
+     `reload-sidebars` for), the blocked root left as it was; a signal or the backstop retries. The new image still exports the opt path
+     (`bin/switchboard` runs its realpath through `StablePath`), unless opt/ is missing at that
+     boot: then it keeps the keg path, so `real_bin` runs a keg path through `StablePath`
+     first and that sidebar follows opt/ again at the next upgrade. Not covered: brew cleanup
+     deleting the checked keg after the exec, mid-boot (an upgrade landing during a reload,
+     e.g. a `reload-sidebars` run while `brew upgrade` is going).
+  1. Preflight: `<bin> sidebar --check` with the resume payload in its env.
+     `Sidebar.check` refuses a missing config (the new image would exit and close the
+     pane) or one with a `load_error` (this image keeps its last-good config; the new one
+     would blank the tree). It then builds a sidebar and runs `apply_resume` (shared with
+     `resume_start`) on the payload. It runs no rebuild, because rebuild writes. So it
+     proves the new code can construct a sidebar and take the payload, not just load. It's
+     bounded to 3s, runs with
+     `{"SB_REEXEC"=>nil}` so a system-Ruby re-exec still happens, and with all stdio
+     `/dev/null` since it keeps the pane as its ctty. Outcomes:
+     - `:failed` or `:timeout` blocks that root for the backstop (`@reexec_blocked_root`;
+       a newer keg gets its own try). A signal (`reload-sidebars`) still asks again, which
+       is a timed-out check's retry. There's deliberately no retry clock: a second wake
+       time that every gate had to honor produced a spin and a stale tree in review.
+
+     Either way it flags the pane `@sb_reload_failed=<root>`, after the failed exec's
+     re-tag. `doctor` lists those panes, and the next reload's summary reports them. Only a
+     new image's first tag clears the flag, in the same tmux call as the tag
+     (`clear_failed:`), retries of it included (`@tag_clears`), until a later failed reload
+     revokes that (`reload_failed` drops `@tag_clears` before it flags); the failed exec's
+     re-tag, and its retries, leave it.
+     A pid tag that didn't land is owed (`@tag_pending`) and `tick` retries it
+     (`retry_tag`), `TAG_TRIES` (5) attempts in all, then gives up: without it a `0` left by
+     the exec would make every later reload skip a running sidebar, and tmux < 3.0 (no
+     `set-option -p`) fails every time, so an uncapped retry would cost every tick.
+  2. Write the resume payload, delete `SB_REEXEC`.
+  3. `trap(USR1, "IGNORE")` plus tag `0`: caught handlers reset across exec, `SIG_IGN`
+     survives it, and a second reload during the boot would otherwise kill the new image.
+  4. Flush stdout, then exec.
+
+  A failed exec puts the env, trap and tag back and flags the failure. exec skips
+  `ensure`, so the tty stays raw with focus events on, and the new image re-asserts that.
+  It also drops the old image's `Process.detach` threads, so a resumed image sweeps
+  `Process.wait(-1, WNOHANG)` each tick (`reap_strays`). That's safe because nothing in
+  the sidebar waits on an asynchronous child: every such spawn is detached, and
+  shell-outs wait inline.
+- **Resume** (`SWITCHBOARD_SIDEBAR_RESUME`, JSON v1, ≤64 KiB, read AND deleted by
+  `take_resume` before anything spawns):
+  - `encode` never raises and never writes what `decode` would refuse. Names that aren't
+    valid UTF-8 are scrubbed: git branch names can be any bytes, `JSON.generate` raises on
+    them, and the whole fleet reloads at once. Past `PAYLOAD_MAX` the baseline is dropped
+    and the cursor kept, and `announce` goes false: with no notify cursor left, an announcing
+    first scan would re-ring every alert (so a chime or alert landing during that reload is
+    baselined silently; dispatch pings, being durable, ring on the next scan). A cursor still
+    waiting for its row travels as it came, and a raise in `resume_payload` hands over a
+    minimal payload.
+  - A payload that was handed over but won't decode is `BLANK`, not nil, so it's still a
+    reload: no clear, no launch-time prune.
+  - It carries:
+    - the cursor (identity: `CodeReload::CURSOR_FIELDS`, restored after the first
+      reload's `locate`, falling back to `cursor_to_current`; a respawn's marker carries
+      none, so it starts "here");
+    - the offset;
+    - the Edges baseline (`Edges#baseline`/`restore_baseline`: the sticky hook states past
+      PRESENCE_TTL and the notify cursor). The notify marker mtimes are carried as exact
+      `[sec, nsec]`, because `File.mtime` has nanoseconds and a cursor that comes back a
+      hair early re-rings the alert it already rang;
+    - `announce`.
+  - `announce` is true only if the old image was visible with an announcing scan within
+    REFRESH + `ANNOUNCE_GRACE`. Otherwise the first reload is silent, so a switch-in
+    reload never replays chimes another pane already rang. A missing field reads as
+    silent. It also tells `restore_baseline` the old image scanned (only an announcing scan
+    licenses it): a pane with no hooked worktree carries an empty baseline, which would
+    otherwise restore as "never scanned" and swallow a `monitoring notify` that landed
+    mid-reload.
+  - On resume, `setup` skips its `\e[2J`, and `run` skips the empty first paint: the old
+    frame stays up until the new one overwrites it. Off screen, the first warm waits out
+    the spread (`@warm_not_before`). The home sidebar skips its launch-time prune: a
+    reload isn't a launch.
+- **Cross-version contract**: newer code accepts every older payload (lenient, per field;
+  one that won't decode is a blank resume, still a reload; only an absent one is a cold start; `code_reload_test` pins a frozen v1 string).
+  `@sb_reload`, `@sb_reload_failed` and `SIGUSR1` never change meaning. `Creation` records
+  stay readable by older launchers (`Creator.launch` lives as long as its agent and keeps
+  old code).
+- **Tests**: `code_reload_test`, `sidebar_reload_test`, the reload summary in
+  `upgrade_test` / `cli_test`, and two smoke files.
+  - Both smoke files run sidebars from a fake brew prefix in the tmpdir
+    (`test/smoke/fake_keg.rb`: `Cellar/switchboard/<keg>` copies plus an `opt` link;
+    StablePath's regex is prefix-agnostic).
+  - `sidebar_reload_smoke_test` covers the signal swap (same pane and pid, cursor kept),
+    the backstop flip, a broken B leaving the old sidebar alive, an untagged pane
+    respawned, and back-to-back reloads.
+  - `upgrade_reload_smoke_test` runs `upgrade --finish` as the installed binary (a PATH
+    symlink). It patches the running keg's code in place so only the signal can show it,
+    and covers in place, restarted, and another copy's finish leaving sidebars alone.
+
+## Visibility, dormancy and pre-warming, in detail
+
+This is the full implementation detail [CLAUDE.md](../CLAUDE.md) points to; keep it current with the code.
+
+**Sidebar visibility is per-session, applied to every window** (issue #24). The
+intent lives on the session as a tmux option (`@sb_sidebar` on/off; unset reads
+as on, preserving auto-show). `Tmux.reconcile_sidebars` is the one primitive that
+spawns-or-kills each window's sidebar to match: `prefix-s` (`Tmux.toggle_sidebar`,
+switchboard's one summon/dismiss verb — visible ⇒ dismiss session-wide, hidden ⇒
+summon every window AND focus the tree) flips the flag and reconciles every window;
+`ensure_session` stamps `on` on first creation; `go`/`go_home` reconcile to the
+saved flag on switch-in (and `go_home` always restores the navigator). New
+windows are covered by the `after-new-window[99]` hook → `sidebar-sync <window>`,
+which spawns one iff the session opts in. No spawn recursion: the sidebar is a
+`split-window`, which fires `after-split-window`, not the hooked `after-new-window`.
+
+**A *shown* sidebar still goes dormant while off screen.** Every window keeps its
+own sidebar process, so at any moment most of them are on inactive windows. Each
+caches whether it's currently on screen in `@visible` (the single flag, mutated
+only via `set_visible`); `render` and the spinner/blink (`pulsing?`) are gated on
+it, and `frame_timeout` drops an off-screen sidebar from the `REFRESH` cadence to
+a long `IDLE` backstop. So an off-screen sidebar does essentially nothing — no
+paint, no agent scan, just one cheap visibility check per `IDLE` — until a poke
+wakes it: a session switch (`client-session-changed` → C-l) or a same-session
+window switch (`session-window-changed` → `poke-window` → C-l). The C-l handler
+`reload_and_refresh` **re-samples** `Tmux.visible?` rather than assuming the poke
+means on-screen, because the same C-l is also sent by background PR-refresh
+children (`maybe_refresh_prs --poke`) to a pane you may have navigated away from —
+marking that hidden pane visible would re-wake it. An un-poked reappearance (a
+window switch on a tmux too old for the hook, a bare `tmux attach`) is caught by
+the off→on `reappeared` branch in `tick` within `IDLE`.
+
+**Pre-warming keeps an off-screen sidebar's buffer fresh so switch-in doesn't
+flash a stale tree** (`prewarm?`, default on; `prewarm: false` restores full
+dormancy). Without it, switching into a session shows that pane's *last* render
+(possibly minutes old) until the switch-in poke reloads — a visible flash. A tmux
+pane buffers writes even while off screen (its grid persists; `render` doesn't
+gate on `@visible`, the caller does), so the fix is to paint it *before* you
+arrive. The off-screen branch of `tick` does a **change-gated, `WARM_TTL`-bounded,
+visibility-safe** warm: when `prewarm?` AND `WARM_TTL` has elapsed (`@last_warm`)
+AND a cheap `warm_fingerprint` differs from the `@warm_fp` baseline, it runs
+`warm_reload` + `render`. The gates are cheapest-first, so a fully idle pane still
+costs ~one `Tmux.visible?` call per `IDLE` (today's dormancy). `warm_fingerprint`
+is stats only — a `dir_fingerprint` (name+mtime per file) over the agent-state,
+attention, PR-cache, and **collapse** dirs, the **full-header / branch-fold /
+width** marker files, the **config file** (`Config.path`) mtime, plus each tracked
+worktree's `logs/HEAD` mtime — so it sees agent dots, bold, badges, commits, the
+**project registry** (a project added/removed in another session), **and the
+shared view-state** move without a git/process shell-out. It deliberately does NOT
+cover a *worktree* added/removed in **another** session; that refreshes on the
+switch-in reload as before.
+
+**A project added/removed in another session propagates like shared view-state.**
+`@config` is cached per sidebar process (git is the runtime truth; the config is
+just the project registry), so a project registered elsewhere used to stay
+invisible until the pane's process was respawned. `rebuild` — the one chokepoint
+every reload path funnels through (switch-in poke, the ~15s tree-tick, the
+off-screen warm) — now calls `refresh_config` (`sidebar/actions.rb`): an
+**mtime-gated** re-read that costs one `stat` when the file is unchanged and a
+`Config.new` only when it actually changed (keeping the last-good `@config` on a
+parse error, like `reload_config`, which shares the same `@config_mtime` baseline).
+So the frequent `C-l` reload stays as cheap as when it never re-read config, yet a
+changed registry lands on the next reload. The config-mutating verbs
+(`add_local`/`add_clone`/`add_create`/`remove_project`, and the `e`/CLI `reload-config` path)
+also `Tmux.broadcast_warm` so every *other* sidebar re-reads immediately, and the
+config mtime rides `warm_fingerprint` as the lazy backstop — the same
+broadcast-plus-fingerprint shape as the shared view-state. Because peers now read
+the config concurrently with a writer, `Config.add_project`/`remove_project`/
+`scaffold` write **atomically** (`MarkerBlock.atomic_write`, temp+rename, symlink-
+and mode-aware) — the same invariant the marker stores / `HookFile` / `MarkerBlock`
+already hold: a plain `File.write`'s `O_TRUNC` window would let a peer read the
+empty file, which is *valid YAML* (`load_error` wouldn't catch it), and adopt a
+zero-project config that blanks its whole tree.
+
+**Shared view-state propagates instantly via a broadcast, not just the lazy
+fingerprint.** A collapse/branch-fold/full-header toggle in one sidebar is a user
+action that writes a shared on-disk store; the toggling sidebar then
+`Tmux.broadcast_warm`s a `C-w` "repaint now" poke (`WARM_POKE_BYTE`) to every
+*other* sidebar pane (`all_sidebar_panes`, except itself). Each handles it in
+`warm_poke`: off screen → `warm_reload` + render (paint the new view-state into the
+buffer); on screen → a silent `reload` + render. So an off-screen sidebar reflects
+the fold within ~0.2s — before you can switch to it — instead of lagging until its
+~`IDLE` warm tick (the bug where "collapse then switch still flashed"). The
+broadcast is event-driven (fires only on the rare toggle, zero steady-state cost,
+so dormancy is preserved); the view-state entries in `warm_fingerprint` are the
+lazy backstop if a broadcast is missed. The earlier `prewarm` shipped WITHOUT
+this — its fingerprint omitted view-state, so a collapse never warmed off-screen
+panes and every switch-in repainted the fold = a flash on exactly the case folks
+test with. Width is the one view-state that still defers to switch-in: changing it
+*resizes* the pane (a `pin`, not just a render), so a warm repaint can't apply it
+off screen — the fingerprint tracks it as a backstop but the resize lands on the
+switch-in `pin`.
+
+`warm_reload` is **not** `reload` with flags — reusing `reload` off screen caused
+two real bugs (caught in review): `reload`→`locate` clears `Attention` for
+`@current_path`, so an off-screen warm would erase the bold the on-screen sidebar
+just set for that workspace's completion *before you saw it*; and `reload` stamps
+`@last_reload`, so a warm within `POKE_TTL` of a switch would make
+`reload_and_refresh` skip its PR refresh. So `warm_reload` **skips `locate`
+entirely** (an off-screen pane's `@current_path` can't change while you're away)
+and stamps only `@last_warm` (never `@last_reload`, so switch-in still does its
+full reload + PR refresh). It also passes `refresh_prs: false` (no off-screen
+PR-spawn fan-out — the edge fanout (`Edges#on_scan`) still marks + advances the baseline, only the
+spawn is gated) and `hooks_only: true` to `AgentState.scan` (skip the
+tmux/pgrep/lsof `Agents.active` fallback — which otherwise fires whenever *any*
+worktree lacks a live hook, i.e. almost always — so an off-screen scan stays
+cheap; hook-less/activity dots just defer their freshness to switch-in). Sounds
+are never rung off screen (`announce_sounds: false`). Honest scope: this
+*drastically reduces* the flash, it doesn't kill it — a change in the last
+`~IDLE+WARM_TTL` before a switch can still be caught mid-warm. One limitation:
+the warm frame is drawn at the off-screen pane's size, which is correct for a
+single client at a stable size (the dominant case) but may be briefly mis-sized
+under multiple clients of different sizes until the switch-in poke re-renders
+(self-heals via the poke we already have, never worse than today). The hook
+reporter writes atomically (temp+rename, `hook_file.rb`; the reporter script itself too, since sh
+reads a running script as it goes) so the warm fingerprint
+can never catch — and stamp-as-clean — a torn state file.
+
+
 ## Related
 
 - [Explanation: architecture](explanation-architecture.md) — why tmux owns the lifecycle.
