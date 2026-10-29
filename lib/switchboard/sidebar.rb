@@ -105,6 +105,7 @@ module Switchboard
       @config_mtime = config_mtime # config file's mtime at load; refresh_config re-reads on change
       resolve_keymap      # @keymap (key->action) + @bindings (action->key); re-run each rebuild (#108)
       @cursor = 0
+      @count = nil         # a half-typed vim count ("3" of 3j), as typed
       @offset = 0
       @nodes = []          # full tree
       @rows = []           # visible rows (collapsed projects hide their children)

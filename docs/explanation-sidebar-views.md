@@ -430,6 +430,23 @@ for the overlay and footer hints) in `initialize`, and rebuilds them on every `r
 editing the config with `e` (`reload_config_and_rebuild` → `reload` → `rebuild`) re-binds
 the keys live.
 
+### Digits: a count, unless you've bound them
+
+Digits have one job in the tree, vim's movement count: `3j` moves down three rows. No
+default action uses a digit, but `valid_sidebar_key?` lets you bind one, so the count only
+claims a digit nothing is bound to. If you've put `toggle_branch_fold: "3"` in your config,
+`3` keeps folding branches and never starts a count. For the same reason the `?` overlay's
+move row says "takes a count" rather than showing `3j`: with digits remappable, a literal
+example could point at a key that does something else.
+
+A count lives in the sidebar process between keystrokes, since `3` and `j` often arrive in
+separate reads. Every real key uses it up, whether it moves or not, so `3` then `z` folds
+branches and leaves nothing behind for the next `j`. The tmux pokes are the exception: a
+switch-in `C-l` or a peer's warm broadcast can land between your `3` and your `j`, so they
+leave the count alone. Focus leaving the pane does clear it. That can't split a count
+you're typing, and it keeps a forgotten digit from turning your next `j`, an hour later,
+into a jump.
+
 ## Related
 
 - [Explanation: the sidebar's lifecycle](explanation-sidebar-lifecycle.md) — why view state lives on disk.

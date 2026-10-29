@@ -45,7 +45,7 @@ drifts from a remap.
 
 | Default | Action | What it does |
 |---------|--------|--------------|
-| `↑` / `↓` / `Ctrl-N` / `Ctrl-P` / `j` / `k` | `down` / `up` | Move the highlight down/up (across projects, workspaces, and a workspace's branch rows). Arrow, emacs, and vi spellings all work; only the `j`/`k` letters are remappable (the `↑`/`↓`/`Ctrl-N`/`Ctrl-P` aliases are fixed). In filter mode `j`/`k` type into the query instead. |
+| `↑` / `↓` / `Ctrl-N` / `Ctrl-P` / `j` / `k` | `down` / `up` | Move the highlight down/up (across projects, workspaces, and a workspace's branch rows). Arrow, emacs, and vi spellings all work; only the `j`/`k` letters are remappable (the `↑`/`↓`/`Ctrl-N`/`Ctrl-P` aliases are fixed). Type a count first to move that many rows, as in vim: `3j` moves down three, `10k` up ten. The footer shows a count you've started (`3…`; [`count_indicator: false`](reference-config.md#top-level-keys) hides it), and any other key or leaving the pane drops it. A digit you've bound to an action in `sidebar_keys` keeps doing that action instead of counting. In filter mode `j`/`k` type into the query instead. |
 | `g` / `G` | `top` / `bottom` | Jump to the top / bottom of the tree. |
 | `←` / `→` | _(fixed)_ | Narrow / widen the sidebar pane (2 cols per press; hold to resize smoothly). The width is shared across every window's sidebar and survives a restart. Inert in filter mode. |
 | `/` | `filter` | Filter the tree — type to jump straight to a workspace by name. See [Filter mode](#filter-mode) below. |

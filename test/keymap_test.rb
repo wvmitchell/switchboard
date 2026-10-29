@@ -70,6 +70,13 @@ module Switchboard
       refute map.value?(:delete), "the dropped action has no key in the dispatch map"
     end
 
+    # No literal 3j: a digit can be remapped in sidebar_keys, so an example could
+    # advertise a key that does something else.
+    def test_help_rows_say_the_move_keys_take_a_count
+      rows = Keymap.help_rows(Keymap.bindings(cfg({})))
+      assert(rows.any? { |key, desc| key.include?("j k") && desc == "move · takes a count" })
+    end
+
     def test_help_rows_reflect_a_remap
       rows = Keymap.help_rows(Keymap.bindings(cfg("sidebar_keys" => { "new_workspace" => "c" })))
       new_ws = rows.find { |_key, desc| desc == "new workspace" }

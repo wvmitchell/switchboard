@@ -128,7 +128,7 @@ module Switchboard
       k = ->(name) { bindings[name] || "—" }
       [
         ["", "navigate"],
-        ["↑ ↓  ^n ^p  #{k[:down]} #{k[:up]}", "move"],
+        ["↑ ↓  ^n ^p  #{k[:down]} #{k[:up]}", "move · takes a count"], # no literal 3j: a digit can be remapped
         ["#{k[:top]}  #{k[:bottom]}", "top · bottom"],
         ["←  →", "narrow · widen pane"],
         ["", "open"],
