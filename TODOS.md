@@ -402,18 +402,6 @@ safe today; each is narrow).
   `Input.tokenize` so both readers share one grammar. Pure cleanup; do it next time
   the prompt path is touched.
 
-## Sidebar hot reload (issue #48, v0.59.0) follow-ups
-
-Found by the /ship reviews after the 3-cycle fix limit; deferred with Will's OK (D4).
-*Start in:* the reload section of `lib/switchboard/sidebar.rb`, `CodeReload.reload_all`.
-
-- **A `0` tag whose replacement never lands still strands the pane.** *Why:* since 0.60.3 a
-  new image retries its pid tag (`retry_tag`) up to `TAG_TRIES`; if every attempt fails, the
-  `0` from the exec stays and later reloads skip the pane, with no failure flag for `doctor`.
-  Rarer than before (five failures in a row, or tmux < 3.0, where the exec path can't tag at
-  all). *Fix:* on give-up, flag the pane best-effort, or stamp the `0` with its time beside the
-  tag (`@sb_reload_boot`) so senders can treat an old one as stuck. **Priority:** P3.
-
 ## Sidebar off-screen-work (architecture-review) follow-ups
 
 - **Tighten off-screen detection (zoom + bare-attach).** After the visibility-aware
