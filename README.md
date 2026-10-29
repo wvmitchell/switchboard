@@ -2,11 +2,10 @@
 
 **Run a dozen coding agents at once and always know who needs you — without touching the mouse.**
 
-Switchboard is a keyboard-only switcher and creator for git-worktree workspaces.
-A persistent `tmux` sidebar shows every workspace as a tree, with a live dot
-beside each one telling you whether its agent is thinking, done, or waiting on
-you. Switch between them with a keystroke. It's terminal-native — no Electron,
-no mouse, no database. Pure Ruby, **zero gem dependencies**.
+Switchboard is a keyboard-only `tmux` sidebar for git-worktree workspaces. Every
+workspace shows up as a row with a live dot telling you whether its agent is thinking,
+done, or waiting on you; one keystroke switches to it. Worktrees are discovered straight
+from `git`, so anything you create just shows up. Pure Ruby, zero gem dependencies.
 
 ```
 switchboard · home
@@ -23,156 +22,73 @@ switchboard · home
 ↑↓ move · ↵ open · ? help
 ```
 
-Each row shows its work at a glance: an **agent dot** (`⠹` blue thinking, `◆`
-magenta waiting, `●` green done, `◷` blue still running work it handed off, `∞` green
-running a background monitor), the `»`
-pointer for where you are now, the committed diff vs base (`+adds −dels`), and the
-PR as a color-coded `#number`. When an agent finishes a turn you **hear a short
-chime** and its name goes **bold** until you look — so a completion that lands
-while you're heads-down elsewhere is still waiting for your eye.
-
-An agent running a **background monitor or recurring loop** shows the steady `∞`
-instead of reading as idle/done, so you don't mistake "watching in the background"
-for "finished and abandoned" (and a looping agent won't chime on every tick). Work an
-agent hands off without declaring anything — a background agent, a background shell — shows
-`◷` until it's done, and for a background agent the done chime waits for it. The
-agent flags it with `switchboard monitoring on` (taught automatically via the
-`background_presence` nudge; toggle off in config), or you can run it by hand. When one
-of those quiet cycles actually **surfaces something** — the monitor found what it was
-watching for — the agent runs `switchboard monitoring notify` and that workspace bolds
-and plays a distinct **alert** sound, the one exception to the silent ticks, so a
-background find still reaches you.
-
-A workspace you can reach **from your phone** right now — a Claude session with
-`/remote-control` (`/rc`) on — shows a green `⇅` after its name, and the home header counts
-your links. Nothing to set up: switchboard reads the session file Claude already
-writes. A link left idle past `remote_link_stale_after` (default 120 minutes) turns
-its `⇅` grey and is counted as an **idle link**, so a door you opened and forgot
-doesn't stay open unnoticed. Press `p` on a `⇅` row to show its link as a QR code,
-and your phone's camera opens that exact session.
-
-Renaming a workspace **renames its Claude session too**, so your phone's session list
-and Claude's resume picker show the workspace's name, not the first one Claude gave
-it. No agent has a rename API, so switchboard types `/rename <name>` into the agent's
-pane, and only when that's safe: between turns, while your keyboard is on another
-pane and you haven't touched it for a couple of seconds, into an empty prompt. Turn it off with `sync_session_name: false`.
-
-## Why
-
-Coding agents pay off in parallel — several at once, each in its own worktree.
-But past two or three you lose the thread: which one finished, which is blocked
-on you, which is still grinding. Switchboard gives you one glanceable,
-keyboard-driven view over all of them, and discovers worktrees straight from
-`git`, so anything you create just shows up — nothing to sync.
+`⠹` thinking · `◆` waiting on you · `●` done · `◷` finishing handed-off work ·
+`∞` running a background monitor. Each row also shows its diff against base and its PR.
+When an agent finishes you hear a chime and its name stays **bold** until you look.
+What every glyph and color means: [sidebar reference](docs/reference-sidebar.md).
 
 ## Quickstart
 
-With Homebrew (installs tmux, git, gh, and Ruby for you):
+With Homebrew (brings tmux, git, gh, and Ruby along):
 
 ```sh
 brew tap wvmitchell/switchboard
-brew trust wvmitchell/switchboard             # Homebrew 7+ asks you to trust a tap
+brew trust wvmitchell/switchboard   # Homebrew 7+ asks you to trust a tap
 brew install switchboard
-switchboard install                          # tmux wiring + starter config (idempotent)
-switchboard                                  # launch — drops you in the sidebar
+switchboard install                 # tmux wiring + starter config
+switchboard                         # launch
 ```
 
-Or from a clone (you'll need **tmux**, **git**, **gh**, and **Ruby ≥ 3.3**, no gems;
-on macOS: `brew install tmux git gh`):
+Or from a clone (needs tmux, git, gh, and Ruby ≥ 3.3):
 
 ```sh
 git clone https://github.com/wvmitchell/switchboard
-cd switchboard && bin/switchboard install   # symlinks + tmux wiring + starter config (idempotent)
-switchboard                                  # launch — drops you in the sidebar
+cd switchboard && bin/switchboard install
+switchboard
 ```
 
-That's it. `switchboard install` puts `switchboard` (and a short `sb` alias) on
-your PATH, adds one line to your tmux config, and writes a starter config;
-`switchboard doctor` confirms everything's wired. From a plain shell,
-`switchboard` bootstraps and attaches the home session; inside tmux, `prefix-s`
-toggles the sidebar from any pane.
-
-### Upgrading
-
-```sh
-switchboard upgrade
-```
-
-It updates switchboard the way you installed it (Homebrew, or a fast-forward pull in
-a clone), then brings your setup up to date: tmux's key bindings and hooks, every
-existing worktree's agent hooks, and the codex hooks if you use them. Running sidebars
-swap in the new code where they sit, keeping your cursor and folds: no restart to do
-(`switchboard reload-sidebars` does the same by hand, say after a `git pull` in a clone).
-Already on the newest release, it says so. On Homebrew the sidebar tells you when a new release is out
-(a `↑ 0.58.0 available` line under the wordmark; `update_check: false` turns it off). Moving a clone install to Homebrew, or uninstalling, is covered in
+Inside tmux, `prefix-s` toggles the sidebar from any pane. `switchboard doctor` checks
+your setup, and `switchboard upgrade` keeps it current — running sidebars pick up the
+new code without a restart. More in
 [How to install, upgrade, or move to Homebrew](docs/howto-install-and-upgrade.md).
 
-## The core loop
-
-Everything happens from inside the sidebar:
+## The keys you need
 
 | Key | Does |
 | --- | ---- |
-| `a` | add a project — register a local repo or clone a URL |
-| `n` | dispatch a new workspace in the highlighted project — type what the agent should do (or just `↵`); it builds in the background and pings you when it's ready |
-| `↵` | switch to a workspace (or expand/collapse a project) |
-| `/` | filter — type a few letters to jump straight to a workspace |
-| `?` | the full key map — every shortcut; `→`/`Space` turn the page on a short pane, any other key closes it |
+| `a` | add a project (a local repo or a URL to clone) |
+| `n` | new workspace — type a task for the agent, `↵`, and it builds in the background |
+| `↵` | switch to a workspace (or fold a project) |
+| `/` | filter by name |
+| `?` | every other key |
 
-`a` to make a project, `n` to make work, `↵` to move between it — all without
-leaving the keyboard. Forgot a key? Press `?`. That's the whole muscle memory;
-the [full key map](docs/reference-keybindings.md) has the rest (rename, delete,
-open PR, resize, fold branches, jump to top/bottom, …). Don't like the defaults?
-Remap any of them with [`sidebar_keys`](docs/reference-config.md#sidebar_keys).
+The rest are in the [key map](docs/reference-keybindings.md), and any of them can be
+remapped with [`sidebar_keys`](docs/reference-config.md#sidebar_keys).
 
-## Launching your agent
+## Start your agent automatically
 
-The point of all this is that a new workspace comes up *already running your
-agent*. That's the `session_command` — what switchboard types into a worktree's
-window the first time it creates that session:
+Tell switchboard what to run in a new workspace, and optionally how to set it up first:
 
 ```yaml
 # ~/.config/switchboard/config.yml
 session_command: claude --dangerously-skip-permissions
-```
 
-Set it globally or override it per project (a different agent, different flags).
-It fires only when a workspace is first created, never on a re-switch, so a
-running agent is never disturbed — and leave it unset and a new workspace is just a
-plain shell.
-
-The task you type after `n` becomes the agent's first prompt. For a plain `claude …`
-or `codex …` command it's appended for you; for anything else, put `{task}` where it
-goes (`aider --message {task}`). The workspace builds in the background — `◌` in the
-sidebar — and you get a chime when the agent's first turn is done.
-
-## Making a new worktree usable
-
-A fresh worktree has none of the untracked, git-ignored files your main checkout
-picked up — no `.env`, no `node_modules`. `worktree_creation_command` is the setup
-that fixes that. It runs **once, in the new worktree, before your agent**:
-
-```yaml
-worktree_creation_command:
+worktree_creation_command:   # runs once in the new worktree, before the agent
   - cp "$SWITCHBOARD_PROJECT_PATH/.env" .
   - bundle install
 ```
 
-A string works too (one line or a whole script), and a project can override it —
-or set it to `false` to opt out. It's run with `sh -ec`, so it stops at the first
-failing step, and a failed setup means your agent never starts: the workspace turns
-`✘` with a soft falling sound, and switching in shows the error instead of an agent
-working a broken checkout.
-
-Every config knob is in the [config reference](docs/reference-config.md).
+The task you type after `n` becomes the agent's first prompt (use `{task}` to place it
+for agents other than `claude` and `codex`). If setup fails, the agent never starts and
+the workspace shows `✘`. Both keys can be overridden per project; every option is in
+the [config reference](docs/reference-config.md).
 
 ## Documentation
 
-This README is the overview. The full set lives in [`docs/`](docs/README.md),
-organized by the [Diataxis](https://diataxis.fr/) framework:
+The full set lives in [`docs/`](docs/README.md):
 
 - **New here?** [Tutorial: getting started](docs/tutorial-getting-started.md) —
-  install to your first worktree switch, with a live agent dot, in ~10 minutes.
+  from install to your first switch in about ten minutes.
 - **How-to guides** — [install & upgrade](docs/howto-install-and-upgrade.md) ·
   [manage projects](docs/howto-manage-projects.md) ·
   [agent state & sounds](docs/howto-agent-state-and-sounds.md) ·
@@ -193,19 +109,8 @@ organized by the [Diataxis](https://diataxis.fr/) framework:
 
 ## Contributing
 
-Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for the test,
-zero-gem, and release conventions, and [AGENTS.md](AGENTS.md) if you're pointing
-an AI coding agent at the repo. The test suite is stdlib Minitest with no build
-step: `bin/test`.
-
-Working on the sidebar UI? `bin/switchboard sandbox` boots **this checkout's**
-sidebar in a throwaway, fully-isolated tmux — its own server, socket, and state,
-seeded with a few worktrees (a PR badge, a big diff, an expanded multi-branch
-workspace) so alignment/colors/spacing changes have something to render against.
-Drive it by hand; detach (`prefix-d`) and it tears the whole thing down. Nothing
-it does — `go_home`, a reconcile, even `quit` — can reach your real `sb/`
-sessions, so you can dogfood an in-flight branch without eating your live
-workspaces. It's the interactive twin of the real-tmux smoke layer
-(`bin/test-smoke`).
+See [CONTRIBUTING.md](CONTRIBUTING.md) (and [AGENTS.md](AGENTS.md) for AI coding agents).
+Tests are stdlib Minitest: `bin/test`. `bin/switchboard sandbox` runs your checkout's
+sidebar in a throwaway tmux that can't touch your real sessions.
 
 Licensed under [MIT](LICENSE).
