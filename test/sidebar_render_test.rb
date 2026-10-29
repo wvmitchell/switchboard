@@ -552,12 +552,14 @@ module Switchboard
     def test_console_counts_worktrees_active_agents_and_open_prs
       open_pr  = { "identifier" => "#7", "status" => "OPEN", "is_draft" => 0 }
       draft_pr = { "identifier" => "#8", "status" => "OPEN", "is_draft" => 1 } # draft ≠ open
+      held_pr  = { "identifier" => "#9", "status" => "OPEN", "is_draft" => 0, "review" => "REVIEW_REQUIRED" }
       nodes = [proj("app"),
                ws("a", path: "/wt/a", pr: open_pr),
                ws("b", path: "/wt/b", pr: draft_pr),
-               ws("c", path: "/wt/c")]
+               ws("c", path: "/wt/c"),
+               ws("d", path: "/wt/d", pr: held_pr)] # review-blocked is still open
       sb = sidebar(nodes: nodes, agents: { "/wt/a" => :thinking, "/wt/b" => :done })
-      assert_equal "3 worktrees · 1 active · 1 PR open", sb.send(:console)
+      assert_equal "4 worktrees · 1 active · 2 PRs open", sb.send(:console)
     end
 
     def test_console_quiets_the_zero_clauses

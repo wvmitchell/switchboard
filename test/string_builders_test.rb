@@ -133,9 +133,32 @@ module Switchboard
       assert_equal "CLOSED", View.pr_state("status" => "closed", "is_draft" => 1)
     end
 
-    def test_pr_tag_closed_draft_is_red_not_yellow
+    # Value: protects=review-blocked PRs get their own state while open only; fails_when=draft
+    # stops beating review, the OPEN gate is dropped, or "" / APPROVED / a legacy row turns
+    # yellow; why_new=no review state existed; seam=none
+    def test_pr_state_maps_the_review_decision
+      assert_equal "REVIEW", View.pr_state("status" => "OPEN", "review" => "REVIEW_REQUIRED")
+      assert_equal "REVIEW", View.pr_state("status" => "OPEN", "review" => "CHANGES_REQUESTED")
+      assert_equal "OPEN", View.pr_state("status" => "OPEN", "review" => "APPROVED")
+      assert_equal "OPEN", View.pr_state("status" => "OPEN", "review" => ""), "no required-review rule"
+      assert_equal "OPEN", View.pr_state("status" => "OPEN"), "a row cached before review existed"
+      assert_equal "DRAFT", View.pr_state("status" => "OPEN", "is_draft" => 1, "review" => "REVIEW_REQUIRED"),
+                   "drafts almost always report REVIEW_REQUIRED; draft wins"
+      assert_equal "CLOSED", View.pr_state("status" => "CLOSED", "review" => "REVIEW_REQUIRED")
+      assert_equal "MERGED", View.pr_state("status" => "MERGED", "review" => "APPROVED")
+    end
+
+    def test_pr_open_counts_review_blocked_but_not_drafts
+      assert View.pr_open?("status" => "OPEN")
+      assert View.pr_open?("status" => "OPEN", "review" => "REVIEW_REQUIRED")
+      refute View.pr_open?("status" => "OPEN", "is_draft" => 1)
+      refute View.pr_open?("status" => "MERGED")
+      refute View.pr_open?(nil)
+    end
+
+    def test_pr_tag_closed_draft_is_red_not_grey
       closed_draft = View.pr_tag("identifier" => "#7", "status" => "closed", "is_draft" => 1)
-      assert_includes closed_draft, "\e[31m" # CLOSED -> red, distinct from DRAFT yellow
+      assert_includes closed_draft, "\e[31m" # CLOSED -> red, distinct from DRAFT grey
     end
 
     def test_pr_tag_colors_by_state_and_is_empty_without_a_pr
@@ -144,7 +167,9 @@ module Switchboard
       assert_includes open_tag, "#5"
       assert_includes open_tag, "\e[32m" # OPEN -> green
       draft_tag = View.pr_tag("identifier" => "#6", "status" => "open", "is_draft" => 1)
-      assert_includes draft_tag, "\e[33m" # DRAFT -> yellow
+      assert_includes draft_tag, "\e[90m" # DRAFT -> grey
+      review_tag = View.pr_tag("identifier" => "#7", "status" => "open", "review" => "REVIEW_REQUIRED")
+      assert_includes review_tag, "\e[33m" # REVIEW -> yellow
     end
 
     # --- View diff-count badge (issue #79) -----------------------------------

@@ -10,6 +10,17 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
+## [0.61.0] — a PR waiting on review shows yellow (2026-10-29)
+
+### Changed
+- A PR badge now tells you when an open PR is held by review. It turns yellow while the PR
+  waits on a required review or has changes requested, and stays green once approved (or in
+  a repo with no required-review rule). Drafts, which used to be yellow, are now grey.
+  Merged (magenta) and closed (red) are unchanged.
+- The header's "PRs open" count includes the yellow, review-held PRs and still leaves
+  drafts out.
+- Badges cached by an older version pick up their review state on the next refresh.
+
 ## [0.60.9] — a reload signals sidebars before its slow checks (2026-10-29)
 
 ### Fixed
