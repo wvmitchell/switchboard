@@ -57,6 +57,7 @@ agent_state_hooks: true                  # auto-wire agent-state dots on create
 prune_on_launch: true                    # tidy orphaned sessions on landing home
 auto_rename: true                        # let the agent name a placeholder workspace (on by default)
 diff_counts: true                        # show +adds −dels on each row (false skips the git diff)
+count_indicator: true                    # show a half-typed count (the 3 of 3j) in the footer
 prewarm: true                            # keep off-screen sidebars warm (false = full dormancy)
 remote_link_stale_after: 120             # minutes before an idle /rc link's ⇅ turns grey
 update_check: true                       # Homebrew: a line under the wordmark when a newer release is out

@@ -288,7 +288,7 @@ Help you have to already know about isn't help, so `footer` always ends with `? 
 And since the overlay holds the full reference, the footer dropped its two lines of
 action keys. It's one line that changes with context (`nav · ? help`, where the nav verb
 swaps between open, collapse and switch; on the home sidebar, the title; in an empty tree,
-the invitation to add a first project), which gives the tree two more rows. The old
+the invitation to add a first project; while you type a movement count, `3…`), which gives the tree two more rows. The old
 `/ filter` and `+/− vs base` hints moved into the overlay. `filter_footer` keeps its three
 lines, since it shows the live query, not key hints.
 
@@ -406,8 +406,9 @@ and it compares raw stdin bytes.
 
 That one rule reserves every structural key for free. `↵` (the row's action), `Esc`,
 `Backspace`, the resize arrows `←`/`→`, the `C-l`/`C-r` pokes, and focus in and out are all
-non-printable. A remap can't shadow them, and they stay as a literal `case` in `dispatch`
-ahead of the keymap lookup. It also means a configured key can never collide with a fixed
+non-printable. A remap can't shadow them, and `dispatch` handles them ahead of the keymap
+lookup: the pokes and focus reports go to `poke` before a digit can start a count, and `↵`
+and the resize arrows are a literal `case`. It also means a configured key can never collide with a fixed
 alias (printable and non-printable never overlap), so the only possible collisions are
 between two printable keys.
 
