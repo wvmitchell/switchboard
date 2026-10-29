@@ -730,7 +730,7 @@ checkout. Nothing can repoint a sidebar at another install.
        time that every gate had to honor produced a spin and a stale tree in review.
 
      Either way it flags the pane `@sb_reload_failed=<root>`, after the failed exec's
-     re-tag. `doctor` lists those panes, and the next reload's summary reports them. Only a
+     re-tag. `doctor` lists those panes, and the next reload's summary reports those it asks again. Only a
      new image's first tag clears the flag, in the same tmux call as the tag
      (`clear_failed:`), retries of it included (`@tag_clears`), until a later failed reload
      revokes that (`reload_failed` drops `@tag_clears` before it flags); the failed exec's

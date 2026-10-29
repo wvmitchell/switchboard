@@ -278,15 +278,20 @@ module Switchboard
     def test_a_signal_that_fails_is_counted_unreached
       counts, = reload_with([target("%1", tagged: true), target("%2", tagged: true, failed: true)], signal_ok: false)
       assert_equal({ signaled: 0, respawned: 0, left: 0, unreached: 2, failed: 0 }, counts)
+      counts, log = reload_with([target("%1", tagged: false, pid: 10, tag_pid: 11, bin: install("c"), failed: true)],
+                                parents: { 11 => 10 }, signal_ok: false)
+      assert_equal({ signaled: 0, respawned: 0, left: 0, unreached: 1, failed: 0 }, counts, "a sidebar under fish, too")
+      assert_empty log.select { |e| e.first == :respawn }, "never respawned on a failed signal"
     end
 
     # Value: protects=a sidebar gone before its signal lands is reported, not raised out of the
-    # whole reload (and upgrade --finish); fails_when=signal_sidebar's rescue is narrowed or
-    # dropped; why_new=every reload test stubs the signal; seam=none
+    # whole reload (and upgrade --finish); fails_when=signal_sidebar's rescue drops ESRCH or EPERM;
+    # why_new=every reload test stubs the signal; seam=none
     def test_signaling_a_gone_sidebar_reads_as_unreached
       gone = Process.spawn("true", in: File::NULL)
       Process.wait(gone)
-      refute Tmux.signal_sidebar(gone)
+      refute Tmux.signal_sidebar(gone), "ESRCH"
+      refute Tmux.signal_sidebar(1), "EPERM: pid 1 isn't ours" unless Process.uid.zero?
     end
 
     # Value: protects=a second reload never kills a sidebar mid-exec (R4); fails_when=a "0" tag
