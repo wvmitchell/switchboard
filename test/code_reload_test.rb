@@ -261,8 +261,9 @@ module Switchboard
       counts, log = reload_with([target("%1", tagged: false, pid: 10, tag_pid: 11, bin: install("c"))], parents: { 11 => 10 })
       assert_equal({ signaled: 1, respawned: 0, left: 0, unreached: 0, failed: 0 }, counts)
       assert_equal [[:signal, 11]], log
-      _, log = reload_with([target("%1", tagged: false, pid: 10, tag_pid: 11, bin: install("c"))], parents: { 11 => 99 })
+      counts, log = reload_with([target("%1", tagged: false, pid: 10, tag_pid: 11, bin: install("c"))], parents: { 11 => 99 })
       refute_includes log, [:signal, 11], "a stale tag whose pid isn't the pane's child is never signaled"
+      assert_equal 1, counts[:respawned], "it falls through to the restart pass instead of going uncounted"
     end
 
     def test_a_previous_failed_reload_is_counted
@@ -315,6 +316,18 @@ module Switchboard
       assert_includes log, [:signal, 1]
       assert_includes log, [:respawn, "%2", false], "with a decodable resume marker"
       refute_includes log, [:preflight, nil]
+    end
+
+    # Value: protects=no SIGUSR1 lands seconds after the listing read its pid (a sidebar that
+    # exited meanwhile could have that pid reused by another process, which the signal would
+    # quit); fails_when=signals and restart checks interleave again; why_new=no test watched
+    # the order; seam=none; no_claim=a real pid reuse (signal and preflight stubbed)
+    def test_every_signal_goes_out_before_any_restart_check
+      _, log = reload_with([target("%1", tagged: false, bin: install("old")), target("%2", tagged: true, pid: 2),
+                            target("%3", tagged: false, bin: install("older")), target("%4", tagged: true, pid: 4)])
+      kinds = log.map(&:first)
+      assert_equal [:signal, :signal], kinds.first(2), "both signals before the first preflight"
+      assert_includes kinds, :preflight
     end
 
     # Value: protects=no sidebar vanishes on upgrade (R2, R5); fails_when=a missing, unparseable
@@ -489,8 +502,13 @@ module Switchboard
       assert_equal 1, counts[:left]
     end
 
+    # Value (the empty row): protects=a server with no sidebars reports zero counts, not "no
+    # server"; fails_when=an empty listing returns nil or skips the counts; seam=none
     def test_reload_all_is_nil_off_a_server
       assert_nil stub_method(Tmux, :sidebar_reload_targets, -> { nil }) { CodeReload.reload_all }
+      counts, log = reload_with([])
+      assert_equal({ signaled: 0, respawned: 0, left: 0, unreached: 0, failed: 0 }, counts, "no sidebars: zeros, not nil")
+      assert_empty log
     end
 
     def test_describe_names_what_happened

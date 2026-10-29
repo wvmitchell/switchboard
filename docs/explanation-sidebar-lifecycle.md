@@ -318,7 +318,10 @@ The details of that payload are [below](#the-resume-payload).
 
 **A signal.** `upgrade --finish` (installed binary only) and `switchboard reload-sidebars`
 (any binary) send `SIGUSR1`. Senders read `list-panes -a` once
-(`Tmux.sidebar_reload_targets`) to pick targets:
+(`Tmux.sidebar_reload_targets`) to pick targets, and signal every one that takes a signal
+before running any restart check below. Those checks take seconds, and a pid read from the
+listing that long ago could belong to another process by the time it's signaled, which
+`SIGUSR1` would quit.
 
 - **Tagged panes get the signal.** A pane counts as tagged when its `@sb_reload` tag equals
   its `#{pane_pid}`, or names a direct child of it (checked in one `ps`), since a shell like
