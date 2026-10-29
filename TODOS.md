@@ -422,7 +422,7 @@ Found by the /ship reviews after the 3-cycle fix limit; deferred with Will's OK 
   once opt/ resolves. **Priority:** P3.
 - **Reload doc and backstop nits from the 0.60.4 review.** *Why:* `code_moved?` resolves the bin
   twice (`stale?`, then `current_root`), so opt/ dangling in between requests a reload that then
-  skips; and CLAUDE.md's "Nothing can repoint a sidebar at another install" is no longer strict,
+  skips; and explanation-sidebar-lifecycle.md's "Nothing can repoint a sidebar at another install" is no longer strict,
   since a keg-path sidebar now follows opt/ (a `--HEAD` keg included, after a channel switch).
   *Fix:* resolve once in `code_moved?`; reword the guarantee to "its own install's opt/ link".
   **Priority:** P3.

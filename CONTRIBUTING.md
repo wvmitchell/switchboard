@@ -8,7 +8,8 @@ For the design rationale behind the structure, see
 [docs/explanation-architecture.md](docs/explanation-architecture.md). For the
 deepest internals (the multi-process sidebar), see
 [docs/explanation-sidebar-lifecycle.md](docs/explanation-sidebar-lifecycle.md).
-[CLAUDE.md](CLAUDE.md) is the dense, agent-facing map of the whole thing.
+[CLAUDE.md](CLAUDE.md) is the agent-facing map: invariants, conventions, and which doc
+holds each area's full detail.
 
 ## The hard constraints
 

@@ -51,6 +51,12 @@ depth behind it.
   visibility, off-screen dormancy, and the recycled-pane-id bug it prevents.
 - [Distribution](explanation-distribution.md) — why install paths go through
   Homebrew's `opt/` link, and why only a fully-green main tip ever releases.
+- [Background dispatch](explanation-background-dispatch.md) — how `n` builds a
+  workspace in the background, and why cancel and failure never destroy work.
+- [The sidebar's views and keys](explanation-sidebar-views.md) — folds, width, diff
+  counts, the filter, the `?` overlay and remappable keys.
+- [Session-name sync](explanation-session-name-sync.md) — how a rename reaches the
+  Claude session's own name, and why typing into its pane fails closed.
 
 ## By audience
 
@@ -63,7 +69,7 @@ depth behind it.
   [explanation](explanation-architecture.md) docs, and
   [cutting a release](howto-release.md).
 - **AI coding agents** → [AGENTS.md](../AGENTS.md) and [CLAUDE.md](../CLAUDE.md)
-  (the canonical deep map), backed by the explanation docs.
+  (the agent map), which points into the explanation docs for the detail.
 
 ## See also
 

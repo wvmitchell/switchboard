@@ -196,7 +196,8 @@ Rename the workspace you're standing in: moves the worktree directory to `<name>
 (the display leaf) and renames its `sb/` tmux session in place, so a running agent
 and its conversation survive. This is the verb for an **agent to (re)name its own
 live workspace** once it knows what the work actually is — the sidebar's `r` key
-does the same from the tree.
+does the same from the tree. It also carries Claude's conversation history to the new
+path, so `/resume` still finds it after a restart.
 
 **Renaming mid-task is safe** — the dir move doesn't strand your running shell. The
 move leaves a symlink bridge at the old path (below), so a frozen cwd keeps
@@ -268,7 +269,8 @@ moved, or crashed). Reconciles against `git worktree list`. `--dry-run`/`-n` onl
 reports. Works outside tmux (it talks to the tmux server). Only touches projects
 it can *verify* (configured + git-readable), so a moved repo's sessions are left
 alone, as are those of a project whose folder is missing, even under a session prefix
-another project shares. See [How-to: housekeeping](howto-housekeeping.md).
+another project shares. It also reaps orphaned sidebar processes: a
+`switchboard sidebar` whose pane is gone. See [How-to: housekeeping](howto-housekeeping.md).
 
 ### `switchboard quit`
 Close *all* `sb/` sessions — full teardown, the one you're in killed last. Also
