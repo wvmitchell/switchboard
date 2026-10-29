@@ -10,6 +10,14 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
+## [0.60.8] — the reload summary counts every sidebar (2026-10-29)
+
+### Fixed
+- `switchboard upgrade` and `reload-sidebars` no longer leave a sidebar out of their summary
+  when it closed (or refused the signal) between being listed and being asked to reload: it's
+  now reported as "didn't get the reload". "Failed to reload last time (asked again now)"
+  counts only the sidebars that really were asked again.
+
 ## [0.60.7] — a reload no longer swallows a "come look" alert (2026-10-28)
 
 ### Fixed

@@ -656,12 +656,16 @@ checkout. Nothing can repoint a sidebar at another install.
     reload-sidebars` (any binary). Senders read `list-panes -a` once
     (`Tmux.sidebar_reload_targets`). A pane counts as tagged when its `@sb_reload` tag is
     its `#{pane_pid}`, or a child of it (checked in one `ps`): a shell like fish doesn't
-    exec its command. Tagged panes get the signal, sent to the tagged pid. A tag of `0`
+    exec its command. Tagged panes get the signal, sent to the tagged pid; one whose signal
+    fails (it closed after the listing, or refused) is counted `unreached`, and "failed last
+    time (asked again now)" counts only panes actually asked again. A tag of `0`
     means mid-exec from another reload: it's left alone, because a respawn would kill the
     boot. An untagged pane (older than 0.59, or tmux < 3.0, where SIGUSR1's default action
     would KILL it) is instead `respawn-pane -k`'d with NO command, so it reruns the pane's
     own start command. The respawn adds `-e` for the resume marker, retried without `-e` on
-    old tmux. The pane is re-read just before (`Tmux.same_reload_target?`: same pid, tag,
+    old tmux. Two known limits of a respawn, accepted: on tmux < 3.0 every reload is one, cold
+    (no marker), so a home pane reruns its launch-time prune; and a half-typed prompt in an
+    old sidebar is lost (one hop on tmux ≥ 3.0, every reload below it). The pane is re-read just before (`Tmux.same_reload_target?`: same pid, tag,
     liveness and command), because the preflights take time and `-k` kills whatever runs
     there now; any tag change aborts it. Dead panes (`#{pane_dead}`, under remain-on-exit)
     are never targets. The respawn only happens when that start command is exactly `<…/switchboard> sidebar`

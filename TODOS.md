@@ -441,9 +441,6 @@ Found by the /ship reviews after the 3-cycle fix limit; deferred with Will's OK 
   image re-samples visibility before its first scan, so it doesn't ring off screen today.
   *Fix:* re-sample `Tmux.visible?` in `resume_payload`. **Priority:** P3. Found by the 0.60.2
   adversarial review.
-- **Smaller reload edges.** A signal that fails (ESRCH) lands in no count; on tmux < 3.0 every
-  reload is a respawn without the resume marker, so a home pane re-runs its launch-time prune; a
-  respawned old sidebar loses a half-typed task prompt (one-time hop). **Priority:** P3.
 
 ## Sidebar off-screen-work (architecture-review) follow-ups
 
