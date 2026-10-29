@@ -102,7 +102,7 @@ module Switchboard
           counts[:signaled] += 1 # mid-exec from another reload: already on its way
           counts[:failed] += 1 if t.failed
         elsif signal_pid
-          asked = Tmux.signal_sidebar(signal_pid) # false: it closed after the listing, or refused
+          asked = Tmux.signal_sidebar(signal_pid) # false: it closed after the listing (EPERM means its pid is someone else's now)
           counts[asked ? :signaled : :unreached] += 1
           counts[:failed] += 1 if asked && t.failed # "asked again" only when it was
         elsif t.bin && (real = checked[t.bin]) && Tmux.same_reload_target?(t) &&
@@ -168,7 +168,7 @@ module Switchboard
                          "#{left == 1 ? 'it' : 'them'} safely (switchboard missing, won't start or just moved, or not a plain `switchboard sidebar`)"]
       end
       if (unreached = counts.fetch(:unreached, 0)).positive?
-        lines << [:note, "#{unreached} sidebar#{'s' unless unreached == 1} didn't get the reload (closed, or refused the signal)"]
+        lines << [:note, "#{unreached} sidebar#{'s' unless unreached == 1} closed before the reload reached #{unreached == 1 ? 'it' : 'them'}"]
       end
       if (failed = counts.fetch(:failed, 0)).positive?
         lines << [:note, "#{failed} sidebar#{'s' unless failed == 1} failed to reload last time (asked again now) — " \

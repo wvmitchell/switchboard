@@ -14,8 +14,8 @@ refer to the project's earlier, private repository; the public tracker starts at
 
 ### Fixed
 - `switchboard upgrade` and `reload-sidebars` no longer leave a sidebar out of their summary
-  when it closed (or refused the signal) between being listed and being asked to reload: it's
-  now reported as "didn't get the reload". "Failed to reload last time (asked again now)"
+  when it closed between being listed and being asked to reload: it's now reported as
+  "closed before the reload reached it". "Failed to reload last time (asked again now)"
   counts only the sidebars that really were asked again.
 
 ## [0.60.7] — a reload no longer swallows a "come look" alert (2026-10-28)

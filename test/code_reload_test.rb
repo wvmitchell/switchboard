@@ -271,13 +271,22 @@ module Switchboard
       assert_equal 1, counts[:signaled], "and it's asked again"
     end
 
-    # Value: protects=a sidebar that closed (or refused the signal) mid-reload is reported, and a
+    # Value: protects=a sidebar that closed mid-reload is reported, and a
     # previously failed one is "asked again" only when it was; fails_when=a failed signal goes
     # uncounted, or :failed is counted before delivery; why_new=the stub always delivered;
     # seam=none; no_claim=a real ESRCH (signal stubbed)
     def test_a_signal_that_fails_is_counted_unreached
       counts, = reload_with([target("%1", tagged: true), target("%2", tagged: true, failed: true)], signal_ok: false)
       assert_equal({ signaled: 0, respawned: 0, left: 0, unreached: 2, failed: 0 }, counts)
+    end
+
+    # Value: protects=a sidebar gone before its signal lands is reported, not raised out of the
+    # whole reload (and upgrade --finish); fails_when=signal_sidebar's rescue is narrowed or
+    # dropped; why_new=every reload test stubs the signal; seam=none
+    def test_signaling_a_gone_sidebar_reads_as_unreached
+      gone = Process.spawn("true", in: File::NULL)
+      Process.wait(gone)
+      refute Tmux.signal_sidebar(gone)
     end
 
     # Value: protects=a second reload never kills a sidebar mid-exec (R4); fails_when=a "0" tag
@@ -487,10 +496,10 @@ module Switchboard
                     [:note, "1 sidebar failed to reload last time (asked again now) — `switchboard doctor` lists any still on old code"]],
                    CodeReload.describe({ signaled: 0, respawned: 2, left: 2, failed: 1 })
       assert_empty CodeReload.describe({ signaled: 0, respawned: 0, left: 0, failed: 0 })
-      assert_equal [[:note, "1 sidebar didn't get the reload (closed, or refused the signal)"]],
+      assert_equal [[:note, "1 sidebar closed before the reload reached it"]],
                    CodeReload.describe({ signaled: 0, respawned: 0, left: 0, unreached: 1 }),
                    "an unreached-only reload still says so (reload-sidebars won't claim none are running)"
-      assert_equal [:note, "2 sidebars didn't get the reload (closed, or refused the signal)"],
+      assert_equal [:note, "2 sidebars closed before the reload reached them"],
                    CodeReload.describe({ signaled: 1, respawned: 0, left: 0, unreached: 2 }).last
     end
 

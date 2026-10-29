@@ -657,7 +657,7 @@ checkout. Nothing can repoint a sidebar at another install.
     (`Tmux.sidebar_reload_targets`). A pane counts as tagged when its `@sb_reload` tag is
     its `#{pane_pid}`, or a child of it (checked in one `ps`): a shell like fish doesn't
     exec its command. Tagged panes get the signal, sent to the tagged pid; one whose signal
-    fails (it closed after the listing, or refused) is counted `unreached`, and "failed last
+    fails (it closed after the listing) is counted `unreached`, and "failed last
     time (asked again now)" counts only panes actually asked again. A tag of `0`
     means mid-exec from another reload: it's left alone, because a respawn would kill the
     boot. An untagged pane (older than 0.59, or tmux < 3.0, where SIGUSR1's default action
