@@ -805,8 +805,8 @@ checkout. Nothing can repoint a sidebar at another install.
 Hook contract last verified live against **Claude Code 2.1.301–2.1.303** and **codex-cli
 0.163.0** (v0.51.1): payload fields, linked-worktree delivery, the nesting-guard env, and a
 silent PermissionRequest hook leaving the prompt to the user. **codex-cli 0.164.0** (v0.55.2)
-re-passed the real-Codex smoke only: linked-worktree delivery, hook ordering, untrusted-block
-silence.
+and **0.165.0** (v0.60.7) re-passed the real-Codex smoke only: linked-worktree delivery, hook
+ordering, untrusted-block silence.
 
 The dot beside each workspace shows whether an agent (Claude/Codex/Aider) is
 thinking / done / waiting. `AgentState.scan` (`agent_state.rb`) merges **two
@@ -837,7 +837,7 @@ opposite sides of it — the subtle, hard-won part:
   on top of your settings, adding the file to the worktree's git excludes so it never
   dirties `git status`; global `~/.claude` is untouched. This is the only entry in
   `AgentHooks::ADAPTERS`, so `enable`/`disable` and the dispatch worker fan out over it.
-- **Codex is global.** Codex (verified 0.142 through 0.164) deliberately does NOT load a
+- **Codex is global.** Codex (verified 0.142 through 0.165) deliberately does NOT load a
   *linked* git worktree's own `<worktree>/.codex/hooks.json`: it redirects a linked
   worktree's project hooks to the MAIN checkout's `.codex/` (and only when the worktree
   has a `.codex/` dir and is trusted — `config/src/loader/mod.rs`). Switchboard is nothing
@@ -1202,8 +1202,8 @@ already writes the truth. Every live Claude session has `<claude dir>/sessions/<
 (`ClaudeHistory.claude_root`, shared with the transcript reader; test seam
 `SWITCHBOARD_CLAUDE_SESSIONS_DIR`), and `/rc` adds a `bridgeSessionId` (removed on
 disconnect, a NEW id on reconnect; the link is `https://claude.ai/code/<id>`). Verified
-live on Claude Code 2.1.308; no hook or env exposes it. `ClaudeSessions`
-(`claude_sessions.rb`) reads it — one read per scan, shared with the ◷ below — and
+live on Claude Code 2.1.308 (`doctor`'s canary still clean on 2.1.312); no hook or env
+exposes it. `ClaudeSessions` (`claude_sessions.rb`) reads it — one read per scan, shared with the ◷ below — and
 `RemoteLink` (`remote_link.rb`) is the link layer on top (bridge id, staleness, ordering,
 URL, `health`). Because the file is **undocumented**, everything fails closed — an
 unrecognized shape is no link, never a wrong one, and `scan` is total (the sidebar
@@ -1301,7 +1301,8 @@ later one's remap: added mid-list, `p` would have taken the key from anyone who 
 ### Waiting on background work (the ◷ — observed, not declared)
 
 Sessions-file `status` contract last verified live against **Claude Code 2.1.308–2.1.310**
-(v0.56.0) — tracked apart from the hook contract and the ⇅ link; the security monitor
+(v0.56.0), re-checked live on 2.1.311–2.1.312 (a background agent's hand-off held its
+chime) — tracked apart from the hook contract and the ⇅ link; the security monitor
 (`docs/howto-security-monitor.md`) watches it.
 
 Claude hands work to a background agent / background Bash / the Monitor tool and ends its
@@ -1389,7 +1390,8 @@ Claude session in the workspace. `Result#spawned` makes the CLI tell the agent t
 renamed" note it's about to see is ours. A same-name rename is the retry.
 
 The typing rule is the whole design; every step fails closed (wait, never guess), pinned by
-real 2.1.310 captures in `test/fixtures/session_name`:
+real 2.1.310 captures in `test/fixtures/session_name` and confirmed live on 2.1.312 (the
+sidebar's `r`, the pane in view):
 - **Between turns only** (`status` idle/shell). Mid-turn a permission modal can open in the
   instant before our Enter, and Enter APPROVES it; from idle a modal needs a model round trip.
   Every key send re-reads the pane (tmux), the box and the status after the slower checks, then
