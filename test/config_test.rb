@@ -43,7 +43,7 @@ module Switchboard
     def test_scaffold_template_advertises_the_optional_knobs
       %w[tmux_keys sidebar_keys sounds session_command worktree_creation_command base prune_on_launch
          projects_root auto_rename diff_counts prewarm remote_link_stale_after update_check
-         sync_session_name].each do |knob|
+         sync_session_name count_indicator].each do |knob|
         assert_includes Config::SCAFFOLD_TEMPLATE, knob, "a fresh config should advertise #{knob}"
       end
     end
@@ -315,6 +315,13 @@ module Switchboard
       refute cfg("update_check" => false).update_check?
       assert cfg("update_check" => "no").update_check?, "only a real false turns it off, like diff_counts"
       assert_empty cfg("update_check" => false).unknown_keys, "doctor knows the key"
+    end
+
+    def test_count_indicator_on_by_default_off_only_when_false
+      assert cfg({}).count_indicator?
+      assert cfg("count_indicator" => true).count_indicator?
+      refute cfg("count_indicator" => false).count_indicator?
+      assert_empty cfg("count_indicator" => false).unknown_keys, "doctor knows the key"
     end
 
     def test_session_command_global_is_nil_unless_set

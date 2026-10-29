@@ -78,6 +78,142 @@ module Switchboard
              "rebuild picks up the full-header flag another sidebar wrote"
     end
 
+    # --- vim-style counts (3j) -------------------------------------------------
+    # An unbound digit builds a count that the next move uses; every other real key
+    # uses it up, pokes leave it alone, focus-out drops it.
+
+    def counted_tree(n = 15) = sidebar(nodes: [proj("app"), *(1..n).map { |i| ws("w#{i}") }])
+
+    def press(sb, *keys) = keys.each { |k| assert sb.send(:handle, k), "#{k.inspect} kept the loop alive" }
+
+    def test_a_count_moves_that_many_rows_and_clamps
+      sb = counted_tree
+      press(sb, "3j")
+      assert_equal 3, cursor_of(sb)
+      press(sb, "10k")
+      assert_equal 0, cursor_of(sb), "10k from row 3 clamps at the top"
+      press(sb, "99j")
+      assert_equal 15, cursor_of(sb), "and at the bottom"
+    end
+
+    def test_a_count_survives_separate_reads
+      sb = counted_tree
+      press(sb, "1", "0", "j")
+      assert_equal 10, cursor_of(sb)
+    end
+
+    def test_the_aliases_and_a_remapped_down_key_take_a_count
+      sb = counted_tree
+      press(sb, "2\e[B", "2\x0E")
+      assert_equal 4, cursor_of(sb), "↓ and ^N"
+      press(sb, "3\e[A", "1\x10")
+      assert_equal 0, cursor_of(sb), "↑ and ^P"
+      File.write(Config.path, YAML.dump("sidebar_keys" => { "down" => "x" }))
+      sb = counted_tree
+      press(sb, "4x")
+      assert_equal 4, cursor_of(sb), "a remapped down key"
+    end
+
+    # Value: protects=a capped count digit never ends the run loop (handle returns its
+    # dispatch result, false = quit); fails_when=count_digit returns nil past the cap;
+    # why_new=Codex plan review; seam=none; no_claim=none beyond protects
+    def test_the_count_caps_at_three_digits_without_ending_the_loop
+      sb = counted_tree(150)
+      press(sb, "1234j")
+      assert_equal 123, cursor_of(sb)
+    end
+
+    def test_a_lone_zero_is_not_a_count
+      sb = counted_tree
+      press(sb, "0j")
+      assert_equal 1, cursor_of(sb), "0 then j moves one"
+      press(sb, "10j")
+      assert_equal 11, cursor_of(sb), "but 0 extends a count"
+    end
+
+    def test_any_other_real_key_uses_up_the_count
+      sb = counted_tree
+      press(sb, "3\e", "j")
+      assert_equal 1, cursor_of(sb), "Esc dropped the 3"
+      sb = sidebar(nodes: multi_branch_tree)
+      press(sb, "3z", "j")
+      assert sb.instance_variable_get(:@fold_branches), "z still fired"
+      assert_equal 1, cursor_of(sb), "and dropped the 3"
+      sb = counted_tree
+      press(sb, "3\e[C", "j")
+      assert_equal 1, cursor_of(sb), "→ dropped it too"
+    end
+
+    def test_pokes_keep_a_count_and_focus_out_drops_it
+      sb = counted_tree
+      stub_method(sb, :reload_and_refresh, -> {}) do
+        stub_method(sb, :warm_poke, -> {}) { press(sb, "3", "\f", "\x17", "j") }
+      end
+      assert_equal 3, cursor_of(sb), "a switch-in or warm poke can land mid-count"
+      press(sb, "3", "\e[O", "j")
+      assert_equal 4, cursor_of(sb), "leaving the pane dropped the 3"
+    end
+
+    # The regression contract: digits keep their meaning everywhere they had one.
+
+    def test_bare_moves_still_move_one
+      sb = counted_tree
+      ["j", "\e[B", "\x0E"].each { |k| press(sb, k) }
+      assert_equal 3, cursor_of(sb)
+      ["k", "\e[A", "\x10"].each { |k| press(sb, k) }
+      assert_equal 0, cursor_of(sb)
+    end
+
+    def test_a_digit_bound_in_sidebar_keys_fires_its_action_and_never_counts
+      File.write(Config.path, YAML.dump("sidebar_keys" => { "toggle_branch_fold" => "3" }))
+      sb = sidebar(nodes: multi_branch_tree)
+      press(sb, "3j")
+      assert sb.instance_variable_get(:@fold_branches), "3 fired its action"
+      assert_equal 1, cursor_of(sb), "and j moved one"
+      assert_nil sb.instance_variable_get(:@count)
+    end
+
+    def test_digits_are_query_text_while_filtering
+      sb = sidebar(nodes: [proj("app"), ws("v2-api"), ws("beta")])
+      press(sb, "/2")
+      assert_equal "2", sb.instance_variable_get(:@filter)
+      assert_nil sb.instance_variable_get(:@count)
+    end
+
+    def test_a_digit_closes_the_help_overlay_without_starting_a_count
+      sb = counted_tree
+      press(sb, "?", "3", "j")
+      refute sb.instance_variable_get(:@help)
+      assert_equal 1, cursor_of(sb), "the 3 only closed help"
+    end
+
+    def test_digits_typed_with_n_become_the_task
+      sb = sidebar(nodes: [proj("app")])
+      tasks = []
+      stub_method(Creator, :dispatch, ->(_c, _p, task) { tasks << task; :ok }) do
+        stub_method(sb, :read_prompt_key, -> { flunk "the batch held the whole task" }) do
+          capture_stdout { sb.send(:handle, "n42 fix\r") }
+        end
+      end
+      assert_equal ["42 fix"], tasks
+      assert_nil sb.instance_variable_get(:@count)
+    end
+
+    def test_digits_typed_with_r_become_the_new_name
+      sb = sidebar(nodes: [proj("app"), ws("alpha")], cursor: 1)
+      names = []
+      stub_method(sb.instance_variable_get(:@config), :project, ->(*) { { "name" => "app" } }) do
+        stub_method(Rename, :perform, ->(_c, _p, _path, name) { names << name; Rename::Result.new(:ok, nil, false) }) do
+          stub_method(sb, :reload, ->(*) {}) do
+            stub_method(sb, :read_prompt_key, -> { flunk "the batch held the whole name" }) do
+              capture_stdout { sb.send(:handle, "rv2\r") }
+            end
+          end
+        end
+      end
+      assert_equal ["v2"], names
+    end
+
     # --- configurable in-sidebar keys (issue #108) ---------------------------
     # dispatch keys off the resolved @keymap (built in initialize from @config),
     # so a sidebar_keys remap re-binds the tree's keys. The structural aliases

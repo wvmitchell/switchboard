@@ -31,7 +31,7 @@ module Switchboard
     KNOWN_KEYS = %w[
       worktree_root projects_root base branch_prefix session_command worktree_creation_command
       agent_state_hooks prune_on_launch auto_rename diff_counts prewarm background_presence
-      remote_link_stale_after update_check sync_session_name
+      remote_link_stale_after update_check sync_session_name count_indicator
       sounds tmux_keys sidebar_keys projects
     ].freeze
 
@@ -79,6 +79,7 @@ module Switchboard
       # auto_rename: true                          # nudge the agent to rename a placeholder-named workspace once it knows the work
       # background_presence: true                  # nudge the agent to flag background monitors/loops (`switchboard monitoring on`) so the sidebar shows a ∞
       # diff_counts: true                          # show +adds −dels of each branch vs base on the workspace row
+      # count_indicator: true                      # show a half-typed count (the 3 of 3j) in the sidebar footer; false hides it, counts still work
       # prewarm: true                              # keep off-screen sidebars warm so switching sessions doesn't flash a stale tree
       # remote_link_stale_after: 120               # minutes a /remote-control-linked session can sit idle before its ⇅ turns grey; false turns it off
       # update_check: true                        # Homebrew installs: a line under the wordmark when a newer release is out (one git ls-remote every few hours); false never checks
@@ -311,6 +312,12 @@ module Switchboard
     # override is a deliberate non-goal for now (#88).
     def diff_counts?
       @data.fetch("diff_counts", true) != false
+    end
+
+    # Whether the sidebar footer shows a pending vim-style count (the 3 of 3j). On by
+    # default; `count_indicator: false` hides it, and counts still work. Global only.
+    def count_indicator?
+      @data.fetch("count_indicator", true) != false
     end
 
     # Whether a Homebrew install checks for a newer release in the background and

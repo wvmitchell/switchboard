@@ -288,7 +288,7 @@ Help you have to already know about isn't help, so `footer` always ends with `? 
 And since the overlay holds the full reference, the footer dropped its two lines of
 action keys. It's one line that changes with context (`nav · ? help`, where the nav verb
 swaps between open, collapse and switch; on the home sidebar, the title; in an empty tree,
-the invitation to add a first project), which gives the tree two more rows. The old
+the invitation to add a first project; while you type a movement count, `3…`), which gives the tree two more rows. The old
 `/ filter` and `+/− vs base` hints moved into the overlay. `filter_footer` keeps its three
 lines, since it shows the live query, not key hints.
 
@@ -406,8 +406,9 @@ and it compares raw stdin bytes.
 
 That one rule reserves every structural key for free. `↵` (the row's action), `Esc`,
 `Backspace`, the resize arrows `←`/`→`, the `C-l`/`C-r` pokes, and focus in and out are all
-non-printable. A remap can't shadow them, and they stay as a literal `case` in `dispatch`
-ahead of the keymap lookup. It also means a configured key can never collide with a fixed
+non-printable. A remap can't shadow them, and `dispatch` handles them ahead of the keymap
+lookup: the pokes and focus reports go to `poke` before a digit can start a count, and `↵`
+and the resize arrows are a literal `case`. It also means a configured key can never collide with a fixed
 alias (printable and non-printable never overlap), so the only possible collisions are
 between two printable keys.
 
@@ -429,6 +430,23 @@ default, and a malformed file falls back to all defaults plus a `load_error`.
 for the overlay and footer hints) in `initialize`, and rebuilds them on every `rebuild`. So
 editing the config with `e` (`reload_config_and_rebuild` → `reload` → `rebuild`) re-binds
 the keys live.
+
+### Digits: a count, unless you've bound them
+
+Digits have one job in the tree, vim's movement count: `3j` moves down three rows. No
+default action uses a digit, but `valid_sidebar_key?` lets you bind one, so the count only
+claims a digit nothing is bound to. If you've put `toggle_branch_fold: "3"` in your config,
+`3` keeps folding branches and never starts a count. For the same reason the `?` overlay's
+move row says "takes a count" rather than showing `3j`: with digits remappable, a literal
+example could point at a key that does something else.
+
+A count lives in the sidebar process between keystrokes, since `3` and `j` often arrive in
+separate reads. Every real key uses it up, whether it moves or not, so `3` then `z` folds
+branches and leaves nothing behind for the next `j`. The tmux pokes are the exception: a
+switch-in `C-l` or a peer's warm broadcast can land between your `3` and your `j`, so they
+leave the count alone. Focus leaving the pane does clear it. That can't split a count
+you're typing, and it keeps a forgotten digit from turning your next `j`, an hour later,
+into a jump.
 
 ## Related
 

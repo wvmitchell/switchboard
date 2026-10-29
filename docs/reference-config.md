@@ -32,6 +32,7 @@ or `e` in the sidebar — both reload on save.
 | `prune_on_launch` | bool | `true` | Prune orphaned `sb/` sessions when landing on the home session. |
 | `auto_rename` | bool | `true` | Nudge the agent to `switchboard rename` a placeholder-named workspace once it knows the work (a `SessionStart` hook). `false` opts out. Per-project override wins. See [`auto_rename`](#auto_rename). |
 | `diff_counts` | bool | `true` | Show the `+adds −dels` diff count on each workspace/branch row. `false` hides it and skips the per-worktree `git diff` entirely. |
+| `count_indicator` | bool | `true` | Show a half-typed movement count (the `3` of `3j`) in the sidebar footer. `false` hides it; counts still work. Global only. |
 | `prewarm` | bool | `true` | Keep off-screen sidebars warm so switching sessions doesn't flash a stale tree. `false` restores full dormancy (no off-screen work). See [`prewarm`](#prewarm). |
 | `remote_link_stale_after` | minutes or `false` | `120` | How long a `/remote-control`-linked Claude session can sit idle before its `⇅` turns grey and it counts as an **idle link**. `false` or `0` turns that off; anything else invalid uses 120. Global only. See [`remote_link_stale_after`](#remote_link_stale_after). |
 | `update_check` | bool | `true` | Homebrew installs: check for a newer release in the background (one `git ls-remote` of switchboard's public release tags every 4 hours, nothing else sent) and show `↑ 0.58.0 available · switchboard upgrade` under the wordmark. `false` stops the check and hides the line; `SWITCHBOARD_NO_UPDATE_CHECK=1` in the environment stops the check too. Clone and `--HEAD` installs never check. Global only. |
@@ -56,6 +57,7 @@ agent_state_hooks: true                  # auto-wire agent-state dots on create
 prune_on_launch: true                    # tidy orphaned sessions on landing home
 auto_rename: true                        # let the agent name a placeholder workspace (on by default)
 diff_counts: true                        # show +adds −dels on each row (false skips the git diff)
+count_indicator: true                    # show a half-typed count (the 3 of 3j) in the footer
 prewarm: true                            # keep off-screen sidebars warm (false = full dormancy)
 remote_link_stale_after: 120             # minutes before an idle /rc link's ⇅ turns grey
 update_check: true                       # Homebrew: a line under the wordmark when a newer release is out

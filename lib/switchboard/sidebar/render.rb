@@ -118,7 +118,9 @@ module Switchboard
       # you must already know `?` to find would be circular. One line for every row
       # kind, so the tree never reflows as the cursor moves (the nav verb swaps:
       # open/collapse/switch; the home session shows its title instead). The empty tree
-      # (fresh install) shows the first-project invite in place of nav.
+      # (fresh install) shows the first-project invite in place of nav. A half-typed
+      # count (the 3 of 3j) takes the nav verb's place until it's used, unless
+      # count_indicator: false.
       def footer
         return filter_footer if @filter
         # empty tree: invite the first project (the add key resolved live, #108)
@@ -126,7 +128,9 @@ module Switchboard
 
         # ws AND br both open the worktree session, so they read alike (NAV_WS).
         nav = current.kind == "proj" ? NAV_PROJ : NAV_WS
-        ["#{@home ? HOME_TITLE : nav} · #{help_hint}"]
+        lead = @home ? HOME_TITLE : nav
+        lead = "#{@count}…" if @count && @config.count_indicator? # a pending 3j, like vim's showcmd
+        ["#{lead} · #{help_hint}"]
       end
 
       # The persistent "? help" gateway, the ? resolved from the live bindings so a

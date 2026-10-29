@@ -372,6 +372,28 @@ module Switchboard
       assert sb.instance_variable_get(:@reload_requested)
     end
 
+    # Value: protects=a half-typed count can't outlive leaving the pane when no focus-out
+    # escape arrives (focus-events off); fails_when=tick stops clearing @count on lost focus;
+    # why_new=adversarial review (Claude + Codex); seam=none
+    def test_tick_drops_a_pending_count_once_the_pane_has_lost_focus
+      sb, = reloading(visible: false)
+      tick = lambda do |visible, focused|
+        stub_method(Tmux, :visible?, ->(*) { visible }) do
+          stub_method(Tmux, :focused?, ->(*) { focused }) do
+            stub_method(Tmux, :window_panes, ->(*) { 2 }) { sb.send(:tick) }
+          end
+        end
+      end
+      sb.instance_variable_set(:@count, "3")
+      tick.call(true, true)
+      assert_equal "3", sb.instance_variable_get(:@count), "a focused pane keeps the count being typed"
+      tick.call(true, false)
+      assert_nil sb.instance_variable_get(:@count), "on screen but unfocused drops it"
+      sb.instance_variable_set(:@count, "3")
+      tick.call(false, false)
+      assert_nil sb.instance_variable_get(:@count), "off screen drops it"
+    end
+
     # Value: protects=a resumed fleet's hidden panes don't all warm (git rescan) at once (P1);
     # fails_when=tick's warm branch stops consulting warm_spread_over?; why_new=the existing test
     # pins only the predicate, never that tick obeys it; seam=none

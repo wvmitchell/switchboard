@@ -103,6 +103,13 @@ module Switchboard
       assert_nil view(sb)
     end
 
+    def test_a_digit_closes_the_overlay_without_starting_a_count
+      sb = open(linked)
+      assert sb.send(:handle, "3")
+      assert_nil view(sb)
+      assert_nil sb.instance_variable_get(:@count)
+    end
+
     def test_pokes_run_their_handlers_and_leave_the_overlay_open
       sb = open(linked)
       ran = []

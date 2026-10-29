@@ -10,6 +10,16 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
+## [0.62.0] — counts on the sidebar's movement keys (2026-10-29)
+
+### Added
+- Type a count before a move key to move that many rows, as in vim: `3j` moves down three,
+  `10k` up ten. It works with `j`/`k` (or your remapped keys) and with `↓`/`↑`/`Ctrl-N`/`Ctrl-P`.
+  Any other key, or leaving the pane, drops a half-typed count. A digit you've bound to an
+  action in `sidebar_keys` keeps doing that action.
+- While you're typing a count, the footer shows it (`3… · ? help`). Set
+  `count_indicator: false` to hide it; counts still work.
+
 ## [0.61.0] — a PR waiting on review shows yellow (2026-10-29)
 
 ### Changed

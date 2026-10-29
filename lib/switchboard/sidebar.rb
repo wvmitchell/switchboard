@@ -105,6 +105,7 @@ module Switchboard
       @config_mtime = config_mtime # config file's mtime at load; refresh_config re-reads on change
       resolve_keymap      # @keymap (key->action) + @bindings (action->key); re-run each rebuild (#108)
       @cursor = 0
+      @count = nil         # a half-typed vim count ("3" of 3j), as typed
       @offset = 0
       @nodes = []          # full tree
       @rows = []           # visible rows (collapsed projects hide their children)
@@ -356,6 +357,7 @@ module Switchboard
       # Off screen we're never focused, so skip the focused? shell-out entirely —
       # that's half the per-tick tmux cost of a dormant pane.
       @focused = visible && Tmux.focused?(ENV["TMUX_PANE"]) # authoritative if focus-events are off
+      @count = nil unless @focused # a half-typed 3j left behind; focus-out may never have arrived
       reappeared = visible && !@visible
       set_visible(visible)
       if reappeared

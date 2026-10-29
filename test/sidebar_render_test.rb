@@ -429,6 +429,24 @@ module Switchboard
       end
     end
 
+    # A half-typed count (the 3 of 3j) takes the footer's lead, home included, like
+    # vim's showcmd; count_indicator: false keeps the usual lead.
+    def test_footer_shows_a_pending_count_unless_the_indicator_is_off
+      [false, true].each do |home|
+        sb = sidebar(nodes: [proj("app"), ws("a")], cursor: 1)
+        sb.instance_variable_set(:@home, home)
+        sb.send(:handle, "3")
+        assert sb.send(:footer)[0].start_with?("3… · "), "home=#{home}: the count leads"
+        sb.send(:handle, "j")
+        lead = home ? Sidebar::HOME_TITLE : Sidebar::NAV_WS
+        assert sb.send(:footer)[0].start_with?(lead), "home=#{home}: the lead returns once it's used"
+      end
+      File.write(Config.path, YAML.dump("count_indicator" => false))
+      sb = sidebar(nodes: [proj("app"), ws("a")], cursor: 1)
+      sb.send(:handle, "3")
+      assert sb.send(:footer)[0].start_with?(Sidebar::NAV_WS), "the indicator is off"
+    end
+
     # The action keys (a/n/o/O/r/d/e/R/q) no longer ride the footer — the ? overlay
     # holds them now, so the footer stays one calm line.
     def test_footer_drops_the_action_keys_into_the_overlay

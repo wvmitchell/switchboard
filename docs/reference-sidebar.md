@@ -232,7 +232,9 @@ One line, always ending in the `? help` gateway:
 
 - **Normal:** the highlighted row's nav verb + `? help` — e.g. `open · ? help` on
   a workspace, `collapse · ? help` on a project. On the home session it shows the
-  title; on an empty tree, the "press `a` to add a project" invite.
+  title; on an empty tree, the "press `a` to add a project" invite. While you're
+  typing a movement count (the `3` of `3j`), the count takes the nav verb's or title's
+  place, as `3… · ? help`, until the next key uses it; `count_indicator: false` hides it.
 - **Filter mode (`/`):** three lines — your live query, an `↵ open · esc cancel`
   legend that tracks the highlighted row, and a workspace match count.
 

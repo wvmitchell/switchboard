@@ -18,6 +18,7 @@ module Switchboard
                                    # instead of waiting for its lazy warm tick — so a switch right after
                                    # a toggle shows the new view-state with no flash.
       WIDTH_STEP = 2               # cols per ←/→ press; bounds live in Width (issue #78)
+      COUNT_MAX_DIGITS = 3         # a vim-style count (3j) stops growing here; move clamps anyway
       READ_BYTES = 1024            # per read: large enough that a normal input burst (a held
                                    # key-repeat, a switch's focus-event flurry) is never capped
                                    # mid-sequence — so the tokenizer only ever carries a genuine
@@ -153,19 +154,43 @@ module Switchboard
         return help_key(key) if @help     # ? overlay is open: a real key closes it, pokes pass through
         return filter_key(key) if @filter # / filter mode swallows the normal bindings
 
+        # Pokes aren't keystrokes, so they never touch a pending count: a switch-in C-l
+        # can land between the 3 and the j.
+        return poke(key) if POKE_BYTES.include?(key)
+        return count_digit(key) if count_digit?(key)
+
+        # Every other key uses up the count, so none can leave a stale one behind.
+        count = take_count
         # Structural sequences first: reserved keys with their own control flow that
-        # are NOT user-remappable (issue #108) — the resize arrows, the ↵ context-
-        # action, the C-l/C-r pokes, focus in/out. They're non-printable, so a
-        # printable sidebar_keys override (Config#valid_sidebar_key?) can never
-        # shadow them; checking them up front keeps that explicit.
+        # are NOT user-remappable (issue #108) — the resize arrows and the ↵ context-
+        # action. They're non-printable, so a printable sidebar_keys override
+        # (Config#valid_sidebar_key?) can never shadow them; checking them up front
+        # keeps that explicit.
         case key
         when "\e[C"             then resize(WIDTH_STEP)  # → widen the pane (issue #78)
         when "\e[D"             then resize(-WIDTH_STEP) # ← narrow the pane
         when "\r", "\n"         then enter
-        when *POKE_BYTES then return poke(key)
-        else                         return dispatch_action(key)
+        else                         return dispatch_action(key, count)
         end
         true
+      end
+
+      # A vim-style count before a move (3j). Only an unbound digit counts: a digit
+      # remapped in sidebar_keys keeps firing its action. A leading 0 isn't a count.
+      def count_digit?(key)
+        key.bytesize == 1 && key.getbyte(0).between?(0x30, 0x39) && @keymap[key].nil? && (key != "0" || @count)
+      end
+
+      # Always true, even past the cap: a false here would end the run loop.
+      def count_digit(key)
+        @count = "#{@count}#{key}" if @count.to_s.size < COUNT_MAX_DIGITS
+        true
+      end
+
+      def take_count
+        count = @count&.to_i || 1
+        @count = nil
+        count
       end
 
       # The tmux pokes and focus reports: never keystrokes, so they keep doing their job
@@ -176,19 +201,22 @@ module Switchboard
         when WARM_POKE_BYTE     then warm_poke # Ctrl-W (peer broadcast: shared view-state changed)
         when RELOAD_CONFIG_BYTE then reload_config_and_rebuild # Ctrl-R (post-edit reload)
         when "\e[I"             then return false if focus_in # focus-in: light cursor; #64 fast reap may exit the loop
-        when "\e[O"             then @focused = false # tmux focus-out: drop it
+        when "\e[O" # tmux focus-out: drop it, and any half-typed count (you've left the pane)
+          @focused = false
+          @count = nil
         end
         true
       end
 
       # The configurable arm of dispatch (issue #108): resolve the key to an action
       # via @keymap (its default, a sidebar_keys override, or a fixed alias like
-      # ↓/^N/^O), then fire it. An unbound key is a no-op. Returns false only when
-      # quit tears everything down (so the run loop exits); true otherwise.
-      def dispatch_action(key)
+      # ↓/^N/^O), then fire it. An unbound key is a no-op. `count` (a typed 3j) applies
+      # to the moves only. Returns false only when quit tears everything down (so the
+      # run loop exits); true otherwise.
+      def dispatch_action(key, count = 1)
         case @keymap[key]
-        when :down               then move(1)
-        when :up                 then move(-1)
+        when :down               then move(count)
+        when :up                 then move(-count)
         when :top                then @cursor = 0
         when :bottom             then @cursor = [@rows.size - 1, 0].max # clamp: empty tree → 0, not -1
         when :filter             then start_filter # type-to-filter the tree (issue #60)
