@@ -87,11 +87,12 @@ module Switchboard
     # command). An untagged one (older than 0.59, or tmux < 3.0) is respawned by its own
     # start command — but only when that binary passes `restartable` (once per distinct
     # binary): a respawn kills the old process first, so a broken or deleted checkout would
-    # leave the window without a sidebar. Those stay running and are counted, and so are
-    # sidebars a previous reload couldn't switch. nil off a server.
+    # leave the window without a sidebar. Those stay running and are counted, and so are a
+    # signal that failed (the sidebar closed after the listing) and, among the sidebars asked
+    # again, those a previous reload couldn't switch. nil off a server.
     def reload_all
       targets = Tmux.sidebar_reload_targets or return nil
-      counts = { signaled: 0, respawned: 0, left: 0, failed: targets.count(&:failed) }
+      counts = { signaled: 0, respawned: 0, left: 0, unreached: 0, failed: 0 }
       marker = encode
       checked = Hash.new { |memo, bin| memo[bin] = restartable(bin, marker) }
       parents = Tmux.parent_pids(targets.filter_map(&:tag_pid))
@@ -99,8 +100,11 @@ module Switchboard
         signal_pid = t.tagged ? t.pid : (t.tag_pid if t.tag_pid && parents[t.tag_pid] == t.pid)
         if t.between
           counts[:signaled] += 1 # mid-exec from another reload: already on its way
+          counts[:failed] += 1 if t.failed
         elsif signal_pid
-          counts[:signaled] += 1 if Tmux.signal_sidebar(signal_pid)
+          asked = Tmux.signal_sidebar(signal_pid) # false: it closed after the listing (EPERM means its pid is someone else's now)
+          counts[asked ? :signaled : :unreached] += 1
+          counts[:failed] += 1 if asked && t.failed # "asked again" only when it was
         elsif t.bin && (real = checked[t.bin]) && Tmux.same_reload_target?(t) &&
               start_file(t.bin) == real && # a link that moved since the check: leave it
               Tmux.respawn_sidebar(t, marker)
@@ -162,6 +166,9 @@ module Switchboard
       if (left = counts[:left]).positive?
         lines << [:note, "#{left} sidebar#{'s' unless left == 1} left running old code: couldn't restart " \
                          "#{left == 1 ? 'it' : 'them'} safely (switchboard missing, won't start or just moved, or not a plain `switchboard sidebar`)"]
+      end
+      if (unreached = counts.fetch(:unreached, 0)).positive?
+        lines << [:note, "#{unreached} sidebar#{'s' unless unreached == 1} closed before the reload reached #{unreached == 1 ? 'it' : 'them'}"]
       end
       if (failed = counts.fetch(:failed, 0)).positive?
         lines << [:note, "#{failed} sidebar#{'s' unless failed == 1} failed to reload last time (asked again now) — " \

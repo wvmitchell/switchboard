@@ -323,6 +323,9 @@ The details of that payload are [below](#the-resume-payload).
 - **Tagged panes get the signal.** A pane counts as tagged when its `@sb_reload` tag equals
   its `#{pane_pid}`, or names a direct child of it (checked in one `ps`), since a shell like
   fish runs the sidebar as a child instead of exec'ing it. The signal goes to the tagged pid.
+  If the signal fails, the sidebar closed after the listing, and it's counted `unreached`.
+  "Failed to reload last time (asked again now)" counts only flagged panes whose signal
+  landed or that are already mid-reload, never a restarted or left one.
 - **A tag of `0` is left alone.** It means the sidebar is between images in another reload,
   and a respawn would kill the boot.
 - **Dead panes are never targets** (`#{pane_dead}`, under remain-on-exit).
@@ -331,6 +334,10 @@ The details of that payload are [below](#the-resume-payload).
 than 3.0, has no tag, and `SIGUSR1`'s default action would kill it. So it's restarted with
 `respawn-pane -k` and *no* command, which reruns the pane's own start command. The respawn
 adds `-e` for the resume marker, and retries without `-e` on old tmux.
+
+Two limits of a restart are accepted. On tmux older than 3.0 every reload is one, and a cold
+one (no resume marker), so a home pane reruns its launch-time prune. And a half-typed prompt
+in an old sidebar is lost: once on tmux 3.0 and later, on every reload below it.
 
 Respawn kills first, so a broken or deleted checkout would cost the window its sidebar.
 It only happens when all of these hold:
@@ -433,7 +440,8 @@ If it ends `:failed` or `:timeout`:
   is retried. There's deliberately no retry clock: in review, a second wake time that every
   gate had to honor produced a spin and a stale tree.
 - **The pane is flagged** `@sb_reload_failed=<root>`, after the failed exec's re-tag.
-  `doctor` lists those panes, and the next reload's summary reports them.
+  `doctor` lists those panes, and the next reload's summary reports those it signals again
+  or finds mid-reload.
 
 **Only new code starting clears that flag.** A new image's first tag clears it, in the same
 tmux call as the tag (`clear_failed:`), retries of that tag included (`@tag_clears`). A later

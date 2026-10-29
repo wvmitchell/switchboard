@@ -1,5 +1,5 @@
 # frozen_string_literal: true
 
 module Switchboard
-  VERSION = "0.60.7"
+  VERSION = "0.60.8"
 end

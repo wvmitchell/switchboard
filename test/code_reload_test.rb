@@ -208,7 +208,7 @@ module Switchboard
     # `preflight` answers each run as ->(bin, args) (args empty: `version`); a version run
     # also prints `version` to its out, as a real binary would.
     def reload_with(targets, preflight: ->(_bin, _args) { :ok }, version: "switchboard 0.60.5\n", respawn_ok: true,
-                    parents: {}, unchanged: true)
+                    parents: {}, unchanged: true, signal_ok: true)
       log = []
       fake = lambda do |bin, *args, out: File::NULL, **|
         log << [:preflight, bin, *args]
@@ -218,7 +218,7 @@ module Switchboard
       counts = stub_method(Tmux, :sidebar_reload_targets, -> { targets }) do
        stub_method(Tmux, :same_reload_target?, ->(_t) { unchanged }) do
         stub_method(Tmux, :parent_pids, ->(_pids) { parents }) do
-          stub_method(Tmux, :signal_sidebar, ->(pid) { log << [:signal, pid]; true }) do
+          stub_method(Tmux, :signal_sidebar, ->(pid) { log << [:signal, pid]; signal_ok }) do
             stub_method(Tmux, :respawn_sidebar, ->(t, marker) { log << [:respawn, t.pane, CodeReload.decode(marker).nil?]; respawn_ok }) do
               stub_method(CodeReload, :preflight, fake) { CodeReload.reload_all }
             end
@@ -259,7 +259,7 @@ module Switchboard
     # signaled without the parent check; seam=none
     def test_a_sidebar_that_is_a_child_of_its_pane_is_signaled_directly
       counts, log = reload_with([target("%1", tagged: false, pid: 10, tag_pid: 11, bin: install("c"))], parents: { 11 => 10 })
-      assert_equal({ signaled: 1, respawned: 0, left: 0, failed: 0 }, counts)
+      assert_equal({ signaled: 1, respawned: 0, left: 0, unreached: 0, failed: 0 }, counts)
       assert_equal [[:signal, 11]], log
       _, log = reload_with([target("%1", tagged: false, pid: 10, tag_pid: 11, bin: install("c"))], parents: { 11 => 99 })
       refute_includes log, [:signal, 11], "a stale tag whose pid isn't the pane's child is never signaled"
@@ -271,12 +271,37 @@ module Switchboard
       assert_equal 1, counts[:signaled], "and it's asked again"
     end
 
+    # Value: protects=a sidebar that closed mid-reload is reported, and a
+    # previously failed one is "asked again" only when it was; fails_when=a failed signal goes
+    # uncounted, or :failed is counted before delivery; why_new=the stub always delivered;
+    # seam=none; no_claim=a real ESRCH (signal stubbed)
+    def test_a_signal_that_fails_is_counted_unreached
+      counts, = reload_with([target("%1", tagged: true), target("%2", tagged: true, failed: true)], signal_ok: false)
+      assert_equal({ signaled: 0, respawned: 0, left: 0, unreached: 2, failed: 0 }, counts)
+      counts, log = reload_with([target("%1", tagged: false, pid: 10, tag_pid: 11, bin: install("c"), failed: true)],
+                                parents: { 11 => 10 }, signal_ok: false)
+      assert_equal({ signaled: 0, respawned: 0, left: 0, unreached: 1, failed: 0 }, counts, "a sidebar under fish, too")
+      assert_empty log.select { |e| e.first == :respawn }, "never respawned on a failed signal"
+    end
+
+    # Value: protects=a sidebar gone before its signal lands is reported, not raised out of the
+    # whole reload (and upgrade --finish); fails_when=signal_sidebar's rescue drops ESRCH or EPERM;
+    # why_new=every reload test stubs the signal; seam=none
+    def test_signaling_a_gone_sidebar_reads_as_unreached
+      gone = Process.spawn("true", in: File::NULL)
+      Process.wait(gone)
+      refute Tmux.signal_sidebar(gone), "ESRCH"
+      refute Tmux.signal_sidebar(1), "EPERM: pid 1 isn't ours" unless Process.uid.zero?
+    end
+
     # Value: protects=a second reload never kills a sidebar mid-exec (R4); fails_when=a "0" tag
     # is treated as untagged and respawned; seam=none
     def test_a_sidebar_mid_exec_is_left_to_finish
       counts, log = reload_with([target("%1", tagged: false, between: true, bin: install("mid"))])
-      assert_equal({ signaled: 1, respawned: 0, left: 0, failed: 0 }, counts)
+      assert_equal({ signaled: 1, respawned: 0, left: 0, unreached: 0, failed: 0 }, counts)
       assert_empty log, "neither signaled nor respawned"
+      counts, = reload_with([target("%1", tagged: false, between: true, failed: true, bin: install("mid"))])
+      assert_equal 1, counts[:failed], "a failed one mid-exec is being asked again"
     end
 
     # Value: protects=upgrade reloads every sidebar, old ones by their own start command (R1);
@@ -284,8 +309,9 @@ module Switchboard
     # seam=none; no_claim=real tmux (Tmux stubbed; the smoke test runs it)
     def test_reload_all_signals_new_sidebars_and_respawns_old_ones
       good = install("good")
-      counts, log = reload_with([target("%1", tagged: true), target("%2", tagged: false, bin: good)])
-      assert_equal({ signaled: 1, respawned: 1, left: 0, failed: 0 }, counts)
+      counts, log = reload_with([target("%1", tagged: true), target("%2", tagged: false, bin: good, failed: true)])
+      assert_equal({ signaled: 1, respawned: 1, left: 0, unreached: 0, failed: 0 }, counts,
+                   "a flagged pane that's restarted wasn't asked again (D2)")
       assert_includes log, [:signal, 1]
       assert_includes log, [:respawn, "%2", false], "with a decodable resume marker"
       refute_includes log, [:preflight, nil]
@@ -296,13 +322,13 @@ module Switchboard
     # resolves it against its own); seam=none
     def test_reload_all_leaves_a_sidebar_whose_binary_is_gone_or_broken
       broken = File.realpath(install("broken"))
-      counts, log = reload_with([target("%1", tagged: false, bin: path("gone/bin/switchboard")),
+      counts, log = reload_with([target("%1", tagged: false, bin: path("gone/bin/switchboard"), failed: true),
                                  target("%2", tagged: false, bin: nil),
                                  target("%3", tagged: false, bin: broken),
                                  target("%4", tagged: false, bin: "switchboard"),
                                  target("%5", tagged: false, bin: "bin/switchboard")],
                                 preflight: ->(bin, _args) { bin == broken ? :failed : :ok })
-      assert_equal({ signaled: 0, respawned: 0, left: 5, failed: 0 }, counts)
+      assert_equal({ signaled: 0, respawned: 0, left: 5, unreached: 0, failed: 0 }, counts)
       assert_empty log.select { |e| e.first == :respawn }
       assert_equal [[:preflight, broken]], log, "a missing or relative file isn't even run; a broken one stops at `version`"
     end
@@ -475,6 +501,11 @@ module Switchboard
                     [:note, "1 sidebar failed to reload last time (asked again now) — `switchboard doctor` lists any still on old code"]],
                    CodeReload.describe({ signaled: 0, respawned: 2, left: 2, failed: 1 })
       assert_empty CodeReload.describe({ signaled: 0, respawned: 0, left: 0, failed: 0 })
+      assert_equal [[:note, "1 sidebar closed before the reload reached it"]],
+                   CodeReload.describe({ signaled: 0, respawned: 0, left: 0, unreached: 1 }),
+                   "an unreached-only reload still says so (reload-sidebars won't claim none are running)"
+      assert_equal [:note, "2 sidebars closed before the reload reached them"],
+                   CodeReload.describe({ signaled: 1, respawned: 0, left: 0, unreached: 2 }).last
     end
 
     # Value: protects=a sidebar that starts (new code) clears an earlier failed reload, and
