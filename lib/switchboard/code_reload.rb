@@ -96,6 +96,10 @@ module Switchboard
       marker = encode
       checked = Hash.new { |memo, bin| memo[bin] = restartable(bin, marker) }
       parents = Tmux.parent_pids(targets.filter_map(&:tag_pid))
+      # Signal first: a pid read from the listing must be signaled before the seconds of
+      # restart checks below, or a sidebar that exits meanwhile could have its pid reused by
+      # another process of yours, which SIGUSR1 would quit.
+      restarts = []
       targets.each do |t|
         signal_pid = t.tagged ? t.pid : (t.tag_pid if t.tag_pid && parents[t.tag_pid] == t.pid)
         if t.between
@@ -105,7 +109,12 @@ module Switchboard
           asked = Tmux.signal_sidebar(signal_pid) # false: it closed after the listing (EPERM means its pid is someone else's now)
           counts[asked ? :signaled : :unreached] += 1
           counts[:failed] += 1 if asked && t.failed # "asked again" only when it was
-        elsif t.bin && (real = checked[t.bin]) && Tmux.same_reload_target?(t) &&
+        else
+          restarts << t
+        end
+      end
+      restarts.each do |t|
+        if t.bin && (real = checked[t.bin]) && Tmux.same_reload_target?(t) &&
               start_file(t.bin) == real && # a link that moved since the check: leave it
               Tmux.respawn_sidebar(t, marker)
           counts[:respawned] += 1
