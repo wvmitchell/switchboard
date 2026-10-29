@@ -298,7 +298,8 @@ tmux's side nothing changed, and `owns_pane?` stays true.
 
 Each sidebar re-execs its *own* binary. Under Homebrew that's the opt path (`StablePath`),
 so it lands in the new keg, and a dogfood checkout's sidebar stays on its checkout.
-Nothing can repoint a sidebar at another install.
+A Homebrew sidebar reloads through its prefix's `opt/switchboard` link whenever it exists,
+even one that booted holding a keg path; a checkout's sidebar never leaves its checkout.
 
 Most of what the sidebar knows is already on disk: folds, width, header, attention, holds.
 The few per-process things worth keeping ride one env var, `SWITCHBOARD_SIDEBAR_RESUME`,

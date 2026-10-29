@@ -413,34 +413,6 @@ Found by the /ship reviews after the 3-cycle fix limit; deferred with Will's OK 
   Rarer than before (five failures in a row, or tmux < 3.0, where the exec path can't tag at
   all). *Fix:* on give-up, flag the pane best-effort, or stamp the `0` with its time beside the
   tag (`@sb_reload_boot`) so senders can treat an old one as stuck. **Priority:** P3.
-- **A keg-path sidebar spawns from that keg until it reloads.** *Why:* an image that booted
-  while opt/ was missing keeps the keg path in `SWITCHBOARD_BIN`. Since 0.60.4 its reload
-  follows opt/ (`real_bin`), but the env var itself doesn't, so until the swap (up to the
-  spread off screen, or never if the check fails) new-window sidebars, PR refreshes, the
-  pane's own respawn and other `SWITCHBOARD_BIN` spawners run that keg, which `brew upgrade`'s
-  cleanup deletes. *Fix:* re-point `ENV["SWITCHBOARD_BIN"] = StablePath.resolve(bin)` in `tick`
-  once opt/ resolves. **Priority:** P3.
-- **Reload doc and backstop nits from the 0.60.4 review.** *Why:* `code_moved?` resolves the bin
-  twice (`stale?`, then `current_root`), so opt/ dangling in between requests a reload that then
-  skips; and explanation-sidebar-lifecycle.md's "Nothing can repoint a sidebar at another install" is no longer strict,
-  since a keg-path sidebar now follows opt/ (a `--HEAD` keg included, after a channel switch).
-  *Fix:* resolve once in `code_moved?`; reword the guarantee to "its own install's opt/ link".
-  **Priority:** P3.
-- **An unresolved-bin flag can outlive a same-keg relink.** *Why:* since 0.60.4 a reload that
-  can't resolve the install flags the pane with the bin path, and only a reload that lands
-  clears it. If opt/ comes back on the keg the sidebar already runs (`brew reinstall`, a
-  same-version relink), the backstop never fires, so `doctor` and every reload summary report a
-  failure until a `reload-sidebars`. Also: an empty `SWITCHBOARD_BIN` writes an empty flag (reads
-  as not failed), and a transient exec errno (ETXTBSY) blocks a keg that still exists. *Fix:*
-  remember the unresolved state and, once `real_bin` resolves to `LOADED_ROOT`, clear the flag
-  (or request a same-code reexec); treat `""` like nil; block on a failed exec only when the file
-  is gone. **Priority:** P3.
-- **A reload's `announce` is judged on a possibly stale `@visible`.** *Why:* a key batched with
-  the switch poke can move you away (`↵` to another session); `@visible` stays true until the
-  next tick, so a swap in between hands over `announce: true` from a hidden pane. The new
-  image re-samples visibility before its first scan, so it doesn't ring off screen today.
-  *Fix:* re-sample `Tmux.visible?` in `resume_payload`. **Priority:** P3. Found by the 0.60.2
-  adversarial review.
 
 ## Sidebar off-screen-work (architecture-review) follow-ups
 
