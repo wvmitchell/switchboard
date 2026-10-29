@@ -4,7 +4,7 @@ require_relative "test_helper"
 
 module Switchboard
   # Guards the docs' shape so a PR can't quietly rot it: links, anchors and § pointers
-  # resolve, quoted CLAUDE.md sections exist, AGENTS.md's claims hold, every doc fits the
+  # resolve, quoted section names (of CLAUDE.md or any doc) exist, AGENTS.md's claims hold, every doc fits the
   # Diataxis set docs/README.md states, the upstream "last verified" versions live only
   # in CLAUDE.md (the lines the security monitor updates), and no doc points at TODOs or
   # thoughts/. Reads files only, so it's a plain Minitest::Test, not a SandboxTest.
@@ -30,6 +30,7 @@ module Switchboard
     VERIFIED_VERSION = /
       \b(?:last\s+(?:verified|checked)|(?:verified|checked)\s+through)\b[^.;]{0,80}?\d+\.\d+
       | \b(?:verified|checked)\s+\d+\.\d+\S*\s+through\b
+      | \b(?:verified|checked)\s+live\s+(?:on|against)\b[^.;]{0,40}?\d+\.\d+
     /xi
 
     def test_relative_links_and_anchors_resolve
@@ -63,6 +64,23 @@ module Switchboard
       end
       assert_empty stale, "these quote a CLAUDE.md section or phrase that's no longer there — " \
                           "point them at the doc that now holds it"
+    end
+
+    # The same for a doc's own sections, named after a link to it
+    # (`[agent presence](…), "Heading"`) or by its plain name (`(agent presence, "Heading")`).
+    # A heading counts when the quote is all of it or its start, before a ":", "(" or "—".
+    def test_quoted_doc_sections_exist
+      stale = markdown_files.flat_map do |file|
+        text = without_fences(File.read(file)).gsub(/\s+/, " ")
+        quoted_doc_sections(file, text).filter_map do |target, quote|
+          next "#{rel(file)}: \"#{quote}\" names #{rel(target)}, which doesn't exist" unless File.exist?(target)
+          next if headings(target).any? { section_named?(_1, quote) }
+
+          "#{rel(file)}: \"#{quote}\" isn't a section of #{rel(target)}"
+        end
+      end
+      assert_empty stale, "point at the section with an anchor link instead: " \
+                          "[doc § Heading](doc.md#heading)"
     end
 
     def test_agents_md_claims_about_claude_md_hold
@@ -193,6 +211,33 @@ module Switchboard
       without_fences(File.read(file)).gsub(/`[^`\n]*`/, "")
                                       .scan(/\]\(([^)\s]+)(?:\s+"[^"]*")?\)/).flatten
                                       .reject { _1.match?(/\A[a-z]+:/) }
+    end
+
+    # [[target doc, quoted section name]] for each quoted section pointer in a file's text.
+    def quoted_doc_sections(file, text)
+      linked = text.scan(/\]\(([^)\s#]+\.md)(?:#[^)]*)?\)\s*,\s*["“]([^"”]+)["”]/).map do |path, quote|
+        [File.expand_path(path, File.dirname(file)), quote]
+      end
+      named = text.scan(/\(([^()\[\]]*?),\s*["“]([^"”]+)["”]\)/).filter_map do |lead, quote|
+        name = doc_nicknames.keys.find { lead.downcase.end_with?(_1) }
+        [doc_nicknames[name], quote] if name
+      end
+      linked + named
+    end
+
+    # The plain names docs go by: the text of every link to a doc, e.g. "agent presence".
+    def doc_nicknames
+      @doc_nicknames ||= markdown_files.each_with_object({}) do |file, names|
+        File.read(file).scan(/\[([^\]`]{3,40})\]\(([^)\s#]*explanation-[\w-]+\.md|[^)\s#]*(?:howto|reference|tutorial)-[\w-]+\.md)/) do |label, path|
+          names[label.downcase.strip] ||= File.expand_path(path, File.dirname(file))
+        end
+      end
+    end
+
+    def section_named?(heading, quote)
+      plain = heading.delete("`").downcase
+      wanted = quote.delete("`").downcase
+      plain == wanted || plain.start_with?("#{wanted}:", "#{wanted} (", "#{wanted} —")
     end
 
     # Comment markers dropped and lines joined, so a reference wrapped across lines still reads as one.

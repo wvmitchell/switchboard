@@ -15,11 +15,11 @@ because tmux panes run a non-interactive shell that skips rbenv.
 Diataxis set). Before you change an area, read the doc the table below names for it, and
 keep that doc current in the same PR. Don't grow this file back into a manual: new detail
 goes in the docs, and this file gets at most a pointer or a one-line invariant.
-`test/docs_test.rb` holds the shape: links and anchors resolve, quoted CLAUDE.md sections
-exist, every doc is a Diataxis kind indexed under that kind, contract versions live only
-in the list below, section pointers are anchor links, and no doc references TODOs or the
-gitignored `thoughts/`. The docs are for humans as much as agents:
-write them as readable explanation, not this file's compressed style.
+`test/docs_test.rb` holds the shape: links and anchors resolve, quoted section names (of
+CLAUDE.md or any doc) exist, every doc is a Diataxis kind indexed under that kind,
+contract versions live only in the list below, section pointers are anchor links, and no
+doc references TODOs or the gitignored `thoughts/`. The docs are for humans as much as
+agents: write them as readable explanation, not this file's compressed style.
 
 ## Commands
 
