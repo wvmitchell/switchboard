@@ -160,8 +160,15 @@ module Switchboard
       stale_open = branches.select do |b|
         open_seen < OPEN_LIMIT && data[b].is_a?(Hash) && data[b]["status"] == "OPEN" && !fresh.key?(b)
       end
+      # An OPEN entry cached before "review" existed renders green whatever its
+      # review state. The open query rewrites every PR it sees, so this only catches
+      # ones outside both windows (a 500+-open repo) — re-asked once each, since the
+      # rewritten entry carries the key. Independent of the full-window gate above.
+      unreviewed = branches.select do |b|
+        data[b].is_a?(Hash) && data[b]["status"] == "OPEN" && !data[b].key?("review")
+      end
       # Shuffled so a persistently failing head can't starve the ones behind it.
-      (missing + stale_open).shuffle.first(BACKFILL_LIMIT).each do |branch|
+      (missing | stale_open | unreviewed).shuffle.first(BACKFILL_LIMIT).each do |branch|
         list = gh_pr_list(repo, "all", 1, head: branch) # newest PR wins a reused branch
         next if list.nil?
 
@@ -190,7 +197,8 @@ module Switchboard
       {
         "identifier" => "##{pr['number']}",
         "status" => pr["state"],
-        "is_draft" => pr["isDraft"] ? 1 : 0
+        "is_draft" => pr["isDraft"] ? 1 : 0,
+        "review" => pr["reviewDecision"].to_s # "" when the repo has no required-review rule
       }
     end
 
@@ -206,7 +214,7 @@ module Switchboard
     # --state composes with --search (gh folds the state into the search query).
     def pr_list_cmd(repo, state, limit, sort: nil, head: nil)
       cmd = "gh pr list -R #{Shellwords.escape(repo)} --state #{Shellwords.escape(state)} " \
-            "--limit #{limit.to_i} --json number,state,isDraft,headRefName"
+            "--limit #{limit.to_i} --json number,state,isDraft,reviewDecision,headRefName"
       cmd += " --search #{Shellwords.escape("sort:#{sort}")}" if sort
       cmd += " --head #{Shellwords.escape(head)}" if head
       cmd

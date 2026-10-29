@@ -167,13 +167,13 @@ module Switchboard
       git(repo, "commit", "-q", "-m", "seed")
 
       add_worktree(repo, wt_root, "auth-token-refresh", "sandbox/auth-token-refresh") # 1. open PR badge
-      seed_big_diff(add_worktree(repo, wt_root, "bulk-import", "sandbox/bulk-import")) # 2. big +/- diff
+      seed_big_diff(add_worktree(repo, wt_root, "bulk-import", "sandbox/bulk-import")) # 2. big +/- diff, review-blocked PR
       add_worktree(repo, wt_root, "quiet-cleanup", "sandbox/quiet-cleanup")            # 3. no-PR row
       seed_branch_history(add_worktree(repo, wt_root, "sidebar-polish", "sandbox/sidebar-polish")) # 4. multi-branch
       add_worktree(repo, wt_root, "watch-ci", "sandbox/watch-ci")                     # 5. background monitor (∞)
-      add_worktree(repo, wt_root, "fan-out-review", "sandbox/fan-out-review")         # 6. waiting on background work (◷)
+      add_worktree(repo, wt_root, "fan-out-review", "sandbox/fan-out-review")         # 6. waiting on background work (◷), draft PR
 
-      seed_pr_cache("sandbox/auth-token-refresh")
+      seed_pr_cache
       seed_dot(File.join(wt_root, "auth-token-refresh"), "thinking")
       seed_dot(File.join(wt_root, "quiet-cleanup"), "done")
       seed_dot(File.join(wt_root, "watch-ci"), "done")     # a resting agent...
@@ -215,13 +215,18 @@ module Switchboard
       git(dir, "checkout", "-q", "sandbox/sidebar-polish")
     end
 
-    # Seed a FRESH, correctly-shaped PR cache: the renderer reads "identifier" +
-    # "status" (a missing identifier renders "#?"). Fresh mtime + SWITCHBOARD_SANDBOX
-    # (which skips the background refresh) keeps it authoritative all session.
-    def seed_pr_cache(branch)
+    # Seed a FRESH, correctly-shaped PR cache: the renderer reads "identifier",
+    # "status", "is_draft" and "review" (a missing identifier renders "#?"). One
+    # badge per open color — green, yellow (review-blocked), grey (draft) — so they
+    # can be eyeballed side by side. Fresh mtime + SWITCHBOARD_SANDBOX (which skips
+    # the background refresh) keeps it authoritative all session.
+    def seed_pr_cache
       FileUtils.mkdir_p(Pr.cache_dir)
-      File.write(Pr.cache_file(PROJECT),
-                 JSON.dump(branch => { "identifier" => "#12", "status" => "OPEN", "is_draft" => 0 }))
+      File.write(Pr.cache_file(PROJECT), JSON.dump(
+        "sandbox/auth-token-refresh" => { "identifier" => "#12", "status" => "OPEN", "is_draft" => 0, "review" => "" },
+        "sandbox/bulk-import" => { "identifier" => "#13", "status" => "OPEN", "is_draft" => 0, "review" => "REVIEW_REQUIRED" },
+        "sandbox/fan-out-review" => { "identifier" => "#14", "status" => "OPEN", "is_draft" => 1, "review" => "REVIEW_REQUIRED" }
+      ))
     end
 
     # Drop a fresh agent-state hook file so a dot renders. Content is the reporter's
