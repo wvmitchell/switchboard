@@ -107,13 +107,13 @@ tracks these lines; update them when you re-verify one.
   worktree's own hooks, so switchboard writes one `[hooks]` block into
   `~/.codex/config.toml`.
 - **⇅ remote link** (`bridgeSessionId`, `procStart` in `~/.claude/sessions/<pid>.json`):
-  verified live on Claude Code 2.1.308 (`doctor`'s canary still clean on 2.1.312).
+  verified live on Claude Code 2.1.308 (`doctor`'s canary still clean on 2.1.314).
 - **◷ sessions-file `status`:** last verified live against **Claude Code 2.1.308–2.1.310**
-  (v0.56.0), re-checked live on 2.1.311–2.1.312 (a background agent's hand-off held its
-  chime).
+  (v0.56.0), re-checked live on 2.1.311–2.1.312 and 2.1.314 (a background agent's
+  hand-off held its chime).
 - **Session-name sync** (Claude's screen and `/rename`): pinned by real 2.1.310 captures in
-  `test/fixtures/session_name` and confirmed live on 2.1.312 (the sidebar's `r`, the pane
-  in view).
+  `test/fixtures/session_name` and confirmed live on 2.1.312 and 2.1.314 (the sidebar's
+  `r`, the pane in view).
 
 ## Conventions
 
