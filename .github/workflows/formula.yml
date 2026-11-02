@@ -45,6 +45,9 @@ jobs:
           git archive --prefix="switchboard-$version/" -o "$tarball" HEAD
           sha="$(shasum -a 256 "$tarball" | cut -d' ' -f1)"
           brew tap-new --no-git local/switchboard
+          # Homebrew 7.0.11+ only implicitly trusts a tap for install commands, so
+          # `brew audit` would refuse it. A user's `brew install` records its own trust.
+          brew trust --tap local/switchboard
           tap="$(brew --repository)/Library/Taps/local/homebrew-switchboard"
           ruby packaging/release.rb formula "$version" "$sha" \
             | sed "s#$(ruby packaging/release.rb tarball-url "$version")#file://$tarball#" \
