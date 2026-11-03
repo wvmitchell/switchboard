@@ -225,7 +225,7 @@ module Switchboard
       end
 
       rec = begin
-        Creator.dispatch(config, project, task, brief_from: "cli")
+        Creator.dispatch(config, project, task, brief_from: ("cli" unless task.empty?)) # no brief, nothing to label
       rescue SystemCallError, IOError
         nil
       end
@@ -738,7 +738,9 @@ module Switchboard
     def dispatch_piece(wt, source)
       return nil unless DispatchNudge.decide(enabled: config.agent_dispatch_for(wt.project), source: source)
 
-      DispatchNudge.message(brief_from_agent: ENV["SWITCHBOARD_BRIEF_FROM"] == "cli")
+      # The env var lives as long as the agent; only a fresh startup still opens on the brief
+      # (after /clear or a resume, the next first message is the user's own).
+      DispatchNudge.message(brief_from_agent: ENV["SWITCHBOARD_BRIEF_FROM"] == "cli" && source == "startup")
     rescue StandardError
       nil
     end

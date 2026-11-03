@@ -14,15 +14,15 @@ module Switchboard
     PLACEHOLDER_TRIES = 5 # bounded retries past a generated name already taken
 
     # Wire the per-worktree agent hooks (agent-state reporter + the #92 self-naming nudge
-    # + the background-presence monitoring nudge/clears + the agent-dispatch instruction),
-    # scoped to this worktree, never global. Enabled when ANY of dots / auto_rename /
-    # background_presence / agent_dispatch is on — each resolved *per project* so a
-    # project that opts into just one (with the global off) still gets the hook its
-    # runtime nudge needs. Best-effort: a hook-wiring hiccup must never sink an
+    # + the background-presence monitoring nudge/clears; the agent-dispatch instruction rides
+    # them), scoped to this worktree, never global. Enabled when ANY of dots / auto_rename /
+    # background_presence is on — each resolved *per project* so a project that opts into just
+    # one (with the global off) still gets the hook its runtime nudge needs. agent_dispatch
+    # never installs hooks by itself. Best-effort: a hook-wiring hiccup must never sink an
     # otherwise-good worktree.
     def enable_hooks(config, project_name, dest)
       if config.agent_state_hooks? || config.auto_rename_for(project_name) ||
-         config.background_presence_for(project_name) || config.agent_dispatch_for(project_name)
+         config.background_presence_for(project_name)
         AgentHooks.enable(dest)
       end
       dest
@@ -545,7 +545,7 @@ module Switchboard
 
       ENV["SWITCHBOARD_TASK"] = rec["task"].to_s # setup sees it too (D10)
       # Only for a brief an agent wrote: the agent's SessionStart hook reads it (DispatchNudge).
-      if rec["brief_from"] == "cli"
+      if rec["brief_from"] == "cli" && !rec["task"].to_s.empty?
         ENV["SWITCHBOARD_BRIEF_FROM"] = "cli"
       else
         ENV.delete("SWITCHBOARD_BRIEF_FROM")

@@ -580,9 +580,9 @@ payload, rename first. Upgrading reaches every existing workspace with no rewiri
 piece is built under its own rescue, so a fault in one never drops the other, and the
 whole arm still prints only JSON or nothing. `DispatchNudge.decide` uses the same
 sources as the rename nudge, so the instruction comes back after `/clear` and
-compaction. `agent_dispatch` is also one of the settings that make `Creator.enable_hooks`
-wire a new worktree at all, so a project with dots, naming and monitoring all off still
-gets it.
+compaction. `agent_dispatch` only decides whether the instruction is planted; it never makes
+`Creator.enable_hooks` wire a worktree by itself. So a config that turned dots, naming and
+monitoring all off to keep the hooks out stays hook-free.
 
 **It is about workspaces for you, not subagents.** The text says to use `switchboard
 new` only when the user explicitly asks for another workspace, and to keep using the
@@ -597,7 +597,9 @@ which would otherwise read as the user asking. So `new` marks its `Creation` rec
 only, and the instruction then adds one sentence: the first message came from another
 agent, so don't start new workspaces because of it. That keeps one agent's brief from
 chaining further dispatches. A task you type after `n` is your own, so it gets no such
-sentence.
+sentence, and neither does a bare `new` with no task. The sentence is added only when the
+session starts up: the variable lives as long as the agent does, but after `/clear` or a
+resume the next first message is the user's own.
 
 **The text can't drift from the command.** It quotes `switchboard new` examples, and a
 test runs each one through `DispatchArgs.parse`, the parser the command itself uses.

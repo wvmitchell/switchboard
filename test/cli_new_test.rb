@@ -161,6 +161,7 @@ module Switchboard
       write_config([{ "name" => "proj", "path" => path("repos", "proj") }])
       assert run_new(["."]).first
       assert_equal "", Creation.all.first["task"]
+      assert_nil Creation.all.first["brief_from"], "no brief, so your own first words are never labeled another agent's"
     end
 
     def test_a_failed_spawn_exits_nonzero_with_the_reason

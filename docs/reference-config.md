@@ -115,8 +115,7 @@ projects:
 **Turning it on for worktrees you already have:** the nudge is wired into a worktree's
 hooks at create time, so flip it on and run `switchboard enable-hooks` inside an
 existing worktree to add it there (new worktrees get it automatically). The hooks
-wire when any of `agent_state_hooks`, `auto_rename`, `background_presence` or
-`agent_dispatch` is on.
+wire when any of `agent_state_hooks`, `auto_rename` or `background_presence` is on.
 
 ---
 
@@ -132,6 +131,11 @@ self-naming nudge, so it re-appears after `/clear` and compaction.
 Set `agent_dispatch: false` to drop the instruction, globally or for one project (a
 per-project value wins in either direction). The `switchboard new` command itself keeps
 working; agents just aren't told about it.
+
+The instruction rides the hooks the other features install; `agent_dispatch` never
+installs hooks by itself. With the defaults every new worktree is hooked, and a config that
+turned `agent_state_hooks`, `auto_rename` and `background_presence` all off stays
+hook-free.
 
 ```yaml
 agent_dispatch: true         # global default

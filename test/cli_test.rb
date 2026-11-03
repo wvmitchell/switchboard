@@ -1885,6 +1885,10 @@ module Switchboard
       ENV["SWITCHBOARD_BRIEF_FROM"] = "cli"
       assert_equal DispatchNudge.message(brief_from_agent: true),
                    session_context(run_nudge(worktree: named_wt, stdin: '{"source":"startup","cwd":"/x"}'))
+      ["clear", "resume", "compact", "fork"].each do |src|
+        assert_equal DispatchNudge.message, session_context(run_nudge(worktree: named_wt, stdin: %({"source":"#{src}","cwd":"/x"}))),
+                     "after #{src} the first message is no longer the other agent's brief"
+      end
       ENV.delete("SWITCHBOARD_BRIEF_FROM")
       assert_equal DispatchNudge.message, session_context(run_nudge(worktree: named_wt, stdin: '{"source":"startup","cwd":"/x"}'))
     end

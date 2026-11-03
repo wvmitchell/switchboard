@@ -530,10 +530,14 @@ module Switchboard
     def test_the_launcher_marks_only_an_agent_written_brief
       config = config_for(temp_git_repo("proj", origin: true),
                           "session_command" => %(printf '%s' "${SWITCHBOARD_BRIEF_FROM:-none}" > from; sleep 0.5))
-      cli = built(config, task: "")
+      cli = built(config, task: "a brief")
       Creation.update(cli["id"], brief_from: "cli")
       quick_launch(config, cli)
       assert_equal "cli", File.read(File.join(cli["path"], "from"))
+      bare = built(config, task: "")
+      Creation.update(bare["id"], brief_from: "cli") # even a mislabeled record: no task, no label
+      quick_launch(config, bare)
+      assert_equal "none", File.read(File.join(bare["path"], "from"))
       typed = built(config, task: "")
       quick_launch(config, typed)
       assert_equal "none", File.read(File.join(typed["path"], "from")), "a task typed after `n` is the user's own"
