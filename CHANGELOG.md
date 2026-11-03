@@ -10,6 +10,28 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
+## [0.65.0] — every new workspace gets its hooks (2026-11-03)
+
+### Changed
+- Every worktree switchboard creates now gets its Claude hooks. The agent dots, the done
+  chime, auto-naming, monitoring and the `switchboard new` instruction all ride them. The
+  `auto_rename`, `background_presence` and `agent_dispatch` settings now only choose which
+  instructions an agent gets; turning them off no longer skips installing hooks.
+- `agent_state_hooks` is retired. If your config has `agent_state_hooks: false`, new
+  worktrees now get hooks anyway, and `switchboard doctor` names the key as retired.
+  Worktrees you already have keep whatever they had. To keep one worktree hook-free, run
+  `switchboard disable-hooks` in it; to keep a whole project free of Claude hooks, add that
+  line to its setup script (`worktree_creation_command`).
+- `switchboard disable-hooks` now says it affects only this worktree, and exits 1 when
+  switchboard's hooks are still there afterwards instead of reporting success. A malformed
+  settings file of your own, with none of switchboard's hooks in it, is left alone.
+
+### Fixed
+- Switchboard no longer writes its hooks through a `.claude/settings.local.json` (or a
+  `.claude` folder) that a repository commits as a symlink. Such a link could point outside
+  the worktree, for example at your global Claude settings. The warning names where the
+  link leads. A link you make yourself, such as into a dotfiles repo, still works.
+
 ## [0.64.0] — start a workspace from the command line (2026-11-02)
 
 ### Added
