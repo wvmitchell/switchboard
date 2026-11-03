@@ -590,6 +590,15 @@ agent's own subagent tools for delegating parts of its own task. switchboard wir
 subagent hook events for Claude or Codex, and nothing here intercepts a subagent launch.
 A test pins both: the wording, and that no `Subagent*` event is ever wired.
 
+**A brief another agent wrote is labeled as one.** A workspace that `switchboard new`
+started also gets the instruction, and its first message is a brief another agent wrote,
+which would otherwise read as the user asking. So `new` marks its `Creation` record
+`brief_from: "cli"`, the launcher exports `SWITCHBOARD_BRIEF_FROM=cli` for that agent
+only, and the instruction then adds one sentence: the first message came from another
+agent, so don't start new workspaces because of it. That keeps one agent's brief from
+chaining further dispatches. A task you type after `n` is your own, so it gets no such
+sentence.
+
 **The text can't drift from the command.** It quotes `switchboard new` examples, and a
 test runs each one through `DispatchArgs.parse`, the parser the command itself uses.
 

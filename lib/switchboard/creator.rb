@@ -69,12 +69,14 @@ module Switchboard
     # Reserve a name and write the record that claims it as ONE step under the project's
     # reservation lock, so two panes can never hand out the same placeholder. The
     # record, or :no_name / :no_record.
-    def dispatch(config, project_name, task)
+    # `brief_from: "cli"` marks a brief another agent wrote (`switchboard new`), so the
+    # launched agent is told its first message isn't the user asking.
+    def dispatch(config, project_name, task, brief_from: nil)
       Creation.with_project_lock(project_name) do
         name, dest = reserve(config, project_name)
         next :no_name unless dest
 
-        Creation.create(project: project_name, name: name, path: dest, task: task) || :no_record
+        Creation.create(project: project_name, name: name, path: dest, task: task, brief_from: brief_from) || :no_record
       end
     end
 
@@ -91,7 +93,10 @@ module Switchboard
         return false
       end
 
-      Process.detach(Process.spawn(bin, "create-workspace", id,
+      # Its own process group from the first instant: an agent harness that kills the
+      # caller's group when `switchboard new` returns must not take the worker down before
+      # it gets to setsid.
+      Process.detach(Process.spawn(bin, "create-workspace", id, pgroup: true,
                                    in: File::NULL, out: File::NULL, err: File::NULL))
       true
     rescue SystemCallError
@@ -539,6 +544,12 @@ module Switchboard
       end
 
       ENV["SWITCHBOARD_TASK"] = rec["task"].to_s # setup sees it too (D10)
+      # Only for a brief an agent wrote: the agent's SessionStart hook reads it (DispatchNudge).
+      if rec["brief_from"] == "cli"
+        ENV["SWITCHBOARD_BRIEF_FROM"] = "cli"
+      else
+        ENV.delete("SWITCHBOARD_BRIEF_FROM")
+      end
       status = run_setup(config, rec["project"], dest)
       unless status.nil? || status.zero?
         Creation.mark_failed(id, "setup", status, from: "launching")

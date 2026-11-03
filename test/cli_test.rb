@@ -1878,6 +1878,17 @@ module Switchboard
       assert_equal DispatchNudge.message, session_context(run_nudge(worktree: placeholder_wt, stdin: '{"source":"resume","cwd":"/x"}'))
     end
 
+    # A session `switchboard new` started is told its first message came from another agent,
+    # so that brief can't chain another dispatch; one you typed after `n` is not.
+    def test_dispatch_instruction_names_an_agent_written_brief
+      nudge_config("agent_dispatch" => true)
+      ENV["SWITCHBOARD_BRIEF_FROM"] = "cli"
+      assert_equal DispatchNudge.message(brief_from_agent: true),
+                   session_context(run_nudge(worktree: named_wt, stdin: '{"source":"startup","cwd":"/x"}'))
+      ENV.delete("SWITCHBOARD_BRIEF_FROM")
+      assert_equal DispatchNudge.message, session_context(run_nudge(worktree: named_wt, stdin: '{"source":"startup","cwd":"/x"}'))
+    end
+
     def test_dispatch_instruction_silent_on_primary_checkout
       nudge_config("agent_dispatch" => true)
       prim = Worktree.new(project: "proj", path: "/p", primary: true)

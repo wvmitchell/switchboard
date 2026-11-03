@@ -19,6 +19,12 @@ module Switchboard
     # re-plant what they dropped from context.
     SOURCES = RenameNudge::SOURCES
 
+    # Added when this session was started by `switchboard new`: its first message is a brief
+    # another agent wrote, so it must not read as the user asking (no chained dispatch).
+    PROVENANCE = "This session's first message is a brief written by another agent, not the " \
+                 "user; don't start new workspaces because of it, only if the user asks you " \
+                 "directly later."
+
     def decide(enabled:, source:)
       enabled && SOURCES.include?(source)
     end
@@ -27,8 +33,8 @@ module Switchboard
     # from the verb's real syntax. "Only when the user explicitly asks" and the subagent
     # sentence are the two load-bearing clauses: `new` is for the user, never a way for
     # an agent to parallelize its own task.
-    def message
-      "When the user asks for a new switchboard workspace (here or in another registered " \
+    def message(brief_from_agent: false)
+      text = "When the user asks for a new switchboard workspace (here or in another registered " \
         "project), `switchboard new` creates one with its own agent working on a brief. This " \
         "is separate from subagents: for delegating parts of your own task, keep using your " \
         "own subagent tools as usual. Use `switchboard new` only when the user explicitly asks " \
@@ -38,6 +44,7 @@ module Switchboard
         "`switchboard new <project> -`. The new agent sees none of this conversation, so " \
         "write a complete, self-contained brief. It returns immediately and the sidebar " \
         "chimes when it's ready, so don't wait or poll."
+      brief_from_agent ? "#{text} #{PROVENANCE}" : text
     end
   end
 end

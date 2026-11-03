@@ -179,7 +179,7 @@ the agent's own subagents.
   so a pipe that never closes can't hang the caller.
 - **A task that would reach the agent wrong is refused** before anything is built: one
   starting with `-` (the agent would read it as an option), one over 64 KiB, one
-  containing a NUL byte, or one the project's `session_command` can't receive (no agent
+  that isn't valid UTF-8, one containing a NUL byte, or one the project's `session_command` can't receive (no agent
   configured, or a command that needs `{task}`).
 - **It always makes a new workspace.** It never starts an agent in an existing one,
   including the one you're in.

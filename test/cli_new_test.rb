@@ -67,6 +67,7 @@ module Switchboard
       assert_equal [rec["id"]], spawned
       assert_match(/dispatched a new workspace in this project \(proj\): "#{rec['name']}"/, out)
       refute rec["acked"], "the ready chime is how you hear about it"
+      assert_equal "cli", rec["brief_from"], "an agent wrote this brief"
     end
 
     def test_a_named_other_project_says_another_project

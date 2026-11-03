@@ -225,7 +225,7 @@ module Switchboard
       end
 
       rec = begin
-        Creator.dispatch(config, project, task)
+        Creator.dispatch(config, project, task, brief_from: "cli")
       rescue SystemCallError, IOError
         nil
       end
@@ -736,7 +736,9 @@ module Switchboard
     end
 
     def dispatch_piece(wt, source)
-      DispatchNudge.decide(enabled: config.agent_dispatch_for(wt.project), source: source) ? DispatchNudge.message : nil
+      return nil unless DispatchNudge.decide(enabled: config.agent_dispatch_for(wt.project), source: source)
+
+      DispatchNudge.message(brief_from_agent: ENV["SWITCHBOARD_BRIEF_FROM"] == "cli")
     rescue StandardError
       nil
     end

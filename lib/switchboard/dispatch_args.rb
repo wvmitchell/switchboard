@@ -43,7 +43,8 @@ module Switchboard
         buf << chunk
         return [nil, TOO_BIG] if buf.bytesize > limit
       end
-      text = buf.force_encoding(Encoding::UTF_8).scrub("")
+      text = buf.force_encoding(Encoding::UTF_8)
+      return [nil, "the brief on stdin isn't valid UTF-8"] unless text.valid_encoding? # never drop bytes silently
       return [nil, "the brief on stdin is empty"] if text.strip.empty?
 
       [text, nil]
@@ -51,6 +52,7 @@ module Switchboard
 
     # A task that would reach the agent wrong, or crash the launcher -> error, else nil.
     def task_error(task, limit: MAX_TASK_BYTES)
+      return "the brief isn't valid UTF-8" unless task.dup.force_encoding(Encoding::UTF_8).valid_encoding?
       return "the brief contains a NUL byte" if task.include?("\0") # ENV refuses it at launch
       return "a task can't start with '-': the agent would read it as an option; start with a word" if task.lstrip.start_with?("-")
       return "task is #{(task.bytesize / 1024.0).ceil} KiB; the limit is 64 KiB: put the detail in a file and point the brief at it" if task.bytesize > limit

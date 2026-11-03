@@ -35,6 +35,12 @@ module Switchboard
       assert_match(/limit is 64 KiB/, DispatchArgs.task_error("é" * 32_769), "measured in UTF-8 bytes, not characters")
     end
 
+    # The brief reaches the agent intact or not at all: no silently dropped bytes, no backtrace.
+    def test_invalid_utf8_is_refused_never_scrubbed_or_raised
+      assert_equal [nil, "the brief on stdin isn't valid UTF-8"], read_from("caf\xE9 brief".b)
+      assert_equal "the brief isn't valid UTF-8", DispatchArgs.task_error("\xE9t\xE9".dup.force_encoding(Encoding::UTF_8))
+    end
+
     def test_task_error_refuses_nul
       assert_equal "the brief contains a NUL byte", DispatchArgs.task_error("plan\0it")
     end

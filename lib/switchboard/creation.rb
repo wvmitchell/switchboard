@@ -70,11 +70,12 @@ module Switchboard
       canceled: "switchboard: this build was canceled; its agent was not started"
     }.freeze
 
-    def create(project:, name:, path:, task:, now: Time.now, server: current_server)
+    def create(project:, name:, path:, task:, brief_from: nil, now: Time.now, server: current_server)
       id = "#{now.strftime('%Y%m%d%H%M%S')}-#{SecureRandom.hex(3)}"
       rec = { "id" => id, "project" => project, "name" => name, "path" => path, "task" => task.to_s,
               "state" => "queued", "worktree_added" => false, "hooked" => false, "acked" => false,
               "gen" => 0, "ring_gen" => 0, "rung_gen" => 0, "created_at" => now.to_f, "server" => server }
+      rec["brief_from"] = brief_from if brief_from # additive: older launchers ignore it
       write(rec) ? rec : nil
     end
 

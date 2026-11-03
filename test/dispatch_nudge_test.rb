@@ -30,6 +30,11 @@ module Switchboard
       end
     end
 
+    def test_an_agent_written_brief_is_named_as_such
+      refute_includes DispatchNudge.message, DispatchNudge::PROVENANCE
+      assert DispatchNudge.message(brief_from_agent: true).end_with?(DispatchNudge::PROVENANCE)
+    end
+
     def test_message_names_the_projects_verb_the_cli_routes
       assert_includes DispatchNudge.message, "`switchboard projects`"
       assert CLI.respond_to?(:list_projects)

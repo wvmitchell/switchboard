@@ -31,7 +31,7 @@ module Switchboard
     KNOWN_KEYS = %w[
       worktree_root projects_root base branch_prefix session_command worktree_creation_command
       agent_state_hooks prune_on_launch auto_rename diff_counts prewarm background_presence
-      remote_link_stale_after update_check sync_session_name count_indicator
+      remote_link_stale_after update_check sync_session_name count_indicator agent_dispatch
       sounds tmux_keys sidebar_keys projects
     ].freeze
 

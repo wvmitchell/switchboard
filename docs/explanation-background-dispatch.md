@@ -381,7 +381,8 @@ a refusal with a reason the caller can act on:
   dispatch can't be confused.
 - **The brief reaches the agent intact or not at all.** One task argument only, since an
   unquoted brief was already rewritten by the shell. No leading `-`, which the agent would
-  read as an option. No NUL byte, which the environment can't carry. At most 64 KiB,
+  read as an option. Valid UTF-8 only, since a brief is never repaired by dropping bytes.
+  No NUL byte, which the environment can't carry. At most 64 KiB,
   because the task travels in both the environment and argv and macOS caps the two at
   1 MiB. And `Creator.agent_command` runs up front, so a project whose agent can't receive
   a task says so now instead of building a workspace whose agent never gets the brief.
@@ -390,6 +391,9 @@ a refusal with a reason the caller can act on:
   longer than 5 seconds.
 - **The worker's start is reported honestly.** `Creator.spawn_worker` returns whether it
   started. If it didn't, the record is already marked `didnt_start` and `new` exits 1.
+- **The worker survives its caller.** It's spawned in its own process group, so an
+  agent harness that kills the command's whole group when `new` returns can't take the
+  worker down in the moment before it detaches itself.
 - **It needs `$TMUX`.** The record and the new session belong to the tmux server the
   caller is on. Without one, the worker would start a headless server nobody sees.
 - **`$SWITCHBOARD_TASK` is never read.** A dispatched agent's own shell carries its own

@@ -292,11 +292,12 @@ module Switchboard
     def test_spawn_worker_starts_the_worker_and_says_so
       rec = Creation.create(project: "proj", name: "x", path: path("x"), task: "")
       ENV["SWITCHBOARD_BIN"] = "/opt/sb"
-      argv = nil
-      stub_method(Process, :spawn, ->(*a, **_k) { argv = a; 4242 }) do
+      argv = opts = nil
+      stub_method(Process, :spawn, ->(*a, **k) { argv = a; opts = k; 4242 }) do
         stub_method(Process, :detach, ->(_pid) {}) { assert_equal true, Creator.spawn_worker(rec["id"]) }
       end
       assert_equal ["/opt/sb", "create-workspace", rec["id"]], argv
+      assert opts[:pgroup], "its own process group: a caller's group kill can't reach it before setsid"
       assert_equal "queued", Creation.find(rec["id"])["state"]
     end
     
@@ -521,6 +522,21 @@ module Switchboard
       rec = built(config, task: "")
       assert_equal "ready", quick_launch(config, rec)["state"]
       assert_path_exists File.join(rec["path"], "setup-ran")
+    end
+
+    # Value: protects=only a `switchboard new` brief marks the agent's env as agent-written, so its
+    # SessionStart hook adds the provenance sentence; fails_when=the launcher exports it for `n`
+    # tasks too, or never; why_new=brief_from is new; seam=none; no_claim=a real agent's hook env
+    def test_the_launcher_marks_only_an_agent_written_brief
+      config = config_for(temp_git_repo("proj", origin: true),
+                          "session_command" => %(printf '%s' "${SWITCHBOARD_BRIEF_FROM:-none}" > from; sleep 0.5))
+      cli = built(config, task: "")
+      Creation.update(cli["id"], brief_from: "cli")
+      quick_launch(config, cli)
+      assert_equal "cli", File.read(File.join(cli["path"], "from"))
+      typed = built(config, task: "")
+      quick_launch(config, typed)
+      assert_equal "none", File.read(File.join(typed["path"], "from")), "a task typed after `n` is the user's own"
     end
 
     def test_session_command_alone_runs_the_agent

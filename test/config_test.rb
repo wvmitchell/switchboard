@@ -238,6 +238,7 @@ module Switchboard
     def test_agent_dispatch_on_by_default_off_only_when_false
       assert cfg({}).agent_dispatch?
       refute cfg("agent_dispatch" => false).agent_dispatch?
+      assert_empty cfg("agent_dispatch" => false).unknown_keys, "doctor knows the key"
     end
     
     def test_agent_dispatch_for_resolution_matrix
