@@ -10,6 +10,20 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
+## [0.63.0] — a folded project shows its workspace count (2026-11-02)
+
+### Added
+- A folded project now shows how many workspaces it's hiding, in dim grey after its name:
+  `▸ personal-site (4)`. The number is what unfolding would show, so a dispatch that
+  failed still counts until you clear it. An empty project shows no count, and the count
+  goes away when you unfold or filter with `/`.
+
+### Fixed
+- Workspace and project names with wide characters (Chinese, Japanese, Korean, and most
+  emoji) no longer push their row past the edge of the pane. Names are now measured by the
+  columns they take on screen, so the diff counts and PR badges stay lined up. A long
+  project name gives up its own letters before it gives up its count.
+
 ## [0.62.0] — counts on the sidebar's movement keys (2026-10-29)
 
 ### Added
