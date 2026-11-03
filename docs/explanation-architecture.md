@@ -104,6 +104,65 @@ The primary trunk checkout (`primary`) is always filtered out as a switch target
 > subcommands in `cli.rb`). It was removed so the sidebar is the single source of
 > truth. References to it in old commits or issues are stale.
 
+## Layers
+
+`lib/switchboard/` is about sixty files in one folder. Most are small, with one job each,
+but the folder doesn't tell you which files talk to tmux, which hold switchboard's own
+state, and which are the commands people run. Without that, every new piece of code
+lands wherever the nearest example was, and the codebase slowly tangles.
+
+So each file belongs to one of five layers. A file may use anything in its own layer or
+a lower one, never a higher one:
+
+| Layer | What lives there | Examples |
+|---|---|---|
+| **Support** | Plumbing with no switchboard concepts: atomic writes, marker stores, process identity | `MarkerBlock`, `KeyedMarkerStore`, `ProcessIdentity` |
+| **Adapters** | One module per outside thing, answering questions about it and degrading to `[]`/`{}`/`nil` | `Tmux`, `Git`, `Pr` (gh), `ClaudeSessions`, `AgentState`, `Width` |
+| **State** | Switchboard's own nouns: the workspace model, dispatch records, the per-workspace markers | `Model`, `Tree`, `Creation`, `Attention`, `Config` |
+| **Operations** | One module per thing a person or agent can trigger | `Creator`, `Rename`, `Installer`, `Upgrade`, `CodeReload` |
+| **Interfaces** | Turn keys, commands or hook calls into operations and show the result | `CLI`, `Sidebar` and its concern files |
+
+The sidebar is still the one front-end a person navigates with (see
+[above](#one-data-model-one-front-end)). The CLI is the other interface: the commands you
+type, and the entry point tmux hooks, agent hooks and background workers call back into.
+
+The direction is the point. A tmux query belongs in an adapter, so it never needs to know
+the sidebar exists. A rule both interfaces share belongs in an operation, so the sidebar
+key and the CLI command can't drift apart. `Width` sits with the adapters even though it's
+a view setting: it is one small file read deep inside `Tmux`'s session setup, and it
+depends on nothing.
+
+### The layer test holds it
+
+`test/layers_test.rb` checks every file under `lib/switchboard/` on every run. It lists
+each file's layer and fails when:
+
+- a file has no layer, or is listed twice;
+- a top-level constant is defined in two files, so its layer would be ambiguous;
+- a file references a constant from a higher layer;
+- a file locates files relative to itself with `__dir__` or `__FILE__`. Such a file
+  changes meaning when it moves. If `CodeReload`'s root shifted, `stale?` would read true
+  on every tick, and every sidebar would re-exec forever.
+
+`lib/switchboard.rb` itself isn't scanned. It's the entry point that requires everything,
+so it has no layer, and its small `Switchboard.env` helper counts as support.
+
+References come from Ruby's own tokenizer (Ripper), not from a text search. A name that
+only appears in a comment, a string, a symbol (`:Config`) or a heredoc, such as the shell
+script in `HookFile::SCRIPT`, is never counted as a dependency. A file Ripper can't parse
+fails the test instead of being half-read. Nested names don't count either:
+`Sidebar::Edges` is a use of `Sidebar`, and a constant a file defines for itself
+(`CodeReload::VERSION`) doesn't count as the top-level one. Only constants count: a
+`require_relative` or a method called on `Switchboard` itself isn't an edge.
+
+A few violations predate the test. They're listed in the test's `ALLOWED` and
+`PATH_MATH_ALLOWED` tables, each with a note on what removes it. Those lists only shrink:
+once an entry is fixed, the test fails until the entry is deleted. An `ALLOWED` entry
+covers a whole pair of files, though, so a *new* reference between those same two files
+goes unnoticed until the entry is removed. Keep the entries few and short-lived. This is
+the same idea as Packwerk's constant analysis, done with the standard library to keep
+switchboard free of gems.
+
 ## The binary re-invokes itself to spawn the sidebar
 
 `bin/switchboard` exports its own absolute path as `$SWITCHBOARD_BIN`. `tmux.rb`

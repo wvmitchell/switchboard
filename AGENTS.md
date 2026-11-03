@@ -52,6 +52,10 @@ no build step.
 - Stateless helpers are `module_function` modules; only `Model`, `Config`,
   `Sidebar` (plus its `Sidebar::Edges` collaborator, #57), `AgentState` are
   classes (they hold state).
+- Every `lib/switchboard/` file belongs to one layer (support → adapters → state →
+  operations → interfaces) and references only its own layer or lower.
+  `test/layers_test.rb` enforces it, so a new file needs an entry in its `LAYERS` list
+  (see [docs/explanation-architecture.md](docs/explanation-architecture.md#layers)).
 - New worktree state belongs on disk (one file per item, atomic temp+rename, GC'd)
   because every window's sidebar is a separate process — see
   [docs/explanation-sidebar-lifecycle.md](docs/explanation-sidebar-lifecycle.md). For

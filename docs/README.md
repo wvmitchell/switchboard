@@ -44,7 +44,7 @@ depth behind it.
 
 ### 💡 Explanation — why it works this way
 - [Architecture](explanation-architecture.md) — git as the source of truth, one
-  model + one front-end, tmux as the window manager.
+  model + one front-end, the layers every file belongs to, tmux as the window manager.
 - [Agent presence](explanation-agent-presence.md) — the two-signal dots, hooks,
   and the one edge that drives the dot, the sound, and the bold name.
 - [The sidebar's lifecycle](explanation-sidebar-lifecycle.md) — per-session
