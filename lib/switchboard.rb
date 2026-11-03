@@ -6,6 +6,7 @@ module Switchboard
   def self.env(name) = ENV[name]&.dup&.force_encoding(Encoding::UTF_8)
 end
 
+require_relative "switchboard/root"
 require_relative "switchboard/version"
 require_relative "switchboard/stable_path"
 require_relative "switchboard/config"

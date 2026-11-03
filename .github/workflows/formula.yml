@@ -13,6 +13,7 @@ on:
       - switchboard.tmux
       - lib/switchboard.rb
       - lib/switchboard/stable_path.rb
+      - lib/switchboard/root.rb
       - lib/switchboard/installer.rb
       - lib/switchboard/cli.rb
       - lib/switchboard/config.rb

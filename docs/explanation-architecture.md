@@ -140,9 +140,16 @@ each file's layer and fails when:
 - a file has no layer, or is listed twice;
 - a top-level constant is defined in two files, so its layer would be ambiguous;
 - a file references a constant from a higher layer;
-- a file locates files relative to itself with `__dir__` or `__FILE__`. Such a file
-  changes meaning when it moves. If `CodeReload`'s root shifted, `stale?` would read true
-  on every tick, and every sidebar would re-exec forever.
+- any file but `root.rb` locates files relative to itself with `__dir__` or `__FILE__`.
+  Such a file changes meaning when it moves. If `CodeReload`'s root shifted, `stale?`
+  would read true on every tick, and every sidebar would re-exec forever.
+
+That last rule has one home. `lib/switchboard/root.rb` defines `Switchboard::ROOT`, the
+install this process loaded (a keg's real path under Homebrew, the checkout otherwise),
+and `CodeReload`, `Installer` and `Sandbox` all take their root from it. They require
+`root.rb` directly, so each still loads on its own, which `test/root_test.rb` checks
+against the repo as the test sees it. `root.rb` is pinned: it must never move out of
+`lib/switchboard/`, because `ROOT` is computed from where it sits.
 
 `lib/switchboard.rb` itself isn't scanned. It's the entry point that requires everything,
 so it has no layer, and its small `Switchboard.env` helper counts as support.
@@ -155,13 +162,12 @@ fails the test instead of being half-read. Nested names don't count either:
 (`CodeReload::VERSION`) doesn't count as the top-level one. Only constants count: a
 `require_relative` or a method called on `Switchboard` itself isn't an edge.
 
-A few violations predate the test. They're listed in the test's `ALLOWED` and
-`PATH_MATH_ALLOWED` tables, each with a note on what removes it. Those lists only shrink:
-once an entry is fixed, the test fails until the entry is deleted. An `ALLOWED` entry
-covers a whole pair of files, though, so a *new* reference between those same two files
-goes unnoticed until the entry is removed. Keep the entries few and short-lived. This is
-the same idea as Packwerk's constant analysis, done with the standard library to keep
-switchboard free of gems.
+A few violations predate the test. They're listed in the test's `ALLOWED` table, each with
+a note on what removes it. That list only shrinks: once an entry is fixed, the test fails
+until the entry is deleted. An entry covers a whole pair of files, though, so a *new*
+reference between those same two files goes unnoticed until the entry is removed. Keep
+the entries few and short-lived. This is the same idea as Packwerk's constant analysis,
+done with the standard library to keep switchboard free of gems.
 
 ## The binary re-invokes itself to spawn the sidebar
 
@@ -523,7 +529,7 @@ documented superset of the second; both are set to be safe.
 
 ### Testing this checkout, not another
 
-The checkout under test is found from `sandbox.rb`'s own `__dir__`, not the
+The checkout under test is `Switchboard::ROOT`, the code that's actually loaded, not the
 symlink-resolved `SWITCHBOARD_BIN`, and printed as a banner. So running `switchboard
 sandbox` from your PATH can't silently dogfood the canonical checkout instead.
 

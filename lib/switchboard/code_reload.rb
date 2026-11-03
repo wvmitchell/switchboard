@@ -3,6 +3,7 @@
 require "json"
 require "tempfile"
 require_relative "latest_release"
+require_relative "root"
 require_relative "stable_path"
 
 module Switchboard
@@ -30,9 +31,9 @@ module Switchboard
     CHECK_SINCE = "0.59.0" # the first release with `sidebar --check`
     VERSION_LINE = /\Aswitchboard (\d+\.\d+\.\d+)\s*\z/
 
-    # The install this process loaded: <root>/lib/switchboard/.. — a keg's realpath under
-    # Homebrew, the checkout otherwise. Captured at require time, before any upgrade moves opt/.
-    LOADED_ROOT = File.expand_path("../..", __dir__)
+    # The install this process loaded (see Switchboard::ROOT): a keg's realpath under Homebrew,
+    # the checkout otherwise, captured at require time before any upgrade moves opt/.
+    LOADED_ROOT = ROOT
 
     # Does SWITCHBOARD_BIN now resolve to different code than we loaded? Only a Homebrew
     # upgrade moves it (opt/ points at a new keg); a clone's root never changes, so this

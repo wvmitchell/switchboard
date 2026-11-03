@@ -5,6 +5,7 @@ require "shellwords"
 require_relative "marker_block"
 require_relative "codex_hook"
 require_relative "stable_path"
+require_relative "root"
 
 module Switchboard
   # Stands switchboard up from a fresh clone: a `switchboard` symlink on PATH
@@ -43,9 +44,8 @@ module Switchboard
 
     # --- paths ---------------------------------------------------------------
 
-    # Repo root from this file (lib/switchboard/installer.rb → ../..). Works
-    # through a PATH symlink: require resolves to the real file, so __dir__ is
-    # the real lib dir — which StablePath lifts out of a versioned Homebrew keg.
+    # Repo root of the loaded code (Switchboard::ROOT). Works through a PATH symlink:
+    # ROOT is the real lib dir's parent, which StablePath lifts out of a versioned keg.
     def repo_root
       StablePath.resolve(real_root)
     end
@@ -56,9 +56,7 @@ module Switchboard
       StablePath.homebrew?(real_root)
     end
 
-    def real_root
-      File.expand_path("../..", __dir__)
-    end
+    def real_root = ROOT
 
     def bin_path
       File.join(repo_root, "bin", "switchboard")

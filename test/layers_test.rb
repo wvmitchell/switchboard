@@ -15,7 +15,7 @@ module Switchboard
 
     # Lowest first. A file may depend on its own layer or any layer before it.
     LAYERS = {
-      support: %w[keyed_marker_store marker_block process_identity stable_path version],
+      support: %w[keyed_marker_store marker_block process_identity root stable_path version],
       adapters: %w[agent_hooks agent_state agents claude_history claude_hook claude_sessions
                    codex_hook editor git hook_file latest_release pr qr tmux width],
       state: %w[attention branch_fold collapse config creation dispatch_args dispatch_nudge
@@ -33,14 +33,11 @@ module Switchboard
       %w[tmux code_reload] => "the reload-pane ops move from Tmux into CodeReload"
     }.freeze
 
-    # Files under lib/switchboard/ may not locate files from their own position: such a file
-    # changes meaning when it moves (a CodeReload root that shifts makes stale? true on every
-    # tick, so every sidebar re-execs forever). lib/switchboard.rb isn't scanned.
-    PATH_MATH_ALLOWED = {
-      "code_reload" => "until LOADED_ROOT derives from a pinned Switchboard::ROOT",
-      "installer" => "until real_root derives from a pinned Switchboard::ROOT",
-      "sandbox" => "until checkout_root derives from a pinned Switchboard::ROOT"
-    }.freeze
+    # Only root.rb may locate files from its own position: such a file changes meaning when
+    # it moves (a CodeReload root that shifts makes stale? true on every tick, so every
+    # sidebar re-execs forever). Everything else uses Switchboard::ROOT. root.rb is pinned,
+    # and lib/switchboard.rb isn't scanned.
+    PATH_MATH_HOME = "root"
 
     def test_every_lib_file_has_exactly_one_layer
       listed = LAYERS.values.flatten
@@ -67,8 +64,7 @@ module Switchboard
 
     def test_only_root_files_locate_paths_from_their_own_position
       found = lib_files.select { |f| path_math?(source(f)) }
-      assert_empty found - PATH_MATH_ALLOWED.keys, "don't locate files from __dir__/__FILE__; see docs/explanation-architecture.md#layers"
-      assert_empty PATH_MATH_ALLOWED.keys - found, "fixed, so delete these from PATH_MATH_ALLOWED"
+      assert_equal [PATH_MATH_HOME], found, "only root.rb locates files from __dir__/__FILE__; use Switchboard::ROOT (see docs/explanation-architecture.md#layers)"
     end
 
     def test_names_in_comments_strings_and_heredocs_are_not_references

@@ -124,7 +124,8 @@ without it and asserts an untrusted block writes no state (the case behind `doct
 - **Every file under `lib/switchboard/` has a layer** (support, adapters, state,
   operations, interfaces) and may reference only its own layer or a lower one.
   `test/layers_test.rb` fails when a file has no layer, when a lower layer reaches up
-  to a higher one, or when a file locates paths from its own `__dir__` or `__FILE__`.
+  to a higher one, or when a file other than `lib/switchboard/root.rb` locates paths from
+  its own `__dir__` or `__FILE__` (use `Switchboard::ROOT` instead).
   A new file goes into the test's `LAYERS` list; the
   [architecture doc's Layers section](docs/explanation-architecture.md#layers) explains
   which layer fits.
