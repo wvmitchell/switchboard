@@ -565,6 +565,34 @@ The subcommand finds the worktree from the hook's stdin `cwd` (via `current_work
 **always exits 0, printing only the JSON or nothing**. A stray byte on stdout poisons
 Claude even at exit 0, so the whole body is rescued to silence.
 
+## The agent-dispatch instruction
+
+An agent can start another workspace with `switchboard new` (see
+[dispatching from the command line](explanation-background-dispatch.md#dispatching-from-the-command-line)),
+but only if it knows the command exists. So a session also gets a short instruction
+about it, gated on `agent_dispatch` (global plus per-project, on by default).
+
+**It rides the self-naming command, not a hook of its own.** The `rename-nudge`
+`SessionStart` command is already wired in every hooked worktree and calls the stable
+binary. So `CLI#rename_nudge` builds the rename text (if that applies) and the dispatch
+text (`DispatchNudge`, if that applies) and prints them as one `additionalContext`
+payload, rename first. Upgrading reaches every existing workspace with no rewiring. Each
+piece is built under its own rescue, so a fault in one never drops the other, and the
+whole arm still prints only JSON or nothing. `DispatchNudge.decide` uses the same
+sources as the rename nudge, so the instruction comes back after `/clear` and
+compaction. `agent_dispatch` is also one of the settings that make `Creator.enable_hooks`
+wire a new worktree at all, so a project with dots, naming and monitoring all off still
+gets it.
+
+**It is about workspaces for you, not subagents.** The text says to use `switchboard
+new` only when the user explicitly asks for another workspace, and to keep using the
+agent's own subagent tools for delegating parts of its own task. switchboard wires no
+subagent hook events for Claude or Codex, and nothing here intercepts a subagent launch.
+A test pins both: the wording, and that no `Subagent*` event is ever wired.
+
+**The text can't drift from the command.** It quotes `switchboard new` examples, and a
+test runs each one through `DispatchArgs.parse`, the parser the command itself uses.
+
 ## Background monitors: the `∞`
 
 A workspace where an agent runs a background monitor, a recurring loop or a scheduled tick

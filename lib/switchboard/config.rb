@@ -78,6 +78,7 @@ module Switchboard
       # prune_on_launch: true                      # prune orphaned sb/ sessions when landing on home
       # auto_rename: true                          # nudge the agent to rename a placeholder-named workspace once it knows the work
       # background_presence: true                  # nudge the agent to flag background monitors/loops (`switchboard monitoring on`) so the sidebar shows a ∞
+      # agent_dispatch: true                       # tell agents `switchboard new` can start another workspace, here or in another project, when you ask
       # diff_counts: true                          # show +adds −dels of each branch vs base on the workspace row
       # count_indicator: true                      # show a half-typed count (the 3 of 3j) in the sidebar footer; false hides it, counts still work
       # prewarm: true                              # keep off-screen sidebars warm so switching sessions doesn't flash a stale tree
@@ -288,6 +289,23 @@ module Switchboard
       return node == true unless node.nil?
 
       background_presence?
+    end
+
+    # Global agent-dispatch switch — ON by default. When on, the agent hooks plant a
+    # SessionStart instruction saying `switchboard new` can start another workspace (here
+    # or in another registered project) when the user asks, separate from the agent's own
+    # subagents. `agent_dispatch: false` drops the instruction; the verb still works.
+    def agent_dispatch?
+      @data.fetch("agent_dispatch", true) != false
+    end
+
+    # Resolved agent_dispatch for a project: an explicit per-project value wins over the
+    # global default (mirrors auto_rename). Boolean by VALUE, not truthiness.
+    def agent_dispatch_for(project_name)
+      node = project_key(project_name, "agent_dispatch")
+      return node == true unless node.nil?
+
+      agent_dispatch?
     end
 
     # Whether a rename also renames the workspace's live Claude session (the name its

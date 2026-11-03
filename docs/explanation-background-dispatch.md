@@ -361,6 +361,48 @@ All the branch checks (`valid_branch_name?`, and `branch_exists?` giving the
 `:branch_exists` result) run before anything moves, and the branch is renamed first. So
 a collision fails cleanly with nothing moved, and the agent retries with another name.
 
+## Dispatching from the command line
+
+`switchboard new <project|.> ["task" | -]` is `n` without the sidebar, so an agent can
+start another workspace when you ask it to, in the same project or a different one. It
+runs the same three steps the sidebar does: `Creator.dispatch` reserves a name and writes
+the record under the project lock, `Creator.spawn_worker` starts the detached worker,
+and `Tmux.broadcast_warm` puts the `◌` row on every sidebar. Then it returns, well under
+a second, however long setup takes. Like `n`, it never waits for the build, and the
+ping comes from a visible sidebar.
+
+What's different is that nobody is watching the pane the work lands in. So everything
+that could go wrong later is checked first, before any record exists, and every doubt is
+a refusal with a reason the caller can act on:
+
+- **Where it goes is never guessed.** The target is either `.` (the project the current
+  directory is in) or a registered name. The first line of output says "this project" or
+  "ANOTHER project", judged by where the caller is, so a same-project and a cross-project
+  dispatch can't be confused.
+- **The brief reaches the agent intact or not at all.** One task argument only, since an
+  unquoted brief was already rewritten by the shell. No leading `-`, which the agent would
+  read as an option. No NUL byte, which the environment can't carry. At most 64 KiB,
+  because the task travels in both the environment and argv and macOS caps the two at
+  1 MiB. And `Creator.agent_command` runs up front, so a project whose agent can't receive
+  a task says so now instead of building a workspace whose agent never gets the brief.
+- **Stdin can't hang the caller.** An agent's shell can hand a command a stdin pipe that
+  never closes. So `-` refuses a terminal, reads in chunks, and gives up on any pause
+  longer than 5 seconds.
+- **The worker's start is reported honestly.** `Creator.spawn_worker` returns whether it
+  started. If it didn't, the record is already marked `didnt_start` and `new` exits 1.
+- **It needs `$TMUX`.** The record and the new session belong to the tmux server the
+  caller is on. Without one, the worker would start a headless server nobody sees.
+- **`$SWITCHBOARD_TASK` is never read.** A dispatched agent's own shell carries its own
+  task there.
+
+**It never touches an existing workspace.** `reserve` hands out only paths that don't
+exist and branches and sessions that aren't taken, a collision moves on to a fresh name,
+and the launch line is typed only into a session the worker just created. So `new .`
+always makes a sibling, never a second agent in the workspace you're in. This is separate
+from an agent's own subagents too: `new` is for workspaces you asked for, and the
+instruction that teaches it says so (see
+[the agent-dispatch instruction](explanation-agent-presence.md#the-agent-dispatch-instruction)).
+
 ## Related
 
 - [Explanation: architecture](explanation-architecture.md) — the worktree ⇆ session mapping this builds on.

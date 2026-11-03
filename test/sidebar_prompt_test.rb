@@ -178,7 +178,7 @@ module Switchboard
       dest = path("wts", "app", "wandering-finch")
       stub_method(sb, :prompt_line, ->(*_a, **_k) { "" }) do
         stub_method(Creator, :reserve, ->(*) { ["wandering-finch", dest] }) do
-          stub_method(sb, :spawn_worker, ->(_id) {}) do
+          stub_method(Creator, :spawn_worker, ->(_id) { true }) do
             stub_method(Tmux, :go, ->(*_a, **_k) { went = true }) do
               stub_method(Tmux, :broadcast_warm, ->(**_k) {}) do
                 stub_method(sb, :reload, -> {}) { sb.send(:create) }

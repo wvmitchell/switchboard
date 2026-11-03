@@ -1779,8 +1779,11 @@ module Switchboard
     # --- rename-nudge (#92 SessionStart hook entry) --------------------------
 
     # Write a sandboxed config and force `config` to re-read it (drop any memoized one).
+    # Pins agent_dispatch OFF so the rename tests keep asserting exact silence (D7); the
+    # dispatch tests below turn it on explicitly.
     def nudge_config(extra)
-      base = { "worktree_root" => path("wts"), "projects" => [{ "name" => "proj", "path" => "/p" }] }
+      base = { "worktree_root" => path("wts"), "agent_dispatch" => false,
+               "projects" => [{ "name" => "proj", "path" => "/p" }] }
       File.write(Config.path, YAML.dump(base.merge(extra)))
     end
 
@@ -1846,6 +1849,54 @@ module Switchboard
       nudge_config("auto_rename" => true)
       prim = Worktree.new(project: "proj", path: "/p", primary: true)
       assert_equal "", run_nudge(worktree: prim, stdin: '{"source":"resume","cwd":"/p"}')
+    end
+
+    # --- the agent-dispatch instruction riding the same SessionStart payload (D7) ---
+
+    def session_context(out)
+      JSON.parse(out)["hookSpecificOutput"]["additionalContext"]
+    end
+
+    def named_wt
+      Worktree.new(project: "proj", path: "/wts/proj/fix-auth", primary: false)
+    end
+
+    def test_dispatch_instruction_alone_in_a_named_workspace
+      nudge_config("auto_rename" => true, "agent_dispatch" => true)
+      assert_equal DispatchNudge.message, session_context(run_nudge(worktree: named_wt, stdin: '{"source":"startup","cwd":"/x"}'))
+    end
+
+    def test_dispatch_and_rename_join_into_one_payload_rename_first
+      nudge_config("auto_rename" => true, "agent_dispatch" => true)
+      out = run_nudge(worktree: placeholder_wt, stdin: '{"source":"startup","cwd":"/x"}')
+      assert_equal 1, out.lines.size, "one JSON object"
+      assert_equal "#{RenameNudge.message('wandering-finch')}\n\n#{DispatchNudge.message}", session_context(out)
+    end
+
+    def test_dispatch_instruction_alone_when_auto_rename_off
+      nudge_config("auto_rename" => false, "agent_dispatch" => true)
+      assert_equal DispatchNudge.message, session_context(run_nudge(worktree: placeholder_wt, stdin: '{"source":"resume","cwd":"/x"}'))
+    end
+
+    def test_dispatch_instruction_silent_on_primary_checkout
+      nudge_config("agent_dispatch" => true)
+      prim = Worktree.new(project: "proj", path: "/p", primary: true)
+      assert_equal "", run_nudge(worktree: prim, stdin: '{"source":"resume","cwd":"/p"}')
+    end
+
+    def test_dispatch_instruction_is_on_by_default
+      File.write(Config.path, YAML.dump("worktree_root" => path("wts"), "projects" => [{ "name" => "proj", "path" => "/p" }]))
+      assert_equal DispatchNudge.message, session_context(run_nudge(worktree: named_wt, stdin: '{"source":"startup","cwd":"/x"}'))
+    end
+
+    # Each piece is rescued alone: a fault building the dispatch text drops only it.
+    def test_a_failing_dispatch_piece_still_prints_the_rename_text
+      nudge_config("auto_rename" => true, "agent_dispatch" => true)
+      out = nil
+      stub_method(DispatchNudge, :message, -> { raise "boom" }) do
+        out = run_nudge(worktree: placeholder_wt, stdin: '{"source":"startup","cwd":"/x"}')
+      end
+      assert_equal RenameNudge.message("wandering-finch"), session_context(out)
     end
 
     def test_rename_nudge_silent_on_malformed_stdin

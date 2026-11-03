@@ -133,15 +133,23 @@ module Switchboard
     def test_build_skips_hooks_for_a_per_project_auto_rename_opt_out
       repo = temp_git_repo("proj", origin: true)
       File.write(Config.path, YAML.dump("worktree_root" => path("wts"), "agent_state_hooks" => false,
-                                        "auto_rename" => true, "background_presence" => false,
+                                        "auto_rename" => true, "background_presence" => false, "agent_dispatch" => false,
                                         "projects" => [{ "name" => "proj", "auto_rename" => false, "path" => repo }]))
       refute ClaudeHook.enabled?(build(Config.new)), "per-project auto_rename:false skips the hook despite global on"
     end
 
-    def test_build_skips_hooks_when_dots_rename_and_presence_all_off
-      config = config_for(temp_git_repo("proj", origin: true), "agent_state_hooks" => false,
-                                                                 "auto_rename" => false, "background_presence" => false)
+    def test_build_skips_hooks_when_dots_rename_presence_and_dispatch_all_off
+      config = config_for(temp_git_repo("proj", origin: true), "agent_state_hooks" => false, "auto_rename" => false,
+                                                                 "background_presence" => false, "agent_dispatch" => false)
       refute ClaudeHook.enabled?(build(config))
+    end
+
+    # The dispatch instruction rides the hook too, so agent_dispatch alone must wire it
+    # (R10): a project with everything else off would otherwise never hear about `new`.
+    def test_build_wires_the_hook_for_agent_dispatch_alone
+      config = config_for(temp_git_repo("proj", origin: true), "agent_state_hooks" => false, "auto_rename" => false,
+                                                                 "background_presence" => false, "agent_dispatch" => true)
+      assert ClaudeHook.enabled?(build(config)), "the agent-dispatch instruction needs it"
     end
 
     def test_build_wires_the_hook_for_background_presence_alone

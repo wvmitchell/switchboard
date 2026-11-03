@@ -14,14 +14,15 @@ module Switchboard
     PLACEHOLDER_TRIES = 5 # bounded retries past a generated name already taken
 
     # Wire the per-worktree agent hooks (agent-state reporter + the #92 self-naming nudge
-    # + the background-presence monitoring nudge/clears), scoped to this worktree, never
-    # global. Enabled when ANY of dots / auto_rename / background_presence is on — each
-    # resolved *per project* so a project that opts into just one (with the global off)
-    # still gets the hook its runtime nudge needs. Best-effort: a hook-wiring hiccup must
-    # never sink an otherwise-good worktree.
+    # + the background-presence monitoring nudge/clears + the agent-dispatch instruction),
+    # scoped to this worktree, never global. Enabled when ANY of dots / auto_rename /
+    # background_presence / agent_dispatch is on — each resolved *per project* so a
+    # project that opts into just one (with the global off) still gets the hook its
+    # runtime nudge needs. Best-effort: a hook-wiring hiccup must never sink an
+    # otherwise-good worktree.
     def enable_hooks(config, project_name, dest)
       if config.agent_state_hooks? || config.auto_rename_for(project_name) ||
-         config.background_presence_for(project_name)
+         config.background_presence_for(project_name) || config.agent_dispatch_for(project_name)
         AgentHooks.enable(dest)
       end
       dest
@@ -75,6 +76,27 @@ module Switchboard
 
         Creation.create(project: project_name, name: name, path: dest, task: task) || :no_record
       end
+    end
+
+    SPAWN_FAILED = "couldn't start the build worker"
+
+    # Detach the worker for a dispatched record (the sidebar's `n` and `switchboard new`).
+    # It daemonizes itself (setsid), so the caller closing mid-build can't take it down.
+    # No wrapper or a failed spawn means it will never run, so the record turns ✘ at once
+    # instead of waiting out GC's grace. True when the worker was started.
+    def spawn_worker(id)
+      bin = ENV["SWITCHBOARD_BIN"]
+      unless bin
+        Creation.mark_failed(id, "didnt_start", from: "queued")
+        return false
+      end
+
+      Process.detach(Process.spawn(bin, "create-workspace", id,
+                                   in: File::NULL, out: File::NULL, err: File::NULL))
+      true
+    rescue SystemCallError
+      Creation.mark_failed(id, "didnt_start", from: "queued")
+      false
     end
 
     def stale_session?(project_name, dest)

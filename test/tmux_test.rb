@@ -789,6 +789,25 @@ module Switchboard
       refute poked
     end
 
+    # Value: protects=the launch line (and so an agent) is never typed into a session that
+    # already existed or that a racer created first; fails_when=ensure_session drops its
+    # has_session? check or ignores new-session's failure; why_new=only stubbed elsewhere;
+    # seam=none; no_claim=a real tmux server (system stubbed)
+    def test_ensure_session_never_types_into_a_session_it_did_not_create
+      typed = []
+      stub_method(Tmux, :run_in_session, ->(name, cmd) { typed << [name, cmd] }) do
+        stub_method(Tmux, :has_session?, ->(_n) { true }) do
+          refute Tmux.ensure_session("sb/p/existing", "/tmp", "launch")
+        end
+        stub_method(Tmux, :has_session?, ->(_n) { false }) do
+          stub_method(Tmux, :system, ->(*_a, **_k) { false }) do # a racer won new-session
+            refute Tmux.ensure_session("sb/p/raced", "/tmp", "launch")
+          end
+        end
+      end
+      assert_empty typed
+    end
+
     private
 
     # Stub the seams toggle_sidebar drives: the session it reads, whether the
@@ -816,6 +835,5 @@ module Switchboard
           end
         end
       end
-    end
-  end
+    end  end
 end
