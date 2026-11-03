@@ -597,10 +597,16 @@ which would otherwise read as the user asking. So `new` marks its `Creation` rec
 only, and the instruction then adds one sentence: the first message came from another
 agent, so don't start new workspaces because of it. That keeps one agent's brief from
 chaining further dispatches. A task you type after `n` is your own, so it gets no such
-sentence, and neither does a bare `new` with no task. The sentence comes back after a
-resume, a fork or compaction, which all keep the conversation that opened on the brief. It's
-dropped only after `/clear`: the variable lives as long as the agent does, but a cleared
-session's next first message is the user's own.
+sentence, and neither does a bare `new` with no task.
+
+The variable lives exactly as long as the agent process the launcher started, because
+the launcher sets it in its own environment and only that child inherits it; the pane's
+shell never has it. So within that process the sentence comes back after a `/resume`, a
+fork or compaction, which all keep the conversation that opened on the brief, and it's
+dropped after `/clear`, since a cleared session's next first message is the user's own.
+Once that agent exits, the label is gone: a `claude --resume` you start later from the
+pane's shell runs without the variable, so the resumed conversation gets the plain
+instruction.
 
 **The text can't drift from the command.** It quotes `switchboard new` examples, and a
 test runs each one through `DispatchArgs.parse`, the parser the command itself uses.

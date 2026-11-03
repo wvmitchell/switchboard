@@ -413,7 +413,7 @@ serve every project:
 |---|---|
 | `$SWITCHBOARD_PROJECT_PATH` | the project's canonical checkout (its registered `path`) |
 | `$SWITCHBOARD_WORKTREE_PATH` | the new worktree (also just `.`, the cwd) |
-| `$SWITCHBOARD_TASK` | the task typed after `n` (empty for a bare create) — the agent gets it too |
+| `$SWITCHBOARD_TASK` | the task typed after `n` or passed to `switchboard new` (empty for a bare create) — the agent gets it too |
 
 ```yaml
 worktree_creation_command: cp "$SWITCHBOARD_PROJECT_PATH/.env" .
@@ -485,7 +485,7 @@ Everything switchboard writes, and how to redirect it. State dirs follow XDG.
 | Held `◷` chimes (waiting on a background agent) | `$XDG_STATE_HOME/switchboard/offstage_hold` → `~/.local/state/switchboard/offstage_hold` | `$SWITCHBOARD_OFFSTAGE_HOLD_DIR` |
 | In-flight delete markers | `$XDG_STATE_HOME/switchboard/pending-delete` → `~/.local/state/switchboard/pending-delete` | `$SWITCHBOARD_PENDING_DELETE_DIR` |
 | Project-collapse folds | `$XDG_STATE_HOME/switchboard/collapse` → `~/.local/state/switchboard/collapse` | `$SWITCHBOARD_COLLAPSE_DIR` |
-| Background-create records (`n` dispatches) | `$XDG_STATE_HOME/switchboard/creation` → `~/.local/state/switchboard/creation` | `$SWITCHBOARD_CREATION_DIR` |
+| Background-create records (`n` and `switchboard new` dispatches) | `$XDG_STATE_HOME/switchboard/creation` → `~/.local/state/switchboard/creation` | `$SWITCHBOARD_CREATION_DIR` |
 | PR-badge cache | `$XDG_CACHE_HOME/switchboard/prs` → `~/.cache/switchboard/prs` | `$SWITCHBOARD_CACHE_DIR` |
 | Agent-state reporter script | `$XDG_DATA_HOME/switchboard/sb-agent-hook` → `~/.local/share/switchboard/sb-agent-hook` | `$XDG_DATA_HOME` |
 | Synthesized sound WAVs | `$XDG_DATA_HOME/switchboard/sounds` → `~/.local/share/switchboard/sounds` | `$XDG_DATA_HOME` |

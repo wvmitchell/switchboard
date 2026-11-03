@@ -378,7 +378,7 @@ a refusal with a reason the caller can act on:
 - **Where it goes is never guessed.** The target is either `.` (the project the current
   directory is in) or a registered name. The first line of output says "this project" or
   "ANOTHER project", judged by where the caller is, so a same-project and a cross-project
-  dispatch can't be confused.
+  dispatch can't be confused. A caller outside any project gets just the project's name.
 - **The brief reaches the agent intact or not at all.** One task argument only, since an
   unquoted brief was already rewritten by the shell. No leading `-`, which the agent would
   read as an option. Valid UTF-8 only, since a brief is never repaired by dropping bytes.

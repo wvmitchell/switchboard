@@ -187,7 +187,8 @@ the agent's own subagents.
   server you're on.
 
 The first line of output says whether the workspace went into this project or
-**another** one, judged by where you ran it. The path and record id follow.
+**another** one, judged by where you ran it (run from outside any project, it just names
+the project). The path and record id follow.
 `$SWITCHBOARD_TASK` is never read, so an agent's own task can't leak into a dispatch.
 
 ### `switchboard projects [--names]`
@@ -412,7 +413,7 @@ no-op outside the right tmux context.
 | `reload-config [origin]` | the post-edit Ctrl-R poke | Re-read config and redraw after editing it from the sidebar. |
 | `tmux-bind` | the `switchboard.tmux` fragment | (Re)bind the configured `tmux_keys`, cleaning up the previously-bound key. A `config.yml` that won't parse re-binds the keys already bound (the defaults only if none were). |
 | `check-update` | a visible sidebar, at most every 4 hours (spawned detached) | Homebrew installs: reads the newest release tag and caches it for the update line under the wordmark (#47). Does nothing under `SWITCHBOARD_NO_UPDATE_CHECK`. |
-| `create-workspace <id>` | the sidebar's `n` (spawned detached) | Background worker for a dispatched workspace: fetch, `git worktree add`, wire hooks, open the session. |
+| `create-workspace <id>` | the sidebar's `n` or `switchboard new` (spawned detached) | Background worker for a dispatched workspace: fetch, `git worktree add`, wire hooks, open the session. |
 | `launch <dest>` | the line the worker types into the new pane | Run the setup script, then start the agent with the task. |
 
 See [Explanation: sidebar lifecycle](explanation-sidebar-lifecycle.md) for how

@@ -51,8 +51,9 @@ depth behind it.
   visibility, off-screen dormancy, and the recycled-pane-id bug it prevents.
 - [Distribution](explanation-distribution.md) — why install paths go through
   Homebrew's `opt/` link, and why only a fully-green main tip ever releases.
-- [Background dispatch](explanation-background-dispatch.md) — how `n` builds a
-  workspace in the background, and why cancel and failure never destroy work.
+- [Background dispatch](explanation-background-dispatch.md) — how `n` (or
+  `switchboard new`) builds a workspace in the background, and why cancel and failure
+  never destroy work.
 - [The sidebar's views and keys](explanation-sidebar-views.md) — folds, width, diff
   counts, the filter, the `?` overlay and remappable keys.
 - [Session-name sync](explanation-session-name-sync.md) — how a rename reaches the
