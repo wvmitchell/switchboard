@@ -298,7 +298,6 @@ module Switchboard
         projects_root: #{File.join(state_dir, 'projects')}
         base: main
         auto_rename: false
-        agent_state_hooks: false
         projects:
           - name: #{PROJECT}
             path: #{File.join(state_dir, 'projects', PROJECT)}

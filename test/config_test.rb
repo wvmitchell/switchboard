@@ -210,12 +210,6 @@ module Switchboard
       assert_nil cfg("branch_prefix" => "/").branch_prefix
     end
 
-    def test_agent_state_hooks_on_by_default_off_only_when_false
-      assert cfg({}).agent_state_hooks?
-      assert cfg("agent_state_hooks" => true).agent_state_hooks?
-      refute cfg("agent_state_hooks" => false).agent_state_hooks?
-    end
-
     def test_auto_rename_on_by_default_off_only_when_false
       assert cfg({}).auto_rename?
       assert cfg("auto_rename" => true).auto_rename?

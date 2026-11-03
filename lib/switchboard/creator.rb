@@ -13,18 +13,13 @@ module Switchboard
 
     PLACEHOLDER_TRIES = 5 # bounded retries past a generated name already taken
 
-    # Wire the per-worktree agent hooks (agent-state reporter + the #92 self-naming nudge
-    # + the background-presence monitoring nudge/clears; the agent-dispatch instruction rides
-    # them), scoped to this worktree, never global. Enabled when ANY of dots / auto_rename /
-    # background_presence is on — each resolved *per project* so a project that opts into just
-    # one (with the global off) still gets the hook its runtime nudge needs. agent_dispatch
-    # never installs hooks by itself. Best-effort: a hook-wiring hiccup must never sink an
-    # otherwise-good worktree.
-    def enable_hooks(config, project_name, dest)
-      if config.agent_state_hooks? || config.auto_rename_for(project_name) ||
-         config.background_presence_for(project_name)
-        AgentHooks.enable(dest)
-      end
+    # Wire the per-worktree agent hooks (agent-state reporter, plus the SessionStart
+    # instructions for naming, monitoring and dispatch), scoped to this worktree, never
+    # global. Always: switchboard isn't much without them, and each instruction's own setting
+    # decides at runtime whether it's planted. `switchboard disable-hooks` opts one worktree
+    # out. Best-effort: a hook-wiring hiccup must never sink an otherwise-good worktree.
+    def enable_hooks(dest)
+      AgentHooks.enable(dest)
       dest
     rescue StandardError
       dest
@@ -136,7 +131,7 @@ module Switchboard
         return
       end
 
-      enable_hooks(config, rec["project"], dest) # dots/nudges for ANY agent, typed by hand or not
+      enable_hooks(dest) # dots/nudges for ANY agent, typed by hand or not
       # A first guess, so a setup step running claude doesn't chime; the launcher
       # decides for real from the command it runs.
       Creation.update(id, hooked: hooked?(config, rec["project"], dest))

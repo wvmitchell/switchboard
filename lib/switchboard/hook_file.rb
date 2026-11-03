@@ -297,6 +297,7 @@ module Switchboard
       load_settings(path)
       false
     rescue Corrupt
+      return false unless File.exist?(path) # a dangling (committed) link: nothing there to be ours
       return !File.directory?(path) unless readable_settings?(path)
 
       raw = File.binread(path)
@@ -433,7 +434,15 @@ module Switchboard
     # For the WRITE paths (enable/disable): an absent file is {}, but a present
     # file that won't parse must NOT be treated as empty — that would overwrite
     # (or, in disable, delete) settings switchboard doesn't own. Raise instead.
+    # A symlinked file or `.claude` dir the repo COMMITTED would carry the write out of the
+    # worktree, into whatever the repo points it at: refused too. A link you made yourself
+    # (dotfiles) is untracked and still written through. Checked before exist?, which is
+    # false for a dangling link that a write would create.
     def load_settings(path)
+      if committed_link?(path) || committed_link?(File.dirname(path))
+        raise Corrupt, "#{path} goes through a symlink the repo committed (to #{link_target(path)}), " \
+                       "which switchboard won't write through; remove any switchboard entries there by hand"
+      end
       return {} unless File.exist?(path)
       raise Corrupt, "#{path} isn't a regular file under #{MAX_SETTINGS >> 20} MiB" unless readable_settings?(path)
 
@@ -448,6 +457,25 @@ module Switchboard
       data
     rescue JSON::ParserError, EncodingError
       raise Corrupt, "#{path} isn't valid JSON"
+    end
+
+    # A symlink git tracks at this path, in any letter case: macOS opens `.Claude` for
+    # `.claude`, so an exact-name match would let a renamed link through. Fails closed: a
+    # link git can't vouch for (git missing, not a repo) counts as committed.
+    def committed_link?(path)
+      return false unless File.symlink?(path)
+
+      dir = File.dirname(path)
+      name = File.basename(path)
+      out = `git -C #{Shellwords.escape(dir)} ls-files -z -- #{Shellwords.escape(":(icase)#{name}")} 2>/dev/null`
+      !$?.success? || out.split("\0").any? { |tracked| tracked.casecmp?(name) }
+    end
+
+    # Where a link actually leads, for the refusal message (a dangling one: where it aims).
+    def link_target(path)
+      File.realpath(path)
+    rescue SystemCallError
+      MarkerBlock.real_target(path)
     end
 
     # The shape merged/strip_ours walk: { event => [ { "hooks" => [ {...} ] } ] }. Anything

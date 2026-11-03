@@ -396,5 +396,98 @@ module Switchboard
                HookFile.command_entries(CodexHook::EVENTS, "/s", "switchboard").map { |e| e[:event] }
       assert_empty events.grep(/subagent/i)
     end
+
+    # --- a symlink the repo committed (Codex review, Step 11) -------------------------
+
+    # A repo with `.claude/settings.local.json` (or `.claude`) committed as a symlink to
+    # `outside`: a hostile repo aims it at your global Claude settings.
+    def committed_link_repo(link_dir: false)
+      repo = temp_git_repo("linked")
+      outside = path("outside", "settings.json")
+      FileUtils.mkdir_p(File.dirname(outside))
+      File.write(outside, "{}\n")
+      if link_dir
+        File.symlink(File.dirname(outside), File.join(repo, ".claude"))
+      else
+        FileUtils.mkdir_p(File.join(repo, ".claude"))
+        File.symlink(outside, ClaudeHook.settings_path(repo))
+      end
+      git(repo, "add", "-A")
+      git(repo, "commit", "-q", "-m", "link")
+      [repo, outside]
+    end
+
+    # Value: protects=creating a workspace never writes switchboard's hooks through a symlink the repo committed (out of the worktree); fails_when=load_settings stops refusing a committed link; why_new=Codex Step 11 finding, nothing covered it; seam=none; no_claim=a link you made yourself (hook_refresh_test keeps writing through it)
+    def test_enable_refuses_a_committed_settings_symlink
+      repo, outside = committed_link_repo
+      _out, err = capture_io { ClaudeHook.enable(repo) }
+      assert_equal "{}\n", File.read(outside), "the link's target is untouched"
+      assert_match(/symlink the repo committed/, err)
+      refute ClaudeHook.current?(repo)
+    end
+
+    # Value: protects=a committed `.claude` dir symlink is refused the same way; fails_when=only the file is checked, not its directory; why_new=the dir is the other way out; seam=none; no_claim=deeper ancestors (the worktree root itself)
+    def test_enable_refuses_a_committed_claude_dir_symlink
+      repo, outside = committed_link_repo(link_dir: true)
+      capture_io { ClaudeHook.enable(repo) }
+      assert_equal ["settings.json"], Dir.children(File.dirname(outside)), "nothing written beside the target"
+      assert_equal "{}\n", File.read(outside)
+    end
+
+    # Value: protects=a committed DANGLING link isn't followed to create its target; fails_when=the check moves after exist? (false for a dangling link); why_new=the case a naive guard misses; seam=none; no_claim=none beyond protects
+    def test_enable_refuses_a_committed_dangling_symlink
+      repo, outside = committed_link_repo
+      File.delete(outside)
+      capture_io { ClaudeHook.enable(repo) }
+      refute File.exist?(outside), "the link's target was not created"
+    end
+
+    # A committed link under another letter case: macOS opens `.Claude` for `.claude`, so it
+    # must count as committed too. On a case-sensitive filesystem the link isn't at our path
+    # at all, so there's nothing to escape through.
+    def test_enable_refuses_a_committed_link_in_another_letter_case
+      repo = temp_git_repo("cased")
+      outside = path("outside2", "settings.json")
+      FileUtils.mkdir_p(File.dirname(outside))
+      File.write(outside, "{}\n")
+      File.symlink(File.dirname(outside), File.join(repo, ".Claude"))
+      git(repo, "add", "-A")
+      git(repo, "commit", "-q", "-m", "cased link")
+      skip "case-sensitive filesystem: .claude isn't the committed .Claude" unless File.symlink?(File.join(repo, ".claude"))
+
+      capture_io { ClaudeHook.enable(repo) }
+      assert_equal ["settings.json"], Dir.children(File.dirname(outside)), "nothing written through the renamed link"
+    end
+
+    # Value: protects=a committed link to a file without switchboard's hooks doesn't fail disable-hooks (nothing of ours to remove), so a setup-script opt-out still works there; fails_when=committed links always fail disable; why_new=fix-check: such repos failed setup on every workspace; seam=none; no_claim=none beyond protects
+    def test_disable_hooks_passes_a_committed_link_with_nothing_of_ours
+      repo, outside = committed_link_repo
+      got = nil
+      out, = capture_io { got = Dir.chdir(repo) { CLI.disable_hooks } }
+      refute_equal false, got
+      assert_match(/disabled switchboard's hooks/, out)
+      assert_equal "{}\n", File.read(outside)
+      File.delete(outside) # dangling: still nothing of ours
+      refute_equal false, Dir.chdir(repo) { capture_io { got = CLI.disable_hooks }; got }
+    end
+
+    # Value: protects=the refusal names where the committed link leads, so someone already hooked through one can clean that file; fails_when=the target drops out of the message; why_new=fix-check: no path out for already-affected users; seam=none; no_claim=none beyond protects
+    def test_a_committed_link_refusal_names_its_target_once
+      repo, outside = committed_link_repo
+      _out, err = capture_io { ClaudeHook.enable(repo) }
+      assert_includes err, File.realpath(outside)
+      assert_equal 1, err.scan("leaving it untouched").size, "said once"
+    end
+
+    # Value: protects=disable-hooks on a committed link fails (exit 1) instead of deleting the link and reporting success; fails_when=committed links stop reading as unparseable; why_new=Codex: disable deleted the local link while hooks stayed in the target; seam=none; no_claim=an outside target that already held hooks from before this guard (refused alike, left as is)
+    def test_disable_hooks_fails_on_a_committed_symlink
+      repo, outside = committed_link_repo
+      File.write(outside, JSON.generate("hooks" => { "Stop" => [{ "hooks" => [{ "type" => "command", "command" => "x #{HookFile::MARK}" }] }] }))
+      got = nil
+      out, = capture_io { got = Dir.chdir(repo) { CLI.disable_hooks } }
+      assert_equal false, got
+      assert_match(/couldn't remove claude hooks/, out)
+      assert File.symlink?(ClaudeHook.settings_path(repo)), "the committed link is left in place"
+    end
   end
 end

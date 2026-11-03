@@ -328,10 +328,10 @@ module Switchboard
 
     # --- hooked ----------------------------------------------------------------------
 
-    def hooked_worktree(config)
+    def hooked_worktree(_config)
       dest = path("wts", "proj", "hooked")
       FileUtils.mkdir_p(dest)
-      Creator.enable_hooks(config, "proj", dest)
+      Creator.enable_hooks(dest)
       dest
     end
 
@@ -343,7 +343,7 @@ module Switchboard
     def test_not_hooked_for_aider_even_with_default_hook_config
       config = config_for(temp_git_repo("proj", origin: true), "session_command" => "aider")
       refute Creator.hooked?(config, "proj", hooked_worktree(config)),
-             "auto_rename wires the Claude hook, but aider never fires it"
+             "every worktree gets the Claude hook, but aider never fires it"
     end
 
     def test_not_hooked_for_codex

@@ -256,11 +256,28 @@ survives a `git pull` or `brew upgrade`, unlike the checkout. It's rewritten
 whenever it's missing or stale (versioned in the script header), so an upgrade
 self-heals.
 
-New worktrees switchboard creates get the Claude hook automatically: the dispatch
-worker runs `Creator.work` → `enable_hooks` → `AgentHooks.enable`, gated on
-`agent_state_hooks?`, *or* `auto_rename_for(project)`, *or* `background_presence`. So a
-project that opts into `auto_rename` while the global setting is off still gets the hook
-the rename nudge needs. Existing worktrees get it via `switchboard enable-hooks`. Codex
+Every worktree switchboard creates gets the Claude hook: the dispatch worker runs
+`Creator.work` → `enable_hooks` → `AgentHooks.enable`, with no setting in the way. It used
+to be gated on an OR of `agent_state_hooks`, `auto_rename` and `background_presence`, so
+each instruction's setting also decided whether hooks were installed at all. That made a
+new default-on instruction a quiet way to re-enable hooks for someone who had turned the
+rest off. Now the hooks are simply part of switchboard (the dots and every instruction
+ride them), the instruction settings only decide at runtime what gets planted, and
+`agent_state_hooks` is retired. A worktree opts out with `switchboard disable-hooks`;
+a whole project can run it from its setup script, which goes after the hooks are written
+and before the agent starts. Existing worktrees made elsewhere get the hook via
+`switchboard enable-hooks`.
+
+Because every new worktree is written, the write refuses one shape a repository controls:
+a `.claude/settings.local.json` (or a `.claude` directory) that the repo itself committed as
+a symlink. Following it would carry switchboard's hooks out of the worktree, wherever the
+repo points it, your global Claude settings included. Git is asked in any letter case,
+since macOS opens a committed `.Claude` as `.claude`. Install leaves a committed link
+untouched with a warning that names where it leads, so anyone hooked through one before
+this check can clean that file. `disable-hooks` exits 1 while switchboard's hooks are still
+at the link's target, instead of deleting the link and reporting success. A link you made yourself,
+say into a dotfiles repo, is untracked (switchboard adds the file to `.git/info/exclude`),
+so it's still written through as before. Codex
 needs no per-worktree step — its global block already covers them.
 
 ## Inside the global codex block
@@ -580,9 +597,9 @@ payload, rename first. Upgrading reaches every existing workspace with no rewiri
 piece is built under its own rescue, so a fault in one never drops the other, and the
 whole arm still prints only JSON or nothing. `DispatchNudge.decide` uses the same
 sources as the rename nudge, so the instruction comes back after `/clear` and
-compaction. `agent_dispatch` only decides whether the instruction is planted; it never makes
-`Creator.enable_hooks` wire a worktree by itself. So a config that turned dots, naming and
-monitoring all off to keep the hooks out stays hook-free.
+compaction. `agent_dispatch` only decides whether the instruction is planted, never whether
+hooks are installed: every worktree switchboard creates is hooked, and one that should stay
+hook-free opts out with `switchboard disable-hooks`.
 
 **It is about workspaces for you, not subagents.** The text says to use `switchboard
 new` only when the user explicitly asks for another workspace, and to keep using the
@@ -727,9 +744,9 @@ bridge symlink resolves it to the new folder afterwards. That also fixed an olde
 a rename silently dropped `Attention`'s bold.
 
 The session-boundary behavior (nudge and clears) is gated on the `background_presence`
-setting (global plus per-project, on by default, like `auto_rename`). The worker's
-hook-enable gate includes it, so a project that uses only monitoring still gets the hook.
-Cloud routines remain invisible, since they never reach the local reporter; that's a hard
+setting (global plus per-project, on by default, like `auto_rename`). The setting only
+decides at runtime whether the nudge and clears act; it doesn't decide whether the hooks are
+installed, since every worktree switchboard creates gets them. Cloud routines remain invisible, since they never reach the local reporter; that's a hard
 limit, stated rather than worked around.
 
 ## Waiting on background work: the `◷`
@@ -1074,4 +1091,4 @@ so the spinner reads the same on any background.
 - [Reference: reading the sidebar](reference-sidebar.md) — the dot glyphs, the sparkle, and the bold name as they render in the row.
 - [How-to: agent state & sounds](howto-agent-state-and-sounds.md) — enable hooks, pick sounds.
 - [Explanation: sidebar lifecycle](explanation-sidebar-lifecycle.md) — why state is multi-process on disk.
-- [Reference: config](reference-config.md#sounds) — the `sounds` and `agent_state_hooks` knobs.
+- [Reference: config](reference-config.md#sounds) — the `sounds` knob and the retired `agent_state_hooks`.

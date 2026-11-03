@@ -34,7 +34,7 @@ module Switchboard
       when "check-update"      then check_update
       when "launch"            then exit(launch(argv[1]))
       when "enable-hooks"      then exit(1) if enable_hooks(argv[1]) == false
-      when "disable-hooks"     then disable_hooks(argv[1])
+      when "disable-hooks"     then exit(1) if disable_hooks(argv[1]) == false
       when "rename"            then exit(1) unless rename(argv[1])
       when "rename-nudge"      then rename_nudge(argv.drop(1))
       when "sync-session-name" then sync_session_name(argv[1], argv[2])
@@ -603,11 +603,20 @@ module Switchboard
       end
     end
 
+    # The per-worktree opt-out: every new worktree gets the hooks, so this is how one goes
+    # without. False (exit 1) when they're still there, since disable swallows a failed write.
     def disable_hooks(path = nil)
       worktree = worktree_at(path) or return warn("not inside a git worktree (pass a path)")
 
       AgentHooks.disable(worktree) # claude, per-worktree
-      puts "disabled agent-state hooks in #{worktree}"
+      # disable leaves a file it can't parse or read untouched, and enabled? reads that as off:
+      # not proof. Fail only while switchboard's hooks may still be there (a broken file of
+      # your own, or a committed link to a file without them, has nothing of ours to remove).
+      if ClaudeHook.enabled?(worktree) || ClaudeHook.corrupt?(worktree) || ClaudeHook.unreadable?(worktree)
+        Installer.bad "couldn't remove claude hooks in #{worktree} — fix #{ClaudeHook.settings_path(worktree)}, then re-run"
+        return false
+      end
+      puts "disabled switchboard's hooks in #{worktree} (this worktree only; new worktrees still get them)"
       puts "  (codex hooks are global — `switchboard uninstall` removes them)" if CodexHook.installed?
     end
 
@@ -1008,7 +1017,9 @@ module Switchboard
 
       actions = Keymap::ACTIONS.map { |a| a.name.to_s }
       unknown.each do |key|
-        hint = if actions.include?(key)
+        hint = if Config::RETIRED_KEYS.key?(key)
+                 Config::RETIRED_KEYS[key]
+               elsif actions.include?(key)
                  "a sidebar key — nest it under `sidebar_keys:`, indented two spaces"
                else
                  "unrecognized — a typo, or a nested key that lost its parent/indent"

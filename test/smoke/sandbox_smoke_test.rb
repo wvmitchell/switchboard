@@ -30,7 +30,6 @@ module Switchboard
         projects_root: #{File.join(@seed, 'projects')}
         base: main
         auto_rename: false
-        agent_state_hooks: false
         projects:
           - name: sandbox
             path: #{File.join(@seed, 'projects', 'sandbox')}

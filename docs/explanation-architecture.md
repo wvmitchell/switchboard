@@ -220,7 +220,9 @@ A few details of the starter config matter:
 - **The comments are temporary.** They're stripped by the first `add_project` rewrite
   (a `YAML.dump`), after a new user has read them.
 - **Misplaced keys are caught.** Stray top-level keys, usually a misindented child, are
-  reported by `Config#unknown_keys` through `doctor`.
+  reported by `Config#unknown_keys` through `doctor`. A key switchboard used to read, such
+  as `agent_state_hooks`, gets a "retired" hint (`Config::RETIRED_KEYS`) instead of the
+  typo guess.
 
 ### The tmux fragment
 
@@ -436,8 +438,8 @@ and asserts the server is still reaped by its recorded pid. The pure pieces
 - **Keeps your real `HOME`,** so the pane's shell, tmux and Ruby still work. That's safe
   because every state path is redirected.
 
-The seeded config carries `base: main`, `projects:`, `auto_rename: false` and
-`agent_state_hooks: false`, all in the emitted YAML. Without `base`, the repo (which has no
+The seeded config carries `base: main`, `projects:` and `auto_rename: false`, all in
+the emitted YAML. Without `base`, the repo (which has no
 origin) would default to `origin/main` and break `n` and the diff counts. Without
 `projects:`, the tree would be empty. The lone-pane trap from #64 is avoided by always
 seeding a work pane plus sidebar split, which is never touched.

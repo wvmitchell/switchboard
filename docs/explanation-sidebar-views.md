@@ -236,8 +236,8 @@ which is all that matters, since you look at one pane at a time.
 
 One predicate decides, `Sidebar#diff_visible?`, which combines two gates `line` reads:
 
-- **The `diff_counts` setting** (`Config#diff_counts?`, on by default, shaped like
-  `agent_state_hooks?`; issue #88). When it's off, `refresh_diffs` returns early with
+- **The `diff_counts` setting** (`Config#diff_counts?`, on by default, off only when
+  set to `false`; issue #88). When it's off, `refresh_diffs` returns early with
   `@diffs.clear`, so there are no `git diff` shell-outs at all, not just a hidden label.
   Turning it off live drops the cached counts on the next reload.
 - **Expanded workspaces** (issue #90). When a workspace expands into per-branch rows, the

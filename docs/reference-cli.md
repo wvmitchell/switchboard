@@ -210,8 +210,8 @@ specific pane.
 Wire exact agent-state hooks for the **Claude** worktree adapter
 (`<worktree>/.claude/settings.local.json`) — scoped to that worktree, never your
 global `~/.claude`. Defaults to the worktree you're standing in; pass a path to
-target another. A running `claude` there picks them up on its own. New switchboard-created
-worktrees get this automatically.
+target another. A running `claude` there picks them up on its own. Every worktree
+switchboard creates gets this automatically.
 
 Codex is **not** wired here: it can't discover project-local hooks in a linked
 worktree, so its hooks ship as one global block in `~/.codex/config.toml`,
@@ -225,8 +225,14 @@ script couldn't be.
 
 ### `switchboard disable-hooks [path]`
 Remove switchboard's Claude hooks from a worktree, leaving any other settings
-intact. Defaults to the current worktree. (The global codex block is deliberately
-left — it's not per-worktree; `switchboard uninstall` removes it.)
+intact. Defaults to the current worktree. This is the opt-out: every worktree switchboard
+creates gets the hooks, so this affects that worktree only, and the next one you create is
+hooked again (run it from a project's setup script to keep a whole project free of Claude hooks).
+Exits 1 when switchboard's hooks are still there afterwards: a settings file holding them
+that isn't valid JSON or can't be read or written, or one reached through a symlink the
+repo committed. A malformed file of your own with none of switchboard's hooks in it is
+left alone and isn't an error. (The global codex block is deliberately left; it's
+not per-worktree, and `switchboard uninstall` removes it.)
 
 ### `switchboard rename <name>`
 Rename the workspace you're standing in: moves the worktree directory to `<name>`
