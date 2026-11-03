@@ -934,7 +934,7 @@ module Switchboard
       h = RemoteLink.health
       if h[:matched].positive? && h[:unknown_kind] == h[:matched]
         return puts row(false, "session names: no live Claude session reports a kind switchboard knows " \
-                               "(#{RemoteLink::KINDS.join('/')}) — Claude changed the format; renames won't reach the session")
+                               "(#{ClaudeSessions::KINDS.join('/')}) — Claude changed the format; renames won't reach the session")
       end
       return unless h[:verified].positive?
 

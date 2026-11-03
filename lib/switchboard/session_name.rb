@@ -45,7 +45,7 @@ module Switchboard
     # a `/rename` of ours (any worker's) still sitting in it.
     CEILING_VERDICT = { unrecognized: :unrecognized, leftover: :failed_send }.freeze
     WHEN = "once Claude is between turns and nobody is at its pane" # the notices' promise, shared so they can't drift
-    NAME = /\A\w[\w.-]*\z/ # what Rename hands us (Creator.sanitize); anything else never reaches a pane
+    NAME = /\A\w[\w.-]*\z/ # what Rename hands us (Placeholder.sanitize); anything else never reaches a pane
 
     module_function
 

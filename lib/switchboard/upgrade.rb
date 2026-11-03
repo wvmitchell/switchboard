@@ -21,8 +21,6 @@ module Switchboard
   module Upgrade
     module_function
 
-    FETCH_DEADLINE = Creator::FETCH_DEADLINE # a clone's up-to-date fetch gets a workspace build's budget
-
     def run(argv = [])
       return finish(argv[1]) if argv.first == "--finish"
       # An unknown argument (`--help`, `--dry-run`) must never fall through to a real upgrade.
@@ -96,7 +94,7 @@ module Switchboard
       # setting it over a configured one would drop the key or wrapper that clone needs.
       ssh_chosen = ENV["GIT_SSH_COMMAND"] || ENV["GIT_SSH"] || git_out(root, "config", "core.sshCommand")
       env = ssh_chosen ? {} : { "GIT_SSH_COMMAND" => "ssh -o BatchMode=yes" }
-      return nil unless Git.fetch_base(root, nil, timeout: FETCH_DEADLINE, env: env)
+      return nil unless Git.fetch_base(root, nil, timeout: Git::FETCH_DEADLINE, env: env)
 
       count = git_out(root, "rev-list", "--count", "HEAD..@{upstream}") or return nil
       count.to_i.positive?

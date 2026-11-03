@@ -768,7 +768,7 @@ module Switchboard
         stub_method(Git, :fetch_base, ->(*a, **kw) { args = [a, kw]; false }) { Upgrade.clone_behind? }
       end
       assert_nil got
-      assert_equal Upgrade::FETCH_DEADLINE, args.last[:timeout]
+      assert_equal Git::FETCH_DEADLINE, args.last[:timeout]
     end
 
     def test_a_checkout_git_cant_read_isnt_told_to_commit_or_stash

@@ -9,6 +9,11 @@ module Switchboard
   module Git
     module_function
 
+    # Cap how many branches a workspace's history expands to; dedicated worktrees are
+    # short-lived, but we never want a runaway list.
+    MAX_BRANCH_HISTORY = 8
+    FETCH_DEADLINE = 60 # a stalled best-effort fetch (workspace build, clone upgrade check) gives up
+
     # All worktrees registered against a repo, parsed from porcelain output. `strict:` is for
     # callers deciding what's safe to destroy: nil unless git listed them all readably (a
     # failed run reads as an empty list, and a skipped path could hold any branch).
@@ -256,7 +261,7 @@ module Switchboard
     end
 
     # Whether git would accept `name` as a branch (git check-ref-format --branch).
-    # Creator.sanitize keeps names git rejects (foo..bar, *.lock, trailing dots), so
+    # Placeholder.sanitize keeps names git rejects (foo..bar, *.lock, trailing dots), so
     # a rename target must be validated against git, not just the filesystem.
     def valid_branch_name?(name)
       return false if blank?(name)

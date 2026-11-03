@@ -30,8 +30,6 @@ module Switchboard
     # [file, referenced file] => what removes it. An entry covers the whole file pair, so a new
     # reference between the same two files goes unnoticed until the entry is deleted.
     ALLOWED = {
-      %w[claude_sessions remote_link] => "RemoteLink::INTERACTIVE moves to ClaudeSessions",
-      %w[pr tree] => "Tree::MAX_BRANCHES moves to Git",
       %w[tmux code_reload] => "the reload-pane ops move from Tmux into CodeReload"
     }.freeze
 

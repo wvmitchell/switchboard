@@ -22,8 +22,6 @@ module Switchboard
     # The `status` values Claude writes (2.1.310): `shell` is a turn over with a background
     # shell still running, `waiting` a permission modal. SessionName types only on idle/shell.
     STATUSES = %w[idle busy shell waiting].freeze
-    INTERACTIVE = "interactive"
-    KINDS = [INTERACTIVE, "bg"].freeze # the `kind` values Claude writes (2.1.310)
     BRIDGE_ID = /\Asession_[A-Za-z0-9]{1,64}\z/ # bounded so a link URL always stays short
 
     # One linked session. `stale` = an interactive link idle past the configured
@@ -114,8 +112,8 @@ module Switchboard
       same = alive.select { |d| ProcessIdentity.same?(d["pid"], d["procStart"]) }
       linked = same.count { |d| d["bridgeSessionId"].to_s.match?(BRIDGE_ID) }
       # session-name sync's canaries: the status it gates on, the name it confirms by
-      typed = same.select { |d| d["kind"] == INTERACTIVE } # only these get typed into
-      unkind = same.count { |d| !KINDS.include?(d["kind"]) }
+      typed = same.select { |d| d["kind"] == ClaudeSessions::INTERACTIVE } # only these get typed into
+      unkind = same.count { |d| !ClaudeSessions::KINDS.include?(d["kind"]) }
       odd = typed.count { |d| !STATUSES.include?(d["status"]) }
       unnamed = typed.count { |d| !d["name"].is_a?(String) }
       { dir: sessions_dir, files: parsed.size, shaped: shaped.size, alive: alive.size,

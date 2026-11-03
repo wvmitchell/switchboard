@@ -133,14 +133,5 @@ module Switchboard
       refute Git.tracking_upstream?(repo, branch), "--no-track ⇒ origin/main not inherited as upstream"
       refute Git.pushed?(repo, branch), "a freshly-created branch reads as not-pushed"
     end
-
-    # --- sanitize (shared with rename) ----------------------------------------------
-
-    def test_sanitize_neutralizes_traversal
-      assert_equal "etc", Creator.sanitize("../../etc")
-      assert_equal "tmp/x", Creator.sanitize("/tmp/x")
-      assert_equal "", Creator.sanitize("..")
-      assert_equal "my-feature", Creator.sanitize("my feature")
-    end
   end
 end

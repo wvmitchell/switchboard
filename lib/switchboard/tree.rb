@@ -7,10 +7,6 @@ module Switchboard
   module Tree
     module_function
 
-    # Cap how many branches a workspace expands to; dedicated worktrees are
-    # short-lived, but we never want a runaway list.
-    MAX_BRANCHES = 8
-
     # Structured tree node — what the rendered sidebar draws. `folded` is never set
     # by Tree.nodes (stays nil): the sidebar sets it on a folded-workspace clone when
     # the global `z` branch-fold is on (issue #107), to the count of branch rows tucked
@@ -51,7 +47,7 @@ module Switchboard
     end
 
     def lineage(worktree, branch_cache = nil)
-      (Git.branch_history(worktree.path, limit: MAX_BRANCHES, cache: branch_cache) | [worktree.branch].compact)
+      (Git.branch_history(worktree.path, limit: Git::MAX_BRANCH_HISTORY, cache: branch_cache) | [worktree.branch].compact)
     end
   end
 end

@@ -11,7 +11,7 @@ module Switchboard
         name = Placeholder.generate
         assert_match(/\A[a-z]+-[a-z]+\z/, name, "lowercase adjective-noun, hyphen-joined")
         # A clean leaf is also a valid branch name (it becomes the branch).
-        assert_equal name, Creator.sanitize(name), "survives sanitize unchanged"
+        assert_equal name, Placeholder.sanitize(name), "survives sanitize unchanged"
       end
     end
 
@@ -33,6 +33,13 @@ module Switchboard
       refute Placeholder.generated?("#{Placeholder::ADJECTIVES.first}-notaword"), "adj on-list, noun off-list"
       refute Placeholder.generated?(""), "empty"
       refute Placeholder.generated?(nil), "nil"
+    end
+
+    def test_sanitize_neutralizes_traversal
+      assert_equal "etc", Placeholder.sanitize("../../etc")
+      assert_equal "tmp/x", Placeholder.sanitize("/tmp/x")
+      assert_equal "", Placeholder.sanitize("..")
+      assert_equal "my-feature", Placeholder.sanitize("my feature")
     end
   end
 end

@@ -10,6 +10,15 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
+## [0.65.1] — internal tidy-up, no behavior change (2026-11-03)
+
+### Changed
+- Nothing you run behaves differently. A few internal constants moved to the modules that own
+  them: the git timeouts and branch-history cap now live with the git helpers, the name
+  cleanup for new workspaces lives with the placeholder names, and the session kinds
+  Claude writes live with the code that reads Claude's session files. `switchboard doctor`'s
+  "unknown session kind" check reads the same list from its new home.
+
 ## [0.65.0] — every new workspace gets its hooks (2026-11-03)
 
 ### Changed

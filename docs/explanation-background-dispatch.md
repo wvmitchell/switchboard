@@ -238,7 +238,7 @@ commits past its base. Anything else is kept: the sidebar flashes "kept …", co
 opens a plain shell, and `d` on the row asks before forcing.
 
 The worker re-checks for a cancel after its fetch. The fetch and `git worktree add` run
-prompt-free in their own process group, with time limits (`FETCH_DEADLINE`,
+prompt-free in their own process group, with time limits (`Git::FETCH_DEADLINE`,
 `ADD_DEADLINE`, then `ProcessIdentity.terminate_group`).
 
 ### Keeping records while they guard something
