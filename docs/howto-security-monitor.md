@@ -7,7 +7,8 @@ anyone touching the repo:
 - the toolchain it shells out to (Ruby, git, tmux, gh),
 - the agents whose hook contracts it depends on (Claude Code, Codex),
 - the release pipeline (CI, tags, the Homebrew tap),
-- the maintainer's own install.
+- the maintainer's own install,
+- what an agent can make switchboard do on its own: start other workspaces and agents.
 
 This page is the monitor's **playbook**: a Claude Code session reads it on every check
 and follows it. Edit it like any other doc, in a PR.
@@ -314,6 +315,38 @@ gh issue list -R wvmitchell/switchboard -L 100 --json number,title
   warning is a finding; a known one the maintainer has chosen to live with (say, codex
   hooks not yet trusted in `/hooks`) stays in the baseline and isn't re-reported.
 
+### 5. Agent dispatch
+
+Since v0.64.0, an agent can start another workspace, with its own agent working on a
+brief, by running `switchboard new`. Every hooked worktree gets a SessionStart
+instruction that says so
+([agent presence § The agent-dispatch instruction](explanation-agent-presence.md#the-agent-dispatch-instruction)),
+and since v0.65.0 every new worktree is hooked. `agent_dispatch` is on by default, per project.
+
+Nothing technical stops an agent from dispatching on its own. What keeps it to "when you
+ask" is wording, and a prompt-injected agent (a hostile README, issue or web page) is
+exactly the one that won't follow wording. So the guardrails that do exist are worth
+watching, and any merge that weakens one is a finding:
+
+- **The instruction's two load-bearing clauses** in `lib/switchboard/dispatch_nudge.rb`:
+  use `switchboard new` "only when the user explicitly asks", and keep using your own
+  subagents for your own work.
+- **No chained dispatch.** A session started by `switchboard new` carries `brief_from:
+  "cli"`, and its instruction adds that the brief came from another agent, not the user
+  (`DispatchNudge::PROVENANCE`). Dropping that, or dropping `brief_from` from the record,
+  lets one agent's brief start the next.
+- **Registered projects only.** `switchboard new` takes `.` or a registered project name,
+  never a path, and refuses rather than guesses (`DispatchArgs`, `CLI#new_workspace`).
+- **No permissions of its own.** The new agent runs the project's own `session_command`.
+  A change that adds a permission flag, an auto-approve or a trust bypass to a dispatched
+  launch is a finding even if it looks like a convenience.
+- **The tree is set up first.** Dispatch still goes through `Creation.authorize_launch`
+  ([background dispatch § Never an agent on an un-set-up tree](explanation-background-dispatch.md#never-an-agent-on-an-un-set-up-tree)).
+
+On each merge to main, read diffs touching `dispatch_nudge.rb`, `dispatch_args.rb`,
+`creator.rb`, `creation.rb` or the `new` and `projects` commands in `cli.rb` against that
+list.
+
 ## Weekly checks
 
 On top of a normal check, once a week:
@@ -328,6 +361,9 @@ On top of a normal check, once a week:
   `.github/dependabot.yml` still parses.
 - **Ruby security baseline**: record the newest post on the Ruby security page if the
   baseline has none.
+- **Dispatch refuses a stranger**: `switchboard new no-such-project "x"` must exit
+  non-zero with `unknown project` and create nothing. It refuses before any worktree,
+  record or tmux session exists, so it's safe to run against the real install.
 - **New surfaces**: read the week's merges to main for anything that adds a new
   external tool, shell-out, agent contract or background process, and update this page
   ([below](#keep-this-page-current)).
