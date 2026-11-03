@@ -17,6 +17,8 @@ module Switchboard
   # recorded `cwd` is only the fallback. Verified live against Claude Code 2.1.308-2.1.310.
   module ClaudeSessions
     PID_MAX = 2**31 - 1 # pid_t: past it Process.kill raises RangeError, which would blank every cue
+    INTERACTIVE = "interactive"
+    KINDS = [INTERACTIVE, "bg"].freeze # the `kind` values Claude writes (2.1.310)
 
     # `status` while work Claude started is still running after its turn ended: `busy`
     # for a background agent (Claude never rewrites it at the Stop), `shell` for a
@@ -104,7 +106,7 @@ module Switchboard
     # its own session, not this workspace's.
     def sessions_in(ws_path)
       live = records.select do |s|
-        s[:kind] == RemoteLink::INTERACTIVE && ProcessIdentity.alive?(s[:pid]) && ProcessIdentity.same?(s[:pid], s[:proc_start])
+        s[:kind] == INTERACTIVE && ProcessIdentity.alive?(s[:pid]) && ProcessIdentity.same?(s[:pid], s[:proc_start])
       end
       return [] if live.empty?
 

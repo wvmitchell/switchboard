@@ -189,7 +189,7 @@ module Switchboard
       # identical?, not string equality: git prints resolved paths, the config
       # may hold a symlinked spelling of the same checkout.
       Git.worktrees(repo_path).reject { |w| w[:bare] || File.identical?(w[:path], repo_path) }.flat_map do |w|
-        Git.branch_history(w[:path], limit: Tree::MAX_BRANCHES) | [w[:branch]].compact
+        Git.branch_history(w[:path], limit: Git::MAX_BRANCH_HISTORY) | [w[:branch]].compact
       end.uniq
     end
 

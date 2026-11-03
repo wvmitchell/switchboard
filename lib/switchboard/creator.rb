@@ -35,7 +35,6 @@ module Switchboard
 
     CLAIM_DEADLINE = 60 # worker waits this long for the launcher to start (slow shell rc)
     LAUNCH_GRACE = 5    # an agent that exits sooner never really launched
-    FETCH_DEADLINE = 60 # a stalled fetch must not pin the row on ◌ (it's best-effort anyway)
     ADD_DEADLINE = 600  # generous: a big checkout (LFS, hooks) is legitimately slow
     CLAIM_POLL = 0.25
     SHELLS = %w[zsh bash fish sh dash ksh tcsh].freeze
@@ -45,7 +44,7 @@ module Switchboard
     # Returns [name, dest] or nil.
     def reserve(config, project_name)
       project = config.project(project_name) or return nil
-      root = File.join(config.worktree_root, sanitize(project_name))
+      root = File.join(config.worktree_root, Placeholder.sanitize(project_name))
       pending = Creation.all.map { |r| r["path"] }
       PLACEHOLDER_TRIES.times do
         name = Placeholder.generate
@@ -113,7 +112,7 @@ module Switchboard
       project = config.project(rec["project"])
       return Creation.mark_failed(id, "worktree_add", "unknown project") unless project
 
-      Git.fetch_base(project["path"], project["base_ref"], timeout: FETCH_DEADLINE) # best-effort: offline builds off the last fetch
+      Git.fetch_base(project["path"], project["base_ref"], timeout: Git::FETCH_DEADLINE) # best-effort, so a stalled fetch never pins the row on ◌
       return unless Creation.find(id)&.dig("state") == "building" # canceled during a slow fetch
 
       name, dest, err = add_reserved(config, project, rec)
@@ -640,15 +639,6 @@ module Switchboard
       when "failed" then notify_pane(out, Creation.long_reason(rec))
       when nil then notify_pane(out, Creation.notice(gone)) if gone
       end
-    end
-
-    # Filesystem- and branch-safe: spaces become dashes, the char class drops
-    # anything exotic, and ".", ".." and empty path segments are stripped so a
-    # name can never climb out of (or absolute-jump around) the worktree root via
-    # File.join — "../../etc" sanitizes to "etc", "/tmp/x" to "tmp/x", "." to "".
-    def sanitize(name)
-      cleaned = name.to_s.strip.gsub(/\s+/, "-").gsub(%r{[^\w./-]}, "")
-      cleaned.split("/").reject { |seg| seg.empty? || seg == "." || seg == ".." }.join("/")
     end
   end
 end

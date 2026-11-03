@@ -10,57 +10,57 @@ module Switchboard
   # (More builders — name_from_url, session_name, home_dir, repo_slug, View
   # badges — land here in T7; this file starts with the sanitize security guard.)
   class StringBuildersTest < Minitest::Test
-    # Creator.sanitize is the gate on a user-supplied workspace name before it
+    # Placeholder.sanitize is the gate on a user-supplied workspace name before it
     # becomes both a directory under worktree_root and a git branch. The bug it
     # closes: the old char class kept "." and "/", so "../../x" survived and
     # File.join walked out of the root. The invariant now: the result never
     # contains a "." / ".." / empty segment, so it can't climb out.
     def test_sanitize_leaves_a_plain_name_untouched
-      assert_equal "feature-login", Creator.sanitize("feature-login")
+      assert_equal "feature-login", Placeholder.sanitize("feature-login")
     end
 
     def test_sanitize_turns_spaces_into_dashes
-      assert_equal "my-new-thing", Creator.sanitize("my  new\tthing")
+      assert_equal "my-new-thing", Placeholder.sanitize("my  new\tthing")
     end
 
     def test_sanitize_drops_exotic_characters
-      assert_equal "ab", Creator.sanitize("a$b!")
+      assert_equal "ab", Placeholder.sanitize("a$b!")
     end
 
     def test_sanitize_keeps_dots_inside_a_segment
       # version-ish names are fine; only "." / ".." *segments* are traversal.
-      assert_equal "v1.2.0-fix", Creator.sanitize("v1.2.0-fix")
+      assert_equal "v1.2.0-fix", Placeholder.sanitize("v1.2.0-fix")
     end
 
     def test_sanitize_preserves_a_legit_nested_name
-      assert_equal "feature/login", Creator.sanitize("feature/login")
+      assert_equal "feature/login", Placeholder.sanitize("feature/login")
     end
 
     # --- traversal guard (the bug) -------------------------------------------
 
     def test_sanitize_strips_parent_traversal
-      assert_equal "etc/passwd", Creator.sanitize("../../etc/passwd")
+      assert_equal "etc/passwd", Placeholder.sanitize("../../etc/passwd")
     end
 
     def test_sanitize_strips_a_leading_absolute_slash
-      assert_equal "tmp/x", Creator.sanitize("/tmp/x")
+      assert_equal "tmp/x", Placeholder.sanitize("/tmp/x")
     end
 
     def test_sanitize_strips_interior_dot_dot
-      assert_equal "a-b/x", Creator.sanitize("a b/../x")
+      assert_equal "a-b/x", Placeholder.sanitize("a b/../x")
     end
 
     def test_sanitize_drops_a_lone_dot_to_empty
-      assert_equal "", Creator.sanitize(".")
+      assert_equal "", Placeholder.sanitize(".")
     end
 
     def test_sanitize_drops_dot_dot_to_empty
-      assert_equal "", Creator.sanitize("..")
+      assert_equal "", Placeholder.sanitize("..")
     end
 
     def test_sanitize_collapses_a_traversal_only_name_to_empty
       # create() rejects an empty result as "invalid workspace name".
-      assert_equal "", Creator.sanitize("../../..")
+      assert_equal "", Placeholder.sanitize("../../..")
     end
 
     def test_sanitize_result_never_escapes_worktree_root
@@ -68,7 +68,7 @@ module Switchboard
       # root — i.e. the expanded path is a descendant of root/project.
       root = "/work/root/proj"
       ["../../etc", "/etc", "a/../../b", "....//..", "x/./y"].each do |bad|
-        name = Creator.sanitize(bad)
+        name = Placeholder.sanitize(bad)
         next if name.empty?
 
         dest = File.expand_path(File.join(root, name))

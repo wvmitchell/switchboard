@@ -41,7 +41,7 @@ module Switchboard
       # under it would orphan that session and later start a second agent.
       return Result.new(:building) unless Creation.renamable?(Creation.for_path(old_path))
 
-      name = Creator.sanitize(newname)
+      name = Placeholder.sanitize(newname)
       # Reject a "/" the sanitizer preserves: a slashed name would nest the dir
       # while Tmux.session_name / Worktree#leaf only see the basename, so the
       # session and sidebar would silently disagree with the path. Agents type

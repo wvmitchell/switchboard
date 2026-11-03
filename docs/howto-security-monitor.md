@@ -231,7 +231,7 @@ Re-verifying one doesn't advance the others.
   - The main prompt box sits between the last two divider lines on screen, starts with
     `❯` padded by an NBSP, and draws its placeholder dim. A vim-mode footer reads as no
     box.
-  - `kind` keeps naming interactive sessions the way `RemoteLink::KINDS` expects.
+  - `kind` keeps naming interactive sessions the way `ClaudeSessions::KINDS` expects.
 
   A redesign of the prompt box or theme, a new input mode, or a change to `/rename` is a
   drift finding even when its entry doesn't say "prompt box".

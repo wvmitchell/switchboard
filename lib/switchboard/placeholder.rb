@@ -39,5 +39,15 @@ module Switchboard
       adj, noun, extra = leaf.to_s.split("-", 3)
       extra.nil? && ADJECTIVES.include?(adj) && NOUNS.include?(noun)
     end
+
+    # Filesystem- and branch-safe: spaces become dashes, the char class drops
+    # anything exotic, and ".", ".." and empty path segments are stripped so a
+    # name can never climb out of (or absolute-jump around) the worktree root via
+    # File.join — "../../etc" sanitizes to "etc", "/tmp/x" to "tmp/x", "." to "".
+    # The one rule for workspace and project folder names (Creator, Rename).
+    def sanitize(name)
+      cleaned = name.to_s.strip.gsub(/\s+/, "-").gsub(%r{[^\w./-]}, "")
+      cleaned.split("/").reject { |seg| seg.empty? || seg == "." || seg == ".." }.join("/")
+    end
   end
 end

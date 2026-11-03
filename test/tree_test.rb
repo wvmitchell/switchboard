@@ -141,7 +141,7 @@ module Switchboard
       seen_limit = nil
       stub_method(Git, :branch_history, ->(_path, limit:, cache: nil) { seen_limit = limit; %w[x y] }) do
         line = Tree.lineage(wt(path: "/wt/a", branch: "z"))
-        assert_equal Tree::MAX_BRANCHES, seen_limit
+        assert_equal Git::MAX_BRANCH_HISTORY, seen_limit
         assert_equal %w[x y z], line # current appended via dedup union
       end
     end
