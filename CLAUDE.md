@@ -47,6 +47,7 @@ locally without touching real state:
 | Area | Read |
 |---|---|
 | Git as runtime truth, the model/tree, the worktree ⇆ `sb/` session mapping, `session_command` | [explanation-architecture](docs/explanation-architecture.md) |
+| Which layer a file belongs to, and the layer test (`test/layers_test.rb`) | [explanation-architecture § Layers](docs/explanation-architecture.md#layers) |
 | `install` / `uninstall` / `doctor` / `prune`, the tmux fragment and its three hooks | [explanation-architecture § Install, doctor and prune](docs/explanation-architecture.md#install-doctor-and-prune) |
 | Configurable tmux keys (`tmux_keys`, #15) | [explanation-architecture § Configurable tmux keys](docs/explanation-architecture.md#configurable-tmux-keys), [howto-keybindings](docs/howto-keybindings.md) |
 | `switchboard sandbox`, `IsolatedServer` | [explanation-architecture § The sandbox](docs/explanation-architecture.md#the-sandbox) |

@@ -48,6 +48,13 @@ PR-cache dirs, the XDG roots, the git global/system config, `HOME`, `gh`'s confi
 dir, and tmux (`TMUX` unset *and* `TMUX_TMPDIR` redirected so no test can reach a
 live tmux server). `teardown` restores `ENV` wholesale and removes the tmpdir.
 
+It also drops every `SWITCHBOARD_*` variable your shell handed down before setting its
+own. A suite run inside a dispatched workspace inherits `SWITCHBOARD_TASK` and
+`SWITCHBOARD_BRIEF_FROM`, and one inside the sandbox inherits `SWITCHBOARD_SANDBOX`; any
+of them would change what the code under test does. The one survivor is
+`SWITCHBOARD_CODEX_SMOKE`, your opt-in to the real-codex smoke below.
+`test/sandbox_env_test.rb` holds that wall.
+
 So a test never reads or writes anything outside its sandbox, and never pokes your
 real tmux. When you add state, route it through an env-overridable path (see how
 `AgentState.state_dir` and friends read `ENV` *per call*) so the sandbox can
@@ -114,6 +121,13 @@ without it and asserts an untrusted block writes no state (the case behind `doct
   `Sidebar::Edges` collaborator, the #57 carve-out of the agent-edge fanout
   state), and `AgentState` are classes — they hold state. Don't make a class
   for something that doesn't need instance state.
+- **Every file under `lib/switchboard/` has a layer** (support, adapters, state,
+  operations, interfaces) and may reference only its own layer or a lower one.
+  `test/layers_test.rb` fails when a file has no layer, when a lower layer reaches up
+  to a higher one, or when a file locates paths from its own `__dir__` or `__FILE__`.
+  A new file goes into the test's `LAYERS` list; the
+  [architecture doc's Layers section](docs/explanation-architecture.md#layers) explains
+  which layer fits.
 - **Comments explain *why*, not *what*.** The code is meant to be
   self-documenting; the existing comments are there for the non-obvious reason (a
   re-exec, a TTL, a capture-hash, a recycled pane id). Match that density — terse,
