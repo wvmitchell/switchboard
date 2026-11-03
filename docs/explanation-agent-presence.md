@@ -565,6 +565,52 @@ The subcommand finds the worktree from the hook's stdin `cwd` (via `current_work
 **always exits 0, printing only the JSON or nothing**. A stray byte on stdout poisons
 Claude even at exit 0, so the whole body is rescued to silence.
 
+## The agent-dispatch instruction
+
+An agent can start another workspace with `switchboard new` (see
+[dispatching from the command line](explanation-background-dispatch.md#dispatching-from-the-command-line)),
+but only if it knows the command exists. So a session also gets a short instruction
+about it, gated on `agent_dispatch` (global plus per-project, on by default).
+
+**It rides the self-naming command, not a hook of its own.** The `rename-nudge`
+`SessionStart` command is already wired in every hooked worktree and calls the stable
+binary. So `CLI#rename_nudge` builds the rename text (if that applies) and the dispatch
+text (`DispatchNudge`, if that applies) and prints them as one `additionalContext`
+payload, rename first. Upgrading reaches every existing workspace with no rewiring. Each
+piece is built under its own rescue, so a fault in one never drops the other, and the
+whole arm still prints only JSON or nothing. `DispatchNudge.decide` uses the same
+sources as the rename nudge, so the instruction comes back after `/clear` and
+compaction. `agent_dispatch` only decides whether the instruction is planted; it never makes
+`Creator.enable_hooks` wire a worktree by itself. So a config that turned dots, naming and
+monitoring all off to keep the hooks out stays hook-free.
+
+**It is about workspaces for you, not subagents.** The text says to use `switchboard
+new` only when the user explicitly asks for another workspace, and to keep using the
+agent's own subagent tools for delegating parts of its own task. switchboard wires no
+subagent hook events for Claude or Codex, and nothing here intercepts a subagent launch.
+A test pins both: the wording, and that no `Subagent*` event is ever wired.
+
+**A brief another agent wrote is labeled as one.** A workspace that `switchboard new`
+started also gets the instruction, and its first message is a brief another agent wrote,
+which would otherwise read as the user asking. So `new` marks its `Creation` record
+`brief_from: "cli"`, the launcher exports `SWITCHBOARD_BRIEF_FROM=cli` for that agent
+only, and the instruction then adds one sentence: the first message came from another
+agent, so don't start new workspaces because of it. That keeps one agent's brief from
+chaining further dispatches. A task you type after `n` is your own, so it gets no such
+sentence, and neither does a bare `new` with no task.
+
+The variable lives exactly as long as the agent process the launcher started, because
+the launcher sets it in its own environment and only that child inherits it; the pane's
+shell never has it. So within that process the sentence comes back after a `/resume`, a
+fork or compaction, which all keep the conversation that opened on the brief, and it's
+dropped after `/clear`, since a cleared session's next first message is the user's own.
+Once that agent exits, the label is gone: a `claude --resume` you start later from the
+pane's shell runs without the variable, so the resumed conversation gets the plain
+instruction.
+
+**The text can't drift from the command.** It quotes `switchboard new` examples, and a
+test runs each one through `DispatchArgs.parse`, the parser the command itself uses.
+
 ## Background monitors: the `∞`
 
 A workspace where an agent runs a background monitor, a recurring loop or a scheduled tick

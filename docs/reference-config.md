@@ -31,6 +31,7 @@ or `e` in the sidebar — both reload on save.
 | `agent_state_hooks` | bool | `true` | Auto-wire the per-worktree Claude agent-state hook on worktree create. (Codex hooks are global — installed once via `install --codex-hooks`, not per worktree.) |
 | `prune_on_launch` | bool | `true` | Prune orphaned `sb/` sessions when landing on the home session. |
 | `auto_rename` | bool | `true` | Nudge the agent to `switchboard rename` a placeholder-named workspace once it knows the work (a `SessionStart` hook). `false` opts out. Per-project override wins. See [`auto_rename`](#auto_rename). |
+| `agent_dispatch` | bool | `true` | Tell agents (a `SessionStart` hook) that `switchboard new` can start another workspace, here or in another registered project, when you ask. `false` drops the instruction; the command still works. Per-project override wins. See [`agent_dispatch`](#agent_dispatch). |
 | `diff_counts` | bool | `true` | Show the `+adds −dels` diff count on each workspace/branch row. `false` hides it and skips the per-worktree `git diff` entirely. |
 | `count_indicator` | bool | `true` | Show a half-typed movement count (the `3` of `3j`) in the sidebar footer. `false` hides it; counts still work. Global only. |
 | `prewarm` | bool | `true` | Keep off-screen sidebars warm so switching sessions doesn't flash a stale tree. `false` restores full dormancy (no off-screen work). See [`prewarm`](#prewarm). |
@@ -56,6 +57,7 @@ branch_prefix: wvmitchell                # new branches become wvmitchell/<name>
 agent_state_hooks: true                  # auto-wire agent-state dots on create
 prune_on_launch: true                    # tidy orphaned sessions on landing home
 auto_rename: true                        # let the agent name a placeholder workspace (on by default)
+agent_dispatch: true                     # tell agents `switchboard new` exists (on by default)
 diff_counts: true                        # show +adds −dels on each row (false skips the git diff)
 count_indicator: true                    # show a half-typed count (the 3 of 3j) in the footer
 prewarm: true                            # keep off-screen sidebars warm (false = full dormancy)
@@ -112,8 +114,36 @@ projects:
 
 **Turning it on for worktrees you already have:** the nudge is wired into a worktree's
 hooks at create time, so flip it on and run `switchboard enable-hooks` inside an
-existing worktree to add it there (new worktrees get it automatically). Requires
-`agent_state_hooks` OR `auto_rename` to be on for the hooks to wire at all.
+existing worktree to add it there (new worktrees get it automatically). The hooks
+wire when any of `agent_state_hooks`, `auto_rename` or `background_presence` is on.
+
+---
+
+## `agent_dispatch`
+
+On by default. Each agent session in a switchboard workspace gets a short instruction
+saying that `switchboard new` can start another workspace with its own agent, in this
+project or another registered one, and that it should do so **only when you explicitly
+ask**. The instruction also says this is separate from subagents: an agent keeps using
+its own subagent tools for its own work. It rides the same `SessionStart` hook as the
+self-naming nudge, so it re-appears after `/clear` and compaction.
+
+Set `agent_dispatch: false` to drop the instruction, globally or for one project (a
+per-project value wins in either direction). The `switchboard new` command itself keeps
+working; agents just aren't told about it.
+
+The instruction rides the hooks the other features install; `agent_dispatch` never
+installs hooks by itself. With the defaults every new worktree is hooked, and a config that
+turned `agent_state_hooks`, `auto_rename` and `background_presence` all off stays
+hook-free.
+
+```yaml
+agent_dispatch: true         # global default
+projects:
+  - name: scratch
+    path: ~/code/scratch
+    agent_dispatch: false    # ...but quiet in this one
+```
 
 ---
 
@@ -383,7 +413,7 @@ serve every project:
 |---|---|
 | `$SWITCHBOARD_PROJECT_PATH` | the project's canonical checkout (its registered `path`) |
 | `$SWITCHBOARD_WORKTREE_PATH` | the new worktree (also just `.`, the cwd) |
-| `$SWITCHBOARD_TASK` | the task typed after `n` (empty for a bare create) — the agent gets it too |
+| `$SWITCHBOARD_TASK` | the task typed after `n` or passed to `switchboard new` (empty for a bare create) — the agent gets it too |
 
 ```yaml
 worktree_creation_command: cp "$SWITCHBOARD_PROJECT_PATH/.env" .
@@ -455,7 +485,7 @@ Everything switchboard writes, and how to redirect it. State dirs follow XDG.
 | Held `◷` chimes (waiting on a background agent) | `$XDG_STATE_HOME/switchboard/offstage_hold` → `~/.local/state/switchboard/offstage_hold` | `$SWITCHBOARD_OFFSTAGE_HOLD_DIR` |
 | In-flight delete markers | `$XDG_STATE_HOME/switchboard/pending-delete` → `~/.local/state/switchboard/pending-delete` | `$SWITCHBOARD_PENDING_DELETE_DIR` |
 | Project-collapse folds | `$XDG_STATE_HOME/switchboard/collapse` → `~/.local/state/switchboard/collapse` | `$SWITCHBOARD_COLLAPSE_DIR` |
-| Background-create records (`n` dispatches) | `$XDG_STATE_HOME/switchboard/creation` → `~/.local/state/switchboard/creation` | `$SWITCHBOARD_CREATION_DIR` |
+| Background-create records (`n` and `switchboard new` dispatches) | `$XDG_STATE_HOME/switchboard/creation` → `~/.local/state/switchboard/creation` | `$SWITCHBOARD_CREATION_DIR` |
 | PR-badge cache | `$XDG_CACHE_HOME/switchboard/prs` → `~/.cache/switchboard/prs` | `$SWITCHBOARD_CACHE_DIR` |
 | Agent-state reporter script | `$XDG_DATA_HOME/switchboard/sb-agent-hook` → `~/.local/share/switchboard/sb-agent-hook` | `$XDG_DATA_HOME` |
 | Synthesized sound WAVs | `$XDG_DATA_HOME/switchboard/sounds` → `~/.local/share/switchboard/sounds` | `$XDG_DATA_HOME` |

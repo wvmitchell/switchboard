@@ -28,6 +28,8 @@ module Switchboard
       when "create"            then create_project(argv[1])
       when "refresh"           then refresh(*refresh_args(argv))
       when "reap-worktree"     then reap_worktree(argv[1], argv[2], argv[3], force_branch: argv[4] == "--force-branch")
+      when "new"               then exit(1) unless new_workspace(argv.drop(1))
+      when "projects"          then exit(1) unless list_projects(argv.drop(1))
       when "create-workspace"  then create_workspace(argv[1])
       when "check-update"      then check_update
       when "launch"            then exit(launch(argv[1]))
@@ -190,6 +192,110 @@ module Switchboard
       SessionName.work(dest, name)
     rescue StandardError
       nil
+    end
+
+    # `switchboard new <project|.> ["task" | -]`: the sidebar's `n` from the command line,
+    # so an agent can start another workspace (same project or another one) when the user
+    # asks. Same pipeline: reserve + record, detached worker, broadcast; returns at once and
+    # the sidebar chimes. Everything is checked BEFORE a record exists, and every doubt is a
+    # refusal: nobody watches the pane this lands in. Never targets an existing workspace
+    # (reserve only hands out fresh paths). True on dispatch.
+    def new_workspace(args, stdin: $stdin)
+      target, task_arg, err = DispatchArgs.parse(args)
+      return warn(err) if err
+
+      task = task_arg.to_s # never $SWITCHBOARD_TASK: a dispatched agent's shell carries its own
+      if task_arg == "-"
+        task, err = DispatchArgs.read_stdin(stdin)
+        return warn(err) if err
+      end
+      err = DispatchArgs.task_error(task)
+      return warn(err) if err
+
+      task = task.dup.force_encoding(Encoding::UTF_8) # valid now; a C-locale ARGV is tagged binary
+
+      return warn(config.load_error_message) if config.load_error
+      here = current_worktree&.project
+      project = dispatch_target(target, here) or return false
+      # $TMUX names the server the record and the session belong to; without it the
+      # worker would start a headless server nobody is attached to.
+      return warn("run this inside tmux: switchboard dispatches onto the tmux server you're on") if ENV["TMUX"].to_s.empty?
+
+      unless task.empty?
+        _cmd, note = Creator.agent_command(config.session_command_for(project), task)
+        return warn(note) if note # the launcher would drop the brief in a pane nobody's watching
+      end
+
+      rec = begin
+        Creator.dispatch(config, project, task, brief_from: ("cli" unless task.empty?)) # no brief, nothing to label
+      rescue SystemCallError, IOError
+        nil
+      end
+      return warn("no free workspace name — try again") if rec == :no_name
+      return warn("couldn't record the dispatch") unless rec.is_a?(Hash)
+      return warn(Creator::SPAWN_FAILED) unless Creator.spawn_worker(rec["id"])
+
+      Tmux.broadcast_warm
+      announce_dispatch(rec, project, here)
+      true
+    end
+
+    # `.` is the project the cwd is in; anything else is a registered name. Never guessed.
+    def dispatch_target(target, here)
+      names = config.projects.map { |p| p["name"] }
+      if target == "."
+        return here if here
+
+        return warn("not inside a registered project — name one: #{names.join(', ')}")
+      end
+      return target if names.include?(target)
+
+      warn(%(unknown project "#{target}" — registered: #{names.join(', ')}))
+    end
+
+    # Judged by where the caller IS, not how the target was spelled, so a same- vs
+    # cross-project dispatch can't be misread.
+    def announce_dispatch(rec, project, here)
+      where = if here.nil? then "in #{project}"
+              elsif here == project then "in this project (#{project})"
+              else "in ANOTHER project (#{project}, you're in #{here})"
+              end
+      puts %(dispatched a new workspace #{where}: "#{rec['name']}" (◌ building))
+      puts "  path: #{home_relative(rec['path'])}"
+      puts "  id:   #{rec['id']}"
+    end
+
+    # `switchboard projects [--names]`: the registered names `new` accepts, `*` on the one
+    # the cwd is in. `--names` is the script form (the marker shifts the table's columns).
+    def list_projects(args)
+      return warn(config.load_error_message) if config.load_error
+
+      projects = config.projects
+      if projects.empty?
+        puts "no projects registered — `switchboard add <name> <path>`"
+        return true
+      end
+      if args.include?("--names")
+        puts(projects.map { |p| p["name"] })
+        return true
+      end
+
+      here = current_worktree&.project
+      name_w = projects.map { |p| p["name"].length }.max
+      paths = projects.map { |p| home_relative(p["path"]) }
+      path_w = paths.map(&:length).max
+      projects.each_with_index do |p, i|
+        mark = p["name"] == here ? "*" : " "
+        puts "#{mark} #{p['name'].ljust(name_w)}  #{paths[i].ljust(path_w)}   (base #{p['base_ref']})"
+      end
+      true
+    end
+
+    def home_relative(path)
+      home = Dir.home
+      path.to_s == home || path.to_s.start_with?("#{home}/") ? "~#{path.to_s.delete_prefix(home)}" : path.to_s
+    rescue ArgumentError
+      path.to_s
     end
 
     # The one line the worker types into a dispatched workspace's pane.
@@ -590,7 +696,10 @@ module Switchboard
     # workspace still has a generated placeholder name and `auto_rename` is on. Two events
     # dispatch here, selected by `--stop`:
     #   • SessionStart (no flag) — print an `additionalContext` instruction (the soft
-    #     plant), gated on the event source. Rides alongside the sh state reporter.
+    #     plant), gated on the event source. Rides alongside the sh state reporter. The
+    #     agent-dispatch instruction (DispatchNudge) joins the same payload, so it reaches
+    #     every hooked worktree with no new hook entry; each piece is built under its own
+    #     rescue, so a fault in one never drops the other.
     #   • Stop (`--stop`) — see rename_nudge_stop: this command IS the Stop state reporter
     #     AND the backstop (the sh reporter is off the Stop event, hook.rb), so it can
     #     report `thinking` when it blocks instead of a racing `done`.
@@ -612,14 +721,31 @@ module Switchboard
       wt = current_worktree(cwd)
       return if wt.nil? || wt.primary # not a managed worktree, or the trunk checkout
 
-      leaf = File.basename(wt.path)
-      return unless RenameNudge.decide(auto_rename: config.auto_rename_for(wt.project),
-                                       placeholder: Placeholder.generated?(leaf),
-                                       source: payload["source"])
-
-      puts RenameNudge.context_json(leaf)
+      pieces = [rename_piece(wt, payload["source"]), dispatch_piece(wt, payload["source"])].compact
+      puts RenameNudge.session_start_json(pieces.join("\n\n")) unless pieces.empty?
     rescue StandardError
       nil # a hook must never error a session boundary; emit nothing on any fault
+    end
+
+    def rename_piece(wt, source)
+      leaf = File.basename(wt.path)
+      return nil unless RenameNudge.decide(auto_rename: config.auto_rename_for(wt.project),
+                                           placeholder: Placeholder.generated?(leaf), source: source)
+
+      RenameNudge.message(leaf)
+    rescue StandardError
+      nil
+    end
+
+    def dispatch_piece(wt, source)
+      return nil unless DispatchNudge.decide(enabled: config.agent_dispatch_for(wt.project), source: source)
+
+      # The env var lives as long as the agent. Resume, fork and compaction keep the
+      # conversation that opened on the other agent's brief, so the label stays; only /clear
+      # starts fresh, where the next first message is the user's own.
+      DispatchNudge.message(brief_from_agent: ENV["SWITCHBOARD_BRIEF_FROM"] == "cli" && source != "clear")
+    rescue StandardError
+      nil
     end
 
     # The Stop event, unified: report the agent state ourselves (the job the sh reporter
@@ -1326,6 +1452,8 @@ module Switchboard
           switchboard remove N     unregister a project (its repo on disk stays; alias: rm)
           switchboard clone U [N]  clone a repo under projects_root, then register
           switchboard create N     create a brand-new empty repo under projects_root, then register
+          switchboard new P [TASK|-]  dispatch a new workspace in project P (`.` = this one) with an agent on TASK (- reads it from stdin), like `n`
+          switchboard projects     list registered projects (* = the one you're in; --names for names only)
           switchboard refresh      re-fetch PR badges from gh (normally automatic)
           switchboard enable-hooks [P]   wire agent-state dots in a worktree (default: cwd)
           switchboard disable-hooks [P]  remove them from that worktree

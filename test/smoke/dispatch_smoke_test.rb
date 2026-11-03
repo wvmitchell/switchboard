@@ -110,5 +110,20 @@ module Switchboard
       wait_until("home shows the ✘ failure") { capture(home_pane).include?("✘") }
       refute File.exist?(File.join(wt, "agent-ran")), "a failed setup must block even a compound agent command"
     end
+    # `switchboard new` from a shell (an agent's Bash) takes the same pipeline as `n`: the
+    # real worker daemonizes, the session opens detached, setup runs, then the agent gets
+    # the brief byte-exact. The caller returns at once and the client never moves.
+    def test_switchboard_new_from_the_command_line_dispatches_like_n
+      task = %(cli "brief" with $HOME and `tick`)
+      out = IO.popen({ "TMUX" => "#{current_socket_path},0,0" }, [BIN, "new", "proj", task],
+                     err: %i[child out], &:read)
+      assert $?.success?, out
+      assert_match(/dispatched a new workspace in proj: /, out)
+      wt = wait_until("the worktree is built") { new_worktree }
+      wait_until("the agent wrote its task", timeout: SLOW_SETUP + 15) { File.exist?(File.join(wt, ".task")) }
+      assert File.exist?(File.join(wt, ".setup-done")), "setup finished before the agent ran"
+      assert_equal task, File.read(File.join(wt, ".task"))
+      assert_equal HOME, client_session, "dispatch never switches the client"
+    end
   end
 end

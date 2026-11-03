@@ -43,7 +43,7 @@ module Switchboard
     def test_scaffold_template_advertises_the_optional_knobs
       %w[tmux_keys sidebar_keys sounds session_command worktree_creation_command base prune_on_launch
          projects_root auto_rename diff_counts prewarm remote_link_stale_after update_check
-         sync_session_name count_indicator].each do |knob|
+         sync_session_name count_indicator agent_dispatch].each do |knob|
         assert_includes Config::SCAFFOLD_TEMPLATE, knob, "a fresh config should advertise #{knob}"
       end
     end
@@ -235,6 +235,20 @@ module Switchboard
       assert cfg(proj.call({})).auto_rename_for("p")
     end
 
+    def test_agent_dispatch_on_by_default_off_only_when_false
+      assert cfg({}).agent_dispatch?
+      refute cfg("agent_dispatch" => false).agent_dispatch?
+      assert_empty cfg("agent_dispatch" => false).unknown_keys, "doctor knows the key"
+    end
+    
+    def test_agent_dispatch_for_resolution_matrix
+      proj = ->(extra) { { "projects" => [{ "name" => "p", "path" => "/p" }.merge(extra)] } }
+      refute cfg(proj.call("agent_dispatch" => false).merge("agent_dispatch" => true)).agent_dispatch_for("p")
+      assert cfg(proj.call("agent_dispatch" => true).merge("agent_dispatch" => false)).agent_dispatch_for("p")
+      refute cfg(proj.call({}).merge("agent_dispatch" => false)).agent_dispatch_for("p")
+      assert cfg(proj.call({})).agent_dispatch_for("p")
+    end
+    
     def test_background_presence_on_by_default_off_only_when_false
       assert cfg({}).background_presence?
       assert cfg("background_presence" => true).background_presence?

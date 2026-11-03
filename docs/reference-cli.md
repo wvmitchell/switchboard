@@ -159,6 +159,43 @@ Clone a repo under `projects_root`, then register it. `name` defaults to the
 URL's basename (`git@host:org/repo.git` → `repo`). Errors if the name is taken or
 the destination exists.
 
+### `switchboard new <project|.> ["task" | -]`
+Dispatch a new workspace the way the sidebar's `n` does: reserve a placeholder name,
+build the worktree in the background, run its setup, then start the project's
+`session_command` with the task. It returns as soon as the build is queued, well under a
+second, and the sidebar shows the `◌` row and chimes when it's ready (or `✘` if it
+fails). The chime comes from a visible sidebar, so with none open it waits until one is.
+This is how an agent starts another workspace when you ask it to. It is separate from
+the agent's own subagents.
+
+- **The target is always explicit.** `.` means the project the current directory is in
+  (a workspace or the main checkout). Anything else is a registered project name (see
+  `switchboard projects`). It never guesses: `.` outside a project, or an unknown name,
+  exits 1 and lists the registered names.
+- **The task is one argument.** Quote it. More than one word after the target exits 1
+  rather than joining words the shell may already have changed. No task is a bare
+  create. `-` reads the task from stdin, for long briefs (`cat brief.md | switchboard new
+  api -`). Stdin is refused on a terminal, and any pause over 5 seconds ends with an error,
+  so a pipe that never closes can't hang the caller.
+- **A task that would reach the agent wrong is refused** before anything is built: one
+  starting with `-` (the agent would read it as an option), one over 64 KiB, one
+  that isn't valid UTF-8, one containing a NUL byte, or one the project's `session_command` can't receive (no agent
+  configured, or a command that needs `{task}`).
+- **It always makes a new workspace.** It never starts an agent in an existing one,
+  including the one you're in.
+- **It needs tmux.** Outside tmux it exits 1, since the new session belongs to the tmux
+  server you're on.
+
+The first line of output says whether the workspace went into this project or
+**another** one, judged by where you ran it (run from outside any project, it just names
+the project). The path and record id follow.
+`$SWITCHBOARD_TASK` is never read, so an agent's own task can't leak into a dispatch.
+
+### `switchboard projects [--names]`
+List the registered projects in config order: name, path and base ref, with `*` on the
+project the current directory is in. `--names` prints just the names, one per line, for
+scripts. With none registered it says how to add one.
+
 ### `switchboard refresh [name] [--poke PANE]`
 Re-fetch PR badges from `gh` and merge the result onto the on-disk cache (a
 cached badge is only ever updated, never dropped — it persists even after its
@@ -376,7 +413,7 @@ no-op outside the right tmux context.
 | `reload-config [origin]` | the post-edit Ctrl-R poke | Re-read config and redraw after editing it from the sidebar. |
 | `tmux-bind` | the `switchboard.tmux` fragment | (Re)bind the configured `tmux_keys`, cleaning up the previously-bound key. A `config.yml` that won't parse re-binds the keys already bound (the defaults only if none were). |
 | `check-update` | a visible sidebar, at most every 4 hours (spawned detached) | Homebrew installs: reads the newest release tag and caches it for the update line under the wordmark (#47). Does nothing under `SWITCHBOARD_NO_UPDATE_CHECK`. |
-| `create-workspace <id>` | the sidebar's `n` (spawned detached) | Background worker for a dispatched workspace: fetch, `git worktree add`, wire hooks, open the session. |
+| `create-workspace <id>` | the sidebar's `n` or `switchboard new` (spawned detached) | Background worker for a dispatched workspace: fetch, `git worktree add`, wire hooks, open the session. |
 | `launch <dest>` | the line the worker types into the new pane | Run the setup script, then start the agent with the task. |
 
 See [Explanation: sidebar lifecycle](explanation-sidebar-lifecycle.md) for how

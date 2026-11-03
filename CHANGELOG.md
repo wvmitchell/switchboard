@@ -10,6 +10,30 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
+## [0.64.0] — start a workspace from the command line (2026-11-02)
+
+### Added
+- `switchboard new <project> "task"` starts a new workspace with an agent already working
+  on the task, the same way `n` does in the sidebar. Use `.` for the project you're in, or
+  any registered project's name to start one in another project. It returns at once; the
+  sidebar shows the `◌` row and chimes when the workspace is ready. Pipe a long brief in
+  with `-` (`cat brief.md | switchboard new api -`).
+- `switchboard projects` lists your registered projects and marks the one you're in with
+  `*`. `--names` prints just the names.
+- Agents now know about `switchboard new`, so you can ask one to "have another workspace
+  research this and make a plan". A short instruction says to use it only when you ask,
+  and to keep using their own subagents for their own work. Set `agent_dispatch: false`,
+  globally or per project, to leave it out; the command still works.
+
+### Changed
+- `new` refuses, with a reason, anything that would reach the agent wrong. That covers an
+  unknown project, an unquoted multi-word task, a task starting with `-`, a task over
+  64 KiB, a brief that isn't valid UTF-8 or contains a NUL byte, a piped brief that never
+  arrives, and a project whose agent command can't take a task. Nothing is built when it
+  refuses.
+- A workspace started by `new` never reuses an existing one, including the one you're in.
+- An agent started from another agent's brief is told so, and won't start more workspaces
+  because of it unless you ask directly.
 ## [0.63.0] — a folded project shows its workspace count (2026-11-02)
 
 ### Added

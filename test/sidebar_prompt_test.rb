@@ -178,7 +178,7 @@ module Switchboard
       dest = path("wts", "app", "wandering-finch")
       stub_method(sb, :prompt_line, ->(*_a, **_k) { "" }) do
         stub_method(Creator, :reserve, ->(*) { ["wandering-finch", dest] }) do
-          stub_method(sb, :spawn_worker, ->(_id) {}) do
+          stub_method(Creator, :spawn_worker, ->(_id) { true }) do
             stub_method(Tmux, :go, ->(*_a, **_k) { went = true }) do
               stub_method(Tmux, :broadcast_warm, ->(**_k) {}) do
                 stub_method(sb, :reload, -> {}) { sb.send(:create) }
@@ -189,6 +189,30 @@ module Switchboard
       end
       refute went, "dispatch must not switch you in"
       assert_equal "wandering-finch", Creation.all.first["name"]
+      assert_nil Creation.all.first["brief_from"], "a task typed after `n` is the user's own"
+    end
+
+    # Value: protects=a worker that can't start is said out loud in the sidebar, not only a later
+    # ✘; fails_when=the SPAWN_FAILED flash is dropped from create; why_new=only the true path was
+    # stubbed; seam=none; no_claim=flash rendering
+    def test_create_flashes_when_the_worker_cannot_start
+      File.write(Config.path, YAML.dump("worktree_root" => path("wts"), "projects" => [{ "name" => "app", "path" => "/x" }]))
+      sb = sidebar(nodes: [proj("app")], cursor: 0)
+      sb.instance_variable_set(:@config, Config.new)
+      flashed = []
+      dest = path("wts", "app", "wandering-finch")
+      stub_method(sb, :prompt_line, ->(*_a, **_k) { "" }) do
+        stub_method(Creator, :reserve, ->(*) { ["wandering-finch", dest] }) do
+          stub_method(Creator, :spawn_worker, ->(_id) { false }) do
+            stub_method(sb, :flash, ->(msg) { flashed << msg }) do
+              stub_method(Tmux, :broadcast_warm, ->(**_k) {}) do
+                stub_method(sb, :reload, -> {}) { sb.send(:create) }
+              end
+            end
+          end
+        end
+      end
+      assert_equal [Creator::SPAWN_FAILED], flashed
     end
 
     def test_rename_aborts_when_the_prompt_is_cancelled

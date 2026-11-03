@@ -112,10 +112,16 @@ module Switchboard
     # The SessionStart stdout payload Claude reads (its `additionalContext` is merged
     # into the model's context), as a single JSON string.
     def context_json(leaf)
+      session_start_json(message(leaf))
+    end
+
+    # Any SessionStart context text in that payload shape (CLI#rename_nudge joins the
+    # rename and agent-dispatch instructions into one).
+    def session_start_json(text)
       JSON.generate(
         "hookSpecificOutput" => {
           "hookEventName" => "SessionStart",
-          "additionalContext" => message(leaf)
+          "additionalContext" => text
         }
       )
     end

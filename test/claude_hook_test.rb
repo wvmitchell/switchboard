@@ -387,5 +387,14 @@ module Switchboard
       assert_includes cmd, Shellwords.escape(HookFile.script_path), "script path is shell-escaped"
       assert_equal HookFile.script_path, Shellwords.split(cmd).first, "command parses to the script as one token"
     end
+
+    # `switchboard new` is separate from subagents (R6): switchboard never hooks a
+    # subagent launch, for Claude or Codex.
+    def test_no_subagent_events_are_ever_wired
+      events = ClaudeHook::EVENTS.map(&:first) + CodexHook::EVENTS.map(&:first) +
+               HookFile.command_entries(ClaudeHook::EVENTS, "/s", "switchboard").map { |e| e[:event] } +
+               HookFile.command_entries(CodexHook::EVENTS, "/s", "switchboard").map { |e| e[:event] }
+      assert_empty events.grep(/subagent/i)
+    end
   end
 end

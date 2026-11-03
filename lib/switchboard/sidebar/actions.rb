@@ -197,22 +197,9 @@ module Switchboard
         return flash("no free workspace name — try again") if rec == :no_name
         return flash("couldn't record the dispatch") unless rec.is_a?(Hash)
 
-        spawn_worker(rec["id"])
+        flash(Creator::SPAWN_FAILED) unless Creator.spawn_worker(rec["id"])
         Tmux.broadcast_warm(except: ENV["TMUX_PANE"]) # every other pane shows the ◌ row now
         keep_cursor { reload }
-      end
-
-      # Detach the worker. It daemonizes itself (setsid) so this pane closing mid-build
-      # can't take it down. No wrapper or a failed spawn means it will never run, so the
-      # row turns ✘ at once instead of waiting out GC's grace.
-      def spawn_worker(id)
-        bin = ENV["SWITCHBOARD_BIN"]
-        return Creation.mark_failed(id, "didnt_start", from: "queued") unless bin
-
-        Process.detach(Process.spawn(bin, "create-workspace", id,
-                                     in: File::NULL, out: File::NULL, err: File::NULL))
-      rescue SystemCallError
-        Creation.mark_failed(id, "didnt_start", from: "queued")
       end
 
       # Run a reload without moving the selection off the row it's on, even when a new
