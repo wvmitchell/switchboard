@@ -1020,3 +1020,18 @@ safe today; each is narrow).
     last ~15 min.
   - Test quality: a few FakeClaude tests assert call counts rather than outcomes, and the smoke
     typing test paces keys with sleeps.
+
+## `switchboard new` (v0.63.0) follow-ups
+
+- **One switch for installing hooks, separate from what they plant.** *Why:* whether a new
+  worktree gets switchboard's hook file is an OR of feature settings
+  (`agent_state_hooks || auto_rename || background_presence` in `Creator.enable_hooks`),
+  and each of those also decides at runtime whether its own instruction is planted. So one
+  key does two jobs, and any new default-on instruction risks silently re-enabling hooks for
+  someone who turned the others off to stay hook-free. `agent_dispatch` avoided this by
+  never installing hooks itself; the next instruction will hit the same question. *Start
+  in:* make `agent_state_hooks` (or a renamed successor) the one install switch, so
+  `enable_hooks` reads only it, and leave `auto_rename`, `background_presence` and
+  `agent_dispatch` as instruction toggles. The one config that changes is
+  `agent_state_hooks: false` with naming or monitoring on: decide between a fallback with
+  a `doctor` hint and a clean break noted in the CHANGELOG. **Priority:** P2.
