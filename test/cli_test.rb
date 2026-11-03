@@ -1885,10 +1885,13 @@ module Switchboard
       ENV["SWITCHBOARD_BRIEF_FROM"] = "cli"
       assert_equal DispatchNudge.message(brief_from_agent: true),
                    session_context(run_nudge(worktree: named_wt, stdin: '{"source":"startup","cwd":"/x"}'))
-      ["clear", "resume", "compact", "fork"].each do |src|
-        assert_equal DispatchNudge.message, session_context(run_nudge(worktree: named_wt, stdin: %({"source":"#{src}","cwd":"/x"}))),
-                     "after #{src} the first message is no longer the other agent's brief"
+      %w[resume compact fork].each do |src|
+        assert_equal DispatchNudge.message(brief_from_agent: true),
+                     session_context(run_nudge(worktree: named_wt, stdin: %({"source":"#{src}","cwd":"/x"}))),
+                     "#{src} keeps the conversation that opened on the other agent's brief"
       end
+      assert_equal DispatchNudge.message, session_context(run_nudge(worktree: named_wt, stdin: '{"source":"clear","cwd":"/x"}')),
+                   "after /clear the next first message is the user's own"
       ENV.delete("SWITCHBOARD_BRIEF_FROM")
       assert_equal DispatchNudge.message, session_context(run_nudge(worktree: named_wt, stdin: '{"source":"startup","cwd":"/x"}'))
     end

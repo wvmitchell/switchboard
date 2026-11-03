@@ -212,6 +212,8 @@ module Switchboard
       err = DispatchArgs.task_error(task)
       return warn(err) if err
 
+      task = task.dup.force_encoding(Encoding::UTF_8) # valid now; a C-locale ARGV is tagged binary
+
       return warn(config.load_error_message) if config.load_error
       here = current_worktree&.project
       project = dispatch_target(target, here) or return false
@@ -738,9 +740,10 @@ module Switchboard
     def dispatch_piece(wt, source)
       return nil unless DispatchNudge.decide(enabled: config.agent_dispatch_for(wt.project), source: source)
 
-      # The env var lives as long as the agent; only a fresh startup still opens on the brief
-      # (after /clear or a resume, the next first message is the user's own).
-      DispatchNudge.message(brief_from_agent: ENV["SWITCHBOARD_BRIEF_FROM"] == "cli" && source == "startup")
+      # The env var lives as long as the agent. Resume, fork and compaction keep the
+      # conversation that opened on the other agent's brief, so the label stays; only /clear
+      # starts fresh, where the next first message is the user's own.
+      DispatchNudge.message(brief_from_agent: ENV["SWITCHBOARD_BRIEF_FROM"] == "cli" && source != "clear")
     rescue StandardError
       nil
     end

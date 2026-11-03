@@ -207,6 +207,15 @@ module Switchboard
       assert_equal brief, Creation.all.first["task"]
     end
 
+    # A C-locale shell hands ARGV over tagged binary; the validated brief is stored as UTF-8,
+    # with no json encoding warning on the caller's stderr (json 3.0 would refuse it).
+    def test_a_binary_tagged_argv_brief_is_stored_as_utf8
+      result, _out, err, = run_new([".", "café ✓".b])
+      assert result
+      assert_equal "café ✓", Creation.all.first["task"]
+      refute_match(/BINARY|encoding/, err)
+    end
+
     def test_an_inherited_switchboard_task_is_never_read
       ENV["SWITCHBOARD_TASK"] = "the caller's own task"
       run_new(["."])

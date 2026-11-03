@@ -597,9 +597,10 @@ which would otherwise read as the user asking. So `new` marks its `Creation` rec
 only, and the instruction then adds one sentence: the first message came from another
 agent, so don't start new workspaces because of it. That keeps one agent's brief from
 chaining further dispatches. A task you type after `n` is your own, so it gets no such
-sentence, and neither does a bare `new` with no task. The sentence is added only when the
-session starts up: the variable lives as long as the agent does, but after `/clear` or a
-resume the next first message is the user's own.
+sentence, and neither does a bare `new` with no task. The sentence comes back after a
+resume, a fork or compaction, which all keep the conversation that opened on the brief. It's
+dropped only after `/clear`: the variable lives as long as the agent does, but a cleared
+session's next first message is the user's own.
 
 **The text can't drift from the command.** It quotes `switchboard new` examples, and a
 test runs each one through `DispatchArgs.parse`, the parser the command itself uses.
