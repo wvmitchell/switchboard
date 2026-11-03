@@ -10,6 +10,14 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
+## [0.65.2] — internal tidy-up, no behavior change (2026-11-03)
+
+### Changed
+- Nothing you run behaves differently. The code that finds where switchboard is installed
+  now works it out in one place instead of three. Hot reload, `switchboard install` and
+  `switchboard sandbox` all read that one answer, so they can no longer disagree about
+  where the running code lives.
+
 ## [0.65.1] — internal tidy-up, no behavior change (2026-11-03)
 
 ### Changed

@@ -3,6 +3,7 @@
 require "fileutils"
 require "json"
 require "shellwords"
+require_relative "root"
 
 module Switchboard
   # `switchboard sandbox` (#126) — an isolated, interactive tmux session for
@@ -340,13 +341,11 @@ module Switchboard
 
     # --- helpers -------------------------------------------------------------
 
-    # The WORKTREE this sandbox.rb lives in (lib/switchboard/ -> repo root), NOT
+    # The WORKTREE whose code is loaded (Switchboard::ROOT), NOT
     # ENV["SWITCHBOARD_BIN"] — which bin/switchboard resolved through the installed
     # symlink, so a PATH `switchboard sandbox` would otherwise dogfood the canonical
-    # checkout. The loaded code IS this checkout, so __dir__ is the truth (F6).
-    def checkout_root
-      File.expand_path("../..", __dir__)
-    end
+    # checkout. The loaded code IS this checkout, so its ROOT is the truth (F6).
+    def checkout_root = ROOT
 
     def branch_note(dir)
       b = `git -C #{Shellwords.escape(dir)} rev-parse --abbrev-ref HEAD 2>/dev/null`.strip
