@@ -55,9 +55,17 @@ module Switchboard
   # test pokes a live tmux server. Everything is restored on teardown by
   # replacing ENV wholesale.
   class SandboxTest < Minitest::Test
+    HARNESS_ENV = %w[SWITCHBOARD_CODEX_SMOKE].freeze # the real-codex smoke's opt-in
+
     def setup
       @dir = Dir.mktmpdir("switchboard-test")
       @env = ENV.to_h
+
+      # Drop every inherited switchboard var first: a suite run inside a dispatched workspace
+      # inherits SWITCHBOARD_BRIEF_FROM/TASK (and a sandbox SWITCHBOARD_SANDBOX), which change
+      # what the code under test does. The knobs a test needs are set explicitly below.
+      # HARNESS_ENV are the developer's opt-ins to the suite itself, so they survive.
+      (ENV.keys.grep(/\ASWITCHBOARD_/) - HARNESS_ENV).each { |k| ENV.delete(k) }
 
       # switchboard's own knobs
       ENV["SWITCHBOARD_CONFIG"]    = path("config.yml")
