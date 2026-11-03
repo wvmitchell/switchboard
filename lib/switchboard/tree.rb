@@ -14,7 +14,8 @@ module Switchboard
     # Structured tree node — what the rendered sidebar draws. `folded` is never set
     # by Tree.nodes (stays nil): the sidebar sets it on a folded-workspace clone when
     # the global `z` branch-fold is on (issue #107), to the count of branch rows tucked
-    # away — render reads it for the dim `▸N` cue.
+    # away — render reads it for the dim `▸N` cue — and on a collapsed project header's
+    # clone, to the count of workspace rows its fold hides (the dim `(N)`).
     # `creation` is set only on a SYNTHETIC ws row: a dispatched workspace whose worktree
     # git doesn't list yet (or never will — a pre-worktree ✘), drawn from its Creation record.
     Node = Struct.new(:kind, :project, :path, :branch, :name, :pr, :dirty, :base, :active, :last,

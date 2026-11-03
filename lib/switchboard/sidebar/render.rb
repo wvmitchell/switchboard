@@ -34,6 +34,7 @@ module Switchboard
       LINK_LIVE_LABEL = "phone link on" # the legend entry the p hint attaches to
       LINK_STALE_FG = "\e[90m"    # ...and grey when idle past remote_link_stale_after (bold read identical; the theme-relative dim branch rows use)
       WS_PREFIX_COLS = 4          # a ws row's "<pointer> <dot> " before its name: fit_plain and colored must agree on it
+      PROJ_PREFIX_COLS = 2        # ...and a project header's "▸ " / "▾ "
       NOTE_FG  = "\e[2m"          # the dim task label / failure reason in the right region (DR3/DR8)
       UPDATE_FG = "\e[33m"        # the update line's message: BUILDING's yellow at normal weight, so it reads on light themes (#47)
       UPDATE_HINT = " · switchboard upgrade" # the update line's dim tail, the first thing a narrow pane drops
@@ -581,8 +582,8 @@ module Switchboard
         # go plain here so they read under the inverted bar.
         if active && @focused
           right = right_region(counts, node.pr, adds_w, dels_w, pr_w, with_color: false)
-          bar = region_w.zero? ? text : "#{text.ljust(left_cols)} #{right}"
-          return "\e[7m#{bar.ljust(cols)}\e[0m"
+          bar = region_w.zero? ? text : "#{ljust_columns(text, left_cols)} #{right}"
+          return "\e[7m#{ljust_columns(bar, cols)}\e[0m"
         end
 
         body = colored(node, text, current: node.kind == "ws" && node.path == @current_path)
@@ -591,7 +592,7 @@ module Switchboard
         # `colored` preserves `text`'s visible width, so pad off the plain region
         # width (right_region pads each cell off its plain length, then wraps ANSI).
         right_colored = right_region(counts, node.pr, adds_w, dels_w, pr_w, with_color: true)
-        pad = [cols - text.length - region_w, 1].max
+        pad = [cols - columns(text) - region_w, 1].max
         "#{body}#{' ' * pad}#{right_colored}"
       end
 
@@ -613,7 +614,7 @@ module Switchboard
       # extra label goes before the name does).
       def note_line(node, active, cols, note)
         text = fit_plain(node, cols)
-        room = cols - text.length - 1
+        room = cols - columns(text) - 1
         return line_without_note(node, active, cols, text) if room < 4
 
         fitted = fit_columns(note, room)
@@ -627,9 +628,9 @@ module Switchboard
         "#{body} #{NOTE_FG}#{fitted}\e[0m"
       end
 
-      # The task note is free text (pasted from anywhere), so it's measured in terminal
-      # COLUMNS, not characters: a CJK char or an emoji takes two, and counting it as one
-      # would push the row past the pane edge. Invisible characters (controls, bidi and
+      # The task note, and ws/proj names, are measured in terminal COLUMNS, not
+      # characters: a CJK char or an emoji takes two, and counting it as one would push
+      # the row past the pane edge. Invisible characters (controls, bidi and
       # zero-width marks, combining marks) are dropped before it's drawn.
       def columns(str)
         str.to_s.scrub.each_char.sum { |c| c.match?(NOTE_WIDE) ? 2 : (c.match?(NOTE_ZERO) ? 0 : 1) }
@@ -639,6 +640,7 @@ module Switchboard
       # the width regex raises on them.
       def fit_columns(str, width)
         str = str.to_s.scrub
+        return "" if width <= 0
         return str if columns(str) <= width
 
         out = +""
@@ -653,8 +655,14 @@ module Switchboard
         "#{out}…"
       end
 
+      # ljust in terminal columns: a wide name is fewer chars than columns, so a plain
+      # ljust would over-pad it past the pane.
+      def ljust_columns(str, width)
+        "#{str}#{' ' * [width - columns(str), 0].max}"
+      end
+
       def line_without_note(node, active, cols, text)
-        return "\e[7m#{text.ljust(cols)}\e[0m" if active && @focused
+        return "\e[7m#{ljust_columns(text, cols)}\e[0m" if active && @focused
 
         colored(node, text, current: node.kind == "ws" && node.path == @current_path)
       end
@@ -700,11 +708,7 @@ module Switchboard
       # still shows what its agent is doing.
       def plain(node)
         case node.kind
-        when "proj"
-          # In filter mode the children show regardless of fold, so the header always
-          # reads expanded (▾); the ▸ collapsed glyph only applies to the normal tree.
-          folded = @filter.nil? && @collapsed.include?(node.project)
-          "#{folded ? '▸' : '▾'} #{shown(node.project)}"
+        when "proj" then proj_parts(node).join
         when "ws"   then ws_parts(node).join
         else             "     #{node.last ? '└' : '├'}#{node.active ? '●' : ' '}#{shown(node.branch)}"
         end
@@ -717,6 +721,13 @@ module Switchboard
       # stay the same visible width (the line()/right-region alignment depends on it).
       def fold_cue(node)
         node.folded ? " ▸#{node.folded}" : ""
+      end
+
+      # The dim " (N)" trailing a folded project's name: the N workspace rows its fold
+      # hides (`folded` on the visible_tree clone). Nothing for an empty fold, nor for
+      # an expanded or filtered header (no clone there).
+      def proj_cue(node)
+        node.folded.to_i.positive? ? " (#{node.folded})" : ""
       end
 
       # " ⇅" on a workspace with a live /remote-control link (" ⇅2" for several), right
@@ -734,23 +745,52 @@ module Switchboard
         @links[path]&.any?(&:stale)
       end
 
-      # A ws row's plain parts: [pointer + glyph + name, link cue, fold cue].
+      # A row's plain parts: [prefix, name, trailing cues]. ws: pointer + glyph, then the
+      # link and fold cues; proj: the fold glyph, then the (N) count.
       def ws_parts(node, name = shown(node.name))
-        ["#{pointer(node.path)} #{ws_glyph(node.path)} #{name}", link_cue(node), fold_cue(node)]
+        ["#{pointer(node.path)} #{ws_glyph(node.path)} ", name, link_cue(node) + fold_cue(node)]
       end
 
-      # The row's plain text fit to `width`. A ws row gives up NAME columns, never its
-      # trailing cues: truncating the whole string from the right (the old way) cut
-      # the ⇅ and ▸N first, so they vanished under the cursor bar on a long name. Only
-      # when not even one name column would remain do the cues drop (colored's rule).
+      def proj_parts(node, name = shown(node.project))
+        # In filter mode the children show regardless of fold, so the header always
+        # reads expanded (▾); the ▸ collapsed glyph only applies to the normal tree.
+        folded = @filter.nil? && @collapsed.include?(node.project)
+        ["#{folded ? '▸' : '▾'} ", name, proj_cue(node)]
+      end
+
+      # The one rule both draw paths (fit_plain, colored) and both cue-bearing row kinds
+      # share, so plain and colored stay the same visible width (#118's columns depend
+      # on it): the cues' width comes off the NAME budget, so a long name gives up name
+      # columns, never its cues; only when not even one name column would remain do the
+      # cues drop. Returns [name columns, cues kept]. Measured in terminal COLUMNS, so a
+      # wide (CJK) name can't push the row past the pane.
+      def cue_budget(width, prefix_cols, cues)
+        budget = width - prefix_cols - columns(cues)
+        budget < 1 ? [width - prefix_cols, ""] : [budget, cues]
+      end
+
+      # The cues fit_plain kept in `text`: colored reads the decision back off the text
+      # rather than re-deriving it from text's width, which a name with no columns of its
+      # own (only combining marks) would get wrong, dropping cues fit_plain kept.
+      def kept_cues(text, cues)
+        !cues.empty? && text.end_with?(cues) ? cues : ""
+      end
+
+      # The row's plain text fit to `width` columns. ws and proj rows go through
+      # cue_budget (truncating the whole string from the right cut the cues first, so
+      # they vanished under the cursor bar on a long name); branch rows stay a plain cut.
       def fit_plain(node, width)
-        return trunc(plain(node), width) unless node.kind == "ws"
+        parts = case node.kind
+                when "ws"   then ws_parts(node)
+                when "proj" then proj_parts(node)
+                end
+        return trunc(plain(node), width) unless parts
 
-        _, link, cue = ws_parts(node)
-        budget = width - WS_PREFIX_COLS - link.length - cue.length
-        return trunc(plain(node).delete_suffix(link + cue), width) if budget < 1
+        prefix, name, cues = parts
+        name_cols, kept = cue_budget(width, columns(prefix), cues)
+        return fit_columns(prefix + name, width) if name_cols < 1 || kept.empty?
 
-        ws_parts(node, trunc(shown(node.name), budget)).join
+        "#{prefix}#{fit_columns(name, name_cols)}#{kept}"
       end
 
       def styled_link(path, link)
@@ -769,23 +809,22 @@ module Switchboard
 
       def colored(node, text, current: false)
         case node.kind
-        when "proj" then "\e[1m#{text}\e[0m"
+        when "proj"
+          # The bold name, then the dim (N) only if fit_plain kept it in `text`.
+          kept = kept_cues(text, proj_cue(node))
+          cue = kept.empty? ? "" : "\e[2m#{kept}\e[0m"
+          "\e[1m#{text.delete_suffix(kept)}\e[0m#{cue}"
         when "ws"
           dot = sparkling?(node.path) ? SPARKLE_COLORED[(@pulse / 2) % SPARKLE_COLORED.size] : dot_for(render_state(node.path))
           # The trailing cues (the " ⇅" link, then the " ▸N" fold) are appended ONLY when
-          # their full width was reserved off the name budget (budget >= 1 ⇒ ≥1 name col
-          # left after them) — the same rule fit_plain applies to `text`. At a very narrow
-          # pane the budget floors and there's no room: drop both so colored's visible
-          # width matches `text` instead of overrunning and staircasing the #118 diff/PR
-          # columns. They return as the pane widens; the common case always shows them.
+          # fit_plain kept them in `text` (cue_budget's rule). At a very narrow pane there's
+          # no room: both drop so colored's visible width matches `text` instead of
+          # overrunning and staircasing the #118 diff/PR columns.
           link = link_cue(node)
           cue = fold_cue(node)
-          budget = text.length - WS_PREFIX_COLS - link.length - cue.length
-          if budget < 1 # no room for the cues: the name gets their columns back, as in fit_plain's `text`
-            link = cue = ""
-            budget = text.length - WS_PREFIX_COLS
-          end
-          name = trunc(shown(node.name), [budget, 1].max)
+          link = cue = "" if kept_cues(text, link + cue).empty?
+          name_cols = columns(text) - WS_PREFIX_COLS - columns(link + cue)
+          name = fit_columns(shown(node.name), [name_cols, 1].max)
           ptr = " "
           if current
             ptr  = "#{BRAND}#{CURRENT_MARK}\e[0m"  # "you are here" pointer — bold-cyan, switchboard's signature accent

@@ -1020,3 +1020,16 @@ safe today; each is narrow).
     last ~15 min.
   - Test quality: a few FakeClaude tests assert call counts rather than outcomes, and the smoke
     typing test paces keys with sleeps.
+
+## Folded-project count follow-ups
+
+- **A folded project header could carry its hidden workspaces' attention state.**
+  *Why:* folding a project hides its workspace rows, and with them the bold-yellow
+  "done, not yet viewed" name and the failure mark; the completion chime still plays,
+  but the screen gives no hint which folded project wants you. *Pros:* a fold stops
+  hiding the one thing worth unfolding for. *Cons:* another state on the header row,
+  and its color has to stay distinct from the bold project name. *Start in:*
+  `Render#colored` (the `@attention.include?` / `unseen_failure?` branch) and the
+  collapsed-header clone in `Sidebar::Rows#visible_tree`, which can tally the hidden
+  rows' attention the same way it tallies the `(N)` count. *Depends on:* the folded
+  project `(N)` count landing first. **Priority:** P3.

@@ -23,6 +23,23 @@ module Switchboard
       n
     end
 
+    # Value: protects=a name with no columns of its own (only combining marks) keeps its
+    # cues and badge column in the painted row; fails_when=colored re-derives the cue
+    # decision from the fitted text's width (0 name columns) and drops what fit_plain kept;
+    # why_new=every other cue test uses a printable name; seam=none; no_claim=how a terminal
+    # draws a lone combining mark
+    def test_a_zero_width_name_keeps_its_cues_and_badge_column
+      node = folded_ws("\u0301", "/wt/z").tap { |n| n[:pr] = open_pr("#12") }
+      sb = with_links(sidebar(nodes: [proj("app"), node], focused: false), { "/wt/z" => [link] })
+      row = strip_ansi(sb.send(:line, node, false, 40))
+      assert_includes row, "⇅ ▸2", "the painted row keeps both cues"
+      assert_equal 40, sb.send(:columns, row), "and fills the pane, the badge flush right"
+      header = proj("\u0301").tap { |n| n.folded = 3 }
+      sb = sidebar(collapsed: ["\u0301"])
+      assert_includes sb.send(:colored, header, sb.send(:fit_plain, header, 20)), "\e[2m (3)\e[0m",
+                      "a zero-width project name keeps its count dim"
+    end
+
     def test_a_linked_workspace_shows_the_cue_right_after_its_name
       sb = with_links(sidebar(nodes: [ws("alpha", path: "/wt/a")]), { "/wt/a" => [link] })
       assert_equal "    alpha ⇅", sb.send(:plain, ws("alpha", path: "/wt/a"))
