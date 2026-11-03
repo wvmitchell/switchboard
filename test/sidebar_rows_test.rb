@@ -57,6 +57,41 @@ module Switchboard
       assert_includes colored, "\e[2m ▸2\e[0m", "the colored cue is dimmed"
     end
 
+    # --- folded project: the (N) workspace count -----------------------------
+
+    def folded_header(sb, project = "app") = rows_of(sb).find { |n| n.kind == "proj" && n.project == project }
+
+    def test_a_folded_project_counts_its_workspaces_not_their_branch_rows
+      sb = sidebar(nodes: multi_branch_tree, collapsed: ["app"])
+      assert_equal %w[proj], rows_of(sb).map(&:kind), "the fold hides every child row"
+      assert_equal 2, folded_header(sb).folded, "two workspaces; their two branch rows don't count"
+    end
+
+    def test_a_folded_count_covers_only_its_own_project
+      sb = sidebar(nodes: [proj("app"), ws("a"), ws("b"), proj("other"), ws("x", project: "other")], collapsed: ["app"])
+      assert_equal 2, folded_header(sb).folded
+      assert_nil folded_header(sb, "other").folded, "an expanded header is the plain node, no count"
+    end
+
+    def test_a_workspace_being_deleted_leaves_the_folded_count
+      sb = sidebar(nodes: [proj("app"), ws("a"), ws("b")], collapsed: ["app"])
+      sb.instance_variable_set(:@pending_delete, Set["/wt/b"])
+      sb.send(:recompute_rows)
+      assert_equal 1, folded_header(sb).folded, "unfolding wouldn't show it, so it doesn't count"
+    end
+
+    def test_a_folded_project_with_no_workspaces_counts_zero
+      sb = sidebar(nodes: [proj("app")], collapsed: ["app"])
+      assert_equal 0, folded_header(sb).folded
+    end
+
+    def test_filter_mode_never_carries_the_folded_count
+      sb = sidebar(nodes: [proj("app"), ws("alpha")], collapsed: ["app"])
+      sb.instance_variable_set(:@filter, "alp")
+      sb.send(:recompute_rows)
+      assert_nil folded_header(sb).folded, "filtering shows the children, so the header reads expanded"
+    end
+
     def test_a_single_branch_ws_is_unchanged_by_the_fold
       sb = sidebar(nodes: multi_branch_tree)
       sb.send(:toggle_branch_fold)

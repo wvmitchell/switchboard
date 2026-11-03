@@ -131,6 +131,21 @@ module Switchboard
       refute_includes line, "long"
     end
 
+    # Value: protects=a wide (CJK) name with a task/failure note stays inside the pane;
+    # fails_when=note_line sizes the note's room off text.length instead of columns(text);
+    # why_new=the wide-name tests cover line()'s badge/bar path, never note_line; seam=none;
+    # no_claim=which note text survives truncation
+    def test_a_wide_name_with_a_note_fits_the_pane
+      rec = record(path: "/wt/cjk", name: "中文工作区名字", state: "building")
+      Creation.mark_failed(rec["id"], "setup", 1)
+      sb = hydrated([proj("app")], focused: false)
+      [24, 30].each do |cols|
+        line = strip_ansi(sb.send(:line, rows_of(sb).last, false, cols))
+        assert_includes line, "中文工作区名字"
+        assert_equal cols, sb.send(:columns, line), "#{cols}: name and note fill the pane exactly"
+      end
+    end
+
     def test_an_unseen_pre_worktree_failure_is_bold
       rec = record(path: "/wt/never-made", state: "building")
       Creation.mark_failed(rec["id"], "worktree_add", "branch exists")
@@ -201,6 +216,15 @@ module Switchboard
     end
 
     # --- ↵ / d on a dispatch row ------------------------------------------------------
+
+    # A folded project's (N) is the rows unfolding would show, so a failed dispatch's
+    # row (git never made its worktree) counts: it's exactly the row worth unfolding for.
+    def test_a_failed_dispatch_counts_toward_its_folded_project
+      rec = record(path: "/wt/never-made", state: "building")
+      Creation.mark_failed(rec["id"], "worktree_add", "a branch named 'x' already exists")
+      sb = hydrated([proj("app"), ws("alpha")], collapsed: ["app"])
+      assert_equal 2, rows_of(sb).first.folded
+    end
 
     def test_enter_on_a_building_row_says_still_creating
       record(path: "/wt/quiet-otter")

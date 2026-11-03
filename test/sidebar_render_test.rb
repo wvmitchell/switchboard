@@ -143,6 +143,78 @@ module Switchboard
       assert_equal "\e[1m▾ app\e[0m", sb.send(:colored, proj("app"), "▾ app")
     end
 
+    # --- folded project: the dim (N) count ------------------------------------
+
+    def folded_proj(name = "app", count = 3)
+      proj(name).tap { |n| n.folded = count }
+    end
+
+    def visible_cols(sb, line) = sb.send(:columns, strip_ansi(line))
+
+    def test_a_folded_project_shows_its_count_dim_after_the_bold_name
+      sb = sidebar(collapsed: ["app"])
+      assert_equal "▸ app (3)", sb.send(:plain, folded_proj)
+      assert_equal "\e[1m▸ app\e[0m\e[2m (3)\e[0m", sb.send(:colored, folded_proj, "▸ app (3)")
+    end
+
+    def test_an_empty_folded_project_shows_no_count
+      sb = sidebar(collapsed: ["app"])
+      assert_equal "▸ app", sb.send(:plain, folded_proj("app", 0))
+      assert_equal "\e[1m▸ app\e[0m", sb.send(:colored, folded_proj("app", 0), "▸ app")
+    end
+
+    def test_a_long_folded_name_gives_up_name_columns_not_its_count
+      sb = sidebar(collapsed: ["verylongproject"])
+      node = folded_proj("verylongproject")
+      assert_equal "▸ ver… (3)", sb.send(:fit_plain, node, 10)
+      assert_equal "▸ ver…", sb.send(:fit_plain, node, 6), "no name column left: the count drops"
+    end
+
+    def test_a_folded_header_draws_plain_and_colored_at_one_width
+      sb = sidebar(collapsed: ["verylongproject"])
+      node = folded_proj("verylongproject")
+      (3..24).each do |w|
+        text = sb.send(:fit_plain, node, w)
+        assert_equal text, strip_ansi(sb.send(:colored, node, text)), "width #{w}: colored == plain"
+        assert_operator sb.send(:columns, text), :<=, w, "width #{w}: inside the pane"
+      end
+    end
+
+    def test_a_folded_header_under_the_cursor_bar_fills_the_pane
+      sb = sidebar(nodes: [folded_proj], collapsed: ["app"], focused: true)
+      line = sb.send(:line, folded_proj, true, 20)
+      assert_equal 20, visible_cols(sb, line)
+      assert_includes line, "(3)"
+    end
+
+    # D4: names are measured in terminal columns, so a wide (CJK) name and its cues
+    # stay inside the pane — focused (the padded bar) and not (padded to the badge).
+    def test_a_wide_project_name_and_its_count_fit_the_pane
+      name = "中文项目名称"
+      sb = sidebar(nodes: [folded_proj(name)], collapsed: [name])
+      [10, 13, 20].each do |cols|
+        bar = sb.send(:line, folded_proj(name), true, cols)
+        assert_equal cols, visible_cols(sb, bar), "focused at #{cols}: the bar fills exactly"
+        assert_includes bar, "(3)", "focused at #{cols}: the count survives"
+        plain = sb.send(:line, folded_proj(name), false, cols)
+        assert_operator visible_cols(sb, plain), :<=, cols, "unfocused at #{cols}: inside the pane"
+        assert_includes strip_ansi(plain), "(3)"
+      end
+    end
+
+    def test_a_wide_workspace_name_and_its_badge_fit_the_pane
+      node = Tree::Node.new(kind: "ws", project: "app", path: "/wt/cjk", name: "中文工作区名字很长",
+                            pr: open_pr("#12"), folded: 2)
+      sb = sidebar(nodes: [proj("app"), node], focused: true)
+      [12, 16, 30].each do |cols|
+        bar = sb.send(:line, node, true, cols)
+        assert_equal cols, visible_cols(sb, bar), "focused at #{cols}: the bar fills exactly"
+        row = sb.send(:line, node, false, cols)
+        assert_equal cols, visible_cols(sb, row), "unfocused at #{cols}: name, cue and badge fill exactly"
+        assert strip_ansi(row).end_with?("#12"), "unfocused at #{cols}: the badge stays flush right"
+      end
+    end
+
     # --- background-monitor dot (∞) ------------------------------------------
 
     def test_monitoring_glyph_and_dot
