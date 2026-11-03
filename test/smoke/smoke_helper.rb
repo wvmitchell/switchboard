@@ -120,7 +120,6 @@ module Switchboard
       File.write(ENV["SWITCHBOARD_CONFIG"], <<~YAML)
         worktree_root: #{path('worktrees')}
         base: main
-        agent_state_hooks: false
         projects:
           - name: proj
             path: #{@project}

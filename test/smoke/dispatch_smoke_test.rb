@@ -25,7 +25,6 @@ module Switchboard
       File.write(ENV["SWITCHBOARD_CONFIG"], <<~YAML)
         worktree_root: #{path('worktrees')}
         base: main
-        agent_state_hooks: false
         auto_rename: false
         background_presence: false
         worktree_creation_command: i=0; while [ ! -f "$SWITCHBOARD_PROJECT_PATH/.go" ] && [ $i -lt 300 ]; do sleep 0.1; i=$((i+1)); done; sleep #{SLOW_SETUP}; touch .setup-done

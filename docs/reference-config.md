@@ -28,10 +28,10 @@ or `e` in the sidebar — both reload on save.
 | `projects_root` | path | `~` | Where `a`/`clone` drop fetched repos: `<root>/<name>`. |
 | `base` | git ref | `origin/main` | Default ref new worktrees branch from. Per-project `base` overrides it. |
 | `branch_prefix` | string | _(none)_ | New branches become `<prefix>/<name>`. Empty/unset ⇒ bare `<name>`. |
-| `agent_state_hooks` | bool | `true` | Auto-wire the per-worktree Claude agent-state hook on worktree create. (Codex hooks are global — installed once via `install --codex-hooks`, not per worktree.) |
 | `prune_on_launch` | bool | `true` | Prune orphaned `sb/` sessions when landing on the home session. |
 | `auto_rename` | bool | `true` | Nudge the agent to `switchboard rename` a placeholder-named workspace once it knows the work (a `SessionStart` hook). `false` opts out. Per-project override wins. See [`auto_rename`](#auto_rename). |
 | `agent_dispatch` | bool | `true` | Tell agents (a `SessionStart` hook) that `switchboard new` can start another workspace, here or in another registered project, when you ask. `false` drops the instruction; the command still works. Per-project override wins. See [`agent_dispatch`](#agent_dispatch). |
+| `background_presence` | bool | `true` | Tell agents (a `SessionStart` hook) to declare background monitors and loops with `switchboard monitoring on`, so the sidebar shows a `∞`, and clear that declaration at session boundaries. `false` drops the instruction and the clears; `switchboard monitoring` still works by hand. Per-project override wins. See [background monitors](explanation-agent-presence.md#background-monitors-the-). |
 | `diff_counts` | bool | `true` | Show the `+adds −dels` diff count on each workspace/branch row. `false` hides it and skips the per-worktree `git diff` entirely. |
 | `count_indicator` | bool | `true` | Show a half-typed movement count (the `3` of `3j`) in the sidebar footer. `false` hides it; counts still work. Global only. |
 | `prewarm` | bool | `true` | Keep off-screen sidebars warm so switching sessions doesn't flash a stale tree. `false` restores full dormancy (no off-screen work). See [`prewarm`](#prewarm). |
@@ -45,6 +45,14 @@ or `e` in the sidebar — both reload on save.
 | `sidebar_keys` | map | _(defaults)_ | Remap the keys *inside* the sidebar, by action name. See [`sidebar_keys`](#sidebar_keys). |
 | `projects` | list | `[]` | The project registry. See [`projects`](#projects). |
 
+**Retired: `agent_state_hooks`.** Every worktree switchboard creates gets its hooks: the
+agent dots, the done chime and the instructions above all ride them, and switchboard isn't
+much use without them. A config that still has the key keeps working; `doctor` names it as
+retired. To keep a worktree hook-free, run `switchboard disable-hooks` in it, or put that
+line in a project's setup script to keep the whole project free of Claude hooks from the
+first session ([how-to](howto-agent-state-and-sounds.md#keep-a-worktree-or-project-hook-free)).
+Codex hooks are one global block, which only `switchboard uninstall` removes.
+
 Paths accept `~` and are expanded. Unknown keys are ignored.
 
 ### A complete example
@@ -54,7 +62,6 @@ worktree_root: ~/switchboard/worktrees   # where `n` puts new worktrees
 projects_root: ~/Programming             # where `a`/`clone` drop cloned repos
 base: origin/main                        # default ref new worktrees branch from
 branch_prefix: wvmitchell                # new branches become wvmitchell/<name>
-agent_state_hooks: true                  # auto-wire agent-state dots on create
 prune_on_launch: true                    # tidy orphaned sessions on landing home
 auto_rename: true                        # let the agent name a placeholder workspace (on by default)
 agent_dispatch: true                     # tell agents `switchboard new` exists (on by default)
@@ -112,10 +119,11 @@ projects:
     auto_rename: false       # ...but off for this one
 ```
 
-**Turning it on for worktrees you already have:** the nudge is wired into a worktree's
-hooks at create time, so flip it on and run `switchboard enable-hooks` inside an
-existing worktree to add it there (new worktrees get it automatically). The hooks
-wire when any of `agent_state_hooks`, `auto_rename` or `background_presence` is on.
+**Worktrees you already have:** the setting is read each time an agent starts, so
+flipping it reaches every hooked worktree on its next session. A worktree without
+switchboard's hooks (one made outside switchboard, or one you ran `disable-hooks` in)
+needs `switchboard enable-hooks` first. Every worktree switchboard creates gets the
+hooks; this setting only decides whether the naming instruction rides them.
 
 ---
 
@@ -132,10 +140,8 @@ Set `agent_dispatch: false` to drop the instruction, globally or for one project
 per-project value wins in either direction). The `switchboard new` command itself keeps
 working; agents just aren't told about it.
 
-The instruction rides the hooks the other features install; `agent_dispatch` never
-installs hooks by itself. With the defaults every new worktree is hooked, and a config that
-turned `agent_state_hooks`, `auto_rename` and `background_presence` all off stays
-hook-free.
+The instruction rides switchboard's hooks, which every new worktree gets; this setting
+only decides whether the instruction is planted, never whether hooks are installed.
 
 ```yaml
 agent_dispatch: true         # global default

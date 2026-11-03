@@ -1081,10 +1081,67 @@ module Switchboard
       repo = temp_git_repo
       out = Dir.chdir(repo) { capture { CLI.disable_hooks } }
       refute_match(/codex hooks are global/, out)
+      assert_includes out, "this worktree only; new worktrees still get them", "the only opt-out says its scope"
 
       CodexHook.install_global
       out2 = Dir.chdir(repo) { capture { CLI.disable_hooks } }
       assert_match(/codex hooks are global/, out2)
+    end
+
+    # Value: protects=disable-hooks never reports success while claude's hooks are still wired, and the command exits 1 then (0 on a real removal); fails_when=the post-disable check, the false return or the dispatcher's exit(1) is dropped; why_new=disable swallows its own failures, nothing checked the result; seam=none; no_claim=a permissions failure on a real filesystem (stubbed disable)
+    def test_disable_hooks_fails_when_the_hooks_are_still_there
+      repo = temp_git_repo
+      AgentHooks.enable(repo)
+      got = nil
+      stub_method(ClaudeHook, :disable, ->(_wt) {}) do
+        out = Dir.chdir(repo) { capture { got = CLI.disable_hooks } }
+        assert_equal false, got
+        assert_match(/couldn't remove claude hooks/, out)
+        refute_match(/disabled switchboard's hooks/, out)
+
+        e = assert_raises(SystemExit) { Dir.chdir(repo) { capture { CLI.run(["disable-hooks"]) } } }
+        assert_equal 1, e.status, "scripts see the failure too"
+      end
+      Dir.chdir(repo) { capture { CLI.run(["disable-hooks"]) } } # a real removal: no exit
+      refute ClaudeHook.enabled?(repo)
+    end
+
+    # Value: protects=a corrupt settings file still holding switchboard's hooks (left untouched by disable, read as "not enabled") isn't reported as disabled; fails_when=the corrupt? check is dropped; why_new=enabled? alone returns false for a file it can't parse; seam=none; no_claim=unreadable (permissions) variant
+    def test_disable_hooks_fails_on_a_corrupt_settings_file_with_our_hooks
+      repo = temp_git_repo
+      FileUtils.mkdir_p(File.join(repo, ".claude"))
+      File.write(ClaudeHook.settings_path(repo), "{ \"hooks\": \"#{HookFile::MARK}\" ")
+      got = nil
+      out = Dir.chdir(repo) { capture { got = CLI.disable_hooks } }
+      assert_equal false, got
+      assert_match(/couldn't remove claude hooks/, out)
+    end
+
+    # Value: protects=a malformed settings file of your own (no switchboard marks) doesn't fail disable-hooks, so a setup-script opt-out can't sink a workspace on it; fails_when=disable fails on any unparseable file again; why_new=adversarial review: it failed on files that never held our hooks; seam=none; no_claim=none beyond protects
+    def test_disable_hooks_passes_over_a_malformed_file_of_your_own
+      repo = temp_git_repo
+      FileUtils.mkdir_p(File.join(repo, ".claude"))
+      File.write(ClaudeHook.settings_path(repo), "{ not json")
+      got = nil
+      out, = capture_io { got = Dir.chdir(repo) { CLI.disable_hooks } }
+      refute_equal false, got
+      assert_match(/disabled switchboard's hooks/, out)
+      assert_equal "{ not json", File.read(ClaudeHook.settings_path(repo)), "your file is left as it was"
+    end
+
+    # Value: protects=an unreadable (chmod 000) settings file isn't reported as disabled; fails_when=the unreadable? check is dropped; why_new=enabled?/unparseable? both read EACCES as "fine"; seam=none; no_claim=root, who reads anything (skipped)
+    def test_disable_hooks_fails_on_an_unreadable_settings_file
+      skip "root reads anything" if Process.uid.zero?
+      repo = temp_git_repo
+      AgentHooks.enable(repo)
+      settings = ClaudeHook.settings_path(repo)
+      File.chmod(0o000, settings)
+      got = nil
+      out, err = capture_io { got = Dir.chdir(repo) { CLI.disable_hooks } }
+      assert_equal false, got
+      assert_includes out + err, "couldn't remove claude hooks"
+    ensure
+      File.chmod(0o600, settings) if settings && File.exist?(settings)
     end
 
     # --- prune / quit (Reconcile + Tmux stubbed so no real tmux is touched) ---
@@ -1470,6 +1527,16 @@ module Switchboard
       out = capture { CLI.send(:doctor_unknown_keys) }
       assert_includes out, "\"wortree_root\""
       assert_includes out, "unrecognized", "a non-action key gets the generic hint, not a sidebar_keys steer"
+    end
+
+    # Value: protects=a config still carrying agent_state_hooks gets a doctor line naming it retired and pointing at disable-hooks; fails_when=RETIRED_KEYS is dropped or the generic typo hint wins; why_new=no test covered a retired key; seam=none; no_claim=none beyond protects
+    def test_doctor_names_a_retired_key_and_what_replaced_it
+      File.write(Config.path, YAML.dump("worktree_root" => "/x", "agent_state_hooks" => false))
+      out = capture { CLI.send(:doctor_unknown_keys) }
+      assert_includes out, "\"agent_state_hooks\""
+      assert_includes out, "retired"
+      assert_includes out, "switchboard disable-hooks"
+      refute_includes out, "unrecognized", "a retired key isn't a typo"
     end
 
     # --- doctor: sidebar_keys rows (issue #108) -------------------------------

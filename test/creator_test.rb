@@ -106,13 +106,15 @@ module Switchboard
     end
 
     # --- the agent hooks a new worktree gets ---------------------------------------
-    # Wired for ANY agent (typed by hand or not) whenever dots, auto_rename or
-    # background_presence is on — each resolved per project.
+    # Always wired, for ANY agent (typed by hand or not); the instruction settings only
+    # decide at runtime what the hooks plant.
 
-    def test_build_wires_hooks_when_auto_rename_on_even_with_dots_off
-      config = config_for(temp_git_repo("proj", origin: true), "agent_state_hooks" => false, "auto_rename" => true)
+    # Value: protects=every new worktree gets switchboard's hooks whatever the instruction toggles say; fails_when=enable_hooks regains a config gate; why_new=replaces the five OR-gate tests; seam=none; no_claim=Claude actually loading the file (ClaudeHook.enabled? only)
+    def test_build_wires_hooks_even_with_every_instruction_toggle_off
+      config = config_for(temp_git_repo("proj", origin: true), "auto_rename" => false,
+                                                                 "background_presence" => false, "agent_dispatch" => false)
       dest = build(config)
-      assert ClaudeHook.enabled?(dest), "claude hook wired because auto_rename is on"
+      assert ClaudeHook.enabled?(dest), "hooks don't depend on the instruction settings"
       refute File.exist?(File.join(dest, ".codex", "hooks.json")), "codex is global; no per-worktree file"
     end
 
@@ -120,34 +122,6 @@ module Switchboard
       config = config_for(temp_git_repo("proj", origin: true))
       dest = build(config)
       assert ClaudeHook.enabled?(dest), "an agent started by hand still gets its dot and nudges"
-    end
-
-    def test_build_wires_hooks_for_a_per_project_auto_rename_opt_in
-      repo = temp_git_repo("proj", origin: true)
-      File.write(Config.path, YAML.dump("worktree_root" => path("wts"), "agent_state_hooks" => false,
-                                        "auto_rename" => false,
-                                        "projects" => [{ "name" => "proj", "auto_rename" => true, "path" => repo }]))
-      assert ClaudeHook.enabled?(build(Config.new)), "per-project auto_rename:true wires the hook with the global off"
-    end
-
-    def test_build_skips_hooks_for_a_per_project_auto_rename_opt_out
-      repo = temp_git_repo("proj", origin: true)
-      File.write(Config.path, YAML.dump("worktree_root" => path("wts"), "agent_state_hooks" => false,
-                                        "auto_rename" => true, "background_presence" => false,
-                                        "projects" => [{ "name" => "proj", "auto_rename" => false, "path" => repo }]))
-      refute ClaudeHook.enabled?(build(Config.new)), "per-project auto_rename:false skips the hook despite global on"
-    end
-
-    def test_build_skips_hooks_when_dots_rename_and_presence_all_off
-      config = config_for(temp_git_repo("proj", origin: true), "agent_state_hooks" => false,
-                                                                 "auto_rename" => false, "background_presence" => false)
-      refute ClaudeHook.enabled?(build(config))
-    end
-
-    def test_build_wires_the_hook_for_background_presence_alone
-      config = config_for(temp_git_repo("proj", origin: true), "agent_state_hooks" => false,
-                                                                 "auto_rename" => false, "background_presence" => true)
-      assert ClaudeHook.enabled?(build(config)), "the monitoring nudge + session-boundary clears need it"
     end
 
     # The branch cut from origin/main must NOT inherit it as an upstream (--no-track), so

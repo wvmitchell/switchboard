@@ -33,8 +33,8 @@ You get *something* for free and *something better* by opting in:
 
 ## Enable exact hooks
 
-**Claude (per worktree).** Worktrees switchboard *creates* get the Claude hook
-automatically (when `agent_state_hooks` is on, the default). For a worktree you
+**Claude (per worktree).** Every worktree switchboard *creates* gets the Claude hook
+automatically. For a worktree you
 made elsewhere, run this once from inside it. A running `claude` picks it up on
 its own (Claude Code watches its settings files; if a dot doesn't move, run `/hooks`
 in it once):
@@ -64,14 +64,37 @@ has approved (`N/M trusted`), or the fix when the block is stale, can't be rewri
 safely, or collides with your own `[hooks]`. It also prints the reporter script path. Start an agent and watch the dot
 become precise.
 
-### Turn off auto-wiring on new worktrees
+### Keep a worktree or project hook-free
 
-If you don't want switchboard touching `.claude/settings.local.json` on create,
-set in `config.yml`:
+Switchboard writes its hooks into `.claude/settings.local.json` in every worktree it
+creates; the dots, the done chime, auto-naming and monitoring all depend on them. If one
+worktree should go without, run this inside it:
+
+```sh
+switchboard disable-hooks
+```
+
+It removes only switchboard's entries, says when it couldn't (and exits 1), and affects
+that worktree alone: the next one you create is hooked again.
+
+To keep a whole project free of switchboard's Claude hooks from its agent's first moment,
+put the same line in the project's setup script (`worktree_creation_command`). Switchboard
+writes the hooks before setup runs and starts the agent after it, so the agent never sees
+them. This covers Claude only: Codex hooks live in one global block you opted into with
+`install --codex-hooks`, and only `switchboard uninstall` removes that.
 
 ```yaml
-agent_state_hooks: false
+projects:
+  - name: myapp
+    path: ~/code/myapp
+    worktree_creation_command:   # a list runs its steps in order
+      - bin/setup                # whatever setup the project already had
+      - switchboard disable-hooks
 ```
+
+If you want the dots but not the instructions an agent gets at startup, keep the hooks
+and turn off `auto_rename`, `background_presence` or `agent_dispatch` instead (see
+[Reference: config](reference-config.md)).
 
 ## Set completion sounds
 

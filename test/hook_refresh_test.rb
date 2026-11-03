@@ -118,7 +118,10 @@ module Switchboard
       reader&.close
     end
 
+    # Your own link (dotfiles) is untracked, so it's written through; a committed one isn't
+    # (claude_hook_test). A real worktree is a git repo, which that check asks.
     def test_a_symlinked_settings_file_stays_a_symlink
+      system("git", "init", "-q", worktree, exception: true)
       real = path("dotfiles", "settings.local.json")
       FileUtils.mkdir_p(File.dirname(real))
       File.write(real, "{}")

@@ -30,10 +30,17 @@ module Switchboard
     # read, so the setting silently does nothing. `doctor` flags these (CLI#doctor_unknown_keys).
     KNOWN_KEYS = %w[
       worktree_root projects_root base branch_prefix session_command worktree_creation_command
-      agent_state_hooks prune_on_launch auto_rename diff_counts prewarm background_presence
+      prune_on_launch auto_rename diff_counts prewarm background_presence
       remote_link_stale_after update_check sync_session_name count_indicator agent_dispatch
       sounds tmux_keys sidebar_keys projects
     ].freeze
+
+    # Top-level keys switchboard once read and no longer does, with what replaced them. Still
+    # unknown (doctor lists them), but with this hint instead of the typo guess.
+    RETIRED_KEYS = {
+      "agent_state_hooks" => "retired: every new worktree gets switchboard's hooks; " \
+                             "`switchboard disable-hooks` opts one worktree out"
+    }.freeze
 
     def self.path
       ENV["SWITCHBOARD_CONFIG"] || DEFAULT_PATH
@@ -74,7 +81,6 @@ module Switchboard
       # branch_prefix: ""                          # new branches become <prefix>/<name>
       # session_command: ""                        # the agent a new workspace runs (e.g. claude --dangerously-skip-permissions); the `n` task is appended for claude/codex, or put {task} where it goes
       # worktree_creation_command: ""              # run ONCE in a NEW worktree, before session_command (e.g. bundle install); sees $SWITCHBOARD_TASK. A list runs its steps in order; `false` on a project turns it off
-      # agent_state_hooks: true                    # auto-wire the agent-state dots on worktree create
       # prune_on_launch: true                      # prune orphaned sb/ sessions when landing on home
       # auto_rename: true                          # nudge the agent to rename a placeholder-named workspace once it knows the work
       # background_presence: true                  # nudge the agent to flag background monitors/loops (`switchboard monitoring on`) so the sidebar shows a ∞
@@ -234,13 +240,6 @@ module Switchboard
     # not the throwaway worktrees.
     def projects_root
       File.expand_path(@data["projects_root"] || DEFAULT_PROJECTS_ROOT)
-    end
-
-    # Whether to wire per-worktree agent-state hooks (sidebar dots) when creating
-    # a worktree. On by default; scoped to the worktree, never global. Set
-    # `agent_state_hooks: false` in config.yml to opt out.
-    def agent_state_hooks?
-      @data.fetch("agent_state_hooks", true) != false
     end
 
     # Whether the home sidebar reconciles (prunes orphaned sb/ sessions) on

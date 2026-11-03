@@ -36,7 +36,6 @@ module Switchboard
       File.write(ENV["SWITCHBOARD_CONFIG"], <<~YAML)
         worktree_root: #{path('worktrees')}
         base: main
-        agent_state_hooks: false
         session_command: echo agent >> .order
         worktree_creation_command: #{setup_yaml}
         projects:
