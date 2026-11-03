@@ -39,6 +39,15 @@ built on the shared `KeyedMarkerStore`, like `Attention`.
 
 `toggle_collapse` writes through and updates `@collapsed`.
 
+A folded header shows a dim `(N)`, the count of workspace rows the fold hides. It's
+built the way the branch fold's `▸N` is (below): `visible_tree` swaps the header for a
+shallow clone carrying the count in `folded`, the same field that means "N child rows
+are hidden here" on a folded workspace, so `@nodes` stays untouched and no new field or
+on-disk state is needed. The count is what unfolding would show: in-flight and failed
+dispatch rows count, a workspace being deleted and every branch row don't. Filter mode
+builds its rows without `visible_tree`, so a filtered header never carries a count,
+which matches its `▾`.
+
 `collapsed` cleans up a fold whose project is no longer configured, but only when it's
 handed a non-empty project list. The key is a name, not a path it could check, so a
 config that's briefly empty or fails to load can't wipe your folds.
@@ -94,6 +103,18 @@ The dim `▸N` cue (`fold_cue`) trails the folded workspace's name in both `plai
 `colored`. Its width is taken from the name's budget, so the two render paths stay the
 same visible width, which the `line` and right-region alignment depend on. Filter mode is
 unaffected, since it already leaves out branch rows.
+
+That rule lives in one place, `cue_budget`, shared by workspace rows (the `⇅` and `▸N`
+cues) and project headers (the `(N)` count). A long name gives up name columns, never
+its cues; only when not even one name column would remain do the cues drop. Only
+`fit_plain` applies it. `colored` doesn't decide again: it reads `fit_plain`'s decision
+back off the plain text (`kept_cues`, which checks whether the text still ends with the
+cues). Working it out a second time from the text's width would get one case wrong: a
+name made only of combining marks takes no columns of its own, so the width math would
+see no room and drop cues that `fit_plain` kept. It measures in terminal columns (`columns` / `fit_columns`, the
+same rule as the task note), so a wide CJK name is cut by the columns it takes and can't
+push its row past the pane. Branch rows, the footer and the help overlay still measure in
+characters.
 
 ### The width: a file holding a number
 

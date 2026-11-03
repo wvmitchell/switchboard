@@ -100,14 +100,39 @@ module Switchboard
       # visible) carrying the active branch's PR and the hidden-branch count for the cue.
       def visible_tree
         active_pr, counts = fold_lookup
+        hidden = hidden_workspaces
         rows = []
         @nodes.each do |n|
           next if n.kind != "proj" && @pending_delete.include?(n.path) # being deleted: hide the ws + its branch rows
           next if n.kind != "proj" && @collapsed.include?(n.project) # collapsed project hides its children
           next if n.kind == "br" && @fold_branches                   # folded: hide every branch row
-          rows << (foldable_ws?(n) ? fold_ws(n, active_pr[n.path], counts[n.path]) : n)
+          rows << if n.kind == "proj" && @collapsed.include?(n.project) then fold_proj(n, hidden[n.project])
+                  elsif foldable_ws?(n) then fold_ws(n, active_pr[n.path], counts[n.path])
+                  else n
+                  end
         end
         rows
+      end
+
+      # Per collapsed project, the workspace rows its fold hides: what unfolding would
+      # show, so in-flight and failed creation rows count, pending deletes and branch
+      # rows don't. Empty unless something is collapsed.
+      def hidden_workspaces
+        hidden = Hash.new(0)
+        return hidden if @collapsed.empty?
+
+        @nodes.each do |n|
+          next unless n.kind == "ws" && @collapsed.include?(n.project) && !@pending_delete.include?(n.path)
+
+          hidden[n.project] += 1
+        end
+        hidden
+      end
+
+      # A shallow clone of a collapsed project header carrying its hidden-workspace
+      # count (`folded`) for the dim (N) cue — fold_ws's twin, leaving @nodes intact.
+      def fold_proj(node, count)
+        node.class.new(**node.to_h.merge(folded: count))
       end
 
       # Per-workspace [active-branch PR, branch-row count], precomputed once from the
