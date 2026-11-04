@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
-require "fileutils"
+require_relative "paths"
+require_relative "view_flag"
 
 module Switchboard
   # The global "fold every workspace's branch-history rows" toggle (the `z` key).
@@ -25,38 +26,22 @@ module Switchboard
   module BranchFold
     module_function
 
+    STORE = ["SWITCHBOARD_BRANCH_FOLD_FILE", "branch_fold"].freeze
+
     # Folded when the marker exists. Degrades to off (branches shown) on any error —
     # a sidebar that can't read the flag just renders the tree expanded, never crashes.
-    def folded?
-      File.exist?(marker)
-    rescue StandardError
-      false
-    end
+    def folded? = ViewFlag.on?(STORE)
 
     # Fold every workspace's branches. Idempotent create — re-folding stays folded.
-    def fold
-      FileUtils.mkdir_p(File.dirname(marker))
-      File.write(marker, "on")
-    rescue StandardError
-      nil
-    end
+    def fold = ViewFlag.on(STORE)
 
     # Unfold. Idempotent — a missing marker is a quiet no-op, so a toggle can call
     # it unconditionally on the unfold edge.
-    def unfold
-      File.delete(marker)
-    rescue StandardError
-      nil
-    end
+    def unfold = ViewFlag.off(STORE)
 
     # The single marker file, XDG-state-rooted beside the collapse folds and the
     # full-header flag. Resolved from ENV per call (not frozen at load) so the test
     # sandbox can redirect it.
-    def marker
-      File.expand_path(
-        ENV["SWITCHBOARD_BRANCH_FOLD_FILE"] ||
-          File.join(ENV["XDG_STATE_HOME"] || "~/.local/state", "switchboard", "branch_fold")
-      )
-    end
+    def marker = Paths.state(*STORE)
   end
 end

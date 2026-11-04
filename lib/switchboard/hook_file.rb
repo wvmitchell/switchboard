@@ -4,6 +4,7 @@ require "json"
 require "fileutils"
 require "shellwords"
 require_relative "marker_block"
+require_relative "paths"
 
 module Switchboard
   # The shared engine behind the hook adapters. What BOTH agents share lives here ONCE:
@@ -120,8 +121,7 @@ module Switchboard
     # the switchboard checkout/cellar (which moves on upgrade). One reporter is
     # shared by every adapter — the state-file format is agent-neutral.
     def script_path
-      File.expand_path(File.join(Switchboard.env("XDG_DATA_HOME") || "~/.local/share", "switchboard", MARK))
-          .dup.force_encoding(Encoding::UTF_8) # `~` expands from $HOME, BINARY under a C locale
+      Paths.data(MARK)
     end
 
     MAX_SETTINGS = 1 << 22 # 4 MiB; a real settings file is a few KB

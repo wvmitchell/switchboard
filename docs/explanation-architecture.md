@@ -130,7 +130,24 @@ The direction is the point. A tmux query belongs in an adapter, so it never need
 the sidebar exists. A rule both interfaces share belongs in an operation, so the sidebar
 key and the CLI command can't drift apart. `Width` sits with the adapters even though it's
 a view setting: it is one small file read deep inside `Tmux`'s session setup, and it
-depends on nothing.
+depends only on support files.
+
+### Where state files live
+
+`lib/switchboard/paths.rb` is the one place that knows where a store under the XDG roots
+goes (the config file keeps its own path, in `Config`). `Paths.state`, `Paths.cache` and
+`Paths.data` each take the store's leaf name, plus its override variable where it has one.
+Every result is UTF-8, even under a C locale, where Ruby hands the
+environment back as raw bytes that can't be joined with the rest of a message. The file
+also holds `Switchboard.env`, the UTF-8 environment read, and the two canonicalizers:
+`Paths.real_or_self` for a best-effort key, and `Paths.real_or_nil` for a path that must
+match nothing once it stops resolving.
+
+An exported-but-empty variable counts as unset everywhere. Taken literally, an empty string
+expands to the current directory, and a store's cleanup would delete the files there. The
+shell reporter in `HookFile::SCRIPT`, which has to keep its own copy because it runs without
+Ruby, reads it the same way. `test/paths_test.rb` pins all of this, so a change here is
+deliberate.
 
 ### The layer test holds it
 
@@ -152,7 +169,7 @@ against the repo as the test sees it. `root.rb` is pinned: it must never move ou
 `lib/switchboard/`, because `ROOT` is computed from where it sits.
 
 `lib/switchboard.rb` itself isn't scanned. It's the entry point that requires everything,
-so it has no layer, and its small `Switchboard.env` helper counts as support.
+so it has no layer.
 
 References come from Ruby's own tokenizer (Ripper), not from a text search. A name that
 only appears in a comment, a string, a symbol (`:Config`) or a heredoc, such as the shell

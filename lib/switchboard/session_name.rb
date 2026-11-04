@@ -2,6 +2,7 @@
 
 require "fileutils"
 require_relative "keyed_marker_store"
+require_relative "paths"
 
 module Switchboard
   # After a workspace rename, give its live agent session the same name — the one the
@@ -627,11 +628,7 @@ module Switchboard
         KeyedMarkerStore.dir("SWITCHBOARD_SESSION_NAME_DIR", "session-name")
       end
 
-      def realpath(path)
-        File.realpath(path)
-      rescue StandardError
-        path
-      end
+      def realpath(path) = Paths.real_or_self(path)
     end
 
     # One worker per workspace: each claims `dest` at start, and an older worker that no

@@ -4,6 +4,7 @@ require "set"
 require "zlib"
 require "fileutils"
 require "tmpdir"
+require_relative "paths"
 
 module Switchboard
   # The shared machinery behind the "keyed-marker" stores: a directory of tiny
@@ -46,10 +47,7 @@ module Switchboard
     # we fall back to a tmpdir sibling so the op degrades instead of crashing the
     # sidebar paint, preserving degrade-not-crash.
     def dir(env_var, leaf)
-      File.expand_path(
-        ENV[env_var] ||
-          File.join(ENV["XDG_STATE_HOME"] || "~/.local/state", "switchboard", leaf)
-      )
+      Paths.state(env_var, leaf)
     rescue StandardError
       File.join(Dir.tmpdir, "switchboard", leaf)
     end

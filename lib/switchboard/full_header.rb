@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
-require "fileutils"
+require_relative "paths"
+require_relative "view_flag"
 
 module Switchboard
   # The shared "show the full header on every session" toggle (the `H` key). The
@@ -19,37 +20,21 @@ module Switchboard
   module FullHeader
     module_function
 
+    STORE = ["SWITCHBOARD_FULL_HEADER_FILE", "full_header"].freeze
+
     # On when the marker exists. Degrades to off on any error — a sidebar that
     # can't read the flag just shows the minimal wordmark, never crashes the paint.
-    def enabled?
-      File.exist?(marker)
-    rescue StandardError
-      false
-    end
+    def enabled? = ViewFlag.on?(STORE)
 
     # Turn it on. Idempotent create — re-enabling an already-on flag is a no-op.
-    def enable
-      FileUtils.mkdir_p(File.dirname(marker))
-      File.write(marker, "on")
-    rescue StandardError
-      nil
-    end
+    def enable = ViewFlag.on(STORE)
 
     # Turn it off. Idempotent — a missing marker is a quiet no-op, so a toggle can
     # call it unconditionally on the off edge.
-    def disable
-      File.delete(marker)
-    rescue StandardError
-      nil
-    end
+    def disable = ViewFlag.off(STORE)
 
     # The single marker file, XDG-state-rooted beside the collapse folds. Resolved
     # from ENV per call (not frozen at load) so the test sandbox can redirect it.
-    def marker
-      File.expand_path(
-        ENV["SWITCHBOARD_FULL_HEADER_FILE"] ||
-          File.join(ENV["XDG_STATE_HOME"] || "~/.local/state", "switchboard", "full_header")
-      )
-    end
+    def marker = Paths.state(*STORE)
   end
 end

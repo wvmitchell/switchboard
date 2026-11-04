@@ -52,11 +52,23 @@ module Switchboard
     end
 
     # Atomic temp+rename, so a peer's concurrent resolved never reads a half-written
-    # value — no .tmp straggler is left behind.
+    # value — no temp straggler is left behind, whatever its suffix.
     def test_set_leaves_no_tmp_straggler
       Width.set(50)
-      strays = Dir.glob("#{Width.state_file}*").select { |f| f.end_with?(".tmp") }
-      assert_empty strays, "the atomic write cleans up its temp file"
+      assert_equal [Width.state_file], Dir.glob("#{Width.state_file}*"), "the atomic write cleans up its temp file"
+    end
+
+    # A resize key must never crash the sidebar, and atomic_write re-raises by design.
+    def test_set_degrades_to_nil_when_it_cannot_write
+      Width.set(50)
+      assert_nil Width.set("garbage")
+      assert_equal 50, Width.resolved, "a bad value leaves the width alone"
+
+      File.write(path("a-file"), "")
+      ENV["SWITCHBOARD_WIDTH_FILE"] = path("a-file", "width")
+      assert_nil Width.set(50)
+      ENV["SWITCHBOARD_WIDTH_FILE"] = "~no_such_user_xyz_42/width"
+      assert_nil Width.set(50)
     end
   end
 end
