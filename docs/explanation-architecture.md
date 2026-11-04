@@ -143,11 +143,11 @@ also holds `Switchboard.env`, the UTF-8 environment read, and the two canonicali
 `Paths.real_or_self` for a best-effort key, and `Paths.real_or_nil` for a path that must
 match nothing once it stops resolving.
 
-An exported-but-empty variable counts as unset everywhere. Taken literally, an empty string
-expands to the current directory, and a store's cleanup would delete the files there. The
-shell reporter in `HookFile::SCRIPT`, which has to keep its own copy because it runs without
-Ruby, reads it the same way. `test/paths_test.rb` pins all of this, so a change here is
-deliberate.
+For every store here, an exported-but-empty variable counts as unset. Taken literally, an
+empty string expands to the current directory, and a store's cleanup would delete the files
+there. The shell reporter in `HookFile::SCRIPT`, which has to keep its own copy because it
+runs without Ruby, reads it the same way. `test/paths_test.rb` pins all of this, so a change
+here is deliberate.
 
 ### The layer test holds it
 

@@ -56,9 +56,9 @@ of them would change what the code under test does. The one survivor is
 `test/sandbox_env_test.rb` holds that wall.
 
 So a test never reads or writes anything outside its sandbox, and never pokes your
-real tmux. When you add state, route it through an env-overridable path (see how
-`AgentState.state_dir` and friends read `ENV` *per call*) so the sandbox can
-redirect it.
+real tmux. When you add state, resolve its location through `Paths`
+(`lib/switchboard/paths.rb`; see how `AgentState.state_dir` and friends call it). It
+reads `ENV` *per call*, so the sandbox can redirect it.
 
 Helpers you'll use:
 
@@ -187,5 +187,6 @@ the new binary re-wire tmux and every hooked worktree — the CHANGELOG header s
 | Agent state / hooks | `lib/switchboard/agent_state.rb`, `agents.rb`; adapters `claude_hook.rb` (Claude, per-worktree) + `codex_hook.rb` (Codex, global `~/.codex/config.toml` block) over shared base `hook_file.rb`, behind registry `agent_hooks.rb` |
 | Sounds / bold / collapse | `lib/switchboard/sound.rb`, `attention.rb`, `collapse.rb` (shared base: `keyed_marker_store.rb`) |
 | Git / PRs / reconcile | `lib/switchboard/git.rb`, `pr.rb`, `reconcile.rb` |
+| State-file locations / on-off view flags | `lib/switchboard/paths.rb`, `view_flag.rb` |
 
 See [docs/](docs/) for the full Diataxis documentation set.
