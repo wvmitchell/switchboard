@@ -24,7 +24,7 @@ refer to the project's earlier, private repository; the public tracker starts at
   your project's own checkout is on or has used always stays. Branches on your remote are
   left alone.
 - If there are too many branches to list in the pane, `d` offers to delete the workspace
-  and keep its branches. If another workspace's folder can't be read, it keeps them too.
+  and keep its branches. It offers the same if another workspace's folder can't be read.
 
 ## [0.65.2] — internal tidy-up, no behavior change (2026-11-03)
 

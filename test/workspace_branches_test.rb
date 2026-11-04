@@ -23,10 +23,13 @@ module Switchboard
       git(worktree, "commit", "-q", "--allow-empty", "-m", "ahead")
     end
 
+    # The reaper always clears the hide marker, removed or not, so the row can come back.
     def reap(repo, worktree, branch, entries)
+      PendingDelete.mark(worktree)
       stub_method(Tmux, :broadcast_warm, ->(**) {}) do
         CLI.send(:reap_worktree!, repo, worktree, branch, branches: entries)
       end
+      assert_empty PendingDelete.pending([worktree]), "the marker is cleared"
     end
 
     # Value: protects=the rule that deleting a workspace removes every branch it used; fails_when=the plan reads only the current branch or stops reading the worktree's own reflog; why_new=removal only ever tried the last branch; seam=none; no_claim=remote branches
@@ -142,7 +145,56 @@ module Switchboard
 
       git(repo, "worktree", "lock", other) # an unmounted volume: registered, unreadable
       File.rename(other, path("unmounted"))
-      assert_empty WorkspaceBranches.plan(repo, wt, "main")
+      assert_nil WorkspaceBranches.plan(repo, wt, "main"), "can't tell, which isn't the same as nothing to take"
+    end
+
+    # Value: protects=deleting workspaces back to back takes each one's branches, including one they shared; fails_when=a sibling already being deleted blocks the plan or still protects what it visited; why_new=adversarial and Codex both found overlapping deletes leaving branches behind; seam=none; no_claim=a real reaper's timing
+    def test_a_sibling_already_being_deleted_does_not_block_the_plan
+      repo = temp_git_repo("app")
+      other = workspace(repo, "other", branch: "theirs")
+      git(other, "checkout", "-q", "-b", "shared")
+      git(other, "checkout", "-q", "theirs")
+      wt = workspace(repo)
+      git(wt, "checkout", "-q", "shared")
+      git(wt, "checkout", "-q", "feature")
+
+      PendingDelete.mark(Git.worktrees(repo).find { |w| w[:branch] == "theirs" }[:path])
+      assert_equal %w[feature shared], names(WorkspaceBranches.plan(repo, wt, "main")).sort, "readable, it has no say"
+
+      git(repo, "worktree", "lock", other)
+      File.rename(other, path("half-removed"))
+      assert_equal %w[feature shared], names(WorkspaceBranches.plan(repo, wt, "main")).sort, "and unreadable, it doesn't block"
+    end
+
+    # Value: protects=a sibling mid-removal still protects the branch it's on until it's gone; fails_when=the pending check drops the sibling's current branch too, so this plan lists a branch that's still checked out; why_new=the pending skip is new; seam=none; no_claim=none
+    def test_a_sibling_being_deleted_still_holds_its_current_branch
+      repo = temp_git_repo("app")
+      git(repo, "branch", "held")
+      wt = workspace(repo)
+      git(wt, "checkout", "-q", "held")
+      git(wt, "checkout", "-q", "feature")
+      workspace(repo, "other", branch: "theirs")
+      other = Git.worktrees(repo).find { |w| w[:branch] == "theirs" }[:path]
+      git(other, "checkout", "-q", "held")
+      PendingDelete.mark(other)
+      assert_equal %w[feature], names(WorkspaceBranches.plan(repo, wt, "main"))
+    end
+
+    # Value: protects=case folding guards any stored spelling, and runs on every filesystem; fails_when=names compare with plain downcase, or by exact spelling; why_new=the mis-cased tests skip on Linux CI and only use lowercase stored names, and security reproduced STRASSE reaching straße; seam=Git.visited_branches; no_claim=that the filesystem would resolve these names
+    def test_case_folding_protects_any_stored_spelling
+      { "Shared" => "shared", "straße" => "STRASSE", "STRASSE" => "straße", "café" => "café" }.each_with_index do |(stored, typed), i|
+        repo = temp_git_repo("app#{i}")
+        git(repo, "branch", stored)
+        wt = workspace(repo, "wt#{i}")
+        git(wt, "checkout", "-q", stored)
+        git(wt, "checkout", "-q", "feature")
+        other = File.realpath(workspace(repo, "other#{i}", branch: "theirs"))
+        real = Git.method(:visited_branches)
+        seen = ->(p) { File.realpath(p) == other ? [typed] : real.call(p) }
+        stub_method(Git, :visited_branches, seen) do
+          assert_equal %w[feature], names(WorkspaceBranches.plan(repo, wt, "main")), "#{typed} protects #{stored}"
+        end
+      end
     end
 
     # Value: protects=a bare project's HEAD branch survives, and its empty reflog doesn't read as unreadable; fails_when=kept_names drops the repo's HEAD, or a bare repo's reflog read fails and every delete offers nothing; why_new=red team reproduced trunk going in a bare project; seam=none; no_claim=none
@@ -213,16 +265,28 @@ module Switchboard
     end
 
     # Value: protects=nothing is offered when a worktree couldn't be read, since it could hold a candidate; fails_when=the plan uses the non-strict listing; why_new=strict exists for destructive callers; seam=Git.worktrees; no_claim=none
-    def test_plan_offers_nothing_when_git_cannot_list_every_worktree
+    def test_plan_cannot_tell_when_git_cannot_list_every_worktree
       stub_method(Git, :worktrees, ->(*, **) { nil }) do
-        assert_empty WorkspaceBranches.plan("/repos/app", "/wt/a", "main")
+        assert_nil WorkspaceBranches.plan("/repos/app", "/wt/a", "main")
       end
     end
 
-    def test_plan_offers_nothing_for_a_tree_git_does_not_list
+    def test_plan_cannot_tell_for_a_tree_git_does_not_list
       repo = temp_git_repo("app")
       workspace(repo)
-      assert_empty WorkspaceBranches.plan(repo, path("no-such-tree"), "main")
+      assert_nil WorkspaceBranches.plan(repo, path("no-such-tree"), "main")
+    end
+
+    def test_plan_is_empty_when_there_is_truly_nothing_to_take
+      repo = temp_git_repo("app")
+      git(repo, "checkout", "-q", "--detach")
+      wt = path("wt")
+      git(repo, "worktree", "add", "-q", wt, "main")
+      assert_equal [], WorkspaceBranches.plan(repo, wt, "main"), "only the trunk"
+
+      detached = path("detached")
+      git(repo, "worktree", "add", "-q", "--detach", detached)
+      assert_equal [], WorkspaceBranches.plan(repo, detached, "main"), "no branch at all"
     end
 
     # Value: protects=the confirm warns about unmerged work and stays quiet about a lone merged branch; fails_when=the merged flag or listing rule inverts; why_new=option A's whole safety is this prompt; seam=none; no_claim=painting

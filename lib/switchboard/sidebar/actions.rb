@@ -461,7 +461,8 @@ module Switchboard
       # input loop never freezes — the whole point of this path (the delete-hang fix).
       # git owns the removal's correctness (dirty/submodule, a lock you set, freeing the
       # branch) — only our own un-set-up build's lock is forced past (`unfinished_at?`);
-      # we only decide whether to force-confirm and where the row goes.
+      # we decide whether to force-confirm, which local branches go with it
+      # (WorkspaceBranches) and where the row goes.
       def delete
         node = current
         return unless node && node.kind == "ws"
@@ -473,10 +474,13 @@ module Switchboard
         label = File.basename(node.path)
         base = project["base_ref"]
         branches = WorkspaceBranches.plan(repo, node.path, base)
+        listing = branches && WorkspaceBranches.listing(branches, base)
         question = "delete #{label}?"
-        # No branch is force-deleted unless it was listed. Too many to list, the workspace
-        # can still go: its branches stay, as a long-lived one's did before.
-        unless paint_above_prompt(WorkspaceBranches.listing(branches, base))
+        # No branch is force-deleted unless it was listed, and the prompt says when they stay.
+        # Too many to list, or no way to tell which, the workspace can still go.
+        if listing && paint_above_prompt(listing)
+          drain_input unless listing.empty? # a y typed before the list appeared never saw it
+        else
           question = "delete #{label}, keep its branches?"
           branches = []
         end

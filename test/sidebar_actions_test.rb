@@ -356,6 +356,72 @@ module Switchboard
       refute_includes out, "\e[4;1H", "the bottom row stays the prompt's"
     end
 
+    # Value: protects=a listed name can't display differently from the branch it deletes; fails_when=paint_above_prompt stops running names through shown, so a bidi override reorders them; why_new=no test covered it, and this list is the only safeguard on -D; seam=winsize; no_claim=every terminal's rendering
+    def test_paint_above_prompt_drops_bidi_from_a_listed_name
+      sb = deletable_sidebar
+      out = capture_io do
+        stub_method(sb, :winsize, -> { [4, 40] }) { sb.send(:paint_above_prompt, ["! inno‮cent"]) }
+      end.first
+      refute_includes out, "‮"
+      assert_includes out, "! innocent"
+    end
+
+    # Value: protects=a y typed before the list appeared can't answer it, while the plain prompt keeps working as it did; fails_when=delete skips the drain, drains after asking, or drains with no list showing; why_new=before this PR that y could only -d, and now it can -D unmerged work; seam=confirm + a real pipe as stdin; no_claim=terminal input parsing
+    def test_keys_typed_before_a_list_appeared_cannot_answer_it
+      [[false, true], [true, false]].each do |merged, drained|
+        sb = deletable_sidebar
+        planned = [WorkspaceBranches::Entry.new(name: "feature", sha: "abc", merged: merged)]
+        reader, writer = IO.pipe
+        writer.write("y")
+        pending_at_ask = nil
+        ask = lambda do |_msg|
+          pending_at_ask = !IO.select([reader], nil, nil, 0).nil?
+          false
+        end
+        original = $stdin
+        begin
+          $stdin = reader
+          stub_method(WorkspaceBranches, :plan, ->(*) { planned }) do
+            capture_io { stub_method(sb, :confirm, ask) { sb.send(:delete) } }
+          end
+        ensure
+          $stdin = original
+          reader.close
+          writer.close
+        end
+        assert_equal !drained, pending_at_ask, merged ? "the plain prompt reads input as before" : "the list drains it"
+      end
+    end
+
+    # Value: protects=the prompt says when branches stay because the plan can't tell, and none are force-deleted; fails_when=delete treats an unknown plan like an empty one and asks the plain question, or raises on nil; why_new=three reviewers found the silent keep; seam=WorkspaceBranches.plan + Process.spawn; no_claim=none
+    def test_a_plan_that_cannot_tell_says_the_branches_stay
+      sb = deletable_sidebar
+      ENV["SWITCHBOARD_BIN"] = "/bin/switchboard"
+      asked = nil
+      spawned = nil
+      sb.define_singleton_method(:reload) { |**| }
+      stub_method(WorkspaceBranches, :plan, ->(*) {}) do
+        stub_method(Git, :clean?, ->(*) { true }) do
+          stub_method(Tmux, :session_of, ->(*) { "sb/home" }) do
+            stub_method(Tmux, :session_name, ->(*) { "sb/app/a" }) do
+              stub_method(Tmux, :kill, ->(*) {}) do
+                stub_method(Process, :spawn, ->(*a, **) { spawned = a; 4242 }) do
+                  stub_method(Process, :detach, ->(*) {}) do
+                    stub_method(sb, :confirm, ->(msg) { asked = msg; true }) { sb.send(:delete) }
+                  end
+                end
+              end
+            end
+          end
+        end
+      end
+      assert_equal "delete a, keep its branches?", asked
+      assert_equal ["feature", "--branches"], spawned.last(2), "an empty plan: nothing is deleted"
+    ensure
+      ENV.delete("SWITCHBOARD_BIN")
+      PendingDelete.clear("/wt/a")
+    end
+
     # Value: protects=a list that can't fit paints nothing and reports it, on any pane height; fails_when=it paints a partial list, or raises on a one-row pane; why_new=Codex showed names hidden behind a count still being deleted; seam=winsize; no_claim=none
     def test_paint_above_prompt_refuses_a_list_that_does_not_fit
       sb = deletable_sidebar

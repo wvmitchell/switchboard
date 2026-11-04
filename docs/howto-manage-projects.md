@@ -128,8 +128,10 @@ From the sidebar, press `d` on the highlighted row (confirms first):
   base branch, `main` and `master` are never deleted. A branch another workspace is on,
   or has used, stays until the last workspace that used it is deleted. One your project's
   own checkout is on, or has used, stays too, since that checkout is never deleted. If
-  another workspace's folder can't be read (say, it's on an unmounted disk), no branches are
-  deleted, because there's no way to tell what that workspace used. Branches on your
+  another workspace's folder can't be read (say, it's on an unmounted disk), it offers to
+  delete the workspace and keep its branches, because there's no way to tell what that
+  workspace used. A workspace already being deleted doesn't count, so you can delete
+  several in a row. Branches on your
   remote are left alone. If it has uncommitted changes or untracked files (even ones your
   git config hides from `git status`), it asks again before forcing the delete.
 - On a **project** header: unregisters the project *and* closes its sessions. The

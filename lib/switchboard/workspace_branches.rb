@@ -17,17 +17,18 @@ module Switchboard
 
     module_function
 
-    # Nothing is offered when git can't list every worktree or read another's reflog: any
-    # unread one could hold a candidate. Git's own listing names this tree's branch, since
-    # a row can lag a rename. Unmerged branches come first, where they're easiest to see.
+    # nil when it can't tell: git couldn't list every worktree or read another's reflog,
+    # and any unread one could hold a candidate. Empty means there's truly nothing to take.
+    # Git's own listing names this tree's branch, since a row can lag a rename. Unmerged
+    # branches come first, where they're easiest to see.
     def plan(repo, path, base)
       base = base.to_s
       worktrees = Git.worktrees(repo, strict: true)
-      return [] unless worktrees
+      return nil unless worktrees
 
       here = real(path)
       own, others = worktrees.partition { |w| real(w[:path]) == here }
-      return [] if own.empty?
+      return nil if own.empty?
 
       # A reflog holds what was typed. On a case-insensitive filesystem `MAIN` resolves to
       # main's ref and passes every name check, and `main~1` isn't a branch: only git's own
@@ -35,14 +36,22 @@ module Switchboard
       names = [own.first[:branch], *Git.visited_branches(path)].compact.uniq & Git.local_branches(repo)
       return [] if names.empty?
 
-      elsewhere = others.map { |w| Git.visited_branches(w[:path]) }
-      return [] if elsewhere.any?(&:nil?)
+      # A worktree already being deleted has no say in what its history used, and mid-removal
+      # its reflog may be unreadable. Its current branch still counts until it's gone.
+      deleting = PendingDelete.pending(others.map { |w| w[:path] })
+      elsewhere = others.reject { |w| deleting.include?(w[:path]) }.map { |w| Git.visited_branches(w[:path]) }
+      return nil if elsewhere.any?(&:nil?)
 
-      # Other worktrees' names stay as typed, so these compare without case: on that same
+      # Other worktrees' names stay as typed, so these compare the way APFS does: on that
       # filesystem `Feature` over there is `feature` here, and `branch -D` won't notice.
-      taken = (kept_names(repo, base) + others.map { |w| w[:branch] } + elsewhere.flatten).compact.map { |n| n.scrub.downcase }
-      names.reject { |name| taken.include?(name.downcase) }
+      taken = (kept_names(repo, base) + others.map { |w| w[:branch] } + elsewhere.flatten).compact.map { |n| same_file_key(n) }
+      names.reject { |name| taken.include?(same_file_key(name)) }
            .map { |name| entry(repo, name, base) }.compact.sort_by { |e| e.merged ? 1 : 0 }
+    end
+
+    # Names a case- and normalization-insensitive filesystem treats as one file share a key.
+    def same_file_key(name)
+      name.scrub.unicode_normalize(:nfd).downcase(:fold)
     end
 
     # A renamed workspace's old path is a symlink, so the same tree can go by two names.
