@@ -5,6 +5,7 @@ require "shellwords"
 require_relative "git"
 require_relative "tree"
 require_relative "marker_block"
+require_relative "paths"
 
 module Switchboard
   # PR badges sourced from `gh` and cached on disk, so the sidebar never blocks
@@ -247,13 +248,7 @@ module Switchboard
     # On-disk cache location, resolved at call time (so tests and XDG can
     # override it). An exported-but-empty env var is treated as unset.
     def cache_dir
-      override = ENV["SWITCHBOARD_CACHE_DIR"]
-      return File.expand_path(override) if override && !override.empty?
-
-      xdg = ENV["XDG_CACHE_HOME"]
-      return File.join(xdg, "switchboard", "prs") if xdg && !xdg.empty?
-
-      File.expand_path("~/.cache/switchboard/prs")
+      Paths.cache("SWITCHBOARD_CACHE_DIR", "prs")
     end
 
     def cache_file(name)

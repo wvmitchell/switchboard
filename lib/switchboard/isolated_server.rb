@@ -3,6 +3,7 @@
 require "securerandom"
 require "fileutils"
 require_relative "process_identity"
+require_relative "paths"
 
 module Switchboard
   # Shared scaffolding for a THROWAWAY tmux server on its own socket — the single
@@ -207,11 +208,7 @@ module Switchboard
     def isolated_socket?(sock_dir, socket_path)
       return false if sock_dir.nil? || socket_path.to_s.strip.empty?
 
-      root = begin
-        File.realpath(sock_dir)
-      rescue StandardError
-        sock_dir
-      end
+      root = Paths.real_or_self(sock_dir)
       !!(root && socket_path.strip.start_with?(root + File::SEPARATOR))
     end
   end

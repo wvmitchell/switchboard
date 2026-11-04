@@ -151,6 +151,13 @@ module Switchboard
 
     # --- ensure_builtin: materialize once, cache -----------------------------
 
+    # A chime that can't be written fails quietly: atomic_write re-raises by design.
+    def test_ensure_builtin_degrades_to_nil_when_it_cannot_write
+      File.write(path("a-file"), "")
+      ENV["XDG_DATA_HOME"] = path("a-file")
+      assert_nil Sound.ensure_builtin("train")
+    end
+
     def test_ensure_builtin_writes_once_and_reuses
       path = Sound.ensure_builtin("train")
       assert File.exist?(path)

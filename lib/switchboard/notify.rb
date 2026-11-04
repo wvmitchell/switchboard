@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "keyed_marker_store"
+require_relative "paths"
 
 module Switchboard
   # Per-worktree "come look — this monitor cycle surfaced something" markers behind
@@ -117,9 +118,7 @@ module Switchboard
     def realpath(path)
       return nil if path.nil? || path.empty?
 
-      File.realpath(path)
-    rescue StandardError
-      path
+      Paths.real_or_self(path)
     end
   end
 end

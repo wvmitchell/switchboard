@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require_relative "paths"
+
 module Switchboard
   # Owns the tmux session lifecycle: reconciles the live `sb/` sessions against
   # the worktrees git actually has, killing the orphans a deleted/moved/crashed
@@ -169,10 +171,6 @@ module Switchboard
     end
 
     # Canonicalize for comparison; raw path on failure (a vanished worktree).
-    def real(path)
-      File.realpath(path)
-    rescue StandardError
-      path
-    end
+    def real(path) = Paths.real_or_self(path)
   end
 end

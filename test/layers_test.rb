@@ -15,7 +15,8 @@ module Switchboard
 
     # Lowest first. A file may depend on its own layer or any layer before it.
     LAYERS = {
-      support: %w[keyed_marker_store marker_block process_identity root stable_path version],
+      support: %w[keyed_marker_store marker_block paths process_identity root stable_path version
+                  view_flag],
       adapters: %w[agent_hooks agent_state agents claude_history claude_hook claude_sessions
                    codex_hook editor git hook_file latest_release pr qr tmux width],
       state: %w[attention branch_fold collapse config creation dispatch_args dispatch_nudge

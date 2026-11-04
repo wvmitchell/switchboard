@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
-require "fileutils"
+require_relative "marker_block"
+require_relative "paths"
 
 module Switchboard
   # Plays a short sound when a hooked agent finishes a turn (:done) or asks for
@@ -115,7 +116,7 @@ module Switchboard
     # Stable, install-independent home for the synthesized WAVs (XDG data dir,
     # like HookFile's reporter) — survives reinstalls and `brew upgrade`.
     def asset_dir
-      File.expand_path(File.join(ENV["XDG_DATA_HOME"] || "~/.local/share", "switchboard", "sounds"))
+      Paths.data("sounds")
     end
 
     # Write the synthesized WAV if it isn't cached yet, return its path. Written
@@ -127,10 +128,7 @@ module Switchboard
       path = File.join(asset_dir, "#{name}.v#{ASSET_VERSION}.wav")
       return path if File.exist?(path)
 
-      FileUtils.mkdir_p(asset_dir)
-      tmp = "#{path}.#{Process.pid}.tmp"
-      File.binwrite(tmp, synth(name))
-      File.rename(tmp, path) # atomic on one fs — readers see whole file or nothing
+      MarkerBlock.atomic_write(path, synth(name), follow: false) # readers see whole file or nothing
       path
     rescue StandardError
       nil

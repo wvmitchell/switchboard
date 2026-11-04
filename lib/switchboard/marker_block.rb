@@ -65,8 +65,9 @@ module Switchboard
     # to the umask default by the rewrite.
     # `mode` is set on the temp file before the rename, so the file never appears without it
     # (an executable script); otherwise an existing file's mode carries over.
-    def atomic_write(path, content, mode: nil)
-      dest = real_target(path)
+    # `follow: false` replaces a symlink instead of writing through it.
+    def atomic_write(path, content, mode: nil, follow: true)
+      dest = follow ? real_target(path) : path
       FileUtils.mkdir_p(File.dirname(dest))
       tmp = "#{dest}.#{Process.pid}.sb-tmp"
       final = mode || (File.exist?(dest) ? File.stat(dest).mode & 0o7777 : 0o666 & ~File.umask)

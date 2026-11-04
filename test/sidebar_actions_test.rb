@@ -699,11 +699,16 @@ module Switchboard
       sb = sidebar_with_config({ "worktree_root" => path("wts"),
                                  "projects" => [{ "name" => "app", "path" => temp_git_repo("app", origin: true) }] })
       ENV.delete("SWITCHBOARD_BIN")
-      stub_method(sb, :prompt_line, ->(*_a, **_k) { "" }) do
-        stub_method(Tmux, :broadcast_warm, ->(**_k) {}) do
-          stub_method(sb, :reload, -> {}) { sb.send(:create, proj("app")) }
+      flashed = []
+      # The real flash waits for a key, which hangs the suite on an idle stdin.
+      stub_method(sb, :flash, ->(msg) { flashed << msg }) do
+        stub_method(sb, :prompt_line, ->(*_a, **_k) { "" }) do
+          stub_method(Tmux, :broadcast_warm, ->(**_k) {}) do
+            stub_method(sb, :reload, -> {}) { sb.send(:create, proj("app")) }
+          end
         end
       end
+      assert_equal [Creator::SPAWN_FAILED], flashed
       rec = Creation.all.first
       assert_equal "failed", rec["state"]
       assert_equal "didnt_start", rec["reason"]

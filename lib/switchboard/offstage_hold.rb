@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "keyed_marker_store"
+require_relative "paths"
 
 module Switchboard
   # A held completion chime, one marker per worktree. When an agent's turn ends while a
@@ -103,10 +104,6 @@ module Switchboard
       KeyedMarkerStore.key(real)
     end
 
-    def realpath(path)
-      File.realpath(path)
-    rescue StandardError
-      nil
-    end
+    def realpath(path) = Paths.real_or_nil(path)
   end
 end

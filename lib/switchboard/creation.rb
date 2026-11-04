@@ -7,6 +7,7 @@ require_relative "keyed_marker_store"
 require_relative "marker_block"
 require_relative "process_identity"
 require_relative "attention"
+require_relative "paths"
 
 module Switchboard
   # The lifecycle of a background ("dispatched") workspace create: `n` writes a record,
@@ -452,11 +453,7 @@ module Switchboard
     end
 
     # Records are matched by realpath (the sidebar indexes its rows the same way).
-    def real_path(path)
-      File.realpath(path)
-    rescue StandardError
-      path
-    end
+    def real_path(path) = Paths.real_or_self(path)
 
     # --- internals ---------------------------------------------------------------
 

@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "shellwords"
+require_relative "paths"
 
 module Switchboard
   # Per-worktree agent state for the sidebar dots. Two presence signals, either
@@ -48,10 +49,7 @@ module Switchboard
     # it tracks the exact precedence the hook sh-script uses: SWITCHBOARD_STATE_DIR,
     # else XDG_STATE_HOME, else ~/.local/state.
     def self.state_dir
-      File.expand_path(
-        ENV["SWITCHBOARD_STATE_DIR"] ||
-          File.join(ENV["XDG_STATE_HOME"] || "~/.local/state", "switchboard", "agents")
-      )
+      Paths.state("SWITCHBOARD_STATE_DIR", "agents")
     end
 
     # Wipe every hook-state file. Called on `quit`: tearing down all sb/ sessions
@@ -223,10 +221,6 @@ module Switchboard
       path == root || path.start_with?("#{root}/")
     end
 
-    def real(path)
-      File.realpath(path)
-    rescue StandardError
-      path
-    end
+    def real(path) = Paths.real_or_self(path)
   end
 end

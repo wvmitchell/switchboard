@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "json"
+require_relative "paths"
 
 module Switchboard
   # The live Claude Code sessions in the tracked worktrees, read from the per-session
@@ -236,10 +237,6 @@ module Switchboard
       root && roots[root]
     end
 
-    def real(path)
-      File.realpath(path)
-    rescue StandardError
-      path
-    end
+    def real(path) = Paths.real_or_self(path)
   end
 end
