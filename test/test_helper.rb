@@ -13,6 +13,9 @@ require "stringio"
 
 require_relative "../lib/switchboard"
 
+# Nothing in the suite may wait on the keyboard: an idle inherited stdin would hang it forever.
+$stdin.reopen(File::NULL)
+
 class Minitest::Test
   # Temporarily swap one method on a module/object for the block, then restore —
   # a version-proof stand-in for minitest/mock's stub (not loadable in every

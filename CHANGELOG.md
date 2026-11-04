@@ -26,6 +26,20 @@ refer to the project's earlier, private repository; the public tracker starts at
 - If there are too many branches to list in the pane, `d` offers to delete the workspace
   and keep its branches. It offers the same if another workspace's folder can't be read.
 
+## [0.65.3] — empty path variables can't delete your files (2026-11-04)
+
+### Fixed
+- An exported-but-empty state variable, such as `SWITCHBOARD_STATE_DIR=`, used to point
+  switchboard at the current directory, where `quit` and the sidebar's marker cleanup could
+  delete your files. Empty now counts as unset for every state, cache and data location. An
+  empty `XDG_STATE_HOME` or `XDG_DATA_HOME` now means the default under your home folder.
+- A state, cache or data path with non-English characters no longer raises an encoding error
+  under a C locale, which is common in tmux panes.
+
+### Changed
+- The rest is internal. Every state file's location now comes from one place, so these paths
+  can't drift apart.
+
 ## [0.65.2] — internal tidy-up, no behavior change (2026-11-03)
 
 ### Changed

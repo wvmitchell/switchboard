@@ -2,6 +2,7 @@
 
 require "json"
 require "fileutils"
+require_relative "paths"
 
 module Switchboard
   # "Is a newer switchboard out?" for the sidebar's update line (#47), Homebrew stable
@@ -24,12 +25,7 @@ module Switchboard
     # SWITCHBOARD_UPDATE_CACHE (a file path) → $XDG_CACHE_HOME/switchboard → ~/.cache.
     # An exported-but-empty override counts as unset, like Pr.cache_dir.
     def cache_path
-      override = ENV["SWITCHBOARD_UPDATE_CACHE"]
-      return File.expand_path(override) if override && !override.empty?
-
-      xdg = ENV["XDG_CACHE_HOME"]
-      root = xdg && !xdg.empty? ? File.join(xdg, "switchboard") : File.expand_path("~/.cache/switchboard")
-      File.join(root, "latest.json")
+      Paths.cache("SWITCHBOARD_UPDATE_CACHE", "latest.json")
     end
 
     # Its mtime throttles retries; the child's flock on it keeps one lookup at a time.

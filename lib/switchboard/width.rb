@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
-require "fileutils"
+require_relative "marker_block"
+require_relative "paths"
 
 module Switchboard
   # The shared sidebar pane WIDTH, stepped by the tree's ←/→ keys (issue #78). The
@@ -40,11 +41,7 @@ module Switchboard
     # peer's concurrent read never sees a half-written value — the multi-process
     # pattern (Collapse, Attention, the synthesized WAVs).
     def set(width)
-      n = Integer(width).clamp(MIN, MAX)
-      FileUtils.mkdir_p(File.dirname(state_file))
-      tmp = "#{state_file}.#{Process.pid}.tmp"
-      File.write(tmp, n.to_s)
-      File.rename(tmp, state_file) # atomic on the same fs
+      MarkerBlock.atomic_write(state_file, Integer(width).clamp(MIN, MAX).to_s, follow: false)
     rescue StandardError
       nil
     end
@@ -53,10 +50,7 @@ module Switchboard
     # full-header marker. Resolved from ENV per call (not frozen at load) so the test
     # sandbox can redirect it.
     def state_file
-      File.expand_path(
-        ENV["SWITCHBOARD_WIDTH_FILE"] ||
-          File.join(ENV["XDG_STATE_HOME"] || "~/.local/state", "switchboard", "width")
-      )
+      Paths.state("SWITCHBOARD_WIDTH_FILE", "width")
     end
   end
 end

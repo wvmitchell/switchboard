@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require_relative "paths"
+
 module Switchboard
   # Rename a workspace: move its worktree directory (the display name), rename its
   # branch when that's safe (#94), rename its tmux session in place, and (inside tmux)
@@ -136,11 +138,7 @@ module Switchboard
 
     # File.realpath, degrading to the raw path on a vanished/odd path — a best-effort
     # canonical key for the marker carry (a bad path just misses a carry, never raises).
-    def canonical(path)
-      File.realpath(path)
-    rescue StandardError
-      path
-    end
+    def canonical(path) = Paths.real_or_self(path)
 
     # The branch to rename, or false when the branch should be left alone. We sync
     # the branch to match the new leaf only when it's still the auto-created branch

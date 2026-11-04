@@ -25,7 +25,8 @@ fold and the width. They share one pattern:
 - **Durable.** These are view preferences, not alerts, so `quit` doesn't clear them. A
   folded project stays folded across restarts.
 - **Located by env var or `XDG_STATE_HOME`.** Each store has its own override variable,
-  named below.
+  named below, and [`Paths`](explanation-architecture.md#where-state-files-live) resolves
+  them all.
 
 What differs is the shape of the file, and that decides how careful the write has to be.
 
@@ -59,7 +60,8 @@ console and rule (`Sidebar#header`). Every other session shows just the wordmark
 puts the full header on *all* sessions.
 
 `FullHeader` (`full_header.rb`) is a single marker file whose existence is the flag
-(`SWITCHBOARD_FULL_HEADER_FILE`). A toggle is one idempotent create or delete. Since only
+(`SWITCHBOARD_FULL_HEADER_FILE`), handled by the shared `ViewFlag` (`view_flag.rb`). A
+toggle is one idempotent create or delete. Since only
 existence is ever read, never the contents, it doesn't need the temp+rename write that
 `Collapse` uses for names.
 
@@ -74,7 +76,7 @@ folds *every* workspace's branch rows at once, wherever the cursor is; the ask w
 "toggle branches" key, not a per-row fold.
 
 So it's modeled like `FullHeader`, not like `Collapse`: a single global existence flag
-(`BranchFold`, `branch_fold.rb`, `SWITCHBOARD_BRANCH_FOLD_FILE`). It defaults to off,
+(`BranchFold`, `branch_fold.rb`, `SWITCHBOARD_BRANCH_FOLD_FILE`), also on `ViewFlag`. It defaults to off,
 so branches show, exactly as before #107, until you press `z`.
 
 `toggle_branch_fold` writes through, flips `@fold_branches`, then puts the cursor back on
@@ -125,7 +127,7 @@ pin *respects* the width you chose.
 
 `Width` (`width.rb`) is a single global file like `FullHeader` (`SWITCHBOARD_WIDTH_FILE`),
 but it holds an integer. That value is *read*, so a torn write could misread, which is why
-it uses `Collapse`'s atomic temp+rename. `resolved` clamps it to `[MIN, MAX]` and falls back
+it's written atomically by temp+rename, through `MarkerBlock.atomic_write`. `resolved` clamps it to `[MIN, MAX]` and falls back
 to `DEFAULT` (40) on a missing, garbled or torn file, so a bad read just sizes the pane
 normally.
 

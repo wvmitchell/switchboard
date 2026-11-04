@@ -4,6 +4,7 @@ require "yaml"
 require "fileutils"
 require "shellwords"
 require "json"
+require_relative "paths"
 
 module Switchboard
   # Command dispatch. The sidebar is the one navigator: the bare command (and
@@ -853,11 +854,7 @@ module Switchboard
     # helpers in reconcile/attention/agent_state) on a vanished path: a cwd that
     # no longer resolves must match NO worktree, so `current_worktree` returns nil
     # rather than risk a bogus match against an unresolved string.
-    def real_path(path)
-      File.realpath(path)
-    rescue StandardError
-      nil
-    end
+    def real_path(path) = Paths.real_or_nil(path)
 
     # cwd relative to a worktree root ("" when standing at the root), so the
     # rename cd hint can return the user to the same subdir under the new path.
