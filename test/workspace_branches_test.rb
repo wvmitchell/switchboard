@@ -113,6 +113,64 @@ module Switchboard
       assert_equal %w[feature], names(WorkspaceBranches.plan(repo, wt, "main"))
     end
 
+    # Value: protects=another worktree on a mis-cased name still protects the branch, whether it's on it now or only visited; fails_when=the plan compares other worktrees' names by exact spelling, so branch -D feature leaves that worktree's HEAD unborn; why_new=three pass 2 reviewers reproduced it; seam=none; no_claim=case-sensitive filesystems
+    def test_another_worktrees_mis_cased_name_still_protects_the_branch
+      repo = temp_git_repo("app")
+      skip "needs a case-insensitive filesystem" unless File.exist?(File.join(repo, ".GIT", "HEAD"))
+      git(repo, "branch", "on-now")
+      git(repo, "branch", "visited")
+      other = workspace(repo, "other", branch: "theirs")
+      git(other, "checkout", "-q", "VISITED")
+      git(other, "checkout", "-q", "ON-NOW")
+      wt = workspace(repo)
+      %w[on-now visited feature].each do |b|
+        git(wt, "checkout", "-q", "--ignore-other-worktrees", b)
+      end
+      assert_equal %w[feature], names(WorkspaceBranches.plan(repo, wt, "main"))
+    end
+
+    # Value: protects=a sibling whose reflog can't be read might hold a candidate, so nothing is offered; fails_when=visited_branches reads failure as an empty history; why_new=Codex, red team and adversarial reproduced it with an unmounted worktree; seam=none; no_claim=none
+    def test_an_unreadable_sibling_reflog_offers_nothing
+      repo = temp_git_repo("app")
+      other = workspace(repo, "other", branch: "theirs")
+      git(other, "checkout", "-q", "-b", "shared")
+      git(other, "checkout", "-q", "theirs")
+      wt = workspace(repo)
+      git(wt, "checkout", "-q", "shared")
+      git(wt, "checkout", "-q", "feature")
+      assert_equal %w[feature], names(WorkspaceBranches.plan(repo, wt, "main"))
+
+      git(repo, "worktree", "lock", other) # an unmounted volume: registered, unreadable
+      File.rename(other, path("unmounted"))
+      assert_empty WorkspaceBranches.plan(repo, wt, "main")
+    end
+
+    # Value: protects=a bare project's HEAD branch survives, and its empty reflog doesn't read as unreadable; fails_when=kept_names drops the repo's HEAD, or a bare repo's reflog read fails and every delete offers nothing; why_new=red team reproduced trunk going in a bare project; seam=none; no_claim=none
+    def test_a_bare_projects_head_is_kept_and_its_reflog_does_not_block
+      source = temp_git_repo("source")
+      git(source, "branch", "-m", "main", "trunk")
+      bare = path("bare.git")
+      git(nil, "clone", "-q", "--bare", source, bare)
+      wt = path("wt")
+      git(bare, "worktree", "add", "-q", wt, "-b", "feature")
+      git(wt, "config", "user.email", "t@example.com")
+      git(wt, "config", "user.name", "T")
+      git(bare, "symbolic-ref", "HEAD", "refs/heads/trunk")
+      git(wt, "checkout", "-q", "--ignore-other-worktrees", "trunk")
+      git(wt, "checkout", "-q", "feature")
+      assert_equal %w[feature], names(WorkspaceBranches.plan(bare, wt, "origin/release"))
+    end
+
+    # Value: protects=an undecodable name can't match a different branch; fails_when=names are scrubbed before comparing, so topic-<FF> selects a real topic-<U+FFFD>; why_new=Codex reproduced it on Linux, which permits both; seam=Git.capture; no_claim=whether a filesystem can hold the name
+    def test_an_undecodable_branch_name_is_left_out_not_repaired
+      log = +"checkout: moving from good to topic-\xFF\n"
+      refs = +"refs/heads/good\nrefs/heads/topic-\xFF\n"
+      stub_method(Git, :capture, ->(_repo, *args) { args.first == "reflog" ? `true` && log : refs }) do
+        assert_empty Git.visited_branches("/wt")
+        assert_equal %w[good], Git.local_branches("/repo")
+      end
+    end
+
     # Value: protects=a branch another live workspace once used isn't deleted from under it, and the last workspace still takes it; fails_when=the plan subtracts only other worktrees' current branches, or the reflog check outlives the worktree; why_new=red team reproduced another workspace's parked work going; seam=none; no_claim=none
     def test_a_branch_another_workspace_used_stays_until_the_last_one_goes
       repo = temp_git_repo("app")

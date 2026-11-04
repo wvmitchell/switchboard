@@ -197,15 +197,23 @@ module Switchboard
 
     # Every name this worktree's own HEAD has moved between, newest first. Reflog subjects
     # aren't localized. Detached shas and renamed-away names come along: callers keep only
-    # what still resolves as a branch.
+    # what still resolves as a branch. nil when the reflog can't be read, which isn't the
+    # same as a worktree that never moved. A name that isn't valid UTF-8 is left out, not
+    # repaired: repaired, it could match a different branch.
     def visited_branches(worktree)
-      log = capture(worktree, "reflog", "show", "--format=%gs", "HEAD").scrub
-      log.each_line.flat_map { |line| line.strip.match(/\Acheckout: moving from (\S+) to (\S+)\z/)&.captures.to_a.reverse }.uniq
+      log = capture(worktree, "reflog", "show", "--format=%gs", "HEAD")
+      return nil unless $?&.success?
+
+      log.each_line.select(&:valid_encoding?).flat_map do |line|
+        line.strip.match(/\Acheckout: moving from (\S+) to (\S+)\z/)&.captures.to_a.reverse
+      end.uniq
     end
 
-    # Every local branch, spelled the way git stores it. Empty when git can't say.
+    # Every local branch, spelled the way git stores it. Empty when git can't say. Skips a
+    # name that isn't valid UTF-8, as visited_branches does.
     def local_branches(repo)
-      capture(repo, "for-each-ref", "--format=%(refname)", "refs/heads").scrub.split("\n").map { |r| r.delete_prefix("refs/heads/") }
+      lines = capture(repo, "for-each-ref", "--format=%(refname)", "refs/heads").each_line(chomp: true)
+      lines.select(&:valid_encoding?).map { |r| r.delete_prefix("refs/heads/") }
     end
 
     # Is `commit` contained in `ref`? False when either can't be read.

@@ -370,22 +370,37 @@ module Switchboard
       assert_equal true, sb.send(:paint_above_prompt, []), "no list always fits"
     end
 
-    # Value: protects=nothing is deleted from a pane too short to list it; fails_when=delete ignores paint_above_prompt's answer and asks anyway; why_new=the list is the only safeguard on -D; seam=flash + winsize; no_claim=none
-    def test_delete_refuses_when_the_list_does_not_fit
+    # Value: protects=a workspace with too many branches to list can still be deleted, and no unlisted branch is force-deleted; fails_when=delete hands the reaper the unlisted plan, or refuses outright as an earlier version did; why_new=adversarial review found the dead end on long-lived workspaces; seam=winsize + Process.spawn; no_claim=none
+    def test_too_many_branches_to_list_keeps_them_and_still_deletes_the_workspace
       sb = deletable_sidebar
+      ENV["SWITCHBOARD_BIN"] = "/bin/switchboard"
       planned = [WorkspaceBranches::Entry.new(name: "feature", sha: "abc", merged: false)]
-      flashed = nil
-      asked = false
+      asked = nil
+      spawned = nil
+      sb.define_singleton_method(:reload) { |**| }
       stub_method(WorkspaceBranches, :plan, ->(*) { planned }) do
         stub_method(sb, :winsize, -> { [2, 40] }) do
-          stub_method(sb, :flash, ->(msg) { flashed = msg }) do
-            stub_method(sb, :confirm, ->(*) { asked = true }) { sb.send(:delete) }
+          stub_method(Git, :clean?, ->(*) { true }) do
+            stub_method(Tmux, :session_of, ->(*) { "sb/home" }) do
+              stub_method(Tmux, :session_name, ->(*) { "sb/app/a" }) do
+                stub_method(Tmux, :kill, ->(*) {}) do
+                  stub_method(Process, :spawn, ->(*a, **) { spawned = a; 4242 }) do
+                    stub_method(Process, :detach, ->(*) {}) do
+                      stub_method(sb, :confirm, ->(msg) { asked = msg; true }) { sb.send(:delete) }
+                    end
+                  end
+                end
+              end
+            end
           end
         end
       end
-      assert_includes flashed.to_s, "too short"
-      refute asked, "it doesn't ask about what it couldn't show"
-      assert_empty PendingDelete.pending(["/wt/a"])
+      assert_equal "delete a, keep its branches?", asked
+      assert_equal ["--branches"], spawned.last(1), "an empty plan: nothing is deleted"
+      refute_includes spawned, "abc:feature"
+    ensure
+      ENV.delete("SWITCHBOARD_BIN")
+      PendingDelete.clear("/wt/a")
     end
 
     # Value: protects=answering no to the branch list deletes and hides nothing; fails_when=the first confirm's result is ignored or removal moves ahead of it; why_new=the dirty test answers yes to the first prompt; seam=confirm; no_claim=terminal input parsing

@@ -473,11 +473,14 @@ module Switchboard
         label = File.basename(node.path)
         base = project["base_ref"]
         branches = WorkspaceBranches.plan(repo, node.path, base)
-        # Nothing is deleted that you couldn't read first.
+        question = "delete #{label}?"
+        # No branch is force-deleted unless it was listed. Too many to list, the workspace
+        # can still go: its branches stay, as a long-lived one's did before.
         unless paint_above_prompt(WorkspaceBranches.listing(branches, base))
-          return flash("pane too short to list #{branches.size} branches — resize, then d")
+          question = "delete #{label}, keep its branches?"
+          branches = []
         end
-        return unless confirm("delete #{label}?")
+        return unless confirm(question)
 
         # Fail-CLOSED clean check (Git.clean?, not the fail-open Git.dirty?): an
         # undeterminable git-status state prompts to force rather than silently

@@ -123,12 +123,14 @@ From the sidebar, press `d` on the highlighted row (confirms first):
   branches the workspace used: the one it's on and any it checked out earlier. The
   confirm lists them when there's anything to weigh, and marks with `!` any that aren't
   in the project's base. Those are deleted too if you say yes, and a squash-merged branch
-  always carries that mark, so check the list before answering. If the list doesn't fit
-  in the pane, nothing is deleted: resize and press `d` again. Your base branch, `main`
-  and `master` are never deleted. A branch another workspace is on, or has used, stays
-  until the last workspace that used it is deleted. Branches on your remote are left
-  alone. If it has uncommitted changes or untracked files (even ones your git config
-  hides from `git status`), it asks again before forcing the delete.
+  always carries that mark, so check the list before answering. If there are too many to
+  list in the pane, it offers to delete the workspace and keep its branches instead. Your
+  base branch, `main` and `master` are never deleted. A branch another workspace is on,
+  or has used, stays until the last workspace that used it is deleted. If another
+  workspace's folder can't be read (say, it's on an unmounted disk), no branches are
+  deleted, because there's no way to tell what that workspace used. Branches on your
+  remote are left alone. If it has uncommitted changes or untracked files (even ones your
+  git config hides from `git status`), it asks again before forcing the delete.
 - On a **project** header: unregisters the project *and* closes its sessions. The
   repo on disk is untouched.
 

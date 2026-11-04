@@ -17,9 +17,9 @@ module Switchboard
 
     module_function
 
-    # Nothing is offered when git can't list every worktree: any unread one could hold a
-    # candidate. Git's own listing names this tree's branch, since a row can lag a rename.
-    # Unmerged branches come first, where they're easiest to see.
+    # Nothing is offered when git can't list every worktree or read another's reflog: any
+    # unread one could hold a candidate. Git's own listing names this tree's branch, since
+    # a row can lag a rename. Unmerged branches come first, where they're easiest to see.
     def plan(repo, path, base)
       base = base.to_s
       worktrees = Git.worktrees(repo, strict: true)
@@ -33,9 +33,16 @@ module Switchboard
       # main's ref and passes every name check, and `main~1` isn't a branch: only git's own
       # spelling of a branch counts.
       names = [own.first[:branch], *Git.visited_branches(path)].compact.uniq & Git.local_branches(repo)
-      names -= kept_names(repo, base)
-      names -= others.flat_map { |w| [w[:branch], *Git.visited_branches(w[:path])] } unless names.empty?
-      names.map { |name| entry(repo, name, base) }.compact.sort_by { |e| e.merged ? 1 : 0 }
+      return [] if names.empty?
+
+      elsewhere = others.map { |w| Git.visited_branches(w[:path]) }
+      return [] if elsewhere.any?(&:nil?)
+
+      # Other worktrees' names stay as typed, so these compare without case: on that same
+      # filesystem `Feature` over there is `feature` here, and `branch -D` won't notice.
+      taken = (kept_names(repo, base) + others.map { |w| w[:branch] } + elsewhere.flatten).compact.map { |n| n.scrub.downcase }
+      names.reject { |name| taken.include?(name.downcase) }
+           .map { |name| entry(repo, name, base) }.compact.sort_by { |e| e.merged ? 1 : 0 }
     end
 
     # A renamed workspace's old path is a symlink, so the same tree can go by two names.
@@ -48,12 +55,13 @@ module Switchboard
     # Never a project's trunk, even when this workspace visited it. A base can be spelled
     # `develop`, `origin/develop` or `refs/heads/develop`, and a remote's name can hold a
     # slash, so every tail of the ref is kept. Keeping one too many only leaves a branch.
+    # The repo's own HEAD counts: a bare project's is listed nowhere else.
     def kept_names(repo, base)
       tails = [base, Git.remote_head(repo)].compact.flat_map do |ref|
         parts = ref.split("/")
         parts.each_index.map { |i| parts.drop(i).join("/") }
       end
-      ALWAYS_KEPT + tails
+      ALWAYS_KEPT + tails + [Git.current_branch(repo)]
     end
 
     def entry(repo, name, base)
