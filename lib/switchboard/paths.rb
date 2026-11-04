@@ -39,6 +39,11 @@ module Switchboard
       utf8(File.expand_path(File.join(default, APP, leaf)))
     end
 
+    # A directory outside our XDG roots, such as the install's bin folder or Codex's home.
+    def dir(override, default)
+      utf8(File.expand_path(set_value(override) || default))
+    end
+
     # For a path that must match nothing once it stops resolving.
     def real_or_nil(path)
       File.realpath(path)

@@ -2,6 +2,7 @@
 
 require_relative "hook_file"
 require_relative "marker_block"
+require_relative "paths"
 require "strscan"
 
 module Switchboard
@@ -82,10 +83,11 @@ module Switchboard
 
     def label = "codex"
 
-    # ~/.codex/config.toml, honoring $CODEX_HOME (and sandboxed in tests).
-    def config_path
-      File.expand_path(File.join(ENV["CODEX_HOME"] || "~/.codex", "config.toml"))
-    end
+    # ~/.codex, honoring $CODEX_HOME (and sandboxed in tests). Codex reads an empty value as
+    # unset too.
+    def home = Paths.dir("CODEX_HOME", "~/.codex")
+
+    def config_path = File.join(home, "config.toml")
 
     # Idempotently write the global [hooks] block. Returns the path, or :collision if the
     # user has their own hooks config, :unsafe if the block holds something a line-based

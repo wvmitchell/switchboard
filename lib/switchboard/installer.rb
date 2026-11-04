@@ -6,6 +6,7 @@ require_relative "marker_block"
 require_relative "codex_hook"
 require_relative "stable_path"
 require_relative "root"
+require_relative "paths"
 
 module Switchboard
   # Stands switchboard up from a fresh clone: a `switchboard` symlink on PATH
@@ -67,7 +68,7 @@ module Switchboard
     end
 
     def bin_dir
-      File.expand_path(ENV["SWITCHBOARD_BIN_DIR"] || "~/.local/bin")
+      Paths.dir("SWITCHBOARD_BIN_DIR", "~/.local/bin")
     end
 
     # Names we put on PATH: the full command plus a short alias you can type
@@ -292,7 +293,7 @@ module Switchboard
     end
 
     def codex_present?
-      File.directory?(File.expand_path(ENV["CODEX_HOME"] || "~/.codex")) ||
+      File.directory?(CodexHook.home) ||
         system("command -v codex >/dev/null 2>&1")
     end
 
@@ -874,7 +875,7 @@ module Switchboard
 
     def warn_path
       return if homebrew?
-      return if ENV["PATH"].to_s.split(File::PATH_SEPARATOR).map { |p| File.expand_path(p) }.include?(bin_dir)
+      return if Switchboard.env("PATH").to_s.scrub.split(File::PATH_SEPARATOR).map { |p| File.expand_path(p) }.include?(bin_dir)
 
       note "#{bin_dir} isn't on your PATH — add this to your shell profile:"
       puts "      export PATH=\"#{bin_dir}:$PATH\""
