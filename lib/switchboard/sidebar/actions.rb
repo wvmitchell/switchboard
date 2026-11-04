@@ -471,6 +471,12 @@ module Switchboard
 
         repo = project["path"]
         label = File.basename(node.path)
+        base = project["base_ref"]
+        branches = WorkspaceBranches.plan(repo, node.path, base)
+        # Nothing is deleted that you couldn't read first.
+        unless paint_above_prompt(WorkspaceBranches.listing(branches, base))
+          return flash("pane too short to list #{branches.size} branches — resize, then d")
+        end
         return unless confirm("delete #{label}?")
 
         # Fail-CLOSED clean check (Git.clean?, not the fail-open Git.dirty?): an
@@ -485,7 +491,7 @@ module Switchboard
           Creation.transition(rec["id"], from: Creation::PRE_READY, to: :canceled)
           Creation.ack(rec["id"]) # seen and deleted: its ✘ must not come back once the tree is gone
         end
-        start_removal(repo, node.path, node.branch) # marks + hides the row, spawns the reaper
+        start_removal(repo, node.path, node.branch, branches: branches) # marks + hides the row, spawns the reaper
 
         worktree = Worktree.new(project: node.project, path: node.path, branch: node.branch,
                                 dirty: false, pr: nil, base: nil, primary: false)
@@ -510,26 +516,30 @@ module Switchboard
       # (a shared PendingDelete marker, so every window's sidebar hides it). Falls back
       # to a SYNCHRONOUS removal (the old inline hang, but correct) when we can't
       # self-invoke — no SWITCHBOARD_BIN, or the spawn raises — so delete always works.
-      def start_removal(repo, path, branch, force_branch: false)
+      def start_removal(repo, path, branch, force_branch: false, branches: nil)
         bin = ENV["SWITCHBOARD_BIN"]
-        return sync_remove(repo, path, branch, force_branch: force_branch) unless bin
+        return sync_remove(repo, path, branch, force_branch: force_branch, branches: branches) unless bin
 
         PendingDelete.mark(path)      # shared: hides the row in every pane
         @pending_delete.add(path)     # ...and this pane same-frame, before the reaper runs
         args = [bin, "reap-worktree", repo, path, branch.to_s]
         args << "--force-branch" if force_branch
+        args.concat(WorkspaceBranches.to_args(branches)) if branches
         Process.detach(Process.spawn(*args, in: File::NULL, out: File::NULL, err: File::NULL))
       rescue SystemCallError
         PendingDelete.clear(path)     # spawn failed: un-hide and remove synchronously instead
         @pending_delete.delete(path)
-        sync_remove(repo, path, branch, force_branch: force_branch)
+        sync_remove(repo, path, branch, force_branch: force_branch, branches: branches)
       end
 
-      # The branch delete is the safe -d (unmerged branches are kept) unless the caller
-      # proved there's nothing on it to lose (a canceled dispatch, untouched?).
-      def sync_remove(repo, path, branch, force_branch: false)
-        Git.remove_worktree(repo, path, force: true, locked: Creation.unfinished_at?(path))
-        Git.delete_branch(repo, branch, force: force_branch)
+      # `branches:` is what you confirmed deleting with the workspace. Without it the delete
+      # is the safe -d (unmerged branches are kept) unless the caller proved there's nothing
+      # on it to lose (a canceled dispatch, untouched?).
+      def sync_remove(repo, path, branch, force_branch: false, branches: nil)
+        removed = Git.remove_worktree(repo, path, force: true, locked: Creation.unfinished_at?(path))
+        return Git.delete_branch(repo, branch, force: force_branch) unless branches
+
+        WorkspaceBranches.delete_and_report(repo, branches) if removed
       end
 
       # Rename a workspace: move its worktree directory (the display name) + rename

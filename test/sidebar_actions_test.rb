@@ -151,8 +151,8 @@ module Switchboard
       end
       assert_includes PendingDelete.pending(["/wt/a"]), "/wt/a", "the row is hidden via a shared marker"
       assert_includes sb.instance_variable_get(:@pending_delete), "/wt/a", "...and this pane same-frame"
-      assert_equal ["/bin/switchboard", "reap-worktree", "/repos/app", "/wt/a", "feature"], spawned,
-                   "hands the removal to the detached reaper (repo, path, branch)"
+      assert_equal ["/bin/switchboard", "reap-worktree", "/repos/app", "/wt/a", "feature", "--branches"], spawned,
+                   "hands the removal to the detached reaper (repo, path, branch, its plan: empty here, /repos/app isn't real)"
       assert detached, "and detaches it so it outlives us"
       assert_equal({ hooks_only: true }, reload_kwargs, "the non-current reload skips the lsof fallback (Option C)")
     ensure
@@ -266,14 +266,17 @@ module Switchboard
       removed = nil
       branch_deleted = nil
       sb.define_singleton_method(:reload) { |**| }
-      stub_method(Git, :clean?, ->(*) { true }) do
-        stub_method(Git, :remove_worktree, ->(repo, p, **) { removed = [repo, p]; true }) do
-          stub_method(Git, :delete_branch, ->(_repo, b, **) { branch_deleted = b; true }) do
-            stub_method(Tmux, :session_of, ->(*) { "sb/home" }) do
-              stub_method(Tmux, :session_name, ->(*) { "sb/app/a" }) do
-                stub_method(Tmux, :kill, ->(*) {}) do
-                  stub_method(sb, :confirm, ->(*) { true }) do
-                    sb.send(:delete)
+      planned = [WorkspaceBranches::Entry.new(name: "feature", sha: "abc", merged: true)]
+      stub_method(WorkspaceBranches, :plan, ->(*) { planned }) do
+        stub_method(Git, :clean?, ->(*) { true }) do
+          stub_method(Git, :remove_worktree, ->(repo, p, **) { removed = [repo, p]; true }) do
+            stub_method(WorkspaceBranches, :delete_and_report, ->(_repo, entries) { branch_deleted = entries.map(&:name) }) do
+              stub_method(Tmux, :session_of, ->(*) { "sb/home" }) do
+                stub_method(Tmux, :session_name, ->(*) { "sb/app/a" }) do
+                  stub_method(Tmux, :kill, ->(*) {}) do
+                    stub_method(sb, :confirm, ->(*) { true }) do
+                      sb.send(:delete)
+                    end
                   end
                 end
               end
@@ -282,7 +285,7 @@ module Switchboard
         end
       end
       assert_equal ["/repos/app", "/wt/a"], removed, "no binary ⇒ remove synchronously"
-      assert_equal "feature", branch_deleted
+      assert_equal %w[feature], branch_deleted
       assert_empty PendingDelete.pending(["/wt/a"]), "the sync fallback leaves no hide marker"
     end
 
@@ -298,6 +301,165 @@ module Switchboard
         end
       end
       assert_equal({ "/wt/half" => true, "/wt/a" => false }, locks)
+    end
+
+    # Value: protects=you see the branches, unmerged ones flagged, before answering, and the reaper gets exactly that list; fails_when=delete skips the listing, paints it after the confirm, or drops the pins from the spawn; why_new=the prompt is what makes deleting unmerged work acceptable; seam=confirm + Process.spawn; no_claim=terminal rendering
+    def test_delete_names_the_branches_before_asking_and_hands_them_to_the_reaper
+      sb = deletable_sidebar
+      ENV["SWITCHBOARD_BIN"] = "/bin/switchboard"
+      planned = [WorkspaceBranches::Entry.new(name: "feature", sha: "abc", merged: false),
+                 WorkspaceBranches::Entry.new(name: "old", sha: "def", merged: true)]
+      painted = nil
+      spawned = nil
+      sb.define_singleton_method(:reload) { |**| }
+      sb.define_singleton_method(:paint_above_prompt) { |lines| painted = lines }
+      on_screen = nil
+      answer = lambda do |_msg|
+        on_screen = painted
+        true
+      end
+      stub_method(WorkspaceBranches, :plan, ->(*) { planned }) do
+        stub_method(Git, :clean?, ->(*) { true }) do
+          stub_method(Tmux, :session_of, ->(*) { "sb/home" }) do
+            stub_method(Tmux, :session_name, ->(*) { "sb/app/a" }) do
+              stub_method(Tmux, :kill, ->(*) {}) do
+                stub_method(Process, :spawn, ->(*a, **) { spawned = a; 4242 }) do
+                  stub_method(Process, :detach, ->(*) {}) do
+                    stub_method(sb, :confirm, answer) { sb.send(:delete) }
+                  end
+                end
+              end
+            end
+          end
+        end
+      end
+      assert_includes on_screen.to_a, "! feature", "the list is up before the question"
+      assert_equal ["--branches", "abc:feature", "def:old"], spawned.last(3)
+    ensure
+      ENV.delete("SWITCHBOARD_BIN")
+    end
+
+    # Value: protects=a list that fits is shown whole, cut by columns so wide names can't wrap and scroll the frame; fails_when=lines are cut by characters or the row check is off by one over the prompt row; why_new=confirm's bottom row is all this code had; seam=winsize; no_claim=none
+    def test_paint_above_prompt_shows_a_list_that_fits_cut_by_columns
+      sb = deletable_sidebar
+      wide = "界" * 30
+      result = nil
+      out = capture_io do
+        stub_method(sb, :winsize, -> { [4, 10] }) do
+          result = sb.send(:paint_above_prompt, ["a-very-long-branch-name", wide, "c"])
+        end
+      end.first
+      assert result
+      assert_includes out, "\e[1;1H\e[Ka-very-lo…"
+      assert_includes out, "\e[2;1H\e[K#{sb.send(:fit_columns, wide, 10)}\e"
+      assert_includes out, "\e[3;1H\e[Kc"
+      refute_includes out, "\e[4;1H", "the bottom row stays the prompt's"
+    end
+
+    # Value: protects=a list that can't fit paints nothing and reports it, on any pane height; fails_when=it paints a partial list, or raises on a one-row pane; why_new=Codex showed names hidden behind a count still being deleted; seam=winsize; no_claim=none
+    def test_paint_above_prompt_refuses_a_list_that_does_not_fit
+      sb = deletable_sidebar
+      [[4, %w[a b c d]], [1, %w[a]]].each do |rows, lines|
+        result = :unset
+        out = capture_io do
+          stub_method(sb, :winsize, -> { [rows, 40] }) { result = sb.send(:paint_above_prompt, lines) }
+        end.first
+        assert_equal false, result, "#{rows} rows"
+        assert_empty out
+      end
+      assert_equal true, sb.send(:paint_above_prompt, []), "no list always fits"
+    end
+
+    # Value: protects=nothing is deleted from a pane too short to list it; fails_when=delete ignores paint_above_prompt's answer and asks anyway; why_new=the list is the only safeguard on -D; seam=flash + winsize; no_claim=none
+    def test_delete_refuses_when_the_list_does_not_fit
+      sb = deletable_sidebar
+      planned = [WorkspaceBranches::Entry.new(name: "feature", sha: "abc", merged: false)]
+      flashed = nil
+      asked = false
+      stub_method(WorkspaceBranches, :plan, ->(*) { planned }) do
+        stub_method(sb, :winsize, -> { [2, 40] }) do
+          stub_method(sb, :flash, ->(msg) { flashed = msg }) do
+            stub_method(sb, :confirm, ->(*) { asked = true }) { sb.send(:delete) }
+          end
+        end
+      end
+      assert_includes flashed.to_s, "too short"
+      refute asked, "it doesn't ask about what it couldn't show"
+      assert_empty PendingDelete.pending(["/wt/a"])
+    end
+
+    # Value: protects=answering no to the branch list deletes and hides nothing; fails_when=the first confirm's result is ignored or removal moves ahead of it; why_new=the dirty test answers yes to the first prompt; seam=confirm; no_claim=terminal input parsing
+    def test_declining_the_delete_changes_nothing
+      sb = deletable_sidebar
+      planned = [WorkspaceBranches::Entry.new(name: "feature", sha: "abc", merged: false)]
+      removed = false
+      stub_method(WorkspaceBranches, :plan, ->(*) { planned }) do
+        stub_method(Git, :remove_worktree, ->(*, **) { removed = true }) do
+          capture_io { stub_method(sb, :confirm, ->(*) { false }) { sb.send(:delete) } }
+        end
+      end
+      refute removed
+      assert_empty PendingDelete.pending(["/wt/a"])
+    end
+
+    # Value: protects=the sync fallback deletes exactly what you confirmed when the reaper can't spawn; fails_when=the rescue calls sync_remove without branches:, leaking visited branches and running -d on the current one; why_new=the spawn-failure test asserts nothing about branches; seam=Process.spawn; no_claim=why the spawn fails
+    def test_a_failed_spawn_keeps_the_confirmed_branches
+      sb = deletable_sidebar
+      ENV["SWITCHBOARD_BIN"] = "/bin/switchboard"
+      planned = [WorkspaceBranches::Entry.new(name: "old", sha: "abc", merged: true)]
+      deleted = nil
+      stub_method(Process, :spawn, ->(*_a, **_k) { raise Errno::ENOENT }) do
+        stub_method(Git, :remove_worktree, ->(*, **) { true }) do
+          stub_method(WorkspaceBranches, :delete_and_report, ->(_repo, entries) { deleted = entries }) do
+            sb.send(:start_removal, "/repos/app", "/wt/a", "feature", branches: planned)
+          end
+        end
+      end
+      assert_equal planned, deleted
+    ensure
+      ENV.delete("SWITCHBOARD_BIN")
+    end
+
+    # Value: protects=a removal that failed keeps its branches in the no-binary path too; fails_when=sync_remove stops checking the removal and force-deletes branches for a workspace that still exists; why_new=only the reaper path had this test; seam=Git.remove_worktree; no_claim=why git refused
+    def test_sync_remove_keeps_the_branches_when_the_removal_fails
+      sb = deletable_sidebar
+      planned = [WorkspaceBranches::Entry.new(name: "old", sha: "abc", merged: true)]
+      deleted = false
+      stub_method(Git, :remove_worktree, ->(*, **) { false }) do
+        stub_method(WorkspaceBranches, :delete_and_report, ->(*) { deleted = true }) do
+          sb.send(:sync_remove, "/repos/app", "/wt/a", "feature", branches: planned)
+        end
+      end
+      refute deleted
+    end
+
+    # Value: protects=a canceled build without the binary still cleans its branch, forced only when asked; fails_when=sync_remove drops the legacy delete_branch call or its force flag; why_new=the old assertion moved to the plan path; seam=Git.delete_branch; no_claim=git's -d semantics
+    def test_sync_remove_without_a_plan_uses_the_callers_branch_and_force
+      sb = deletable_sidebar
+      calls = []
+      stub_method(Git, :remove_worktree, ->(*, **) { true }) do
+        stub_method(Git, :delete_branch, ->(_repo, b, force: false) { calls << [b, force] }) do
+          sb.send(:sync_remove, "/repos/app", "/wt/a", "safe")
+          sb.send(:sync_remove, "/repos/app", "/wt/b", "placeholder", force_branch: true)
+        end
+      end
+      assert_equal [["safe", false], ["placeholder", true]], calls
+    end
+
+    # Value: protects=canceling a dispatched build still spawns with --force-branch and no --branches; fails_when=to_args is called on nil and raises, or the flag is dropped and placeholder branches leak; why_new=sidebar_dispatch_test stubs start_removal; seam=Process.spawn; no_claim=the reaper's handling, which cli_test covers
+    def test_spawning_without_a_plan_keeps_the_legacy_arguments
+      sb = deletable_sidebar
+      ENV["SWITCHBOARD_BIN"] = "/bin/switchboard"
+      spawned = nil
+      stub_method(Process, :spawn, ->(*a, **) { spawned = a; 4242 }) do
+        stub_method(Process, :detach, ->(*) {}) do
+          sb.send(:start_removal, "/repos/app", "/wt/a", "placeholder", force_branch: true)
+        end
+      end
+      assert_equal ["/bin/switchboard", "reap-worktree", "/repos/app", "/wt/a", "placeholder", "--force-branch"], spawned
+    ensure
+      ENV.delete("SWITCHBOARD_BIN")
+      PendingDelete.clear("/wt/a")
     end
 
     # bin present but the reaper spawn raises (e.g. a stale/broken SWITCHBOARD_BIN):

@@ -27,7 +27,8 @@ module Switchboard
       when "clone"             then clone_project(argv[1], argv[2])
       when "create"            then create_project(argv[1])
       when "refresh"           then refresh(*refresh_args(argv))
-      when "reap-worktree"     then reap_worktree(argv[1], argv[2], argv[3], force_branch: argv[4] == "--force-branch")
+      when "reap-worktree"     then reap_worktree(argv[1], argv[2], argv[3], force_branch: argv[4] == "--force-branch",
+                                                  branches: WorkspaceBranches.from_args(argv))
       when "new"               then exit(1) unless new_workspace(argv.drop(1))
       when "projects"          then exit(1) unless list_projects(argv.drop(1))
       when "create-workspace"  then create_workspace(argv[1])
@@ -135,11 +136,11 @@ module Switchboard
     # controlling terminal, the only thing that survives the pane-teardown SIGHUP when
     # the caller kills its own session (deleting the workspace you're in). Then the
     # removal core clears the marker and repaints every pane from git truth.
-    def reap_worktree(repo, path, branch, force_branch: false)
+    def reap_worktree(repo, path, branch, force_branch: false, branches: nil)
       return unless repo && path
 
       Process.daemon(true, true) # new session, no ctty; keep the already-/dev/null'd stdio
-      reap_worktree!(repo, path, branch, force_branch: force_branch)
+      reap_worktree!(repo, path, branch, force_branch: force_branch, branches: branches)
     end
 
     # Background update check (#47; a visible sidebar spawns it when the cache is
@@ -308,18 +309,24 @@ module Switchboard
     # The removal itself, split out so tests exercise it WITHOUT daemonizing (which
     # would detach the test process). `remove_worktree --force` owns all the
     # correctness git already enforces (dirty/submodule, a lock you set, freeing the
-    # branch) — it forces past a lock only on our own un-set-up build (`unfinished_at?`);
-    # `delete_branch` is the safe `-d` (git refuses a still-checked-out or unmerged
-    # branch, so it's a no-op when the remove failed). The marker is cleared
+    # branch) — it forces past a lock only on our own un-set-up build (`unfinished_at?`).
+    # `branches:` is what you confirmed deleting with the workspace; a failed removal keeps
+    # them all. Without it (a canceled dispatch, an older caller) `delete_branch` is the
+    # safe `-d` (git refuses a still-checked-out or unmerged branch, so it's a no-op when
+    # the remove failed). The marker is cleared
     # UNCONDITIONALLY: on success the row is gone from git anyway; on failure the row
     # must REAPPEAR so a delete that didn't take isn't masked. broadcast_warm makes
     # every sidebar rebuild from git truth now instead of lagging to its next tick.
     # `force_branch:` is for a dispatched tree already proven untouched (nothing past its
     # base): a placeholder branch never reads as merged into your local base, so the
     # safe -d would leak one per canceled build.
-    def reap_worktree!(repo, path, branch, force_branch: false)
-      Git.remove_worktree(repo, path, force: true, locked: Creation.unfinished_at?(path))
-      Git.delete_branch(repo, branch, force: force_branch) if branch && !branch.empty?
+    def reap_worktree!(repo, path, branch, force_branch: false, branches: nil)
+      removed = Git.remove_worktree(repo, path, force: true, locked: Creation.unfinished_at?(path))
+      if branches
+        WorkspaceBranches.delete_and_report(repo, branches) if removed
+      elsif branch && !branch.empty?
+        Git.delete_branch(repo, branch, force: force_branch)
+      end
       PendingDelete.clear(path)
       Tmux.broadcast_warm
     rescue StandardError

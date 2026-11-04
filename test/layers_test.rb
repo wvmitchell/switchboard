@@ -22,7 +22,7 @@ module Switchboard
                 full_header keymap model monitoring monitoring_nudge notify offstage_hold
                 pending_delete placeholder remote_link rename_nudge sound tree view],
       operations: %w[code_reload creator installer isolated_server reconcile registrar rename
-                     sandbox session_name update_check upgrade],
+                     sandbox session_name update_check upgrade workspace_branches],
       interfaces: %w[cli sidebar sidebar/actions sidebar/edges sidebar/input sidebar/prompt
                      sidebar/render sidebar/rows]
     }.freeze
