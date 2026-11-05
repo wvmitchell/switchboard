@@ -15,7 +15,9 @@ surface, see [Reference: keybindings](reference-keybindings.md).
 - The home key is **unbound** — opt in if you want it.
 
 `prefix-s` collides with tmux's built-in `choose-tree`, which is the usual reason
-to remap it. (Your tmux *prefix* is whatever you've configured, default `C-b`.)
+to remap it. Remap it and `choose-tree` comes back. (An install that upgraded in place
+has nothing saved for the key it already holds until tmux restarts.) Your tmux
+*prefix* is whatever you've configured, default `C-b`.
 
 ## Change the sidebar toggle key
 
@@ -32,8 +34,9 @@ modifier combo (`C-s`, `M-x`).
 
 **It takes effect on save.** When you edit config from inside tmux (via `e` or
 `switchboard config`), switchboard rebinds the key immediately and flashes a
-confirmation. It also cleans up the key it bound *last*, so the old key never
-stays live.
+confirmation. It also lets go of the key it bound *last*: the old key stops
+running switchboard, and anything it did before switchboard took it comes back.
+A binding you've made on that key since is left alone.
 
 **Verify:** press your prefix then the new key — the sidebar toggles. Or run
 `switchboard doctor`, which reports `prefix-<key> bound (toggle-sidebar)`.
@@ -111,14 +114,19 @@ in the running server — the "prefix-s stopped working after a `git pull`" case
   Tokens can't contain whitespace, quotes, or control chars. Fix the value.
 - **`doctor` warns about a collision.** Your `home` key resolved to the same key
   as `toggle`; `home` is left unbound (the toggle wins). Pick a different home key.
-- **`doctor` says a binding "replaced a prior binding".** Your chosen key was
-  already bound to something else (yours or a plugin's); switchboard took it and
-  recorded what it displaced. Choose another key if you want the old one back.
+- **`doctor` says a binding "replaced a prior binding".** Your key was already
+  bound to something else (yours, a plugin's, or tmux's own, like `choose-tree` on
+  the default `prefix-s`); switchboard took it and recorded what it displaced. The
+  note stays for as long as switchboard holds the key. Choose another key and the
+  old binding comes back.
 - **`doctor` says a key "isn't bound (tmux refused it)".** tmux didn't accept that
   key name, so switchboard kept (or fell back to) a working toggle. For `home` the
   reason can also be "the toggle fell back onto it": your toggle key was refused, its
   fallback is the default `s`, and that's your home key too, so the toggle keeps it.
   Pick another key.
+- **"can't bind keys, the install path contains a quote".** A quote in the path
+  can't survive the shell a bound key runs in, so switchboard binds nothing. `install`
+  refuses that path too. Move the install to a path without one.
 - **Swapping keys.** Setting `toggle` and `home` to each other's old keys works in one
   step; neither unbinds the key the other now wants.
 - **A malformed config.** switchboard keeps running and keeps the tmux keys already

@@ -10,6 +10,23 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
+## [0.66.10] — A key switchboard took comes back when it lets go (2026-11-05)
+
+### Fixed
+- Moving your toggle or home key, or uninstalling, left the old key unbound even if it had done
+  something before. It now comes back, including tmux's own `choose-tree` on `prefix-s`, and a
+  binding you've made on that key since is left alone. An install upgrading in place has nothing
+  saved for the key it already holds until tmux restarts.
+- `doctor`'s "replaced a prior binding" note disappeared the next time tmux reloaded. It now stays
+  for as long as switchboard holds the key, so new tmux servers on default installs see it for
+  `prefix-s`.
+- If tmux refused your configured toggle key, the fallback to `prefix-s` replaced a custom binding
+  there with no record. It now records it and can give it back.
+- From an install path containing a quote, `tmux-bind` bound a key that couldn't run. It now binds
+  nothing, as `install` already refuses that path.
+- Uninstalling always unbound `prefix-s`, even when it wasn't switchboard's. It now leaves it alone
+  unless it's still bound to switchboard.
+
 ## [0.66.9] — Branch rows come back when a new workspace reuses a deleted one's path (2026-11-05)
 
 ### Fixed

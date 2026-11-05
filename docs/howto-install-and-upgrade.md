@@ -115,7 +115,7 @@ goes stale when the old version is cleaned up. See
    Your config and agent state are left alone.
 
 2. Install with Homebrew and wire it up. Run `switchboard install` from inside
-   tmux (step 1 unbound the old keys in the running server, and install only
+   tmux (step 1 let go of the old keys in the running server, and install only
    reloads tmux when it runs inside it), or reload tmux afterwards with
    `tmux source-file ~/.tmux.conf`:
 

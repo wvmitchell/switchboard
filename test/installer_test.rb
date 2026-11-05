@@ -163,6 +163,249 @@ module Switchboard
       assert_equal ["tmux", "-u", "unbind-key", "\\;"], seen[2], "already escaped: left alone"
     end
 
+    # The per-key query shells out, and tmux answers it with no server, so these keep it off the machine's tmux.
+    def without_key_query(&block) = stub_method(Installer, :`, ->(_cmd) { "" }, &block)
+
+    # --- what we displaced: kept while we hold the key, restored when we let go ---
+
+    # Value: protects=doctor's warning and the restore outliving a tmux reload; fails_when=rebinding
+    # the same key clears the record, which every reload does; why_new=this is the bug, seen live;
+    # seam=none; no_claim=real tmux, which the smoke test covers
+    def test_rebinding_the_same_key_keeps_what_it_displaced
+      ops = Installer.rebind_ops("toggle", "g", recorded: "g", clobbered: nil)
+      refute_includes ops, [:clear_clobber, "toggle"]
+      refute_includes ops, [:clear_displaced, "toggle"]
+    end
+
+    # Value: protects=letting go of a key putting back what was there, in every way we let go;
+    # fails_when=a path still plain-unbinds, or restores a key another role holds; why_new=new
+    # behavior; seam=none; no_claim=tmux accepting the line, which the smoke test covers
+    def test_letting_go_of_a_key_restores_what_it_displaced
+      line = "bind-key -T prefix g display-message mine"
+      moved = Installer.rebind_ops("toggle", "b", recorded: "g", restore: line)
+      assert_includes moved, [:restore, "g", line]
+      refute_includes moved, [:unbind, "g"]
+      assert_includes Installer.rebind_ops("home", nil, recorded: "g", restore: line), [:restore, "g", line]
+      refute_includes Installer.rebind_ops("toggle", "b", recorded: "g", restore: line, taken: ["g"]), [:restore, "g", line]
+    end
+
+    # Value: protects=a bound key's flags surviving, since -r repeat is on tmux's own defaults;
+    # fails_when=only the command is captured; why_new=prefix_binding_from drops flags; seam=none;
+    # no_claim=every tmux version's list-keys format
+    def test_a_displaced_line_keeps_its_flags
+      raw = "bind-key -r -T prefix j select-pane -D\nbind-key    -T prefix jj display-message x\n"
+      assert_equal "bind-key -r -T prefix j select-pane -D", Installer.prefix_line_from(raw, "j")
+      assert_nil Installer.prefix_line_from(raw, "q")
+    end
+
+    # Value: protects=a binding you made since surviving when we let go; fails_when=keep is ignored and
+    # the fallback unbinds it; why_new=the restore's guard alone left it deleted; seam=none; no_claim=real tmux
+    def test_a_key_that_is_no_longer_ours_is_not_released
+      refute_includes Installer.rebind_ops("toggle", "b", recorded: "g", keep: true), [:unbind, "g"]
+      refute_includes Installer.rebind_ops("home", nil, recorded: "g", keep: true), [:unbind, "g"]
+      assert Installer.kept_key?("g", "bind-key -T prefix g display-message newer\n")
+      refute Installer.kept_key?("g", "bind-key -T prefix g run-shell \"'/moved/bin/switchboard' toggle-sidebar\"\n")
+    end
+
+    # Value: protects=a saved binding following its key to the role that takes it; fails_when=the new
+    # holder records nothing; why_new=swaps lost it; seam=none; no_claim=tmux, in smoke
+    def test_a_record_passes_to_the_role_taking_the_key
+      held = { "toggle" => { key: "g", clobbered: "x", line: "bind-key -T prefix g x" }, "home" => { key: "h", clobbered: nil, line: nil } }
+      ours = "bind-key -T prefix g run-shell \"'#{Installer.bin_path}' toggle-sidebar\"\n"
+      assert_equal ["x", "bind-key -T prefix g x"], Installer.displaced_on("g", "home", ours, held)
+      assert_equal [nil, nil], Installer.displaced_on("g", "toggle", ours, held), "its own key isn't handed to itself"
+    end
+
+    # Value: protects=a binding you made since never being overwritten by an older one, and only a
+    # bind ever being sourced; fails_when=restorable skips the ours? check or the bind-key check;
+    # why_new=new behavior; seam=stubs tmux_option; no_claim=real list-keys output
+    def test_only_our_own_key_gets_restored_and_only_with_a_bind
+      ours = "bind-key -T prefix g run-shell \"'#{Installer.bin_path}' toggle-sidebar\"\n"
+      theirs = "bind-key -T prefix g display-message newer\n"
+      moved = "bind-key -T prefix g run-shell \"'/moved/bin/switchboard' toggle-sidebar\"\n"
+      line = "bind-key -T prefix g display-message mine"
+      stub_method(Installer, :tmux_option, ->(_name) { line }) do
+        assert_equal line, Installer.restorable("toggle", "g", ours)
+        assert_nil Installer.restorable("toggle", "g", theirs)
+        assert_equal line, Installer.restorable("toggle", "g", moved), "a moved repo's key is still switchboard's"
+        assert_nil Installer.restorable("toggle", nil, ours)
+      end
+      stub_method(Installer, :tmux_option, ->(_name) { "kill-server" }) { assert_nil Installer.restorable("toggle", "g", ours) }
+    end
+
+    # Value: protects=config spellings finding tmux's listed ones, and another install's key not being
+    # foreign; fails_when=the listed form is compared literally, or foreign uses the exact path;
+    # why_new=both regressed in review; seam=none; no_claim=tmux, in smoke
+    def test_listed_spellings_and_other_installs
+      raw = "bind-key -T prefix \\; last-pane\nbind-key -T prefix \"C-;\" display-message c\nbind-key -T prefix \\$ rename\n"
+      assert_equal "bind-key -T prefix \\; last-pane", Installer.prefix_line_from(raw, ";")
+      assert_equal "bind-key -T prefix \"C-;\" display-message c", Installer.prefix_line_from(raw, "C-;")
+      assert_equal "bind-key -T prefix \\$ rename", Installer.prefix_line_from(raw, "$")
+      moved = "bind-key -T prefix s run-shell \"'/old/bin/switchboard' toggle-sidebar\"\n"
+      assert_nil Installer.foreign_binding(moved, "s")
+    end
+
+    # Value: protects=one failed table read not costing you a binding; fails_when=an empty table reads as
+    # nothing bound, so a saved or newer binding is unbound; why_new=a review caught that regression;
+    # seam=stubs the query; no_claim=how often a read really fails
+    def test_a_failed_table_read_still_finds_the_key
+      line = "bind-key -T prefix g display-message newer"
+      stub_method(Installer, :`, ->(_cmd) { "#{line}\n" }) do
+        assert_equal line, Installer.line_on("", "g")
+        assert Installer.kept_key?("g", "")
+        assert_equal "display-message newer", Installer.foreign_binding("", "g")
+      end
+    end
+
+    # Value: protects=a whole-table reply never reading as one key's line; fails_when=the line count isn't
+    # checked; why_new=the table lookup now catches ; first, so nothing reached it; seam=stubs the query;
+    # no_claim=which keys make tmux list everything
+    def test_a_query_listing_many_keys_is_not_a_keys_line
+      stub_method(Installer, :`, ->(_cmd) { "bind-key -T prefix a x\nbind-key -T prefix b y\n" }) do
+        assert_nil Installer.line_on("bind-key -T prefix z y\n", "f5")
+      end
+      stub_method(Installer, :`, ->(_cmd) { "bind-key -T prefix F5 x\n" }) do
+        assert_equal "bind-key -T prefix F5 x", Installer.line_on("bind-key -T prefix z y\n", "f5")
+      end
+    end
+
+    # Value: protects=a path with a quote saying why nothing was bound; fails_when=the notice goes;
+    # why_new=the no-announce case passes either way; seam=notify; no_claim=the notice on a status line
+    def test_a_path_with_a_quote_says_so_when_asked
+      said = []
+      stub_method(Installer, :tmux_safe_path?, -> { false }) do
+        stub_method(Installer, :notify, ->(message) { said << message }) { Installer.apply_keybindings(announce: true) }
+      end
+      assert_match(/quote/, said.join)
+    end
+
+    # Value: protects=a key given back on every way of letting go, and the record cleared after;
+    # fails_when=the clear-key or recovery path drops the restore; why_new=only the normal move ran it;
+    # seam=run_op; no_claim=tmux, in smoke
+    def test_a_refused_key_and_an_unset_role_still_give_back
+      line = "bind-key -T prefix g x"
+      restores = []
+      ran = []
+      stub_method(Installer, :restore_binding, ->(key, l) { restores << [key, l]; true }) do
+        stub_method(Installer, :run_tmux, ->(*argv) { ran << argv; argv[1] != "Frobnicate" }) do
+          without_key_query do
+            Installer.run_rebind("toggle", "Frobnicate", recorded: "g", legacy_toggle: false, clobbered: nil, restore: line)
+            Installer.run_rebind("home", nil, recorded: "g", legacy_toggle: false, clobbered: nil, restore: line)
+          end
+        end
+      end
+      assert_equal [["g", line], ["g", line]], restores
+      assert_includes ran, ["set-option", "-gu", "@switchboard-home-displaced"]
+      assert_includes ran, ["set-option", "-gu", "@switchboard-toggle-displaced"]
+    end
+
+    # Value: protects=a saved line for another key never being sourced, which would rebind that key and
+    # leave this one held; fails_when=the key isn't compared; why_new=an older version moving the key
+    # leaves this mismatch; seam=tmux_option; no_claim=real tmux
+    def test_a_record_for_another_key_is_not_restored
+      ours = "bind-key -T prefix m run-shell \"'#{Installer.bin_path}' toggle-sidebar\"\n"
+      stub_method(Installer, :tmux_option, ->(_name) { "bind-key -T prefix s choose-tree -Zs" }) do
+        assert_nil Installer.restorable("toggle", "m", ours)
+      end
+    end
+
+    # Value: protects=a role restoring its own record, not the other's; fails_when=the option name is
+    # wrong; why_new=a fixed stub couldn't tell; seam=tmux_option; no_claim=none beyond protects
+    def test_restorable_reads_the_roles_own_record
+      ours = "bind-key -T prefix g run-shell \"'#{Installer.bin_path}' home\"\n"
+      stub_method(Installer, :tmux_option, ->(name) { "bind-key -T prefix g #{name}" }) do
+        assert_equal "bind-key -T prefix g @switchboard-home-displaced", Installer.restorable("home", "g", ours)
+      end
+    end
+
+    # Value: protects=a failure writing the temp file not raising out of a rebind; fails_when=the rescue
+    # goes; why_new=only a failed source ran; seam=Tempfile; no_claim=which errors really occur
+    def test_a_failed_temp_file_unbinds_instead_of_raising
+      cmds = []
+      stub_method(Tempfile, :create, ->(*) { raise Errno::ENOSPC }) do
+        stub_method(Installer, :run_tmux, ->(*argv) { cmds << argv; true }) { Installer.restore_binding("g", "x") }
+      end
+      assert_equal [["unbind-key", "g"]], cmds
+    end
+
+    # Value: protects=the restore running the exact line, and a failure not leaving the key ours;
+    # fails_when=the file isn't what's sourced, or failure doesn't unbind; why_new=new behavior;
+    # seam=run_tmux; no_claim=source-file itself
+    def test_restoring_sources_the_line_and_falls_back_to_unbinding
+      sourced = nil
+      cmds = []
+      ok = lambda do |*argv|
+        cmds << argv
+        sourced = File.read(argv[1]) if argv[0] == "source-file"
+        true
+      end
+      assert(stub_method(Installer, :run_tmux, ok) { Installer.restore_binding("g", "bind-key -T prefix g x") })
+      assert_equal "bind-key -T prefix g x\n", sourced
+      refute_includes cmds, ["unbind-key", "g"]
+
+      cmds.clear
+      stub_method(Installer, :run_tmux, ->(*argv) { cmds << argv; argv[0] != "source-file" }) { Installer.restore_binding("g", "x") }
+      assert_includes cmds, ["unbind-key", "g"]
+    end
+
+    # Value: protects=a custom prefix-s being recorded when a refused key falls back onto it;
+    # fails_when=the recovery passes clobbered: nil; why_new=review finding on the fallback path;
+    # seam=run_tmux; no_claim=real tmux refusing a key
+    def test_a_fallback_onto_s_records_what_it_replaced
+      cmds = []
+      raw = "bind-key -T prefix s display-message mine\n"
+      stub_method(Installer, :run_tmux, ->(*argv) { cmds << argv; argv[1] != "Frobnicate" }) do
+        assert_equal "s", Installer.run_rebind("toggle", "Frobnicate", recorded: "g", legacy_toggle: false, clobbered: nil, raw: raw)
+      end
+      assert_includes cmds, ["set-option", "-g", "@switchboard-toggle-clobbered", "display-message mine"]
+      assert_includes cmds, ["set-option", "-g", "@switchboard-toggle-displaced", "bind-key -T prefix s display-message mine"]
+    end
+
+    # Value: protects=no dead key from an install path with a quote, matching install's refusal;
+    # fails_when=the guard goes; why_new=the config-edit path could still bind one; seam=stubs
+    # tmux_safe_path?; no_claim=the quoting itself, seen live
+    def test_a_path_with_a_quote_binds_nothing
+      cmds = []
+      stub_method(Installer, :tmux_safe_path?, -> { false }) do
+        stub_method(Installer, :run_tmux, ->(*argv) { cmds << argv; true }) { Installer.apply_keybindings }
+      end
+      assert_empty cmds
+    end
+
+    # Value: protects=uninstall leaving a prefix-s that isn't ours; fails_when=the legacy unbind runs
+    # regardless; why_new=it deleted a restored choose-tree; seam=run_tmux; no_claim=real tmux
+    def test_uninstall_only_unbinds_a_legacy_s_that_is_ours
+      cmds = []
+      run = ->(raw) do
+        cmds.clear
+        stub_method(Installer, :list_prefix_keys, -> { raw }) do
+          stub_method(Installer, :tmux_option, ->(_name) {}) do
+            stub_method(Installer, :run_tmux, ->(*argv) { cmds << argv; true }) { Installer.teardown_live }
+          end
+        end
+        cmds.dup
+      end
+      refute_includes run.call("bind-key -T prefix s choose-tree -Zs\n"), ["unbind-key", "s"]
+      assert_includes run.call("bind-key -T prefix s run-shell \"'/a/bin/switchboard' toggle-sidebar\"\n"), ["unbind-key", "s"]
+    end
+
+    # Value: protects=uninstall giving back a displaced prefix-s; fails_when=the legacy unbind runs
+    # after the restore, or teardown still plain-unbinds; why_new=the legacy line would delete it;
+    # seam=run_tmux; no_claim=real tmux
+    def test_uninstall_restores_a_displaced_key_and_leaves_it
+      ours = "bind-key -T prefix s run-shell \"'#{Installer.bin_path}' toggle-sidebar\"\n"
+      cmds = []
+      options = { "@switchboard-toggle-key" => "s", "@switchboard-toggle-displaced" => "bind-key -T prefix s choose-tree -Zs" }
+      stub_method(Installer, :list_prefix_keys, -> { ours }) do
+        stub_method(Installer, :tmux_option, ->(name) { options[name] }) do
+          stub_method(Installer, :run_tmux, ->(*argv) { cmds << argv; true }) { Installer.teardown_live }
+        end
+      end
+      assert(cmds.any? { |c| c[0] == "source-file" })
+      refute_includes cmds, ["unbind-key", "s"]
+      assert_includes cmds, ["set-option", "-gu", "@switchboard-toggle-displaced"]
+    end
+
     # --- run_rebind: bind-first + bind-failure fallback (via the run_tmux seam) -
 
     def test_run_rebind_executes_full_sequence_on_success
@@ -240,8 +483,10 @@ module Switchboard
     def test_teardown_live_unbinds_and_forgets_every_recorded_option
       cmds = []
       opts = { "@switchboard-toggle-key" => "t", "@switchboard-home-key" => "H" }
-      stub_method(Installer, :tmux_option, ->(name) { opts[name] }) do
-        stub_method(Installer, :run_tmux, ->(*argv) { cmds << argv; true }) { Installer.teardown_live }
+      stub_method(Installer, :list_prefix_keys, -> { "" }) do
+        stub_method(Installer, :tmux_option, ->(name) { opts[name] }) do
+          stub_method(Installer, :run_tmux, ->(*argv) { cmds << argv; true }) { without_key_query { Installer.teardown_live } }
+        end
       end
       assert_includes cmds, ["unbind-key", "t"]
       assert_includes cmds, ["unbind-key", "H"]
@@ -343,7 +588,7 @@ module Switchboard
       stub_method(Installer, :list_prefix_keys, -> { "" }) do
         stub_method(Installer, :tmux_option, ->(name) { recorded[name] }) do
           stub_method(Installer, :run_tmux, ->(*argv) { cmds << argv; true }) do
-            Installer.apply_keybindings(config: Config.new)
+            without_key_query { Installer.apply_keybindings(config: Config.new) }
           end
         end
       end
@@ -384,8 +629,10 @@ module Switchboard
     # prefix-C-; bound to a removed binary; why_new=ship 4 pass 3 state machines; seam=system
     def test_teardown_unbinds_a_recorded_semicolon_key
       seen = []
-      stub_method(Installer, :tmux_option, ->(name) { name == "@switchboard-toggle-key" ? "C-;" : nil }) do
-        stub_method(Installer, :system, ->(*argv, **) { seen << argv; true }) { Installer.teardown_live }
+      stub_method(Installer, :list_prefix_keys, -> { "" }) do
+        stub_method(Installer, :tmux_option, ->(name) { name == "@switchboard-toggle-key" ? "C-;" : nil }) do
+          stub_method(Installer, :system, ->(*argv, **) { seen << argv; true }) { without_key_query { Installer.teardown_live } }
+        end
       end
       assert_includes seen, ["tmux", "-u", "unbind-key", "C-\\;"]
     end
@@ -575,7 +822,7 @@ module Switchboard
     end
 
     def test_foreign_binding_nil_when_key_unbound
-      assert_nil Installer.foreign_binding("", "b")
+      without_key_query { assert_nil Installer.foreign_binding("", "b") }
     end
 
     # Value: protects=doctor reading back exactly the fragment install wired; fails_when=

@@ -120,8 +120,9 @@ commit on your branch"); as when already current, a stale setup still gets step 
 ### `switchboard uninstall [--tmux-conf PATH]`
 Reverse `install`: remove both symlinks (under Homebrew it leaves PATH to
 `brew uninstall switchboard` and says so), the tmux marker block, the bound keys,
-the three hook slots, the `@switchboard-*` tmux options (also live-unbinds in
-a running server), and the global codex `[hooks]` block from `~/.codex/config.toml`
+the three hook slots, the `@switchboard-*` tmux options (in a running server too: a
+binding switchboard displaced comes back, and one you've made on the key since stays),
+and the global codex `[hooks]` block from `~/.codex/config.toml`
 if present. Your config and agent state are left untouched.
 
 The codex block goes **first**. Only switchboard's part of it is removed: tables
@@ -417,7 +418,7 @@ no-op outside the right tmux context.
 | `poke-window <window>` | `session-window-changed` hook | Redraw the sidebar on a same-session window switch (gated to `sb/` sessions). |
 | `sidebar-sync <window>` | `after-new-window` hook | Give a new window its own sidebar iff the session opts in. |
 | `reload-config [origin]` | the post-edit Ctrl-R poke | Re-read config and redraw after editing it from the sidebar. |
-| `tmux-bind` | the `switchboard.tmux` fragment | (Re)bind the configured `tmux_keys`, cleaning up the previously-bound key. A `config.yml` that won't parse re-binds the keys already bound (the defaults only if none were). |
+| `tmux-bind` | the `switchboard.tmux` fragment | (Re)bind the configured `tmux_keys`, letting go of the previously-bound key and giving back what it displaced. A `config.yml` that won't parse re-binds the keys already bound (the defaults only if none were). An install path containing a quote or control character binds nothing, as `install` refuses it. |
 | `check-update` | a visible sidebar, at most every 4 hours (spawned detached) | Homebrew installs: reads the newest release tag and caches it for the update line under the wordmark (#47). Does nothing under `SWITCHBOARD_NO_UPDATE_CHECK`. |
 | `create-workspace <id>` | the sidebar's `n` or `switchboard new` (spawned detached) | Background worker for a dispatched workspace: fetch, `git worktree add`, wire hooks, open the session. |
 | `launch <dest>` | the line the worker types into the new pane | Run the setup script, then start the agent with the task. |
