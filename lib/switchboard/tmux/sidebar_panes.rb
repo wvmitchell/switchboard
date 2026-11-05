@@ -249,13 +249,13 @@ module Switchboard
     # press in a session that's never shown one summons rather than dead-keys; the
     # intent is persisted on the session and reconciled across every window.
     def toggle_sidebar
-      session = current_session or return
+      here = current_session or return
       if current_sidebar_pane               # visible here → dismiss for the whole session
-        set_sidebar_flag(session, "off")
-        reconcile_sidebars(session, false)
+        set_sidebar_flag(here, "off")
+        reconcile_sidebars(here, false)
       else                                  # hidden here → summon every window, then enter the tree
-        set_sidebar_flag(session, "on")
-        reconcile_sidebars(session, true)
+        set_sidebar_flag(here, "on")
+        reconcile_sidebars(here, true)
         focus_current_sidebar
       end
     end
@@ -362,8 +362,8 @@ module Switchboard
     def poke_sidebar_of(session, reload_config: false)
       pane = window_sidebar_pane(session) or return
 
-      key = reload_config ? RELOAD_CONFIG_POKE : "C-l"
-      system("tmux", "-u", "send-keys", "-t", pane, key, out: File::NULL, err: File::NULL)
+      poke = reload_config ? RELOAD_CONFIG_POKE : "C-l"
+      system("tmux", "-u", "send-keys", "-t", pane, poke, out: File::NULL, err: File::NULL)
     end
 
     # Guarantee the session's active window isn't sidebar-only: if the sidebar is the
