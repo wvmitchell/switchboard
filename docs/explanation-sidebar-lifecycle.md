@@ -324,7 +324,7 @@ The details of that payload are [below](#the-resume-payload).
 
 **A signal.** `upgrade --finish` (installed binary only) and `switchboard reload-sidebars`
 (any binary) send `SIGUSR1`. Senders read `list-panes -a` once
-(`Tmux.sidebar_reload_targets`) to pick targets, and signal every one that takes a signal
+(`CodeReload.sidebar_reload_targets`) to pick targets, and signal every one that takes a signal
 before running any restart check below. Those checks take seconds, and a pid read from the
 listing that long ago could belong to another process by the time it's signaled, which
 `SIGUSR1` would quit.
@@ -352,7 +352,7 @@ Respawn kills first, so a broken or deleted checkout would cost the window its s
 It only happens when all of these hold:
 
 - **The pane really is a sidebar.** Its start command must be exactly
-  `<…/switchboard> sidebar` (`Tmux.start_bin`), since any program can title its pane
+  `<…/switchboard> sidebar` (`CodeReload.start_bin`), since any program can title its pane
   `sb-sidebar`.
 - **The binary passes `CodeReload.restartable`,** checked once per distinct binary:
   - it's resolved once (`start_file`): an absolute path, realpath'd with no opt/ rewrite,
@@ -365,7 +365,7 @@ It only happens when all of these hold:
     hidden sidebar, and a home one would prune.
 - **The link still resolves to the checked file** just before the respawn. A brew relink
   since then leaves the pane as it is.
-- **The pane hasn't changed.** It's re-read just before (`Tmux.same_reload_target?`: same
+- **The pane hasn't changed.** It's re-read just before (`CodeReload.same_reload_target?`: same
   pid, tag, liveness and command), because the checks take time and `-k` kills whatever is
   running there now. Any tag change aborts.
 

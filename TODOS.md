@@ -163,7 +163,7 @@ safe today; each is narrow).
   queued/launching/turn_done/canceled×remove_project); three wall-clock-bounded tests lack
   `gstack-timing-ok`. *Cleanup:* `doctor_sounds` skips `failed` (loop over
   `DEFAULT_SOUNDS.keys`); comments cite D*/DR* ids that live only in gitignored
-  `thoughts/`; stale `start` docstrings (`tmux.rb` `go`, `Config#session_command_for`)
+  `thoughts/`; stale `start` docstrings (`tmux/sessions.rb` `go`, `Config#session_command_for`)
   and `columns`; declare `@typeahead` in `Sidebar#initialize`; `NOTE_WIDE` as `\u{…}`
   ranges; drop `terminal?` (always true at its caller), the dead `PRE_READY` clause on
   the project rule, `drop?`'s unused defaults, `owner_fields`' `pid` param,

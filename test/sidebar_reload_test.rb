@@ -35,7 +35,7 @@ module Switchboard
         stub_method(Tmux, :enable_focus_events, -> {}) do
           stub_method(Tmux, :session_of, ->(*) { session }) do
             stub_method(Tmux, :pane_tty, ->(*) { nil }) do
-              stub_method(Tmux, :tag_sidebar_pane, tag) do
+              stub_method(CodeReload, :tag_sidebar_pane, tag) do
                 stub_method(Tmux, :visible?, ->(*) { visible }) do
                   stub_method(Tmux, :focused?, ->(*) { false }) { capture_stdout { sb.run } }
                 end
@@ -272,7 +272,7 @@ module Switchboard
       exec_sidebar(preflight: :failed, sb: sb) { flunk "no exec" }
       stub_method(CodeReload, :preflight, ->(*, **) { order << :preflight; :failed }) do
         stub_method(CodeReload, :real_bin, ->(*) { "/Cellar/new/bin/switchboard" }) do
-          stub_method(Tmux, :flag_failed_reload, ->(*) {}) { sb.send(:reexec) }
+          stub_method(CodeReload, :flag_failed_reload, ->(*) {}) { sb.send(:reexec) }
         end
       end
       assert_equal %i[render preflight], order.last(2)
@@ -466,7 +466,7 @@ module Switchboard
       calls = Hash.new(0)
       stub_method(Tmux, :visible?, ->(*) { calls[:visible?] += 1; false }) do
         stub_method(Tmux, :window_panes, ->(*) { calls[:window_panes] += 1; 2 }) do
-          stub_method(Tmux, :tag_sidebar_pane, ->(*) { flunk "no tag per tick" }) { sb.send(:tick) }
+          stub_method(CodeReload, :tag_sidebar_pane, ->(*) { flunk "no tag per tick" }) { sb.send(:tick) }
         end
       end
       assert_equal({ visible?: 1, window_panes: 1 }, calls)
@@ -485,7 +485,7 @@ module Switchboard
       tags = []
       stub_method(Tmux, :visible?, ->(*) { false }) do
         stub_method(Tmux, :window_panes, ->(*) { 2 }) do
-          stub_method(Tmux, :tag_sidebar_pane, ->(_p, v, **) { tags << v; true }) { 2.times { sb.send(:tick) } }
+          stub_method(CodeReload, :tag_sidebar_pane, ->(_p, v, **) { tags << v; true }) { 2.times { sb.send(:tick) } }
         end
       end
       assert_equal [Process.pid], tags, "retried on the next tick, then nothing once it landed"
@@ -495,7 +495,7 @@ module Switchboard
       tries = 0
       stub_method(Tmux, :visible?, ->(*) { false }) do
         stub_method(Tmux, :window_panes, ->(*) { 2 }) do
-          stub_method(Tmux, :tag_sidebar_pane, ->(*, **) { tries += 1; false }) { (Sidebar::TAG_TRIES + 3).times { sb.send(:tick) } }
+          stub_method(CodeReload, :tag_sidebar_pane, ->(*, **) { tries += 1; false }) { (Sidebar::TAG_TRIES + 3).times { sb.send(:tick) } }
         end
       end
       assert_equal Sidebar::TAG_TRIES - 1, tries, "a tag that never lands (tmux < 3.0) stops costing ticks"
@@ -516,8 +516,8 @@ module Switchboard
       lands = @tag_lands.nil? || @tag_lands # a local: the stub runs with Tmux as self
       stub_method(CodeReload, :preflight, ->(*args, **kw) { calls << [args, kw]; preflight }) do
         stub_method(CodeReload, :real_bin, ->(*) { root && "#{root}/bin/switchboard" }) do
-          stub_method(Tmux, :flag_failed_reload, ->(_p, r) { flags << r; order << [:flag, r] }) do
-            stub_method(Tmux, :tag_sidebar_pane, ->(_p, v, clear_failed: true) { tags << v; order << [:tag, v, clear_failed]; lands }) { capture_stdout { sb.send(:reexec) } }
+          stub_method(CodeReload, :flag_failed_reload, ->(_p, r) { flags << r; order << [:flag, r] }) do
+            stub_method(CodeReload, :tag_sidebar_pane, ->(_p, v, clear_failed: true) { tags << v; order << [:tag, v, clear_failed]; lands }) { capture_stdout { sb.send(:reexec) } }
           end
         end
       end
@@ -564,7 +564,7 @@ module Switchboard
       sb, = exec_sidebar { raise Errno::ENOENT, "gone" }
       assert_equal Process.pid, sb.instance_variable_get(:@tag_pending), "the re-tag didn't land: owed"
       calls = []
-      stub_method(Tmux, :tag_sidebar_pane, ->(_p, v, clear_failed: true) { calls << [v, clear_failed]; true }) { sb.send(:retry_tag) }
+      stub_method(CodeReload, :tag_sidebar_pane, ->(_p, v, clear_failed: true) { calls << [v, clear_failed]; true }) { sb.send(:retry_tag) }
       assert_equal [[Process.pid, false]], calls
       assert_nil sb.instance_variable_get(:@tag_pending)
     end
@@ -576,7 +576,7 @@ module Switchboard
       sb = sidebar(nodes: [proj("app")])
       calls = []
       results = [false, false, true]
-      stub_method(Tmux, :tag_sidebar_pane, ->(_p, v, clear_failed: true) { calls << [v, clear_failed]; results.shift }) do
+      stub_method(CodeReload, :tag_sidebar_pane, ->(_p, v, clear_failed: true) { calls << [v, clear_failed]; results.shift }) do
         refute sb.send(:tag_pane)
         2.times { sb.send(:retry_tag) }
         sb.send(:retry_tag) # landed: nothing owed
@@ -591,16 +591,16 @@ module Switchboard
     def test_a_failed_reload_revokes_an_owed_boot_tags_clear
       @tag_lands = true
       sb = sidebar(nodes: [proj("app"), ws("a"), ws("b")], cursor: 2)
-      stub_method(Tmux, :tag_sidebar_pane, ->(*, **) { false }) { sb.send(:tag_pane) } # boot tag owed, may clear
+      stub_method(CodeReload, :tag_sidebar_pane, ->(*, **) { false }) { sb.send(:tag_pane) } # boot tag owed, may clear
       exec_sidebar(preflight: :failed, sb: sb) { flunk "no exec" }
       calls = []
-      stub_method(Tmux, :tag_sidebar_pane, ->(_p, v, clear_failed: true) { calls << [v, clear_failed]; true }) { sb.send(:retry_tag) }
+      stub_method(CodeReload, :tag_sidebar_pane, ->(_p, v, clear_failed: true) { calls << [v, clear_failed]; true }) { sb.send(:retry_tag) }
       assert_equal [[Process.pid, false]], calls, "the flag the failed check just wrote stands"
     end
 
     def test_a_mid_exec_tag_that_fails_owes_nothing
       sb = sidebar(nodes: [proj("app")])
-      stub_method(Tmux, :tag_sidebar_pane, ->(*, **) { false }) { sb.send(:tag_pane, 0) }
+      stub_method(CodeReload, :tag_sidebar_pane, ->(*, **) { false }) { sb.send(:tag_pane, 0) }
       assert_nil sb.instance_variable_get(:@tag_pending), "exec replaces us right after"
     end
 
@@ -643,7 +643,7 @@ module Switchboard
         :failed
       end
       stub_method(CodeReload, :preflight, repoint) do
-        stub_method(Tmux, :flag_failed_reload, ->(_pane, value) { flags << value }) { sb.send(:reexec) }
+        stub_method(CodeReload, :flag_failed_reload, ->(_pane, value) { flags << value }) { sb.send(:reexec) }
       end
       old_root = File.realpath(File.join(dir, "old"))
       assert_equal old_root, sb.instance_variable_get(:@reexec_blocked_root)
@@ -673,8 +673,8 @@ module Switchboard
         :ok
       end
       stub_method(CodeReload, :preflight, repoint) do
-        stub_method(Tmux, :flag_failed_reload, ->(*) {}) do
-          stub_method(Tmux, :tag_sidebar_pane, ->(*, **) { true }) { capture_stdout { sb.send(:reexec) } }
+        stub_method(CodeReload, :flag_failed_reload, ->(*) {}) do
+          stub_method(CodeReload, :tag_sidebar_pane, ->(*, **) { true }) { capture_stdout { sb.send(:reexec) } }
         end
       end
       old = File.realpath(File.join(dir, "old", "bin", "switchboard"))

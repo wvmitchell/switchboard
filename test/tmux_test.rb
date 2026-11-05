@@ -536,6 +536,20 @@ module Switchboard
     # which no developer sees; seam=none; no_claim=shell in switchboard.tmux, whose tmux calls set
     # hooks and read nothing, a one-word subcommand with no flag in a shell string ("tmux ls"), or
     # a command assembled from fragments
+    # Value: protects=the door reload and editor code use to reach tmux; break=query returning output from a failed call makes a reload parse an error as panes; seam=stubs IO.popen and Tmux.system; no_claim=a real tmux
+    def test_the_seam_answers_with_output_or_nil_and_stays_stubbable
+      argv = nil
+      ok = stub_method(IO, :popen, ->(cmd, **, &_b) { argv = cmd; system("true"); "x\n" }) { Tmux.query("list-panes") }
+      assert_equal "x\n", ok
+      assert_equal %w[tmux -u list-panes], argv
+      assert_nil stub_method(IO, :popen, ->(*, **, &_b) { system("false"); "x\n" }) { Tmux.query("list-panes") }
+      assert_nil stub_method(IO, :popen, ->(*, **, &_b) { raise Errno::ENOENT }) { Tmux.query("list-panes") }
+
+      sent = nil
+      assert_equal :answer, stub_method(Tmux, :system, ->(*a, **) { sent = a; :answer }) { Tmux.run("select-pane") }
+      assert_equal %w[tmux -u select-pane], sent
+    end
+
     def test_every_scripted_tmux_call_passes_u
       interactive = %w[attach attach-session]
       unchecked = /(?<![`\w-])tmux (?!-u\b)(?!attach\b)(?:-|[a-z]+-[a-z]+|[a-z]+ -)/ # a backtick inside text is advice to a person
@@ -572,18 +586,18 @@ module Switchboard
     # a live home pane, so editor panes can't pile up (the accumulation bug).
 
     def test_reusable_editor_pane_returns_the_stashed_id_when_still_live
-      assert_equal "%3", Tmux.reusable_editor_pane("%3", ["%0", "%1", "%3"])
+      assert_equal "%3", Editor.reusable_editor_pane("%3", ["%0", "%1", "%3"])
     end
 
     def test_reusable_editor_pane_is_nil_when_the_editor_pane_is_gone
       # :q closed the pane; the retired id is absent -> spawn a fresh editor.
-      assert_nil Tmux.reusable_editor_pane("%3", ["%0", "%1"])
+      assert_nil Editor.reusable_editor_pane("%3", ["%0", "%1"])
     end
 
     def test_reusable_editor_pane_is_nil_when_nothing_is_stashed
       # Option unset -> show-options -v yields "" -> no pane to reuse.
-      assert_nil Tmux.reusable_editor_pane("", ["%0", "%1"])
-      assert_nil Tmux.reusable_editor_pane("", [])
+      assert_nil Editor.reusable_editor_pane("", ["%0", "%1"])
+      assert_nil Editor.reusable_editor_pane("", [])
     end
 
     # --- pane_switch_keys: the user's own select-pane bindings, surfaced in the ?

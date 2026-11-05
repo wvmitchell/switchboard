@@ -188,7 +188,7 @@ the new binary re-wire tmux and every hooked worktree — the CHANGELOG header s
 | Config / registry | `lib/switchboard/config.rb` |
 | The data model + tree | `lib/switchboard/model.rb`, `tree.rb` |
 | The sidebar TUI | `lib/switchboard/sidebar.rb` (run-loop core) + `lib/switchboard/sidebar/{edges,render,input,actions,prompt,rows}.rb` (its test files: `test/sidebar_*_test.rb`, sharing `test/support/sidebar_case.rb`) |
-| tmux integration | `lib/switchboard/tmux.rb`, `switchboard.tmux` |
+| tmux integration | `lib/switchboard/tmux.rb`, `lib/switchboard/tmux/`, `switchboard.tmux` |
 | Install / keybindings | `lib/switchboard/installer.rb`, `stable_path.rb` (Homebrew `opt/` paths) |
 | Upgrade / release check | `lib/switchboard/upgrade.rb`, `latest_release.rb` |
 | Packaging / releases | `packaging/homebrew/switchboard.rb` (formula), `packaging/release.rb`, `.github/workflows/{release,formula}.yml` |

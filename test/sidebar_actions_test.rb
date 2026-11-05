@@ -847,7 +847,7 @@ module Switchboard
       ENV["SWITCHBOARD_BIN"] = "/opt/sb"
       captured = nil
       stub_method(Tmux, :session_of, -> { "sb/app/feat" }) do
-        stub_method(Tmux, :edit_in_home, ->(cmd) { captured = cmd }) do
+        stub_method(Editor, :edit_in_home, ->(cmd) { captured = cmd }) do
           sidebar(nodes: []).send(:edit_config)
         end
       end
@@ -863,7 +863,7 @@ module Switchboard
     def test_edit_config_tolerates_a_nil_origin_session
       captured = nil
       stub_method(Tmux, :session_of, -> { nil }) do
-        stub_method(Tmux, :edit_in_home, ->(cmd) { captured = cmd }) do
+        stub_method(Editor, :edit_in_home, ->(cmd) { captured = cmd }) do
           sidebar(nodes: []).send(:edit_config)
         end
       end

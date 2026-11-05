@@ -41,7 +41,7 @@ module Switchboard
     # A sidebar whose code reload failed keeps running its old code (#48); it flags its
     # pane. Silent when none did.
     def doctor_reload_failures
-      failed = Tmux.sidebar_reload_targets.to_a.select(&:failed)
+      failed = CodeReload.sidebar_reload_targets.to_a.select(&:failed)
       return if failed.empty?
 
       puts row(false, "#{failed.size} sidebar(s) still on old code after a failed reload (pane #{failed.map(&:pane).join(', ')}) — " \

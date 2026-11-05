@@ -170,7 +170,7 @@ module Switchboard
             "%6\t106\t0\t\t\tsb-sidebar\t/opt/sb/bin/switchboard sidebar\n" \
             "%7\t107\t107\t/Cellar/b\t\tsb-sidebar\t/opt/sb/bin/switchboard sidebar\n" \
             "%8\t108\t108\t\t1\tsb-sidebar\t/opt/sb/bin/switchboard sidebar\n"
-      got = Tmux.parse_reload_targets(raw).map { |t| [t.pane, t.pid, t.tagged, t.between, t.tag_pid, t.failed, t.bin] }
+      got = CodeReload.parse_reload_targets(raw).map { |t| [t.pane, t.pid, t.tagged, t.between, t.tag_pid, t.failed, t.bin] }
       assert_equal [["%1", 101, true, false, nil, false, "/opt/sb/bin/switchboard"],
                     ["%2", 102, false, false, nil, false, "/my dir/bin/switchboard"],
                     ["%3", 103, false, false, 99, false, "/opt/sb/bin/switchboard"], # a foreign tag: only its parent may vouch
@@ -184,12 +184,12 @@ module Switchboard
     # Value: protects=a pane some other program titled sb-sidebar is never respawned (respawn
     # kills what runs there); fails_when=start_bin accepts any command; seam=none
     def test_only_a_plain_switchboard_sidebar_command_can_be_respawned
-      assert_equal "/opt/sb/bin/switchboard", Tmux.start_bin("/opt/sb/bin/switchboard sidebar")
-      assert_nil Tmux.start_bin("sleep 300"), "not switchboard"
-      assert_nil Tmux.start_bin("/x/bin/switchboard sidebar --extra"), "extra arguments"
-      assert_nil Tmux.start_bin("/x/bin/switchboard"), "no sidebar verb"
-      assert_nil Tmux.start_bin("/x/bin/not-switchboard sidebar")
-      assert_nil Tmux.start_bin(""), "no command"
+      assert_equal "/opt/sb/bin/switchboard", CodeReload.start_bin("/opt/sb/bin/switchboard sidebar")
+      assert_nil CodeReload.start_bin("sleep 300"), "not switchboard"
+      assert_nil CodeReload.start_bin("/x/bin/switchboard sidebar --extra"), "extra arguments"
+      assert_nil CodeReload.start_bin("/x/bin/switchboard"), "no sidebar verb"
+      assert_nil CodeReload.start_bin("/x/bin/not-switchboard sidebar")
+      assert_nil CodeReload.start_bin(""), "no command"
     end
 
     # Value: protects=the cross-version contract: a newer image reads what an older one wrote;
@@ -215,11 +215,11 @@ module Switchboard
         out.write(version) if args.empty? && out.respond_to?(:write)
         preflight.call(bin, args)
       end
-      counts = stub_method(Tmux, :sidebar_reload_targets, -> { targets }) do
-       stub_method(Tmux, :same_reload_target?, ->(_t) { unchanged }) do
-        stub_method(Tmux, :parent_pids, ->(_pids) { parents }) do
-          stub_method(Tmux, :signal_sidebar, ->(pid) { log << [:signal, pid]; signal_ok }) do
-            stub_method(Tmux, :respawn_sidebar, ->(t, marker) { log << [:respawn, t.pane, CodeReload.decode(marker).nil?]; respawn_ok }) do
+      counts = stub_method(CodeReload, :sidebar_reload_targets, -> { targets }) do
+       stub_method(CodeReload, :same_reload_target?, ->(_t) { unchanged }) do
+        stub_method(CodeReload, :parent_pids, ->(_pids) { parents }) do
+          stub_method(CodeReload, :signal_sidebar, ->(pid) { log << [:signal, pid]; signal_ok }) do
+            stub_method(CodeReload, :respawn_sidebar, ->(t, marker) { log << [:respawn, t.pane, CodeReload.decode(marker).nil?]; respawn_ok }) do
               stub_method(CodeReload, :preflight, fake) { CodeReload.reload_all }
             end
           end
@@ -238,9 +238,9 @@ module Switchboard
     end
 
     def test_same_reload_target_compares_the_live_pane
-      t = Tmux::ReloadTarget.new(pane: "%1", pid: 10, tagged: false, between: false, bin: "/x/bin/switchboard")
+      t = CodeReload::ReloadTarget.new(pane: "%1", pid: 10, tagged: false, between: false, bin: "/x/bin/switchboard")
       live = lambda do |line|
-        stub_method(IO, :popen, ->(*_a, **_k, &_b) { system("true"); line }) { Tmux.same_reload_target?(t) }
+        stub_method(IO, :popen, ->(*_a, **_k, &_b) { system("true"); line }) { CodeReload.same_reload_target?(t) }
       end
       assert live.call("10\t\t0\tsb-sidebar\t/x/bin/switchboard sidebar\n")
       refute live.call("11\t\t0\tsb-sidebar\t/x/bin/switchboard sidebar\n"), "a new process"
@@ -251,7 +251,7 @@ module Switchboard
     end
 
     def target(pane, tagged:, bin: nil, between: false, pid: 1, tag_pid: nil, failed: false)
-      Tmux::ReloadTarget.new(pane: pane, pid: pid, tagged: tagged, between: between, tag_pid: tag_pid, failed: failed, bin: bin)
+      CodeReload::ReloadTarget.new(pane: pane, pid: pid, tagged: tagged, between: between, tag_pid: tag_pid, failed: failed, bin: bin)
     end
 
     # Value: protects=a sidebar under a shell that doesn't exec it (fish) reloads in place
@@ -291,8 +291,8 @@ module Switchboard
     def test_signaling_a_gone_sidebar_reads_as_unreached
       gone = Process.spawn("true", in: File::NULL)
       Process.wait(gone)
-      refute Tmux.signal_sidebar(gone), "ESRCH"
-      refute Tmux.signal_sidebar(1), "EPERM: pid 1 isn't ours" unless Process.uid.zero?
+      refute CodeReload.signal_sidebar(gone), "ESRCH"
+      refute CodeReload.signal_sidebar(1), "EPERM: pid 1 isn't ours" unless Process.uid.zero?
     end
 
     # Value: protects=a second reload never kills a sidebar mid-exec (R4); fails_when=a "0" tag
@@ -448,10 +448,10 @@ module Switchboard
       run = lambda do |bin|
         File.write(calls, "")
         targets = [target("%1", tagged: false, bin: bin)] # outside the stub: its body runs as Tmux
-        stub_method(Tmux, :sidebar_reload_targets, -> { targets }) do
-          stub_method(Tmux, :same_reload_target?, ->(_t) { true }) do
-            stub_method(Tmux, :parent_pids, ->(_pids) { {} }) do
-              stub_method(Tmux, :respawn_sidebar, ->(_t, _m) { true }) { CodeReload.reload_all }
+        stub_method(CodeReload, :sidebar_reload_targets, -> { targets }) do
+          stub_method(CodeReload, :same_reload_target?, ->(_t) { true }) do
+            stub_method(CodeReload, :parent_pids, ->(_pids) { {} }) do
+              stub_method(CodeReload, :respawn_sidebar, ->(_t, _m) { true }) { CodeReload.reload_all }
             end
           end
         end
@@ -479,6 +479,15 @@ module Switchboard
       assert_equal 1, counts[:left]
     end
 
+    # Value: protects=`reload-sidebars` telling "no server" apart from "no sidebars"; fails_when=a failed
+    # listing reads as an empty one; seam=stubs Tmux.query; no_claim=a real tmux
+    def test_a_failed_listing_is_no_server_not_no_sidebars
+      stub_method(Tmux, :query, ->(*) { nil }) do
+        assert_nil CodeReload.sidebar_reload_targets
+        assert_nil CodeReload.reload_all
+      end
+    end
+
     # Value: protects=an untagged sidebar on tmux < 3.0 (no respawn-pane -e) is still restarted,
     # by its own start command; fails_when=the no-(-e) retry is dropped, or a command is passed
     # (repointing a checkout's sidebar at another binary); why_new=smoke runs a modern tmux, so
@@ -486,14 +495,14 @@ module Switchboard
     def test_respawn_falls_back_without_the_env_flag_on_old_tmux
       calls = []
       ok = stub_method(Tmux, :system, ->(*argv, **) { calls << argv; !argv.include?("-e") }) do
-        Tmux.respawn_sidebar(target("%7", tagged: false), "MARK")
+        CodeReload.respawn_sidebar(target("%7", tagged: false), "MARK")
       end
       assert ok
       assert_equal [["tmux", "-u", "respawn-pane", "-k", "-e", "#{CodeReload::RESUME_ENV}=MARK", "-t", "%7"],
                     ["tmux", "-u", "respawn-pane", "-k", "-t", "%7"]], calls,
                    "-e first, then the bare retry; never a command (the pane reruns its own)"
       calls.clear
-      stub_method(Tmux, :system, ->(*argv, **) { calls << argv; true }) { Tmux.respawn_sidebar(target("%7", tagged: false), "M") }
+      stub_method(Tmux, :system, ->(*argv, **) { calls << argv; true }) { CodeReload.respawn_sidebar(target("%7", tagged: false), "M") }
       assert_equal 1, calls.size, "a modern tmux takes -e: no second respawn"
     end
 
@@ -505,7 +514,7 @@ module Switchboard
     # Value (the empty row): protects=a server with no sidebars reports zero counts, not "no
     # server"; fails_when=an empty listing returns nil or skips the counts; seam=none
     def test_reload_all_is_nil_off_a_server
-      assert_nil stub_method(Tmux, :sidebar_reload_targets, -> { nil }) { CodeReload.reload_all }
+      assert_nil stub_method(CodeReload, :sidebar_reload_targets, -> { nil }) { CodeReload.reload_all }
       counts, log = reload_with([])
       assert_equal({ signaled: 0, respawned: 0, left: 0, unreached: 0, failed: 0 }, counts, "no sidebars: zeros, not nil")
       assert_empty log
@@ -531,9 +540,9 @@ module Switchboard
     def test_tagging_a_pane_clears_a_failed_reload_but_mid_exec_does_not
       calls = []
       stub_method(Tmux, :system, ->(*argv, **) { calls << argv; true }) do
-        assert Tmux.tag_sidebar_pane("%3", 42)
-        Tmux.tag_sidebar_pane("%3", 0)
-        Tmux.flag_failed_reload("%3", "/Cellar/b")
+        assert CodeReload.tag_sidebar_pane("%3", 42)
+        CodeReload.tag_sidebar_pane("%3", 0)
+        CodeReload.flag_failed_reload("%3", "/Cellar/b")
       end
       assert_equal ["tmux", "-u", "set-option", "-p", "-t", "%3", CodeReload::TAG, "42",
                     ";", "set-option", "-p", "-u", "-t", "%3", CodeReload::FAILED_TAG], calls[0]
@@ -541,7 +550,7 @@ module Switchboard
       assert_equal ["tmux", "-u", "set-option", "-p", "-t", "%3", CodeReload::FAILED_TAG, "/Cellar/b"], calls[2]
       calls.clear
       stub_method(Tmux, :system, ->(*argv, **) { calls << argv; false }) do
-        refute Tmux.tag_sidebar_pane("%3", 42, clear_failed: false), "a tag that didn't land says so"
+        refute CodeReload.tag_sidebar_pane("%3", 42, clear_failed: false), "a tag that didn't land says so"
       end
       assert_equal [["tmux", "-u", "set-option", "-p", "-t", "%3", CodeReload::TAG, "42"]], calls,
                    "old code re-tagging itself leaves the failure flag"
@@ -591,17 +600,17 @@ module Switchboard
     end
 
     def test_parent_pids_reads_live_processes
-      assert_equal({ Process.pid => Process.ppid }, Tmux.parent_pids([Process.pid]))
-      assert_equal({}, Tmux.parent_pids([]))
+      assert_equal({ Process.pid => Process.ppid }, CodeReload.parent_pids([Process.pid]))
+      assert_equal({}, CodeReload.parent_pids([]))
     end
 
     def test_doctor_lists_sidebars_whose_reload_failed
-      failed = Tmux::ReloadTarget.new(pane: "%4", pid: 9, failed: true)
-      out, = stub_method(Tmux, :sidebar_reload_targets, -> { [failed, Tmux::ReloadTarget.new(pane: "%5", pid: 8)] }) do
+      failed = CodeReload::ReloadTarget.new(pane: "%4", pid: 9, failed: true)
+      out, = stub_method(CodeReload, :sidebar_reload_targets, -> { [failed, CodeReload::ReloadTarget.new(pane: "%5", pid: 8)] }) do
         capture_io { Doctor.doctor_reload_failures }
       end
       assert_includes out, "1 sidebar(s) still on old code after a failed reload (pane %4)"
-      out, = stub_method(Tmux, :sidebar_reload_targets, -> { nil }) { capture_io { Doctor.doctor_reload_failures } }
+      out, = stub_method(CodeReload, :sidebar_reload_targets, -> { nil }) { capture_io { Doctor.doctor_reload_failures } }
       assert_empty out, "silent off a server or with none"
     end
 
