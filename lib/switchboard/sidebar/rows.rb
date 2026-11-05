@@ -217,9 +217,9 @@ module Switchboard
       # The gate is the worktree's logs/HEAD mtime — read FRESH here, not from
       # @branch_cache[path][1], because that cached mtime only refreshes on rebuild;
       # the refresh_agents edge caller runs WITHOUT a rebuild, so a just-landed commit would
-      # otherwise compare stale-to-stale and skip. Only the gitdir ([0], stable and
-      # already absolute) is safe to reuse from @branch_cache. A MERGED/CLOSED PR row
-      # bypasses the gate: origin fast-forwarding past the branch zeros the base...HEAD
+      # otherwise compare stale-to-stale and skip. Only the gitdir ([0], already absolute,
+      # re-resolved by rebuild if its reflog goes) is safe to reuse from @branch_cache. A
+      # MERGED/CLOSED PR row bypasses the gate: origin fast-forwarding past the branch zeros the base...HEAD
       # diff without moving logs/HEAD (the same blind spot the PR badge has, healed by
       # R). Compute value-or-nil; nil DELETES the entry, so a row that loses its cache
       # slot, base, or diffability clears instead of painting a ghost count. Fully
