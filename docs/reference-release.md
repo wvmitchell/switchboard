@@ -109,7 +109,7 @@ The trigger list must match the job's `GATES` env (`test formula`).
 
 | Trigger | Paths |
 |---------|-------|
-| `pull_request` | `packaging/**`, `bin/switchboard`, `switchboard.tmux`, `lib/switchboard.rb`, `lib/switchboard/{stable_path,root,installer,cli,config}.rb`, `.github/workflows/formula.yml` |
+| `pull_request` | `packaging/**`, `bin/switchboard`, `switchboard.tmux`, `lib/switchboard.rb`, `lib/switchboard/{stable_path,root,installer,cli,config}.rb`, `lib/switchboard/installer/**`, `.github/workflows/formula.yml` |
 | `push` to `main` | all paths (every releasable commit gets a brew test) |
 
 On `macos-latest` it builds a `git archive` tarball of the commit, renders the
