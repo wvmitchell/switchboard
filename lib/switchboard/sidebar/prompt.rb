@@ -22,6 +22,20 @@ module Switchboard
         answer.to_s.downcase == "y"
       end
 
+      # Context for the confirm that follows, on the rows above it. False when it can't all
+      # fit, so the caller doesn't ask about what it couldn't show. Each line is cut by
+      # columns, because a wrapped one would scroll the frame. The next render repaints these rows.
+      def paint_above_prompt(lines)
+        return true if lines.empty?
+
+        rows, cols = winsize
+        return false if lines.size > rows - 1
+
+        top = rows - lines.size
+        print lines.each_with_index.map { |text, i| "\e[#{top + i};1H\e[K#{fit_columns(shown(text), cols)}" }.join
+        true
+      end
+
       # Inline line prompt on the bottom row, edited in raw mode (issue #68). We stay
       # raw — never drop to cooked — so the line discipline can't swallow Esc as a
       # literal byte: Esc and Ctrl-C cancel (return nil), ↵ submits the stripped text,
