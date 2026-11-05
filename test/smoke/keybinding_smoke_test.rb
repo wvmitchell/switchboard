@@ -65,14 +65,14 @@ module Switchboard
     # the whole table is read as this key's line; why_new=stubs can't show tmux's parsing; seam=none;
     # no_claim=every such key
     def test_a_semicolon_key_comes_back
-      tmux!("bind-key", "-T", "prefix", "\;", "last-pane")
-      original = line_for("\;")
+      tmux!("bind-key", "-T", "prefix", "\\;", "last-pane")
+      original = line_for("\\;")
       refute_empty original
       bind_toggle_to(";")
-      assert_includes line_for("\;"), "toggle-sidebar"
+      assert_includes line_for("\\;"), "toggle-sidebar"
       assert_equal original, tmux("show-options", "-gqv", "@switchboard-toggle-displaced").strip
       bind_toggle_to("t")
-      assert_equal original, line_for("\;")
+      assert_equal original, line_for("\\;")
     end
 
     # Value: protects=a moved install keeping what it saved; fails_when=the old install's binding reads
