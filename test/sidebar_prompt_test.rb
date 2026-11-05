@@ -71,18 +71,45 @@ module Switchboard
     def test_held_pokes_run_once_each_after_the_prompt_closes
       sb = sidebar
       events = []
-      sb.define_singleton_method(:reload) { |**| events << :closed }
+      sb.define_singleton_method(:quit) do
+        confirm("quit?")
+        events << :closed
+        true
+      end
       stub_method(sb, :poke, ->(key) { events << key; true }) do
-        with_reads(sb, "\x17", "\x17\x17", "\e[O", "\e[I", "\e[O", "\e[I", "x") { sb.send(:handle, "a") }
+        with_reads(sb, "\x17", "\x17\x17", "\e[O", "\e[I", "\e[O", "\e[I", "x") { sb.send(:handle, "q") }
       end
       assert_equal [:closed, "\x17", "\e[O", "\e[I"], events, "one of each kind, however many arrived"
 
       # Only this script tells last-of-kind from first-of-kind: focus must end out.
       events.clear
       stub_method(sb, :poke, ->(key) { events << key; true }) do
-        with_reads(sb, "\e[O", "\e[I", "\e[O", "x") { sb.send(:handle, "a") }
+        with_reads(sb, "\e[O", "\e[I", "\e[O", "x") { sb.send(:handle, "q") }
       end
       assert_equal [:closed, "\e[I", "\e[O"], events, "the last of each kind survives, so the final focus report runs last"
+    end
+
+    # Value: protects=walking away from a message or menu can't stop this sidebar's dots and
+    # chimes; fails_when=flash or add waits through a focus-out; why_new=confirm's wait is
+    # the opposite rule, tested above; seam=none; no_claim=real focus delivery (scripted reads)
+    def test_a_message_and_the_add_menu_close_when_you_leave_the_pane
+      left = nil
+      with_reads(sb = sidebar, "\e[O", "unread") do |reads|
+        sb.send(:flash, "boom")
+        left = reads.dup
+      end
+      assert_equal ["unread"], left, "the focus-out closed the message"
+
+      sb = sidebar
+      events = []
+      added = false
+      sb.define_singleton_method(:add_local) { added = true }
+      sb.define_singleton_method(:reload) { |**| events << :closed }
+      stub_method(sb, :poke, ->(key) { events << key; true }) do
+        with_reads(sb, "\e[O", "l") { sb.send(:handle, "a") }
+      end
+      refute added, "the menu had closed before the l"
+      assert_equal [:closed, "\e[O"], events, "and the focus-out still ran, after it closed"
     end
 
     # Value: protects=a poke batched behind the answer still runs after the prompt closes;
@@ -119,8 +146,7 @@ module Switchboard
       sb = sidebar
       opened = false
       sb.define_singleton_method(:open_repo) { opened = true }
-      sb.define_singleton_method(:reload) { |**| nil }
-      with_reads(sb, "\e[O", "n") { sb.send(:handle, "a") }
+      with_reads(sb, "\e[O", "n") { sb.send(:handle, "q") }
       refute opened
     end
 
@@ -277,7 +303,7 @@ module Switchboard
           reserved = project
           nil # no free name ⇒ a flash, nothing recorded
         }) do
-          stub_method(sb, :read_char, -> {}) { capture_stdout { sb.send(:create) } }
+          stub_method(sb, :read_char, ->(**) {}) { capture_stdout { sb.send(:create) } }
         end
       end
       assert_equal "app", reserved

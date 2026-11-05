@@ -9,6 +9,7 @@ module Switchboard
     module Prompt
       PASTE_START = "\e[200~" # bracketed paste (the task prompt turns it on)
       PASTE_END = "\e[201~"
+      FOCUS_OUT = "\e[O"
 
       private
 
@@ -256,7 +257,7 @@ module Switchboard
         rows, cols = winsize
         print "\e[#{rows};1H\e[K\e[31m#{trunc(shown(message), cols - 11)}\e[0m — any key "
         $stdout.flush
-        read_char
+        read_char(leaving_closes: true)
       end
 
       # The next real key in raw mode (nil if the read fails or the pane is gone). Tmux's
@@ -264,18 +265,25 @@ module Switchboard
       # @typeahead for the prompt to close, along with anything read after the key. A
       # long-open prompt can collect many pokes that all mean "catch up now", so only the
       # last of each kind runs (the last, so focus ends right).
-      def read_char
+      #
+      # The sidebar does nothing else while this waits. A y/N is worth that, but a message
+      # or a menu isn't: with `leaving_closes`, a focus-out returns nil and still runs, so
+      # walking away can't silently stop this pane's dots, chimes and reap.
+      def read_char(leaving_closes: false)
         held = []
         after = []
         loop do
           chunk = read_prompt_key or return nil
           tokens, @pending = Input.tokenize(@pending.to_s + chunk)
-          at = tokens.index { |t| !Input::POKE_BYTES.include?(t) }
+          at = tokens.index { |t| !Input::POKE_BYTES.include?(t) || (leaving_closes && t == FOCUS_OUT) }
           next held.concat(tokens) unless at
 
           held.concat(tokens[0...at])
           after = tokens[(at + 1)..]
-          return tokens[at]
+          return tokens[at] unless tokens[at] == FOCUS_OUT
+
+          after.unshift(FOCUS_OUT)
+          return nil
         end
       rescue StandardError
         nil

@@ -106,8 +106,10 @@ broadcast landing on an open delete prompt read as "no" and the prompt vanished.
 skips those bytes and runs them once the prompt closes. A prompt can sit open for hours, so
 it keeps only the last of each kind, because they all mean "catch up now", and the last
 focus report is the true one. If a typed prompt opens straight after, as the `a` menu's does,
-it drops them, and the next tick catches up. While a prompt is open, that sidebar doesn't scan or repaint,
-and a pending code reload waits too, so its tree catches up when you answer.
+it drops them, and the next tick catches up. While a y/N prompt is open, that sidebar doesn't scan or repaint,
+and a pending code reload waits too, so its tree catches up when you answer. That's worth it
+for a question you might want to come back to, but not for a message or a menu, so the "any
+key" errors and the `a` menu close when you leave the pane.
 
 ### Pre-warming: fresh on arrival, without the flash
 
