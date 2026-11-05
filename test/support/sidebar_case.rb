@@ -11,6 +11,16 @@ module Switchboard
   # concerns. Test files under test/sidebar_*_test.rb subclass this; bin/test
   # never auto-runs it (not a *_test.rb).
   class SidebarCase < SandboxTest
+    # Script the raw reads behind the bottom-row prompts, so a split read is exact and
+    # running out is EOF. Yields the reads left, to show how many a prompt consumed.
+    def with_reads(sb, *reads)
+      stub_method(sb, :winsize, ->(*) { [24, 40] }) do
+        stub_method(sb, :read_prompt_key, ->(*) { reads.shift }) do
+          capture_stdout { yield reads }
+        end
+      end
+    end
+
     # --- node + sidebar builders --------------------------------------------
 
     def proj(name)

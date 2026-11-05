@@ -259,11 +259,28 @@ module Switchboard
         read_char
       end
 
-      # One key in raw mode (nil if the read fails).
+      # The next real key in raw mode (nil if the read fails or the pane is gone). Tmux's
+      # pokes and focus reports share this stream and aren't an answer, so they wait in
+      # @typeahead for the prompt to close, along with anything read after the key. A
+      # long-open prompt can collect many pokes that all mean "catch up now", so only the
+      # last of each kind runs (the last, so focus ends right).
       def read_char
-        $stdin.getc
+        held = []
+        after = []
+        loop do
+          chunk = read_prompt_key or return nil
+          tokens, @pending = Input.tokenize(@pending.to_s + chunk)
+          at = tokens.index { |t| !Input::POKE_BYTES.include?(t) }
+          next held.concat(tokens) unless at
+
+          held.concat(tokens[0...at])
+          after = tokens[(at + 1)..]
+          return tokens[at]
+        end
       rescue StandardError
         nil
+      ensure
+        @typeahead&.concat(held.reverse.uniq.reverse, after)
       end
     end
     include Prompt
