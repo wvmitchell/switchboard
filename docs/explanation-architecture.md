@@ -30,8 +30,8 @@ from it:
   Conductor creates, shows up the instant git knows about it. There's nothing to
   reconcile, no import step, no stale rows. emdash and Conductor are peers, not
   dependencies — their worktrees appear because git finds them.
-- **No coupling.** The old emdash SQLite seed import was removed (issue #3).
-  `install`/`init` write an empty config; the add-project flow grows it.
+- **No coupling.** Switchboard imports nothing from those tools. `install`/`init` write
+  an empty config; the add-project flow grows it.
 - **PR badges are the one thing git doesn't know,** so they come from `gh` —
   cached on disk (`~/.cache/switchboard/prs`) so the UI never blocks on the
   network. That cache is the only piece of external state, and it self-refreshes
@@ -100,11 +100,6 @@ Pr  ────┘   (project    (ordered      (hand-rolled ANSI TUI in a
 
 The primary trunk checkout (`primary`) is always filtered out as a switch target
 (you never switch *to* `main`).
-
-> There used to be a second front-end — an `fzf` popup picker (`picker.rb`,
-> `Tree.lines`, the `view.rb` preview functions, and `_`-prefixed fzf-callback
-> subcommands in `cli.rb`). It was removed so the sidebar is the single source of
-> truth. References to it in old commits or issues are stale.
 
 ## Layers
 
@@ -181,8 +176,8 @@ fails the test instead of being half-read. Nested names don't count either:
 (`CodeReload::VERSION`) doesn't count as the top-level one. Only constants count: a
 `require_relative` or a method called on `Switchboard` itself isn't an edge.
 
-The violations that predated the test went in its `ALLOWED` table, each with a note on what
-removes it. The last one is now fixed, so the table is empty. It only shrinks: once an entry
+A known violation goes in the test's `ALLOWED` table, with a note on what removes it. The
+table is empty today, and it only shrinks: once an entry
 is fixed, the test fails until the entry is deleted. An entry covers a whole pair of files,
 though, so a *new* reference between those same two files goes unnoticed until the entry is
 removed. Keep the entries few and short-lived. This is the same idea as Packwerk's constant analysis,
@@ -360,15 +355,15 @@ server that ran its `split-window`, so this machine-wide `ps` can only reach sid
 server owns. A different server's sidebar, such as your real one while a throwaway smoke or
 sandbox server runs a prune, is out of range by construction, not just by an env check.
 
-That closed a real bug: running the smoke suite used to SIGTERM the developer's live
-sidebars. Their ttys aren't panes on the isolated server, but they're another server's
-children, so the ppid scope now excludes them. It fails safe: a nil server pid, or a wrong
-assumption about the process tree, reaps too little, never too much. `SWITCHBOARD_SANDBOX`
+The scope matters because the tty check alone would condemn your live sidebars during a
+smoke run: their ttys aren't panes on the isolated server. It fails safe: a nil server
+pid, or a wrong assumption about the process tree, reaps too little, never too much.
+`SWITCHBOARD_SANDBOX`
 is a second guard on top of that: inside a throwaway server, the reap is skipped entirely
 (see [the sandbox](#the-sandbox)).
 
 Orphans mostly pile up from interrupted `bin/test-smoke` runs, whose daemon servers outlive
-the run; the smoke harness now sweeps those before each run.
+the run; the smoke harness sweeps those before each run.
 
 ## Configurable tmux keys
 
@@ -487,11 +482,10 @@ one source and can't drift.
 Teardown and the sweep both go through one primitive,
 `IsolatedServer.kill_server(sock_dir)`.
 
-The bug it closes: a tmux daemon *outlives its socket*. Once the socket file is unlinked,
-`tmux kill-server`, which finds the server by path, can never reach it. The old
-socket-only teardown removed the directory after a kill that had merely been *attempted*,
-which stranded a live daemon where `sweep_stale` (keyed by directory) could never find it.
-About 15 such zombies had piled up.
+The problem: a tmux daemon *outlives its socket*. Once the socket file is unlinked,
+`tmux kill-server`, which finds the server by path, can never reach it. A socket-only
+teardown that removed the directory after a kill that had merely been *attempted* would
+strand a live daemon where `sweep_stale` (keyed by directory) could never find it.
 
 So `kill_server` does both:
 
@@ -509,7 +503,7 @@ server) won't match, reads as nil, and is never killed. On top of that, `ensure_
 SIGKILLs a process that's still a live `tmux`. So it can never reach your real server.
 
 Callers remove the directory only *after* `kill_server` returns, so a kill that doesn't
-take can no longer orphan a daemon.
+take can't orphan a daemon.
 
 `test/smoke/isolated_server_smoke_test.rb` verifies this: it unlinks a live server's socket
 and asserts the server is still reaped by its recorded pid. The pure pieces
@@ -574,8 +568,8 @@ unit-tested offline.
   memoized by mtime).
 - **tmux as the substrate.** Leaning on tmux for sessions, panes, and hooks means
   switchboard does no window management itself, but it inherits tmux's quirks —
-  most sharply, [recycled pane ids](explanation-sidebar-lifecycle.md), which drove
-  a real duplicate-sound bug.
+  most sharply, [recycled pane ids](explanation-sidebar-lifecycle.md), which could
+  make a completion ring twice.
 
 ## Conventions
 
@@ -593,7 +587,7 @@ switchboard locally against throwaway state, see the env overrides in
 ## Related
 
 - [Explanation: agent presence](explanation-agent-presence.md) — the dots, sounds, and bold.
-- [Explanation: sidebar lifecycle](explanation-sidebar-lifecycle.md) — per-session visibility and the orphan bug.
+- [Explanation: sidebar lifecycle](explanation-sidebar-lifecycle.md) — per-session visibility and recycled pane ids.
 - [Explanation: background dispatch](explanation-background-dispatch.md) — how `n` builds a workspace.
 - [Reference: the `switchboard` command](reference-cli.md) — every command and flag.
 - [Reference: config](reference-config.md) — the registry this all reads.

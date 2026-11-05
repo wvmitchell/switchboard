@@ -72,12 +72,12 @@ existence is ever read, never the contents, it doesn't need the temp+rename writ
 A workspace that has held several branches expands into inline branch rows
 (`Tree.nodes` / `Git.branch_history`), which covers the case of several PRs from one
 workspace. Those rows are useful now and then and noise most of the time. `z` (issue #107)
-folds *every* workspace's branch rows at once, wherever the cursor is; the ask was one
-"toggle branches" key, not a per-row fold.
+folds *every* workspace's branch rows at once, wherever the cursor is: one "toggle
+branches" key, not a per-row fold.
 
 So it's modeled like `FullHeader`, not like `Collapse`: a single global existence flag
 (`BranchFold`, `branch_fold.rb`, `SWITCHBOARD_BRANCH_FOLD_FILE`), also on `ViewFlag`. It defaults to off,
-so branches show, exactly as before #107, until you press `z`.
+so branches show until you press `z`.
 
 `toggle_branch_fold` writes through, flips `@fold_branches`, then puts the cursor back on
 the row it was on, by path. Folding from a branch row lands you on its workspace.
@@ -120,10 +120,9 @@ characters.
 
 ### The width: a file holding a number
 
-The sidebar used to be a fixed 40 columns (`Tmux::SIDEBAR_WIDTH`), and `pin_if_resized`
-re-asserted that on every paint, so a plain `resize-pane` was undone by the next pin. Now
-`←`/`→` in the tree step the width by `WIDTH_STEP` columns per press (issue #78), and the
-pin *respects* the width you chose.
+`pin_if_resized` re-asserts the sidebar's width, so a plain `resize-pane` is undone by the
+next pin. To change it, `←`/`→` in the tree step the width by `WIDTH_STEP` columns per press
+(issue #78), and the pin *respects* the width you chose.
 
 `Width` (`width.rb`) is a single global file like `FullHeader` (`SWITCHBOARD_WIDTH_FILE`),
 but it holds an integer. That value is *read*, so a torn write could misread, which is why
@@ -210,9 +209,9 @@ the `pr_*` pair. They abbreviate counts of 1000 or more (`1.5k`), so a huge diff
 swallow the name in a narrow pane.
 
 **The counts and badges line up in fixed columns** (issue #118). Alignment is a property
-of all the visible rows, not one row, so `line` can't size it alone. It used to
-flush-right one `[diff, id]` block per row, which made the `+/−` and `#n` numbers
-staircase. Now `Sidebar#column_widths(@rows)` measures three widths once per `render`:
+of all the visible rows, not one row, so `line` can't size it alone. Flush-righting one
+`[diff, id]` block per row would make the `+/−` and `#n` numbers staircase, so
+`Sidebar#column_widths(@rows)` measures three widths once per `render`:
 
 - the `+adds` sub-column,
 - the `−dels` sub-column,
@@ -223,7 +222,7 @@ rows on screen, so columns hold steady while you scroll; folding a noisy project
 them. The widths are passed into every `line`. Each cell right-justifies (`rjust`) into its column
 (`right_region` → `diff_cell` / `pad_cell`), padding by the *plain* width and then
 wrapping the ANSI, the same split `line` uses. The `+adds`, `−dels` and `#n` columns stay
-flush to the right edge as before.
+flush to the right edge.
 
 A missing cell becomes aligned blanks, not a gap that shifts its neighbor, so the #90
 expanded-workspace suppression reads as clean empty columns. Single-row callers (tests)
@@ -257,8 +256,7 @@ cache logic alone.
 ## Type-to-filter
 
 `/` starts an incremental filter inside the sidebar (issue #60). It works like fzf, but
-it isn't the external `fzf` popup that was removed; it's the same navigator, made
-searchable.
+it's the same navigator, made searchable.
 
 `@filter` is `nil` when off, or the query string. `recompute_rows` switches on it to
 `filtered_rows`, which keeps each project's matching workspace and branch rows *under
@@ -301,21 +299,20 @@ keystroke closes it, except `→`, Space and `←`, which turn pages when the ma
 (below). The `@help` flag is per-process and short-lived, like `@filter`, because opening
 help is an action, not a preference.
 
-It exists because the footer is limited by the pane's width. A *daily* user never found
-`g`/`G`, because the old three-line legend had no room to teach them. Every key the footer
-can't fit now lives in the overlay: `g`/`G`, `←`/`→`, the `^N`/`^P` aliases, the keys for
-the filter and prompt modes, what the diff counts mean, and the tmux keys that operate the
-sidebar.
+It exists because the footer is limited by the pane's width, with no room to teach every
+key. Every key the footer can't fit lives in the overlay: `g`/`G`, `←`/`→`, the `^N`/`^P`
+aliases, the keys for the filter and prompt modes, what the diff counts mean, and the tmux
+keys that operate the sidebar.
 
 ### The footer points to it, in one line
 
 Help you have to already know about isn't help, so `footer` always ends with `? help`.
-And since the overlay holds the full reference, the footer dropped its two lines of
-action keys. It's one line that changes with context (`nav · ? help`, where the nav verb
+And since the overlay holds the full reference, the footer doesn't list action keys. It's
+one line that changes with context (`nav · ? help`, where the nav verb
 swaps between open, collapse and switch; on the home sidebar, the title; in an empty tree,
-the invitation to add a first project; while you type a movement count, `3…`), which gives the tree two more rows. The old
-`/ filter` and `+/− vs base` hints moved into the overlay. `filter_footer` keeps its three
-lines, since it shows the live query, not key hints.
+the invitation to add a first project; while you type a movement count, `3…`), which leaves
+more rows for the tree. The `/ filter` and `+/− vs base` hints live in the overlay.
+`filter_footer` keeps its three lines, since it shows the live query, not key hints.
 
 ### Real keys close it; background pokes don't
 
@@ -347,8 +344,8 @@ wake while help is up. `render_help` uses the same cursor-addressed, no-flash pa
 
 ### A short pane pages; it never cuts
 
-The map outgrew a normal pane, and the part it used to cut off was the tmux section, the
-one that answers "how do I hide this?". So the body comes from the pure
+The map can be taller than a normal pane, and cutting it off would lose the tmux section,
+the one that answers "how do I hide this?". So the body comes from the pure
 `help_pages(rows, cols)`, which packs `help_sections` greedily into pages of `rows - 1`
 lines. `help_sections` is the head block, then one group per `["", heading]` row of
 `Keymap.help_rows` plus `tmux_help_rows`. It groups from those rows, never by re-splitting
@@ -361,7 +358,7 @@ The packing rules:
 - **No blank tops.** A separator that would land at the top of a page is dropped.
 - **Tiny panes still work.** With `rows < 2` the result is `[[]]`: just the hint, since a
   zero-line page would never fill.
-- **The hint says what to do.** One page reads `any key to close`, as before. Several read
+- **The hint says what to do.** One page reads `any key to close`. Several read
   `1/2 · → more · other keys close` / `2/2 · ← back · other keys close`.
 
 `→` and Space go forward, `←` goes back (`HELP_PAGE_STEPS`). Paging stops at both ends,
@@ -371,7 +368,7 @@ so a double-tap can't close it. Any other real key still closes.
 from the last render. `handle` processes a whole read before the next render, so a fast
 `?` then `→` would otherwise see no page count and close the overlay.
 
-That opened another hole, which both adversarial reviewers reproduced. Help only repaints
+That alone isn't enough. Help only repaints
 every `REFRESH`, so the pane can grow to fit one page between a paint of `2/2` and your
 next `→`. That `→` would then close the overlay, and the rest of a held-arrow burst would
 go to the tree's resize, changing your saved width. So `@help_paged` makes the paging keys

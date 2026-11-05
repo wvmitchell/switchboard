@@ -53,7 +53,7 @@ the same bytes point at the new keg, so nothing needs rewriting and codex's trus
 survives.
 
 A clone path doesn't match the keg pattern and passes through unchanged, so clone
-installs behave exactly as before.
+installs aren't affected.
 
 ### Trade-offs
 
@@ -139,9 +139,9 @@ CHANGELOG entry, and pushes the formula to the tap.
   Release gets the Release on the next run.
 - **Loud failures.** Every fact-gathering lookup fails the step when it errors.
   "Not green" means the gate genuinely isn't green, not that the question
-  couldn't be asked. This matters: an early version listed only
-  `contents: write`, which silently dropped `actions: read`, the permission to read
-  Actions results, and every run reported nothing to do.
+  couldn't be asked. This matters: listing only `contents: write` silently drops
+  `actions: read`, the permission to read Actions results, and a failed lookup read as
+  "not green" would make every run report nothing to do.
 - **Decisions in tested Ruby.** The workflow only gathers facts. What to do with
   them is `Release.plan` (`packaging/release.rb`), a pure function with table-driven tests in
   `test/release_test.rb`, alongside the CHANGELOG parser and formula renderer.
@@ -240,8 +240,7 @@ clone's new binary can still re-exec itself under a modern Ruby. The finish step
 
 A hand-off (new code arrived) ends by reloading every running sidebar
 (`Upgrade.reload_sidebars` → `CodeReload.reload_all`, installed binary only; see
-[the code reload](explanation-sidebar-lifecycle.md)) and prints the counts. The old "press
-prefix-s twice" hint is gone.
+[the code reload](explanation-sidebar-lifecycle.md)) and prints the counts.
 
 **Running it again repairs a broken upgrade.** An up-to-date run still finishes any
 leftover setup (`leftovers?`, which includes tmux key drift), so re-running finishes an
