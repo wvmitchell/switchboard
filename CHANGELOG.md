@@ -13,8 +13,8 @@ refer to the project's earlier, private repository; the public tracker starts at
 ## [0.66.3] — `switchboard doctor` moved, no behavior change (2026-11-05)
 
 ### Changed
-- Internal only. `switchboard doctor`'s checks now have their own file and read the config
-  they're handed. It prints the same rows as before.
+- Internal only. `switchboard doctor`'s checks now have their own file and take the config as
+  an argument. It prints the same rows as before.
 
 ## [0.66.2] — agent hook handling moved, no behavior change (2026-11-05)
 
