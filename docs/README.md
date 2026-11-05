@@ -48,7 +48,7 @@ depth behind it.
 - [Agent presence](explanation-agent-presence.md) — the two-signal dots, hooks,
   and the one edge that drives the dot, the sound, and the bold name.
 - [The sidebar's lifecycle](explanation-sidebar-lifecycle.md) — per-session
-  visibility, off-screen dormancy, and the recycled-pane-id bug it prevents.
+  visibility, off-screen dormancy, and why a sidebar checks that it still owns its pane.
 - [Distribution](explanation-distribution.md) — why install paths go through
   Homebrew's `opt/` link, and why only a fully-green main tip ever releases.
 - [Background dispatch](explanation-background-dispatch.md) — how `n` (or

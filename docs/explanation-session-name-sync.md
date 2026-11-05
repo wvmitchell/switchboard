@@ -81,8 +81,8 @@ unparseable reply), and unknown counts as "maybe someone is there":
   `send-keys` binding in one session can type into another session's pane.
 
 The gate is focus, not visibility. After you press `r` in the sidebar, the agent's pane
-is on screen but your keyboard is on the sidebar. An older version gated on "off
-screen", which meant you had to leave the session before the rename could land.
+is on screen but your keyboard is on the sidebar. Gating on "off screen" would mean
+leaving the session before the rename could land.
 
 Some clients can send keys to a pane that isn't the window's active one, so a session
 with one of them attached reads as unknown and is never typed into:
@@ -106,7 +106,7 @@ of the pane, not its direct child. Then:
 - **Our line fits the pane's width.**
 - **Claude is still in charge of that terminal.** One `ps` read of tty, stat, pgid and
   tpgid confirms it's still on the pane's tty, still running, and holds the terminal's
-  foreground process group. Each of these has caught a real case:
+  foreground process group. Each of these rules out a real case:
   - a suspended (`^Z`) Claude can leave its last prompt box on screen;
   - a Claude moved to another terminal with `reptyr` owns *that* terminal's foreground,
     while its old frame still sits in our pane;
@@ -175,8 +175,8 @@ status (idle, busy or shell, never a modal or an unknown status), the same Claud
 front, then untouched once more. Only then does it take back our line, and the back-out
 counts as clean only once the box reads empty again.
 
-Why one blanket rule instead of a list of special cases: three review rounds each found
-a new way backspaces into a pane someone might be using could eat their keys. Claude
+Why one blanket rule instead of a list of special cases: there are too many ways backspaces
+into a pane someone might be using could eat their keys. Claude
 draws a key about 130 ms after it arrives, `Box.parse` strips a trailing space, and focus
 can move in and out during the slow `ps` checks. "Never back out if anyone touched a
 key" closes the whole class at once. A prefix of our text still showing after the settle
@@ -210,8 +210,7 @@ counting.
 A retry *you* run (renaming to the same name again) is a new worker, so it may try once
 more. That's deliberate.
 
-This rule is what ended the retry loops earlier reviews kept finding. Don't add a retry
-around it.
+This rule is what keeps the worker out of retry loops. Don't add a retry around it.
 
 ## How long it keeps trying
 
@@ -282,8 +281,8 @@ an `error` verdict, so it never exits silently.
 A marker is the *newest* worker's verdict. The worker keys it by the realpath it started
 with, writes one per pass (`failed_send` first), and writes nothing once it's superseded
 or retired. The verdict comes from evidence alone. There's no ranking, and nothing
-carries over between workers; two review passes tried sticky and carry-over rules, and
-each grew new corner cases. At the time limit, a box still holding any `/rename …` is a
+carries over between workers, since sticky and carry-over rules each grow new corner
+cases. At the time limit, a box still holding any `/rename …` is a
 `failed_send` (a `:leftover` pass), so leftover text is reported by whichever worker
 finds it. A rename simply forgets the old path's marker.
 
