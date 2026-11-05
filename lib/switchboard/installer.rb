@@ -489,14 +489,15 @@ module Switchboard
         recorded = tmux_option("@switchboard-#{role}-key")
         restore = restorable(role, recorded, raw)
         restored << recorded if restore
-        run_op(restore ? [:restore, recorded, restore] : [:unbind, recorded]) if recorded
+        run_op(restore ? [:restore, recorded, restore] : [:unbind, recorded]) if recorded && !kept_key?(recorded, raw)
         run_tmux("set-option", "-gu", "@switchboard-#{role}-key")
         run_tmux("set-option", "-gu", "@switchboard-#{role}-clobbered")
         run_tmux("set-option", "-gu", "@switchboard-#{role}-displaced")
         run_tmux("set-option", "-gu", "@switchboard-#{role}-rejected")
       end
       run_tmux("set-option", "-gu", "@switchboard-config-path")
-      run_tmux("unbind-key", "s") unless restored.include?("s") # legacy default — covers installs predating the @option record
+      # Legacy default: covers installs predating the @option record, so only if it's still ours.
+      run_tmux("unbind-key", "s") if !restored.include?("s") && switchboard_binding?(binding_on(raw, "s"))
       HOOK_SLOTS.each { |slot| run_tmux("set-hook", "-gu", slot) }
     end
 

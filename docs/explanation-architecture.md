@@ -391,8 +391,9 @@ The rest of the rules:
 - **A displaced binding is recorded, then given back.** If binding replaced someone else's,
   that's recorded in `@switchboard-*-clobbered` for `doctor` to warn about, and the whole
   `list-keys` line goes in `@switchboard-*-displaced`. Moving off the key, or uninstalling,
-  sources that line, so the key comes back with its flags and quoting. It's skipped if the key
-  is no longer ours, since a binding you made since is newer. `ours?` means our bin path
+  sources that line, so the key comes back with its flags and quoting (tmux doesn't list a
+  binding's `-N` note, so that isn't restored). A binding you made on the key since is newer, so
+  it's left alone. The record follows its key when toggle and home trade keys. `ours?` means our bin path
   followed by *either* role's exact subcommand, so swapping toggle and home isn't counted as
   clobbering ourselves.
 - **A refused key is remembered** in `@switchboard-<role>-rejected`.

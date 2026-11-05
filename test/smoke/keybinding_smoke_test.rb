@@ -36,14 +36,48 @@ module Switchboard
       bind_toggle_to("g")
       tmux!("bind-key", "-T", "prefix", "g", "display-message", "newer")
       bind_toggle_to("s")
-      refute_includes line_for("g"), "old", "the record must not overwrite a newer binding"
+      assert_includes line_for("g"), "newer", "neither overwritten by the record nor unbound"
+    end
+
+    # Value: protects=a saved binding following its key when toggle and home trade keys; fails_when=
+    # the leaving role clears the record and the new holder records nothing; why_new=seen in review;
+    # seam=none; no_claim=none beyond protects
+    def test_a_saved_binding_follows_its_key_through_a_swap
+      tmux!("bind-key", "-T", "prefix", "g", "display-message", "mine")
+      mine = line_for("g")
+      bind_keys("toggle" => "g", "home" => "h")
+      bind_keys("toggle" => "h", "home" => "g")
+      bind_keys("toggle" => "b", "home" => "n")
+      assert_equal mine, line_for("g")
+    end
+
+    # Value: protects=a key tmux lists under another spelling; fails_when=the config spelling is only
+    # compared literally, so nothing is recorded; why_new=seen in review; seam=none; no_claim=every spelling
+    def test_a_key_tmux_spells_differently_comes_back
+      original = line_for("\\$")
+      refute_empty original, "tmux binds prefix-$ by default"
+      bind_toggle_to("$")
+      bind_toggle_to("s")
+      assert_equal original, line_for("\\$")
+    end
+
+    # Value: protects=uninstall leaving a key it already gave back; fails_when=the legacy unbind runs
+    # unconditionally; why_new=seen in review; seam=none; no_claim=a real uninstall's tmux.conf edit
+    def test_uninstall_leaves_a_restored_default_alone
+      bind_toggle_to("t")
+      restored = line_for("s")
+      refute_includes restored, "toggle-sidebar"
+      Installer.teardown_live
+      assert_equal restored, line_for("s")
     end
 
     private
 
-    def bind_toggle_to(key)
+    def bind_toggle_to(key) = bind_keys("toggle" => key)
+
+    def bind_keys(keys)
       config = YAML.safe_load_file(ENV["SWITCHBOARD_CONFIG"])
-      File.write(ENV["SWITCHBOARD_CONFIG"], YAML.dump(config.merge("tmux_keys" => { "toggle" => key })))
+      File.write(ENV["SWITCHBOARD_CONFIG"], YAML.dump(config.merge("tmux_keys" => keys)))
       run_bin("tmux-bind")
     end
 
