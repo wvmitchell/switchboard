@@ -745,7 +745,7 @@ module Switchboard
     # the NOT-bound row drops the upgrade advice or reads as bound; why_new=coverage gap;
     # seam=none; no_claim=the live probe itself
     def test_doctor_flags_an_unbound_toggle_key_with_upgrade_advice
-      out = stub_method(Installer, :bound_toggle_key, -> { "s" }) do
+      out = stub_method(Installer, :bound_toggle_key, ->(**) { "s" }) do
         with_key_stubs(live: false) { capture { Doctor.doctor_binding_live(Config.new) } }
       end
       assert_includes out, "prefix-s NOT bound"
@@ -1138,6 +1138,26 @@ module Switchboard
       out = doctor_run_given(Config.new(path("broken.yml")))
       assert_includes out, "config failed to parse"
       assert_includes out, "config.yml didn't parse"
+    end
+
+    # Value: protects=the config row and the bound-key row naming the config doctor was handed;
+    # fails_when=doctor_config goes back to Config.path or the toggle lookup to Config.new;
+    # why_new=the row-text test above leaves those two on the default path; seam=none;
+    # no_claim=a toggle key tmux recorded, which wins over any config (tested elsewhere)
+    def test_doctor_run_config_and_toggle_rows_follow_the_given_config
+      File.write(Config.path, YAML.dump("tmux_keys" => { "toggle" => "x" }))
+      File.write(path("given.yml"), YAML.dump("tmux_keys" => { "toggle" => "T" }))
+      given = Config.new(path("given.yml"))
+      out = doctor_run_given(given)
+      assert_includes out, "config: #{path('given.yml')}"
+      assert_includes out, "prefix-T bound"
+      refute_includes out, "prefix-x"
+
+      File.delete(Config.path)
+      refute_includes doctor_run_given(given), "no config", "the given file exists, whatever sits at the default path"
+
+      File.delete(path("given.yml"))
+      assert_includes doctor_run_given(given), "no config"
     end
 
     # Stub the two tmux shell-outs doctor_binding_live makes: the live-binding probe

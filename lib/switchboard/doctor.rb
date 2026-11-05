@@ -13,10 +13,10 @@ module Switchboard
     # Present AND parseable (#14): a broken file reads as no projects, so a green row here
     # would vouch for the very thing that emptied the tree.
     def doctor_config(config)
-      return puts(row(false, "no config — run `switchboard install`")) unless Config.exist?
+      return puts(row(false, "no config — run `switchboard install`")) unless File.exist?(config.file)
 
       err = config.load_error_message
-      puts row(err.nil?, err ? "config: #{Config.path} — #{err}" : "config: #{Config.path}")
+      puts row(err.nil?, err ? "config: #{config.file} — #{err}" : "config: #{config.file}")
     end
 
     def run(config)
@@ -330,7 +330,7 @@ module Switchboard
     # when there's no server to ask.
     def doctor_binding_live(config)
       doctor_key_config(config)
-      toggle = Installer.bound_toggle_key # the key actually bound, as upgrade checks it (a rejected one fell back)
+      toggle = Installer.bound_toggle_key(config: config) # the key actually bound, as upgrade checks it (a rejected one fell back)
       live = Installer.toggle_key_live?(toggle)
       unless live.nil?
         puts row(live, live ? "prefix-#{toggle} bound (toggle-sidebar)" : "prefix-#{toggle} NOT bound — running tmux is stale; run `switchboard upgrade` (or reload tmux)")
