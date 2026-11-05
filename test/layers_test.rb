@@ -7,8 +7,8 @@ module Switchboard
   # Holds lib/switchboard's layering (docs/explanation-architecture.md#layers): every file
   # sits in exactly one layer, and a file may reference constants only in its own layer or
   # below. References come from Ripper's constant tokens, so a name in a comment, string or
-  # heredoc (HookFile::SCRIPT is a shell script) is never a dependency. Today's violations
-  # are listed in ALLOWED with what removes each; the list only shrinks, so a fixed
+  # heredoc (HookFile::SCRIPT is a shell script) is never a dependency. A violation we accept
+  # goes in ALLOWED with what removes it (none today); the list only shrinks, so a fixed
   # violation left on it fails too. Reads files only, so it's a plain Minitest::Test.
   class LayersTest < Minitest::Test
     LIB = File.expand_path("../lib/switchboard", __dir__)
@@ -23,7 +23,7 @@ module Switchboard
       state: %w[attention branch_fold collapse config creation dispatch_args dispatch_nudge
                 full_header keymap model monitoring monitoring_nudge notify offstage_hold
                 pending_delete placeholder remote_link rename_nudge sound tree view],
-      operations: %w[code_reload creator doctor installer isolated_server reconcile registrar rename
+      operations: %w[code_reload creator doctor installer installer/keybindings isolated_server reconcile registrar rename
                      sandbox session_name update_check upgrade workspace_branches
                      workspaces],
       interfaces: %w[cli hook_commands sidebar sidebar/actions sidebar/edges sidebar/input sidebar/prompt

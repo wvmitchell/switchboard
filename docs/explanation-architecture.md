@@ -372,10 +372,10 @@ the run; the smoke harness now sweeps those before each run.
 
 ## Configurable tmux keys
 
-The fragment leaves binding to `switchboard tmux-bind` (`Installer.apply_keybindings`,
-issue #15). It reads `tmux_keys:` from the config through `Config#tmux_key`, which is
-global and resolves with a default like `sound_for`: `toggle` defaults to `s`, and `home` is
-unbound.
+The fragment leaves binding to `switchboard tmux-bind` (`Installer.apply_keybindings` in
+`installer/keybindings.rb`, issue #15). It reads `tmux_keys:` from the config through
+`Config#tmux_key`, which is global and resolves with a default like `sound_for`: `toggle`
+defaults to `s`, and `home` is unbound.
 
 ### Unbinding exactly what we bound
 
