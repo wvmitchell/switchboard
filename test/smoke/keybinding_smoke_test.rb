@@ -61,6 +61,33 @@ module Switchboard
       assert_equal original, line_for("\\$")
     end
 
+    # Value: protects=a key whose name tmux treats as syntax being released and given back; fails_when=
+    # the whole table is read as this key's line; why_new=stubs can't show tmux's parsing; seam=none;
+    # no_claim=every such key
+    def test_a_semicolon_key_comes_back
+      tmux!("bind-key", "-T", "prefix", "\;", "last-pane")
+      original = line_for("\;")
+      refute_empty original
+      bind_toggle_to(";")
+      assert_includes line_for("\;"), "toggle-sidebar"
+      assert_equal original, tmux("show-options", "-gqv", "@switchboard-toggle-displaced").strip
+      bind_toggle_to("t")
+      assert_equal original, line_for("\;")
+    end
+
+    # Value: protects=a moved install keeping what it saved; fails_when=the old install's binding reads
+    # as foreign and overwrites the record; why_new=review reproduced losing choose-tree; seam=none;
+    # no_claim=a real clone-to-Homebrew move
+    def test_a_moved_install_keeps_the_saved_binding
+      saved = tmux("show-options", "-gqv", "@switchboard-toggle-displaced").strip
+      refute_empty saved, "booting recorded what prefix-s held"
+      tmux!("bind-key", "-T", "prefix", "s", "run-shell", "'/old/place/bin/switchboard' toggle-sidebar")
+      run_bin("tmux-bind")
+      assert_equal saved, tmux("show-options", "-gqv", "@switchboard-toggle-displaced").strip
+      bind_toggle_to("t")
+      refute_includes line_for("s"), "/old/place"
+    end
+
     # Value: protects=uninstall leaving a key it already gave back; fails_when=the legacy unbind runs
     # unconditionally; why_new=seen in review; seam=none; no_claim=a real uninstall's tmux.conf edit
     def test_uninstall_leaves_a_restored_default_alone

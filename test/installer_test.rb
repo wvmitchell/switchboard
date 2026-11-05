@@ -230,6 +230,18 @@ module Switchboard
       stub_method(Installer, :tmux_option, ->(_name) { "kill-server" }) { assert_nil Installer.restorable("toggle", "g", ours) }
     end
 
+    # Value: protects=config spellings finding tmux's listed ones, and another install's key not being
+    # foreign; fails_when=the listed form is compared literally, or foreign uses the exact path;
+    # why_new=both regressed in review; seam=none; no_claim=tmux, in smoke
+    def test_listed_spellings_and_other_installs
+      raw = "bind-key -T prefix \; last-pane\nbind-key -T prefix \"C-;\" display-message c\nbind-key -T prefix \\$ rename\n"
+      assert_equal "bind-key -T prefix \; last-pane", Installer.prefix_line_from(raw, ";")
+      assert_equal "bind-key -T prefix \"C-;\" display-message c", Installer.prefix_line_from(raw, "C-;")
+      assert_equal "bind-key -T prefix \\$ rename", Installer.prefix_line_from(raw, "$")
+      moved = "bind-key -T prefix s run-shell \"'/old/bin/switchboard' toggle-sidebar\"\n"
+      assert_nil Installer.foreign_binding(moved, "s")
+    end
+
     # Value: protects=a path with a quote saying why nothing was bound; fails_when=the notice goes;
     # why_new=the no-announce case passes either way; seam=notify; no_claim=the notice on a status line
     def test_a_path_with_a_quote_says_so_when_asked

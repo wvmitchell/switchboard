@@ -232,20 +232,24 @@ module Switchboard
     # doctor can warn before tmux-bind clobbers it.
     def foreign_binding(raw, key)
       binding = binding_on(raw, key)
-      return nil if binding.nil? || ours?(binding)
-
-      binding
+      binding unless switchboard_binding?(binding) # nil too: nothing's bound
     end
 
     # Pure: `key`'s whole line in list-keys output, flags (`-r`) included, or nil.
     def prefix_line_from(raw, key)
-      raw.to_s.lines.find { |line| listed_key(line) == key }&.strip
+      raw.to_s.lines.find { |line| unlisted(listed_key(line)) == key }&.strip
     end
 
-    # `key`'s line, asking tmux when the config spells it differently than list-keys prints it
-    # (`$` is listed as `\$`, `f5` as `F5`). tmux parses its own spelling; we'd only guess at it.
+    # A key as the config writes it, from how list-keys prints it (`\$`, `;`, `"C-;"`).
+    def unlisted(key) = key.to_s.delete_prefix('"').delete_suffix('"').delete_prefix("\\")
+
+    # `key`'s line, asking tmux for a spelling only it can resolve (`f5` is listed as `F5`). More than
+    # one line back isn't this key: tmux read something as a separator and listed the whole table.
     def line_on(raw, key)
-      prefix_line_from(raw, key) || `tmux -u list-keys -T prefix -- #{Shellwords.escape(key)} 2>/dev/null`.lines.first&.strip
+      prefix_line_from(raw, key) || begin
+        lines = `tmux -u list-keys -T prefix -- #{Shellwords.escape(key)} 2>/dev/null`.lines
+        lines.first.strip if lines.size == 1
+      end
     end
 
     def binding_on(raw, key)
