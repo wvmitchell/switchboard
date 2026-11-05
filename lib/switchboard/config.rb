@@ -28,7 +28,7 @@ module Switchboard
     # weight — most often a NESTED key (a sidebar action, a sound, a tmux key) that
     # lost its parent/indent when uncommented from the scaffold (e.g. `new_workspace:
     # w` at the margin instead of under `sidebar_keys:`): it parses fine but is never
-    # read, so the setting silently does nothing. `doctor` flags these (CLI#doctor_unknown_keys).
+    # read, so the setting silently does nothing. `doctor` flags these (Doctor.doctor_unknown_keys).
     KNOWN_KEYS = %w[
       worktree_root projects_root base branch_prefix session_command worktree_creation_command
       prune_on_launch auto_rename diff_counts prewarm background_presence
