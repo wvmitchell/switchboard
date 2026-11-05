@@ -229,32 +229,6 @@ module Switchboard
       assert_empty Dir.glob(File.join(ENV["SWITCHBOARD_STATE_DIR"], "*")), "agent state is cleared"
     end
 
-    private
-
-    def open_delete_prompt(pane, leaf)
-      # Re-drive `g` `j` `d` until the DELETE prompt is up, as switch_client re-issues its
-      # switch. One shot can lose to the background build (CI flake on #30): until the
-      # sidebar reloads past it, the row can still be the synthetic dispatch row, where `d`
-      # asks "cancel …?", or the keys can land before the tree is drawn (cursor on the
-      # header, "remove …?"). A re-drive's first key answers any wrong prompt no (anything
-      # but `y` is no), so nothing is canceled or removed.
-      # Wait for the prompt before sending `y`: if `d` and `y` land in one read they
-      # tokenize together and confirm's read_char blocks after `d`, never seeing the
-      # buffered `y`. Waiting for [y/N] guarantees read_char is blocking on a fresh read.
-      screen = ""
-      driven = nil
-      wait_until(-> { "the delete confirm prompt is up; the sidebar last showed:\n#{screen}" }) do
-        screen = tmux("capture-pane", "-p", "-t", pane)
-        next true if screen.include?("delete #{leaf}?")
-
-        if driven.nil? || monotonic - driven > 1
-          %w[g j d].each { |k| tmux!("send-keys", "-t", pane, k) } # top (proj header) → the ws row → delete
-          driven = monotonic
-        end
-        false
-      end
-    end
-
     # Value: protects=quit killing what it says it killed when switchboard runs under a C locale,
     # as a tmux pane without LANG does; fails_when=a tmux read loses -u, so tmux prints the format's
     # tab as "_" and the session name misparses (#92); why_new=the smoke layer only ran under the
@@ -286,6 +260,30 @@ module Switchboard
     end
 
     private
+
+    def open_delete_prompt(pane, leaf)
+      # Re-drive `g` `j` `d` until the DELETE prompt is up, as switch_client re-issues its
+      # switch. One shot can lose to the background build (CI flake on #30): until the
+      # sidebar reloads past it, the row can still be the synthetic dispatch row, where `d`
+      # asks "cancel …?", or the keys can land before the tree is drawn (cursor on the
+      # header, "remove …?"). A re-drive's first key answers any wrong prompt no (anything
+      # but `y` is no), so nothing is canceled or removed.
+      # Wait for the prompt before sending `y`: if `d` and `y` land in one read they
+      # tokenize together and confirm's read_char blocks after `d`, never seeing the
+      # buffered `y`. Waiting for [y/N] guarantees read_char is blocking on a fresh read.
+      screen = ""
+      driven = nil
+      wait_until(-> { "the delete confirm prompt is up; the sidebar last showed:\n#{screen}" }) do
+        screen = tmux("capture-pane", "-p", "-t", pane)
+        next true if screen.include?("delete #{leaf}?")
+
+        if driven.nil? || monotonic - driven > 1
+          %w[g j d].each { |k| tmux!("send-keys", "-t", pane, k) } # top (proj header) → the ws row → delete
+          driven = monotonic
+        end
+        false
+      end
+    end
 
     def c_locale
       saved = ENV.values_at("LC_ALL", "LANG")
