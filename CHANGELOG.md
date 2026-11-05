@@ -10,6 +10,14 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
+## [0.66.7] — the tmux code gets clearer homes, with no change to how it behaves (2026-11-05)
+
+### Changed
+- `lib/switchboard/tmux.rb` is now a small core plus concern files under `tmux/`. The code that
+  reloads running sidebars moved into `CodeReload`, and the sidebar's `e` pane moved into `Editor`.
+  Running sidebars, `reload-sidebars` and `e` work as before, and sidebars from older versions
+  reload through this one and the other way around.
+
 ## [0.66.6] — `switchboard quit` works under a C locale (2026-11-05)
 
 ### Fixed
