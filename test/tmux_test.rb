@@ -529,31 +529,42 @@ module Switchboard
     end
 
     # Value: protects=every scripted tmux call reading UTF-8 whatever the locale (#92), because tmux
-    # otherwise prints a format's tab as "_" to a non-UTF-8 client, and non-ASCII names with it;
-    # fails_when=a new `tmux …` or ["tmux", …] call leaves off -u; why_new=one missed call breaks
-    # only under a C locale, which no developer sees; seam=none; no_claim=shell in switchboard.tmux,
-    # whose tmux calls set hooks and read nothing
+    # otherwise prints a format's tab as "_" to a non-UTF-8 client, and non-English names with it,
+    # and attach staying without -u; fails_when=a new call in any quoting (array, %w, single quotes,
+    # backtick, %x, heredoc, a shell string, a variable holding "tmux") leaves off -u, attach gains
+    # it, or the scan stops finding calls; why_new=one missed call breaks only under a C locale,
+    # which no developer sees; seam=none; no_claim=shell in switchboard.tmux, whose tmux calls set
+    # hooks and read nothing, a one-word subcommand with no flag in a shell string ("tmux ls"), or
+    # a command assembled from fragments
     def test_every_scripted_tmux_call_passes_u
       interactive = %w[attach attach-session]
-      missing = Dir[File.expand_path("../lib/switchboard/**/*.rb", __dir__)].flat_map do |file|
+      unchecked = /(?<![`\w-])tmux (?!-u\b)(?!attach\b)(?:-|[a-z]+-[a-z]+|[a-z]+ -)/ # a backtick inside text is advice to a person
+      not_a_call = /File\.join|start_with\?|%w\[.*\]\.each/ # a config path, a process name, a tool list
+      checked = 0
+      missing = Dir[File.expand_path("../lib/**/*.rb", __dir__)].flat_map do |file|
         source = File.read(file)
         lines = source.lines
         tokens = Ripper.lex(source).reject { |t| %i[on_sp on_ignored_nl on_nl].include?(t[1]) }
         tokens.each_with_index.filter_map do |t, i|
           text = t[2]
           next unless t[1] == :on_tstring_content
-          next if lines[t[0][0] - 1].include?("File.join") # a config path, not a command
-          prior = tokens[i - 1]
-          bad = if text == "tmux" && prior[2] == '"' && tokens[i + 2]&.dig(2) == ","
-                  following = tokens[i + 4]&.dig(2)
-                  following != "-u" && !interactive.include?(following)
-                elsif text.start_with?("tmux ") && (prior[1] == :on_backtick || (prior[2] == '"' && t[0][1] < 80 && text.match?(/\Atmux [a-z-]+ -/)))
-                  !text.start_with?("tmux -u ")
+          next if lines[t[0][0] - 1].match?(not_a_call)
+
+          checked += 1 if text.match?(/\Atmux -u\b/) || text == "tmux"
+          bad = if text == "tmux"
+                  word = tokens[i - 1][1] == :on_qwords_beg
+                  listed = word || tokens[i + 2]&.dig(2) == "," # anything else, like ["tmux"] + args or X = "tmux", hides the flag
+                  following = tokens[i + (word ? 2 : 4)]&.dig(2)
+                  after_u = tokens[i + (word ? 4 : 8)]&.dig(2)
+                  !listed || (following == "-u" ? interactive.include?(after_u) : !interactive.include?(following))
+                else
+                  text.match?(unchecked) || text.match?(/\btmux -u attach/)
                 end
           "#{File.basename(file)}:#{t[0][0]}" if bad
         end
       end
-      assert_empty missing, "scripted tmux calls without -u (see CONTRIBUTING.md)"
+      assert_empty missing, "scripted tmux calls without -u, or attach with it (see CONTRIBUTING.md)"
+      assert_operator checked, :>, 50, "the scan stopped finding tmux calls"
     end
 
     # --- reusable_editor_pane: the pure `e` reuse gate ------------------------

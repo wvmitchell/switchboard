@@ -220,10 +220,13 @@ module Switchboard
     # Value: protects=quit killing what it says it killed when switchboard runs under a C locale,
     # as a tmux pane without LANG does; fails_when=a tmux read loses -u, so tmux prints the format's
     # tab as "_" and the session name misparses (#92); why_new=the smoke layer only ran under the
-    # developer's own locale; seam=none; no_claim=other locales' spellings of "not UTF-8"
+    # developer's own locale; also fails_when=bin/switchboard stops forcing UTF-8, since -u now hands a
+    # C-locale Ruby raw non-English bytes it would raise on, and the name test below sets that itself;
+    # seam=none; no_claim=other locales' spellings of "not UTF-8"
     def test_quit_under_a_c_locale_kills_the_sb_sessions_and_spares_the_rest
       create_workspace
       tmux!("new-session", "-d", "-s", "mine")
+      tmux!("new-session", "-d", "-s", "sb/é/x")
       refute_empty sb_sessions, "precondition: switchboard sessions exist"
       assert_isolated_socket!
       c_locale { run_bin("quit") }

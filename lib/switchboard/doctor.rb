@@ -119,7 +119,7 @@ module Switchboard
 
       puts "  \e[33m–\e[0m remote links (⇅): CLAUDE_CONFIG_DIR is #{mine.empty? ? 'unset' : mine.inspect} here but " \
            "#{theirs.empty? ? 'unset' : theirs.inspect} in tmux, where sidebars run — export it in .zshenv " \
-           "or `tmux -u set-environment -g CLAUDE_CONFIG_DIR …` so the ⇅ reads the right dir"
+           "or `tmux set-environment -g CLAUDE_CONFIG_DIR …` so the ⇅ reads the right dir"
     end
 
     # A tmux global environment value, or nil when unset (`-NAME` / unknown variable).
