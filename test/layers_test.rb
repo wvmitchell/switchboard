@@ -174,7 +174,7 @@ module Switchboard
     def tokens(src) = Ripper.lex(src, raise_errors: true).reject { |_, type, _| %i[on_sp on_nl on_ignored_nl on_comment].include?(type) }
 
     # sidebar/* are concern files of Sidebar, so they're one unit.
-    def family(file) = file[%r{\A(sidebar|tmux|installer)/}, 1] || file
+    def family(file) = file[%r{\A(sidebar|tmux)/}, 1] || file
 
     # Constant tokens naming one of `names`: not a definition (`module X`), and not nested
     # under something else (`Sidebar::Edges`), except under `Switchboard::`.
