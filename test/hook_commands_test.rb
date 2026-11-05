@@ -341,7 +341,7 @@ module Switchboard
       end
     end
 
-    # The dot depends on the Stop report, so no fault after the payload parses may skip it.
+    # The dot depends on the Stop report, so no fault may skip it.
     def test_a_stop_still_reports_done_when_a_step_faults
       nudge_config("auto_rename" => true)
       [[Model, :workspace_at], [Config, :new], [Git, :toplevel]].each do |receiver, step|
@@ -353,6 +353,29 @@ module Switchboard
         end
         assert_equal "done", reported, "#{receiver}.#{step} raising"
       end
+    end
+
+    # Value: protects=the dot leaving "thinking" and the ∞ marker clearing whatever JSON shape the
+    # hook sends; fails_when=parse_hook_stdin hands a non-object on, which raises on the first
+    # field read; why_new=the real-binary row only checks silence and exit 0; seam=none;
+    # no_claim=that either agent ever sends one
+    def test_a_payload_that_is_not_an_object_still_reports_the_stop_and_clears_the_marker
+      nudge_config("background_presence" => true)
+      wt = monitoring_wt
+      Monitoring.mark(wt.path)
+      %w[[1] "x" 7 true null].each do |stdin|
+        reported = :none
+        stub_method(Model, :workspace_at, ->(*) { nil }) do
+          stub_method(HookCommands, :report_stop_state, ->(s) { reported = s }) do
+            out = nil
+            with_stdin(StringIO.new(stdin)) { out = capture { CLI.run(%w[rename-nudge --stop]) } }
+            assert_equal "", out, stdin
+          end
+        end
+        assert_equal "done", reported, stdin
+      end
+      assert_equal "", run_monitoring_nudge(worktree: wt, stdin: "[1]", args: ["--end"])
+      assert_empty Monitoring.monitored([wt.path]), "SessionEnd clears the marker on any shape"
     end
 
     # The real binary, as an installed hook calls it: stdout carries nothing and it exits 0,
