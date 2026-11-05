@@ -8,6 +8,148 @@ module Switchboard
   # its paste-safe edit_buffer token loop, Esc/Ctrl-C cancel, the dim hint,
   # and the width-safe prompt paint (issue #80).
   class SidebarPromptTest < SidebarCase
+    # --- one-key prompts: tmux's pokes and focus reports aren't an answer -----
+
+    # Value: protects=a background poke can't answer y/N; fails_when=read_char returns a
+    # poke as a key; why_new=confirm was only ever stubbed; seam=none; no_claim=real tmux
+    # delivery (the delete smoke test sends a real C-w)
+    def test_confirm_waits_through_every_poke_for_a_real_key
+      Sidebar::Input::POKE_BYTES.each do |poke|
+        { "y" => true, "Y" => true, "n" => false, "\e" => false }.each do |key, answer|
+          said = nil
+          with_reads(sb = sidebar, poke, key) { said = sb.send(:confirm, "delete x?") }
+          assert_equal answer, said, "#{poke.inspect} then #{key.inspect}"
+        end
+      end
+    end
+
+    # Value: protects=a dead pane cancels instead of hanging; fails_when=the reader loops
+    # past EOF; why_new=nothing read to EOF through confirm; seam=none; no_claim=none beyond protects
+    def test_confirm_cancels_on_a_dead_pane_even_after_pokes
+      said = :unset
+      with_reads(sb = sidebar, "\x17", "\f") { said = sb.send(:confirm, "delete x?") }
+      assert_equal false, said
+    end
+
+    # Value: protects=a sequence split across reads can't answer; fails_when=the reader
+    # skips @pending; why_new=handle's split test doesn't reach read_char; seam=none;
+    # no_claim=none beyond protects
+    def test_a_split_focus_report_is_not_an_answer
+      said = nil
+      with_reads(sb = sidebar, "\e[", "O", "y") { said = sb.send(:confirm, "delete x?") }
+      assert_equal true, said
+      assert_empty sb.instance_variable_get(:@pending)
+    end
+
+    # Value: protects=an error stays readable; fails_when=flash stops using read_char or a
+    # poke counts as its any key; why_new=flash only stubbed read_char; seam=none;
+    # no_claim=none beyond protects
+    def test_flash_stays_up_through_a_poke
+      left = nil
+      with_reads(sb = sidebar, "\x17", "\e[I", "x", "unread") do |reads|
+        sb.send(:flash, "boom")
+        left = reads.dup
+      end
+      assert_equal ["unread"], left, "only a real key dismisses it"
+    end
+
+    # Value: protects=the a menu survives a poke; fails_when=add reads a poke as its choice;
+    # why_new=add had no input test; seam=none; no_claim=none beyond protects
+    def test_the_add_menu_stays_up_through_a_poke
+      sb = sidebar
+      added = false
+      sb.define_singleton_method(:add_local) { added = true }
+      stub_method(sb, :poke, ->(_) { true }) do
+        with_reads(sb, "\f", "l") { sb.send(:handle, "a") }
+      end
+      assert added, "the l after the poke picked local"
+    end
+
+    # Value: protects=a switch or config poke isn't lost to a prompt, and a long-open one
+    # can't stall on replay; fails_when=held bytes are dropped or replayed one by one;
+    # why_new=new behavior; seam=none; no_claim=the real cost of a reload (counted, not timed)
+    def test_held_pokes_run_once_each_after_the_prompt_closes
+      sb = sidebar
+      events = []
+      sb.define_singleton_method(:quit) do
+        confirm("quit?")
+        events << :closed
+        true
+      end
+      stub_method(sb, :poke, ->(key) { events << key; true }) do
+        with_reads(sb, "\x17", "\x17\x17", "\e[O", "\e[I", "\e[O", "\e[I", "x") { sb.send(:handle, "q") }
+      end
+      assert_equal [:closed, "\x17", "\e[O", "\e[I"], events, "one of each kind, however many arrived"
+
+      # Only this script tells last-of-kind from first-of-kind: focus must end out.
+      events.clear
+      stub_method(sb, :poke, ->(key) { events << key; true }) do
+        with_reads(sb, "\e[O", "\e[I", "\e[O", "x") { sb.send(:handle, "q") }
+      end
+      assert_equal [:closed, "\e[I", "\e[O"], events, "the last of each kind survives, so the final focus report runs last"
+    end
+
+    # Value: protects=walking away from a message or menu can't stop this sidebar's dots and
+    # chimes; fails_when=flash or add waits through a focus-out; why_new=confirm's wait is
+    # the opposite rule, tested above; seam=none; no_claim=real focus delivery (scripted reads)
+    def test_a_message_and_the_add_menu_close_when_you_leave_the_pane
+      left = nil
+      with_reads(sb = sidebar, "\e[O", "unread") do |reads|
+        sb.send(:flash, "boom")
+        left = reads.dup
+      end
+      assert_equal ["unread"], left, "the focus-out closed the message"
+
+      sb = sidebar
+      events = []
+      added = false
+      sb.define_singleton_method(:add_local) { added = true }
+      sb.define_singleton_method(:reload) { |**| events << :closed }
+      stub_method(sb, :poke, ->(key) { events << key; true }) do
+        with_reads(sb, "\e[O", "l") { sb.send(:handle, "a") }
+      end
+      refute added, "the menu had closed before the l"
+      assert_equal [:closed, "\e[O"], events, "and the focus-out still ran, after it closed"
+    end
+
+    # Value: protects=a poke batched behind the answer still runs after the prompt closes;
+    # fails_when=read_char drops what it read past the key; why_new=every other script reads
+    # the key alone; seam=none; no_claim=real tmux batching two bytes into one read
+    def test_a_poke_batched_behind_the_answer_runs_after_the_prompt_closes
+      sb = sidebar
+      events = []
+      sb.define_singleton_method(:reload) { |**| events << :closed }
+      stub_method(sb, :poke, ->(key) { events << key; true }) do
+        with_reads(sb, "x\x17") { sb.send(:handle, "a") }
+      end
+      assert_equal [:closed, "\x17"], events
+    end
+
+    # Value: protects=a read fault on the pane cancels a confirm instead of crashing the
+    # sidebar; fails_when=read_char's rescue is removed; why_new=with_reads only simulates
+    # EOF; seam=none; no_claim=which faults a real pane raises
+    def test_confirm_cancels_when_the_read_raises
+      sb = sidebar
+      said = :unset
+      stub_method(sb, :winsize, ->(*) { [24, 40] }) do
+        stub_method(sb, :read_prompt_key, ->(*) { raise Errno::EIO }) do
+          capture_stdout { said = sb.send(:confirm, "delete x?") }
+        end
+      end
+      assert_equal false, said
+    end
+
+    # Value: protects=leaving the pane can't open GitHub; fails_when=a focus report is read
+    # a byte at a time, leaving its O; why_new=the tokenizer tests never cross a prompt;
+    # seam=none; no_claim=the browser actually opening (stubbed)
+    def test_a_focus_out_during_a_prompt_cannot_fire_open_repo
+      sb = sidebar
+      opened = false
+      sb.define_singleton_method(:open_repo) { opened = true }
+      with_reads(sb, "\e[O", "n") { sb.send(:handle, "q") }
+      refute opened
+    end
+
     # --- inline name prompts: raw-mode edit, Esc/Ctrl-C cancel (issue #68) ----
 
     # Drive prompt_line over a scripted key stream. draw_prompt is silenced so the
@@ -161,7 +303,7 @@ module Switchboard
           reserved = project
           nil # no free name ⇒ a flash, nothing recorded
         }) do
-          stub_method(sb, :read_char, -> {}) { capture_stdout { sb.send(:create) } }
+          stub_method(sb, :read_char, ->(**) {}) { capture_stdout { sb.send(:create) } }
         end
       end
       assert_equal "app", reserved

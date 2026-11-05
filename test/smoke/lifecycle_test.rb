@@ -170,6 +170,68 @@ module Switchboard
       assert system("git", "-C", wt, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "ahead"),
              "put work on it"
 
+      open_delete_prompt(pane, leaf)
+      # A broadcast landing on the open prompt isn't its answer: it used to read as "no",
+      # the prompt vanished, and this `y` hit the tree. The delete below is the proof.
+      tmux!("send-keys", "-t", pane, Tmux::WARM_POKE)
+      tmux!("send-keys", "-t", pane, "y") # confirm (clean placeholder ⇒ no force prompt)
+
+      wait_until("we fall home and the workspace session is gone") do
+        !session?(sess) && client_session == HOME
+      end
+      wait_until("the detached daemon finishes the removal (it survived the session kill)") do
+        !Dir.exist?(wt) && Git.worktrees(@project).none? { |w| w[:path] == wt }
+      end
+      refute session?(sess), "the deleted workspace's session is gone"
+      assert_equal HOME, client_session, "and we've fallen back to home"
+      refute Dir.exist?(wt), "the daemon removed the worktree dir off-loop"
+      wait_until("the daemon deletes the workspace's branches") do
+        [started_on, "later-unmerged"].none? { |b| Git.rev_parse(@project, "refs/heads/#{b}") }
+      end
+    end
+
+    # Value: protects=a delete prompt survives switching away and back with its answer
+    # intact; fails_when=a real switch poke or focus report closes or answers the prompt;
+    # why_new=the delete test above only sends a synthetic C-w while staying put; seam=none;
+    # no_claim=focus reports (only the C-l was seen here), or a poke later than the watch window
+    def test_a_delete_prompt_survives_switching_away_and_back
+      sess = create_workspace(enter: true)
+      leaf = sess.split("/").last
+      wt = worktree_path(leaf)
+      pane = sidebar_pane_ids(sess).first or flunk "no sidebar in the workspace to drive"
+      open_delete_prompt(pane, leaf)
+
+      switch_client(HOME)
+      switch_client(sess)
+      # The return poke lands about 100ms after the switch, invisibly, so sending `y` at once
+      # beats it and proves nothing. Watch the prompt through that window instead. A slower
+      # poke can only make this pass without testing it, never fail spuriously.
+      deadline = monotonic + 1.5
+      while monotonic < deadline
+        assert_includes capture(pane), "delete #{leaf}?", "the prompt is still up after the round trip"
+        sleep 0.05
+      end
+      tmux!("send-keys", "-t", pane, "y")
+
+      wait_until("the session is gone") { !session?(sess) }
+      wait_until("the worktree is gone") do
+        !Dir.exist?(wt) && Git.worktrees(@project).none? { |w| w[:path] == wt }
+      end
+    end
+
+    # quit: full teardown — every sb/ session gone (current one last), agent state cleared.
+    def test_quit_tears_down_every_sb_session
+      create_workspace
+      refute_empty sb_sessions, "precondition: switchboard sessions exist"
+      assert_isolated_socket!
+      run_bin("quit")
+      wait_until("every sb/ session is torn down") { sb_sessions.empty? }
+      assert_empty Dir.glob(File.join(ENV["SWITCHBOARD_STATE_DIR"], "*")), "agent state is cleared"
+    end
+
+    private
+
+    def open_delete_prompt(pane, leaf)
       # Re-drive `g` `j` `d` until the DELETE prompt is up, as switch_client re-issues its
       # switch. One shot can lose to the background build (CI flake on #30): until the
       # sidebar reloads past it, the row can still be the synthetic dispatch row, where `d`
@@ -191,30 +253,6 @@ module Switchboard
         end
         false
       end
-      tmux!("send-keys", "-t", pane, "y") # confirm (clean placeholder ⇒ no force prompt)
-
-      wait_until("we fall home and the workspace session is gone") do
-        !session?(sess) && client_session == HOME
-      end
-      wait_until("the detached daemon finishes the removal (it survived the session kill)") do
-        !Dir.exist?(wt) && Git.worktrees(@project).none? { |w| w[:path] == wt }
-      end
-      refute session?(sess), "the deleted workspace's session is gone"
-      assert_equal HOME, client_session, "and we've fallen back to home"
-      refute Dir.exist?(wt), "the daemon removed the worktree dir off-loop"
-      wait_until("the daemon deletes the workspace's branches") do
-        [started_on, "later-unmerged"].none? { |b| Git.rev_parse(@project, "refs/heads/#{b}") }
-      end
-    end
-
-    # quit: full teardown — every sb/ session gone (current one last), agent state cleared.
-    def test_quit_tears_down_every_sb_session
-      create_workspace
-      refute_empty sb_sessions, "precondition: switchboard sessions exist"
-      assert_isolated_socket!
-      run_bin("quit")
-      wait_until("every sb/ session is torn down") { sb_sessions.empty? }
-      assert_empty Dir.glob(File.join(ENV["SWITCHBOARD_STATE_DIR"], "*")), "agent state is cleared"
     end
 
     # Value: protects=quit killing what it says it killed when switchboard runs under a C locale,

@@ -94,11 +94,8 @@ safe today; each is narrow).
 - **Input edges in the task prompt and modals.** *Why:* an unpaired paste-start marker
   wedges the task prompt in paste mode (Esc/^C/↵ all become text; `prefix-s` escapes); a
   literal paste-end inside pasted text ends the paste early; a 1 KB read split on a
-  terminal without bracketed paste can submit early and spill keys; the worker's C-w warm
-  poke and the C-l refresh poke are read as the answer by `confirm`, `flash` and the `a`
-  menu (see learning modal-dismiss-must-ignore-synthetic-tmux-bytes). *Start in:*
-  `prompt.rb` `edit_buffer`/`read_char` — bound paste mode, and loop `read_char` past
-  `POKE_BYTES`. **Priority:** P2.
+  terminal without bracketed paste can submit early and spill keys. *Start in:*
+  `prompt.rb` `edit_buffer` — bound paste mode. **Priority:** P2.
 - **Say what's actually wrong when the config fails a build.** *Why:* the `config`
   reason's pane/row text says the config couldn't be read, but `setup_invalid?` now fires
   it for a file that parsed fine; `doctor` never checks `setup_invalid?`; the config

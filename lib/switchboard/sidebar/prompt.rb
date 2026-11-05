@@ -9,6 +9,7 @@ module Switchboard
     module Prompt
       PASTE_START = "\e[200~" # bracketed paste (the task prompt turns it on)
       PASTE_END = "\e[201~"
+      FOCUS_OUT = "\e[O"
 
       private
 
@@ -256,14 +257,33 @@ module Switchboard
         rows, cols = winsize
         print "\e[#{rows};1H\e[K\e[31m#{trunc(shown(message), cols - 11)}\e[0m — any key "
         $stdout.flush
-        read_char
+        read_char(leaving_closes: true)
       end
 
-      # One key in raw mode (nil if the read fails).
-      def read_char
-        $stdin.getc
+      # The next real key (nil on a dead pane). Tmux's pokes and focus reports share stdin but
+      # aren't answers: they run after the prompt closes, only the last of each kind, since a
+      # long-open prompt collects many. The sidebar is paused meanwhile, which a message or
+      # menu isn't worth, so `leaving_closes` lets a focus-out end the wait.
+      def read_char(leaving_closes: false)
+        held = []
+        after = []
+        loop do
+          chunk = read_prompt_key or return nil
+          tokens, @pending = Input.tokenize(@pending.to_s + chunk)
+          at = tokens.index { |t| !Input::POKE_BYTES.include?(t) || (leaving_closes && t == FOCUS_OUT) }
+          next held.concat(tokens) unless at
+
+          held.concat(tokens[0...at])
+          after = tokens[(at + 1)..]
+          return tokens[at] unless tokens[at] == FOCUS_OUT
+
+          after.unshift(FOCUS_OUT)
+          return nil
+        end
       rescue StandardError
         nil
+      ensure
+        @typeahead&.concat(held.reverse.uniq.reverse, after)
       end
     end
     include Prompt
