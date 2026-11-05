@@ -489,7 +489,7 @@ module Switchboard
 
     # Value: protects=canceling a build without a working reaper still drops its placeholder
     # branch; fails_when=either synchronous call in start_removal stops passing force_branch:, so
-    # the safe -d leaks one branch per cancel; why_new=the Workspaces.remove! test that covered this was
+    # the safe -d leaks one branch per cancel; why_new=the sync_remove test that covered this
     # moved to Workspaces.remove!, which can't see what start_removal hands it; seam=none;
     # no_claim=git's -D
     def test_both_synchronous_removals_keep_the_force_flag
