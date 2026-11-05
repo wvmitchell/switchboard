@@ -2,6 +2,7 @@
 
 require_relative "test_helper"
 require "json"
+require "pathname"
 
 module Switchboard
   # The CLI dispatch logic that isn't just a pass-through to Installer: flag
@@ -231,7 +232,7 @@ module Switchboard
       d = path("wt")
       FileUtils.mkdir_p(d)
       wt = Worktree.new(project: "p", path: File.realpath(d), primary: false)
-      stub_method(CLI, :current_worktree, ->(*) { wt }) do
+      stub_method(Model, :workspace_at, ->(*) { wt }) do
         out = capture { CLI.monitoring("on") }
         assert_includes out, "monitoring on"
         assert Monitoring.monitored([File.realpath(d)]).any?, "on marks the worktree"
@@ -248,7 +249,7 @@ module Switchboard
       FileUtils.mkdir_p(d)
       real = File.realpath(d)
       wt = Worktree.new(project: "p", path: real, primary: false)
-      stub_method(CLI, :current_worktree, ->(*) { wt }) do
+      stub_method(Model, :workspace_at, ->(*) { wt }) do
         out = capture { CLI.monitoring("on", (Monitoring::TTL * 4).to_s) }
         assert_includes out, "ttl #{Monitoring::TTL * 4}s"
 
@@ -262,7 +263,7 @@ module Switchboard
       d = path("wt")
       FileUtils.mkdir_p(d)
       wt = Worktree.new(project: "p", path: File.realpath(d), primary: false)
-      stub_method(CLI, :current_worktree, ->(*) { wt }) do
+      stub_method(Model, :workspace_at, ->(*) { wt }) do
         assert_includes capture { CLI.monitoring(nil) }, "monitoring off"
         Monitoring.mark(File.realpath(d))
         assert_includes capture { CLI.monitoring("status") }, "monitoring on"
@@ -270,7 +271,7 @@ module Switchboard
     end
 
     def test_monitoring_outside_a_workspace_is_a_noop
-      stub_method(CLI, :current_worktree, ->(*) { nil }) do
+      stub_method(Model, :workspace_at, ->(*) { nil }) do
         out = capture { CLI.monitoring("on") }
         assert_includes out, "not inside a switchboard workspace"
       end
@@ -284,7 +285,7 @@ module Switchboard
       FileUtils.mkdir_p(d)
       real = File.realpath(d)
       wt = Worktree.new(project: "p", path: real, primary: false)
-      stub_method(CLI, :current_worktree, ->(*) { wt }) do
+      stub_method(Model, :workspace_at, ->(*) { wt }) do
         Monitoring.mark(real) # must be monitoring first
         out = capture { CLI.monitoring("notify") }
         assert_includes out, "monitoring notify"
@@ -300,98 +301,12 @@ module Switchboard
       FileUtils.mkdir_p(d)
       real = File.realpath(d)
       wt = Worktree.new(project: "p", path: real, primary: false)
-      stub_method(CLI, :current_worktree, ->(*) { wt }) do
+      stub_method(Model, :workspace_at, ->(*) { wt }) do
         out = capture { CLI.monitoring("notify") } # never ran `on`
         assert_includes out, "not monitoring"
         assert_empty Notify.pending([real]), "no marker written when not monitoring"
         assert_empty Attention.marked([real]), "and no bold either"
       end
-    end
-
-    # --- monitoring-nudge (the Layer-2 SessionStart/SessionEnd hook handler) ------
-
-    # A real worktree dir (Monitoring.mark gates on the dir existing) under project "proj".
-    def monitoring_wt
-      d = path("wt")
-      FileUtils.mkdir_p(d)
-      Worktree.new(project: "proj", path: File.realpath(d), primary: false)
-    end
-
-    def run_monitoring_nudge(worktree:, stdin:, args: [])
-      out = nil
-      stub_method(CLI, :current_worktree, ->(*) { worktree }) do
-        stub_method(CLI, :config, -> { Config.new }) do
-          with_stdin(StringIO.new(stdin)) { out = capture { CLI.monitoring_nudge(args) } }
-        end
-      end
-      out
-    end
-
-    def test_monitoring_nudge_sessionstart_clears_stale_marker_and_emits_nudge
-      nudge_config("background_presence" => true)
-      wt = monitoring_wt
-      Monitoring.mark(wt.path) # a stale marker left by a prior session
-      out = run_monitoring_nudge(worktree: wt, stdin: %({"source":"resume","cwd":"#{wt.path}"}))
-      assert_empty Monitoring.monitored([wt.path]), "SessionStart clears the stale marker (per-session declaration)"
-      assert_includes JSON.parse(out).dig("hookSpecificOutput", "additionalContext"), "monitoring on"
-    end
-
-    def test_monitoring_nudge_end_clears_without_stdout
-      nudge_config("background_presence" => true)
-      wt = monitoring_wt
-      Monitoring.mark(wt.path)
-      out = run_monitoring_nudge(worktree: wt, stdin: %({"cwd":"#{wt.path}"}), args: ["--end"])
-      assert_empty Monitoring.monitored([wt.path]), "SessionEnd clears the marker"
-      assert_equal "", out.strip, "SessionEnd emits nothing on stdout"
-    end
-
-    # Value: protects=/clear's real sequence — SessionEnd(reason: clear) drops the ∞, then
-    # SessionStart(clear) re-teaches; fails_when=a reason-bearing SessionEnd stops clearing (the
-    # premise that keeps `clear` out of CLEARS_ON); why_new=--end was only driven without a
-    # reason; seam=current_worktree/config stubs (as above); no_claim=Claude's real event order
-    def test_monitoring_nudge_clear_sequence_drops_marker_then_reteaches
-      nudge_config("background_presence" => true)
-      wt = monitoring_wt
-      Monitoring.mark(wt.path)
-      run_monitoring_nudge(worktree: wt, stdin: %({"reason":"clear","cwd":"#{wt.path}"}), args: ["--end"])
-      assert_empty Monitoring.monitored([wt.path]), "SessionEnd(clear) drops the marker"
-      out = run_monitoring_nudge(worktree: wt, stdin: %({"source":"clear","cwd":"#{wt.path}"}))
-      assert_includes JSON.parse(out).dig("hookSpecificOutput", "additionalContext"), "monitoring on"
-    end
-
-    # The thought experiment: work with an agent -> compaction -> agent sets a monitor.
-    # Compaction must (1) NOT clear a live monitor's marker, and (2) STILL re-plant the
-    # nudge (compaction can drop the original instruction, so a post-compaction monitor
-    # still gets flagged).
-    # Value (clear row): protects=/clear keeps a live monitor's ∞ yet re-teaches the
-    # convention; fails_when=the CLI wires `clear` into the clear gate or out of the nudge
-    # gate; why_new=only the predicates were tested for `clear`; seam=current_worktree/config
-    # stubs (as the rows above); no_claim=Claude's actual source strings
-    def test_monitoring_nudge_compact_keeps_marker_and_still_reteaches
-      nudge_config("background_presence" => true)
-      wt = monitoring_wt
-      %w[compact clear].each do |source|
-        Monitoring.mark(wt.path)
-        out = run_monitoring_nudge(worktree: wt, stdin: %({"source":"#{source}","cwd":"#{wt.path}"}))
-        assert Monitoring.monitored([wt.path]).any?, "SessionStart(#{source}) itself leaves the marker (for clear, the preceding SessionEnd is what drops it)"
-        assert_includes JSON.parse(out).dig("hookSpecificOutput", "additionalContext"), "monitoring on",
-                        "#{source} still re-teaches the convention (survives context loss)"
-      end
-    end
-
-    def test_monitoring_nudge_noop_when_background_presence_off
-      nudge_config("background_presence" => false)
-      wt = monitoring_wt
-      Monitoring.mark(wt.path)
-      out = run_monitoring_nudge(worktree: wt, stdin: %({"source":"resume","cwd":"#{wt.path}"}))
-      assert Monitoring.monitored([wt.path]).any?, "feature off -> a manual marker is left alone"
-      assert_equal "", out.strip
-    end
-
-    def test_monitoring_nudge_silent_on_primary_checkout
-      nudge_config("background_presence" => true)
-      prim = Worktree.new(project: "proj", path: "/p", primary: true)
-      assert_equal "", run_monitoring_nudge(worktree: prim, stdin: '{"source":"resume","cwd":"/p"}')
     end
 
     def test_init_writes_an_empty_config_when_absent
@@ -1030,6 +945,28 @@ module Switchboard
       refute_includes out, "trusted"
     end
 
+    # Value (disable row): protects=disable-hooks' own git-root lookup outside a repo; fails_when=its
+    # copy of the lookup diverges from enable-hooks'; why_new=only enable was driven outside a repo;
+    # seam=none; no_claim=the exit status
+    # enable-hooks and disable-hooks want the git root, registered or not. A relative or
+    # quoted-tilde path argument keeps resolving the way the shell user meant it.
+    def test_hooks_verbs_take_relative_and_tilde_paths_in_an_unregistered_repo
+      repo = temp_git_repo("loose")
+      real = File.realpath(repo)
+      from_home = "~/#{Pathname(real).relative_path_from(Pathname(File.realpath(Dir.home)))}"
+      Dir.chdir(File.dirname(repo)) do
+        [File.basename(repo), from_home].each do |arg|
+          capture { CLI.enable_hooks(arg) }
+          assert ClaudeHook.enabled?(real), "enabled from #{arg}"
+          capture { CLI.disable_hooks(arg) }
+          refute ClaudeHook.enabled?(real), "disabled from #{arg}"
+        end
+      end
+      FileUtils.mkdir_p(path("plain"))
+      assert_output("", /not inside a git worktree/) { Dir.chdir(path("plain")) { CLI.enable_hooks } }
+      assert_output("", /not inside a git worktree/) { Dir.chdir(path("plain")) { CLI.disable_hooks } }
+    end
+
     # enable-hooks wires claude per-worktree and POINTS AT install for codex when the global
     # block is absent; once the block exists it self-heals (re-ensures) and says "(global)".
     def test_enable_hooks_reports_codex_global_state
@@ -1612,7 +1549,7 @@ module Switchboard
     # the current workspace name) and exits non-zero — switchboard never guesses a name.
     def test_rename_no_arg_warns_usage_with_the_current_name
       wt = Worktree.new(project: "proj", path: "/x/alpha", primary: false)
-      stub_method(CLI, :current_worktree, -> { wt }) do
+      stub_method(Model, :workspace_at, ->(*) { wt }) do
         err = capture_err { refute CLI.rename(nil) }
         assert_match(/usage: switchboard rename/, err)
         assert_includes err, "alpha"
@@ -1636,7 +1573,7 @@ module Switchboard
     end
 
     def test_rename_refuses_the_primary_checkout
-      stub_method(CLI, :current_worktree, -> { Worktree.new(project: "proj", path: "/x", primary: true) }) do
+      stub_method(Model, :workspace_at, ->(*) { Worktree.new(project: "proj", path: "/x", primary: true) }) do
         err = capture_err { refute CLI.rename("x") }
         assert_match(/can't rename the primary checkout/, err)
       end
@@ -1654,7 +1591,7 @@ module Switchboard
     end
 
     def test_rename_reports_partial_and_fails
-      stub_method(CLI, :current_worktree, -> { Worktree.new(project: "proj", path: "/x", primary: false) }) do
+      stub_method(Model, :workspace_at, ->(*) { Worktree.new(project: "proj", path: "/x", primary: false) }) do
         stub_method(Rename, :perform, ->(*) { Rename::Result.new(:partial, "/wts/proj/new") }) do
           err = nil
           capture { err = capture_err { refute CLI.rename("new") } } # :partial also puts the landing to stdout
@@ -1664,7 +1601,7 @@ module Switchboard
     end
 
     def test_rename_reports_exists_and_fails
-      stub_method(CLI, :current_worktree, -> { Worktree.new(project: "proj", path: "/x", primary: false) }) do
+      stub_method(Model, :workspace_at, ->(*) { Worktree.new(project: "proj", path: "/x", primary: false) }) do
         stub_method(Rename, :perform, ->(*) { Rename::Result.new(:exists, "/wts/proj/taken") }) do
           err = capture_err { refute CLI.rename("taken") }
           assert_match(/already exists/, err)
@@ -1673,7 +1610,7 @@ module Switchboard
     end
 
     def test_rename_reports_branch_exists_and_fails
-      stub_method(CLI, :current_worktree, -> { Worktree.new(project: "proj", path: "/x", primary: false) }) do
+      stub_method(Model, :workspace_at, ->(*) { Worktree.new(project: "proj", path: "/x", primary: false) }) do
         stub_method(Rename, :perform, ->(*) { Rename::Result.new(:branch_exists, "/wts/proj/taken") }) do
           err = capture_err { refute CLI.rename("taken") }
           assert_match(/branch named taken already exists/, err)
@@ -1682,7 +1619,7 @@ module Switchboard
     end
 
     def test_rename_reports_unchanged_and_succeeds
-      stub_method(CLI, :current_worktree, -> { Worktree.new(project: "proj", path: "/x", primary: false) }) do
+      stub_method(Model, :workspace_at, ->(*) { Worktree.new(project: "proj", path: "/x", primary: false) }) do
         stub_method(Rename, :perform, ->(*) { Rename::Result.new(:unchanged, "/wts/proj/old") }) do
           out = capture { assert CLI.rename("old") }
           assert_match(/already named old/, out)
@@ -1690,24 +1627,24 @@ module Switchboard
       end
     end
 
-    def test_current_worktree_is_nil_outside_any_repo
+    def test_workspace_at_is_nil_outside_any_repo
       FileUtils.mkdir_p(path("plain"))
-      Dir.chdir(path("plain")) { assert_nil CLI.current_worktree }
+      Dir.chdir(path("plain")) { assert_nil Model.workspace_at(Config.new) }
     end
 
-    def test_current_worktree_finds_the_managed_worktree
+    def test_workspace_at_finds_the_managed_worktree
       old = rename_fixture
-      wt = Dir.chdir(old) { CLI.current_worktree }
+      wt = Dir.chdir(old) { Model.workspace_at(Config.new) }
       refute_nil wt
       assert_equal "proj", wt.project
       refute wt.primary, "a linked worktree isn't primary"
     end
 
-    def test_current_worktree_degrades_when_realpath_raises
+    def test_workspace_at_degrades_when_realpath_raises
       old = rename_fixture
       Dir.chdir(old) do
         stub_method(File, :realpath, ->(*) { raise Errno::ENOENT }) do
-          assert_nil CLI.current_worktree
+          assert_nil Model.workspace_at(Config.new)
         end
       end
     end
@@ -1749,11 +1686,11 @@ module Switchboard
 
     # The realpath-derived primary flag is the guard that stops renaming the trunk —
     # exercise its true branch (the linked-worktree test only covers false).
-    def test_current_worktree_flags_the_primary_checkout
+    def test_workspace_at_flags_the_primary_checkout
       repo = temp_git_repo("proj")
       File.write(Config.path, YAML.dump("worktree_root" => path("wts"),
                                         "projects" => [{ "name" => "proj", "path" => repo }]))
-      wt = Dir.chdir(repo) { CLI.current_worktree }
+      wt = Dir.chdir(repo) { Model.workspace_at(Config.new) }
       refute_nil wt
       assert wt.primary, "the trunk checkout is flagged primary"
     end
@@ -1768,7 +1705,7 @@ module Switchboard
     end
 
     def test_rename_reports_invalid_and_fails
-      stub_method(CLI, :current_worktree, -> { Worktree.new(project: "proj", path: "/x", primary: false) }) do
+      stub_method(Model, :workspace_at, ->(*) { Worktree.new(project: "proj", path: "/x", primary: false) }) do
         stub_method(Rename, :perform, ->(*) { Rename::Result.new(:invalid, nil) }) do
           err = capture_err { refute CLI.rename("bad name") }
           assert_match(/invalid name/, err)
@@ -1778,7 +1715,7 @@ module Switchboard
     end
 
     def test_rename_reports_failed_and_fails
-      stub_method(CLI, :current_worktree, -> { Worktree.new(project: "proj", path: "/x", primary: false) }) do
+      stub_method(Model, :workspace_at, ->(*) { Worktree.new(project: "proj", path: "/x", primary: false) }) do
         stub_method(Rename, :perform, ->(*) { Rename::Result.new(:failed, nil) }) do
           err = capture_err { refute CLI.rename("x") }
           assert_match(/rename failed/, err)
@@ -1788,7 +1725,7 @@ module Switchboard
 
     def test_rename_pokes_the_sidebar_when_inside_tmux
       poked = false
-      stub_method(CLI, :current_worktree, -> { Worktree.new(project: "proj", path: "/x", primary: false) }) do
+      stub_method(Model, :workspace_at, ->(*) { Worktree.new(project: "proj", path: "/x", primary: false) }) do
         stub_method(Rename, :perform, ->(*) { Rename::Result.new(:ok, "/wts/proj/new") }) do
           stub_method(Tmux, :poke_current_sidebar, -> { poked = true }) do
             ENV["TMUX"] = "/tmp/fake-tmux,1,0"
@@ -1843,239 +1780,8 @@ module Switchboard
       end
     end
 
-    # --- rename-nudge (#92 SessionStart hook entry) --------------------------
-
-    # Write a sandboxed config and force `config` to re-read it (drop any memoized one).
-    # Pins agent_dispatch OFF so the rename tests keep asserting exact silence (D7); the
-    # dispatch tests below turn it on explicitly.
-    def nudge_config(extra)
-      base = { "worktree_root" => path("wts"), "agent_dispatch" => false,
-               "projects" => [{ "name" => "proj", "path" => "/p" }] }
-      File.write(Config.path, YAML.dump(base.merge(extra)))
-    end
-
-    # Run rename_nudge with a stubbed worktree + the given stdin, return captured stdout.
-    # `args` selects the event path (e.g. ["--stop"] for the Stop backstop). The Stop
-    # path also reports agent state by spawning the sh reporter — stubbed to a no-op so
-    # tests stay offline and focused on the stdout (block decision) contract.
-    def run_nudge(worktree:, stdin:, args: [])
-      out = nil
-      stub_method(CLI, :current_worktree, ->(*) { worktree }) do
-        stub_method(CLI, :config, -> { Config.new }) do
-          stub_method(CLI, :report_stop_state, ->(*) {}) do
-            with_stdin(StringIO.new(stdin)) { out = capture { CLI.rename_nudge(args) } }
-          end
-        end
-      end
-      out
-    end
-
-    # Capture the state the unified --stop path reports (stubbing the sh-reporter spawn).
-    def stop_reported_state(worktree:, stdin:)
-      reported = :none
-      stub_method(CLI, :current_worktree, ->(*) { worktree }) do
-        stub_method(CLI, :config, -> { Config.new }) do
-          stub_method(CLI, :report_stop_state, ->(s) { reported = s }) do
-            with_stdin(StringIO.new(stdin)) { capture { CLI.rename_nudge(["--stop"]) } }
-          end
-        end
-      end
-      reported
-    end
-
-    def placeholder_wt
-      Worktree.new(project: "proj", path: "/wts/proj/wandering-finch", primary: false)
-    end
-
-    def test_rename_nudge_emits_json_when_gated_on
-      nudge_config("auto_rename" => true)
-      out = run_nudge(worktree: placeholder_wt, stdin: '{"source":"resume","cwd":"/x"}')
-      ctx = JSON.parse(out)["hookSpecificOutput"]
-      assert_equal "SessionStart", ctx["hookEventName"]
-      assert_includes ctx["additionalContext"], "wandering-finch"
-    end
-
-    def test_rename_nudge_silent_when_auto_rename_off
-      nudge_config("auto_rename" => false)
-      assert_equal "", run_nudge(worktree: placeholder_wt, stdin: '{"source":"resume","cwd":"/x"}')
-    end
-
-    def test_rename_nudge_silent_when_not_a_placeholder
-      nudge_config("auto_rename" => true)
-      named = Worktree.new(project: "proj", path: "/wts/proj/fix-auth", primary: false)
-      assert_equal "", run_nudge(worktree: named, stdin: '{"source":"resume","cwd":"/x"}')
-    end
-
-    # /clear wipes the earlier plant out of context, so it re-plants (like compact).
-    def test_rename_nudge_replants_on_clear_source
-      nudge_config("auto_rename" => true)
-      refute_empty run_nudge(worktree: placeholder_wt, stdin: '{"source":"clear","cwd":"/x"}')
-    end
-
-    def test_rename_nudge_silent_on_primary_checkout
-      nudge_config("auto_rename" => true)
-      prim = Worktree.new(project: "proj", path: "/p", primary: true)
-      assert_equal "", run_nudge(worktree: prim, stdin: '{"source":"resume","cwd":"/p"}')
-    end
-
-    # --- the agent-dispatch instruction riding the same SessionStart payload (D7) ---
-
-    def session_context(out)
-      JSON.parse(out)["hookSpecificOutput"]["additionalContext"]
-    end
-
-    def named_wt
-      Worktree.new(project: "proj", path: "/wts/proj/fix-auth", primary: false)
-    end
-
-    def test_dispatch_instruction_alone_in_a_named_workspace
-      nudge_config("auto_rename" => true, "agent_dispatch" => true)
-      assert_equal DispatchNudge.message, session_context(run_nudge(worktree: named_wt, stdin: '{"source":"startup","cwd":"/x"}'))
-    end
-
-    def test_dispatch_and_rename_join_into_one_payload_rename_first
-      nudge_config("auto_rename" => true, "agent_dispatch" => true)
-      out = run_nudge(worktree: placeholder_wt, stdin: '{"source":"startup","cwd":"/x"}')
-      assert_equal 1, out.lines.size, "one JSON object"
-      assert_equal "#{RenameNudge.message('wandering-finch')}\n\n#{DispatchNudge.message}", session_context(out)
-    end
-
-    def test_dispatch_instruction_alone_when_auto_rename_off
-      nudge_config("auto_rename" => false, "agent_dispatch" => true)
-      assert_equal DispatchNudge.message, session_context(run_nudge(worktree: placeholder_wt, stdin: '{"source":"resume","cwd":"/x"}'))
-    end
-
-    # A session `switchboard new` started is told its first message came from another agent,
-    # so that brief can't chain another dispatch; one you typed after `n` is not.
-    def test_dispatch_instruction_names_an_agent_written_brief
-      nudge_config("agent_dispatch" => true)
-      ENV["SWITCHBOARD_BRIEF_FROM"] = "cli"
-      assert_equal DispatchNudge.message(brief_from_agent: true),
-                   session_context(run_nudge(worktree: named_wt, stdin: '{"source":"startup","cwd":"/x"}'))
-      %w[resume compact fork].each do |src|
-        assert_equal DispatchNudge.message(brief_from_agent: true),
-                     session_context(run_nudge(worktree: named_wt, stdin: %({"source":"#{src}","cwd":"/x"}))),
-                     "#{src} keeps the conversation that opened on the other agent's brief"
-      end
-      assert_equal DispatchNudge.message, session_context(run_nudge(worktree: named_wt, stdin: '{"source":"clear","cwd":"/x"}')),
-                   "after /clear the next first message is the user's own"
-      ENV.delete("SWITCHBOARD_BRIEF_FROM")
-      assert_equal DispatchNudge.message, session_context(run_nudge(worktree: named_wt, stdin: '{"source":"startup","cwd":"/x"}'))
-    end
-
-    def test_dispatch_instruction_silent_on_primary_checkout
-      nudge_config("agent_dispatch" => true)
-      prim = Worktree.new(project: "proj", path: "/p", primary: true)
-      assert_equal "", run_nudge(worktree: prim, stdin: '{"source":"resume","cwd":"/p"}')
-    end
-
-    def test_dispatch_instruction_is_on_by_default
-      File.write(Config.path, YAML.dump("worktree_root" => path("wts"), "projects" => [{ "name" => "proj", "path" => "/p" }]))
-      assert_equal DispatchNudge.message, session_context(run_nudge(worktree: named_wt, stdin: '{"source":"startup","cwd":"/x"}'))
-    end
-
-    # Each piece is rescued alone: a fault building the dispatch text drops only it.
-    def test_a_failing_dispatch_piece_still_prints_the_rename_text
-      nudge_config("auto_rename" => true, "agent_dispatch" => true)
-      out = nil
-      stub_method(DispatchNudge, :message, -> { raise "boom" }) do
-        out = run_nudge(worktree: placeholder_wt, stdin: '{"source":"startup","cwd":"/x"}')
-      end
-      assert_equal RenameNudge.message("wandering-finch"), session_context(out)
-    end
-
-    def test_rename_nudge_silent_on_malformed_stdin
-      nudge_config("auto_rename" => true)
-      assert_equal "", run_nudge(worktree: placeholder_wt, stdin: "{ not json")
-      assert_equal "", run_nudge(worktree: placeholder_wt, stdin: "")
-    end
-
-    # The Stop backstop (--stop): blocks the turn when the agent ends it still on a
-    # placeholder, feeding back an imperative rename reminder.
-    def test_rename_nudge_stop_emits_a_block_decision_when_gated_on
-      nudge_config("auto_rename" => true)
-      out = run_nudge(worktree: placeholder_wt, stdin: '{"stop_hook_active":false,"cwd":"/x"}', args: ["--stop"])
-      dec = JSON.parse(out)
-      assert_equal "block", dec["decision"]
-      assert_includes dec["reason"], "wandering-finch"
-    end
-
-    # The loop guard: once Claude has resumed from our block, --stop stays silent so the
-    # turn can end (block once, never nag).
-    def test_rename_nudge_stop_silent_once_stop_hook_active
-      nudge_config("auto_rename" => true)
-      assert_equal "", run_nudge(worktree: placeholder_wt,
-                                 stdin: '{"stop_hook_active":true,"cwd":"/x"}', args: ["--stop"])
-    end
-
-    # Self-clears on rename: a named workspace gets no Stop block.
-    def test_rename_nudge_stop_silent_when_not_a_placeholder
-      nudge_config("auto_rename" => true)
-      named = Worktree.new(project: "proj", path: "/wts/proj/fix-auth", primary: false)
-      assert_equal "", run_nudge(worktree: named, stdin: '{"stop_hook_active":false,"cwd":"/x"}', args: ["--stop"])
-    end
-
-    def test_rename_nudge_stop_silent_when_auto_rename_off
-      nudge_config("auto_rename" => false)
-      assert_equal "", run_nudge(worktree: placeholder_wt,
-                                 stdin: '{"stop_hook_active":false,"cwd":"/x"}', args: ["--stop"])
-    end
-
-    # Fail-closed end-to-end: a Stop payload missing stop_hook_active emits nothing (no
-    # block), matching the SessionStart path's silence on malformed/incomplete stdin.
-    def test_rename_nudge_stop_silent_when_flag_absent
-      nudge_config("auto_rename" => true)
-      assert_equal "", run_nudge(worktree: placeholder_wt, stdin: '{"cwd":"/x"}', args: ["--stop"])
-    end
-
-    # The unification: --stop is the Stop state reporter too. It reports `thinking` when
-    # it blocks (so a forced-to-continue agent never reads as `done`)...
-    def test_rename_nudge_stop_reports_thinking_when_blocking
-      nudge_config("auto_rename" => true)
-      assert_equal "thinking",
-                   stop_reported_state(worktree: placeholder_wt, stdin: '{"stop_hook_active":false,"cwd":"/x"}')
-    end
-
-    # ...and `done` when it doesn't block (here: a named workspace — a normal completion).
-    def test_rename_nudge_stop_reports_done_when_not_blocking
-      nudge_config("auto_rename" => true)
-      named = Worktree.new(project: "proj", path: "/wts/proj/fix-auth", primary: false)
-      assert_equal "done",
-                   stop_reported_state(worktree: named, stdin: '{"stop_hook_active":false,"cwd":"/x"}')
-    end
-
-    # Even a non-managed (nil) worktree still reports done on Stop — the dot depends on it
-    # (the state report is unconditional; only the block is gated).
-    def test_rename_nudge_stop_reports_done_for_an_unmanaged_worktree
-      nudge_config("auto_rename" => true)
-      assert_equal "done", stop_reported_state(worktree: nil, stdin: '{"stop_hook_active":false,"cwd":"/x"}')
-    end
-
-    # The correctness crux of the unification (the rest stub report_stop_state): the real
-    # write must land where AgentState reads it. report_stop_state spawns the same sh
-    # reporter, whose `pwd -P`/cksum key is computed from our inherited cwd — so a state
-    # written here must round-trip back through AgentState.scan as that worktree's state.
-    def test_report_stop_state_round_trips_through_agentstate
-      HookFile.ensure_script
-      wt = path("wt")
-      FileUtils.mkdir_p(wt)
-      Dir.chdir(wt) { CLI.report_stop_state("thinking") }
-      assert_equal({ wt => :thinking }, AgentState.new.scan([wt]))
-    end
-
-    # The hard contract: a fault must never raise (would error a session start) and
-    # must leave stdout empty (a stray byte poisons Claude startup).
-    def test_rename_nudge_never_raises_and_stays_silent_on_a_fault
-      nudge_config("auto_rename" => true)
-      out = nil
-      stub_method(CLI, :current_worktree, ->(*) { raise "boom" }) do
-        with_stdin(StringIO.new('{"source":"resume","cwd":"/x"}')) { out = capture { CLI.rename_nudge } }
-      end
-      assert_equal "", out
-    end
-
-    # current_worktree(at) resolves from a given path (a subdir), via show-toplevel.
-    def test_current_worktree_resolves_from_a_given_subdir
+    # workspace_at(path) resolves from a given path (a subdir), via show-toplevel.
+    def test_workspace_at_resolves_from_a_given_subdir
       repo = temp_git_repo("proj", origin: true)
       File.write(Config.path, YAML.dump("worktree_root" => path("wts"),
                                         "projects" => [{ "name" => "proj", "path" => repo }]))
@@ -2083,11 +1789,14 @@ module Switchboard
       git(repo, "worktree", "add", "-q", "-b", "alpha", dest)
       sub = File.join(dest, "deep")
       FileUtils.mkdir_p(sub)
-      wt = nil
-      stub_method(CLI, :config, -> { Config.new }) { wt = CLI.current_worktree(sub) }
-      refute_nil wt
-      assert_equal "alpha", File.basename(wt.path)
-      refute wt.primary
+      from_home = "~/#{Pathname(File.realpath(sub)).relative_path_from(Pathname(File.realpath(Dir.home)))}"
+      relative = Pathname(File.realpath(sub)).relative_path_from(Pathname(File.realpath(Dir.pwd))).to_s
+      [sub, from_home, relative].each do |given|
+        wt = Model.workspace_at(Config.new, given)
+        refute_nil wt, given
+        assert_equal "alpha", File.basename(wt.path)
+        refute wt.primary
+      end
     end
 
     # Value: protects=doctor's reporter row agreeing with what upgrade will do: current ✓,
@@ -2237,7 +1946,7 @@ module Switchboard
     # --- session-name sync (SessionName): the agent notice, the worker verb, doctor ---
 
     def test_a_rename_that_spawned_the_sync_tells_the_agent_the_coming_note_is_switchboards
-      stub_method(CLI, :current_worktree, -> { Worktree.new(project: "proj", path: "/x", primary: false) }) do
+      stub_method(Model, :workspace_at, ->(*) { Worktree.new(project: "proj", path: "/x", primary: false) }) do
         stub_method(Rename, :perform, ->(*) { Rename::Result.new(:ok, "/wts/proj/new", true) }) do
           out = capture { assert CLI.rename("new") }
           assert_match(/Claude session here will be renamed to new too/, out)
@@ -2259,7 +1968,7 @@ module Switchboard
       wt = Worktree.new(project: "proj", path: dir, primary: false)
       stub_method(Process, :daemon, ->(*a) { calls << [:daemon, *a] }) do
         stub_method(SessionName, :work, ->(*a) { calls << [:work, *a] }) do
-          stub_method(CLI, :current_worktree, ->(*) { wt }) { CLI.run(["sync-session-name", dir, "new"]) }
+          stub_method(Model, :workspace_at, ->(*) { wt }) { CLI.run(["sync-session-name", dir, "new"]) }
           CLI.run(%w[sync-session-name])
         end
       end
@@ -2276,11 +1985,36 @@ module Switchboard
        Worktree.new(project: "proj", path: path("wts", "proj"), primary: false)].each do |wt|
         stub_method(Process, :daemon, ->(*a) { calls << a }) do
           stub_method(SessionName, :work, ->(*a) { calls << a }) do
-            stub_method(CLI, :current_worktree, ->(*) { wt }) { CLI.run(["sync-session-name", dir, "new"]) }
+            stub_method(Model, :workspace_at, ->(*) { wt }) { CLI.run(["sync-session-name", dir, "new"]) }
           end
         end
       end
       assert_empty calls
+    end
+
+    # Value: protects=the verb judges the path it was handed, wherever it runs: the workspace
+    # root passes, its subdir, the primary and a stray dir don't; fails_when=sync_session_name
+    # stops passing dest to workspace_at; why_new=the tests above stub workspace_at and ignore
+    # its args; seam=none; no_claim=typing into a real pane
+    def test_sync_session_name_judges_the_given_path_from_any_cwd
+      repo = temp_git_repo("proj", origin: true)
+      File.write(Config.path, YAML.dump("worktree_root" => path("wts"), "projects" => [{ "name" => "proj", "path" => repo }]))
+      dest = path("wts", "proj", "alpha")
+      git(repo, "worktree", "add", "-q", "-b", "alpha", dest)
+      FileUtils.mkdir_p([File.join(dest, "deep"), path("plain")])
+      sync_from = lambda do |cwd, given|
+        calls = []
+        stub_method(Process, :daemon, ->(*) {}) do
+          stub_method(SessionName, :work, ->(*a) { calls << a }) do
+            Dir.chdir(cwd) { CLI.run(["sync-session-name", given, "new"]) }
+          end
+        end
+        calls
+      end
+      assert_equal [[dest, "new"]], sync_from.call(path("plain"), dest)
+      [File.join(dest, "deep"), repo, path("plain")].each do |refused|
+        assert_empty sync_from.call(dest, refused), refused
+      end
     end
 
     def test_doctor_lists_session_name_failures_with_the_retry

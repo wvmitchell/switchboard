@@ -19,7 +19,7 @@ module Switchboard
   # flicker off until the next re-affirm, but there's no reason to cause it). `/clear`
   # needs no SessionStart clear: it ends the old session first (see CLEARS_ON).
   #
-  # CLI#monitoring_nudge wires the config / cwd / event payload around these pure bits
+  # HookCommands.monitoring_nudge wires the config / cwd / event payload around these pure bits
   # and prints the SessionStart context payload.
   module MonitoringNudge
     module_function

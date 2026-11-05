@@ -18,6 +18,28 @@ module Switchboard
   # Assembles the project -> worktree tree from switchboard's own config (git
   # for truth, gh for PR badges). No emdash/Conductor database at runtime.
   class Model
+    # The workspace a path (default: the cwd) is in, or nil outside every registered project.
+    # Git.toplevel is the question for "which git root", registered or not. Both sides are
+    # realpath-normalized so a match holds across macOS symlinked roots (/tmp, symlinked
+    # HOME); `primary` is re-derived from realpath too, not trusted from the raw string
+    # compare in build_worktrees. A path that no longer resolves matches no workspace.
+    def self.workspace_at(config, path = nil)
+      top = Git.toplevel(path ? File.expand_path(path) : Dir.pwd)
+      real = top && Paths.real_or_nil(top)
+      return nil unless real
+
+      new(config, with_dirty: false).projects.each do |project|
+        project.worktrees.each do |w|
+          wp = Paths.real_or_nil(w.path)
+          next unless wp == real
+
+          w.primary = wp == Paths.real_or_nil(project.path)
+          return w
+        end
+      end
+      nil
+    end
+
     def initialize(config = Config.new, with_dirty: true)
       @config = config
       @prs = {}                # project name => { branch => pr }; keyed per project

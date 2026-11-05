@@ -527,7 +527,7 @@ instead of erroring with "command not found."
 A `SessionStart` command (`rename-nudge`) rides *beside* the sh state reporter
 (`… && … rename-nudge || true`). When `auto_rename` is on (`Config#auto_rename?` /
 `auto_rename_for`, global plus per-project; on by default since #114 made placeholders the
-only way to create), `CLI#rename_nudge` injects a `SessionStart` `additionalContext`
+only way to create), `HookCommands.rename_nudge` injects a `SessionStart` `additionalContext`
 instruction telling the agent to `switchboard rename` the workspace once it understands the
 work. Since #94, that renames both the folder and its branch.
 
@@ -552,7 +552,7 @@ reporter list on purpose, and a single command handles both:
 if command -v switchboard; then switchboard rename-nudge --stop; else <sh-reporter> done; fi
 ```
 
-`CLI#rename_nudge_stop` reports the state *itself*: `thinking` when it blocks (accurate,
+`HookCommands.rename_nudge_stop` reports the state *itself*: `thinking` when it blocks (accurate,
 since the agent is about to keep going) and `done` otherwise (the normal completion). It
 goes through the same sh reporter (`report_stop_state` → `HookFile.script_path`), and the
 child inherits the hook's cwd, so its cksum key matches the file the other events write.
@@ -578,7 +578,7 @@ Both stop the moment the workspace is renamed, because "still unnamed" is derive
 stored: the signal is `Placeholder.generated?(leaf)` (the name is a generated
 adjective-noun), with no marker file.
 
-The subcommand finds the worktree from the hook's stdin `cwd` (via `current_worktree`), and
+The subcommand finds the worktree from the hook's stdin `cwd` (via `Model.workspace_at`), and
 **always exits 0, printing only the JSON or nothing**. A stray byte on stdout poisons
 Claude even at exit 0, so the whole body is rescued to silence.
 
@@ -591,7 +591,7 @@ about it, gated on `agent_dispatch` (global plus per-project, on by default).
 
 **It rides the self-naming command, not a hook of its own.** The `rename-nudge`
 `SessionStart` command is already wired in every hooked worktree and calls the stable
-binary. So `CLI#rename_nudge` builds the rename text (if that applies) and the dispatch
+binary. So `HookCommands.rename_nudge` builds the rename text (if that applies) and the dispatch
 text (`DispatchNudge`, if that applies) and prints them as one `additionalContext`
 payload, rename first. Upgrading reaches every existing workspace with no rewiring. Each
 piece is built under its own rescue, so a fault in one never drops the other, and the
@@ -718,7 +718,7 @@ From fastest to slowest:
 
 1. **Explicit `off`, and `quit`.** Both are instant. `quit` calls `Monitoring.clear_all`
    beside `AgentState.clear_all`, since a teardown kills every agent.
-2. **Session boundaries.** Two hook commands (`MonitoringNudge` and `CLI#monitoring_nudge`,
+2. **Session boundaries.** Two hook commands (`MonitoringNudge` and `HookCommands.monitoring_nudge`,
    wired into the Claude hook by `HookFile.command_entries` as matcher-less `SessionStart` and
    `SessionEnd` commands, marked `MONITOR_MARK` so `ours?` can dedupe and strip them):
    - **clear on `SessionStart`** makes monitoring a per-session declaration. A resumed agent,
