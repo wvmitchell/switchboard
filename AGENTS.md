@@ -37,7 +37,7 @@ no build step.
 
 ## Map
 
-- **Dispatch:** `lib/switchboard/cli.rb`; agent hook entries in `hook_commands.rb`
+- **Dispatch:** `lib/switchboard/cli.rb`; agent hook entries in `hook_commands.rb`, `doctor` in `doctor.rb`
 - **Data model → tree → TUI:** `model.rb` → `tree.rb` → `sidebar.rb` (+ its
   `sidebar/` concern files: `edges`, `render`, `input`, `actions`, `prompt`,
   `rows` — one class in several files, #57)

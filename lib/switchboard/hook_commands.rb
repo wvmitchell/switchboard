@@ -26,7 +26,7 @@ module Switchboard
     #     every hooked worktree with no new hook entry; each piece is built under its own
     #     rescue, so a fault in one never drops the other.
     #   • Stop (`--stop`) — see rename_nudge_stop: this command IS the Stop state reporter
-    #     AND the backstop (the sh reporter is off the Stop event, hook.rb), so it can
+    #     AND the backstop (the sh reporter is off the Stop event, hook_file.rb), so it can
     #     report `thinking` when it blocks instead of a racing `done`.
     def rename_nudge(args = [])
       payload = parse_hook_stdin

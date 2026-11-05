@@ -72,7 +72,7 @@ Helpers you'll use:
 
 Pure decision logic is split out from its shell-out so it's unit-testable without
 a subprocess (e.g. `Reconcile.orphans`, `Installer.rebind_ops`,
-`CLI.orphan_sidebar_count`). Follow that pattern: keep the decision pure, test it
+`Doctor.orphan_sidebar_count`). Follow that pattern: keep the decision pure, test it
 directly, and stub the one I/O seam.
 
 ### The real-tmux smoke layer (issue #104)
@@ -176,6 +176,7 @@ the new binary re-wire tmux and every hooked worktree — the CHANGELOG header s
 | Area | File(s) |
 |------|---------|
 | Command dispatch | `lib/switchboard/cli.rb` |
+| `switchboard doctor`'s checks | `lib/switchboard/doctor.rb` |
 | What the agent hooks print and record | `lib/switchboard/hook_commands.rb` (the decisions: `rename_nudge.rb`, `dispatch_nudge.rb`, `monitoring_nudge.rb`) |
 | Config / registry | `lib/switchboard/config.rb` |
 | The data model + tree | `lib/switchboard/model.rb`, `tree.rb` |

@@ -741,8 +741,8 @@ module Switchboard
 
     # The toggle key switchboard last bound — its fallback when tmux rejected the configured
     # one (apply_keybindings records it), else the configured key.
-    def bound_toggle_key
-      tmux_option("@switchboard-toggle-key") || Config.new.tmux_key("toggle")
+    def bound_toggle_key(config: Config.new)
+      tmux_option("@switchboard-toggle-key") || config.tmux_key("toggle")
     end
 
     # Pure: does `tmux list-keys -T prefix` show `key` bound to toggle-sidebar?

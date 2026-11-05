@@ -598,10 +598,10 @@ module Switchboard
     def test_doctor_lists_sidebars_whose_reload_failed
       failed = Tmux::ReloadTarget.new(pane: "%4", pid: 9, failed: true)
       out, = stub_method(Tmux, :sidebar_reload_targets, -> { [failed, Tmux::ReloadTarget.new(pane: "%5", pid: 8)] }) do
-        capture_io { CLI.doctor_reload_failures }
+        capture_io { Doctor.doctor_reload_failures }
       end
       assert_includes out, "1 sidebar(s) still on old code after a failed reload (pane %4)"
-      out, = stub_method(Tmux, :sidebar_reload_targets, -> { nil }) { capture_io { CLI.doctor_reload_failures } }
+      out, = stub_method(Tmux, :sidebar_reload_targets, -> { nil }) { capture_io { Doctor.doctor_reload_failures } }
       assert_empty out, "silent off a server or with none"
     end
 
