@@ -10,7 +10,7 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
-## [0.66.9] — A key switchboard took comes back when it lets go (2026-11-05)
+## [0.66.10] — A key switchboard took comes back when it lets go (2026-11-05)
 
 ### Fixed
 - Moving your toggle or home key, or uninstalling, left the old key unbound even if it had done
@@ -26,6 +26,14 @@ refer to the project's earlier, private repository; the public tracker starts at
   nothing, as `install` already refuses that path.
 - Uninstalling always unbound `prefix-s`, even when it wasn't switchboard's. It now leaves it alone
   unless it's still bound to switchboard.
+
+## [0.66.9] — Branch rows come back when a new workspace reuses a deleted one's path (2026-11-05)
+
+### Fixed
+- After you deleted a workspace and a new one later took the same path, sidebars that were
+  already running showed it as a single branch, with no error, until they restarted or
+  reloaded. Its diff counts also stopped updating after the first commit. Running sidebars
+  now find the new workspace's history and counts on their next refresh.
 
 ## [0.66.8] — the keybinding code gets its own file, with no change to how keys bind (2026-11-05)
 

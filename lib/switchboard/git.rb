@@ -335,14 +335,15 @@ module Switchboard
     # across reloads) memoizes per worktree so a reload that finds the reflog
     # unchanged skips BOTH the rev-parse subprocess and the re-parse. Keyed on
     # logs/HEAD mtime + limit: a new checkout appends to the reflog (bumping mtime)
-    # and invalidates the entry, while the git-dir is stable per worktree so it's
-    # remembered after the first lookup. cache nil ⇒ no memo (every call recomputes).
+    # and invalidates the entry. The git-dir is remembered too, and resolved again if
+    # its reflog is gone: a new worktree can take a deleted one's path under another
+    # admin dir. cache nil ⇒ no memo (every call recomputes).
     def branch_history(worktree, limit: nil, cache: nil)
       entry = cache && cache[worktree]
+      entry = nil if entry && !File.exist?(File.join(entry[0], "logs", "HEAD"))
       # --absolute-git-dir, not --git-dir: the latter returns a relative ".git",
       # which would resolve logs/HEAD against the process cwd (one worktree) for
-      # every row in the tree. Absolute makes it the worktree's own reflog. Reused
-      # from the cache when present (it doesn't change for a given worktree).
+      # every row in the tree. Absolute makes it the worktree's own reflog.
       gitdir = entry ? entry[0] : capture(worktree, "rev-parse", "--absolute-git-dir").strip
       head_log = File.join(gitdir, "logs", "HEAD")
       return [] unless File.exist?(head_log)

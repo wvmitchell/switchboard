@@ -294,6 +294,47 @@ module Switchboard
       refute_includes hist, "STALE"
     end
 
+    # Value: protects=a long-lived sidebar's branch rows when a deleted workspace's path is reused under another admin dir; fails_when=a cached gitdir with no logs/HEAD is trusted instead of resolved again; why_new=the tests above keep one worktree at its path; seam=none (real git worktrees); no_claim=a cached gitdir that is still alive but now belongs to another worktree
+    def test_branch_history_resolves_again_when_a_new_worktree_takes_the_path
+      repo = temp_git_repo
+      reused = path("reused")
+      git(repo, "worktree", "add", "-q", "-b", "old-first", reused)
+      git(reused, "checkout", "-q", "-b", "old-second")
+      cache = {}
+      assert_equal %w[old-second old-first], Git.branch_history(reused, cache: cache)
+      old_gitdir = cache[reused][0]
+
+      git(repo, "worktree", "remove", reused)
+      elsewhere = path("elsewhere")
+      git(repo, "worktree", "add", "-q", "-b", "new-first", elsewhere)
+      git(elsewhere, "checkout", "-q", "-b", "new-second")
+      git(repo, "worktree", "move", elsewhere, reused)
+
+      new_gitdir = git(reused, "rev-parse", "--absolute-git-dir").strip
+      refute_equal old_gitdir, new_gitdir, "the new worktree must sit under a different admin dir"
+      assert_equal %w[new-second new-first], Git.branch_history(reused, cache: cache)
+      assert_equal new_gitdir, cache[reused][0], "refresh_diffs and warm_fingerprint read the healed gitdir"
+    end
+
+    # Value: protects=refresh_diffs' compute-once gate, which needs the entry to outlive a missing reflog; fails_when=a failed re-resolve deletes or overwrites the entry; why_new=the test above only reaches a re-resolve that succeeds; seam=none (real git worktrees); no_claim=what refresh_diffs paints
+    def test_branch_history_keeps_the_entry_when_resolving_again_finds_no_reflog
+      repo = temp_git_repo
+      wt = path("wt")
+      git(repo, "worktree", "add", "-q", "-b", "first", wt)
+      git(wt, "checkout", "-q", "-b", "second")
+      cache = {}
+      Git.branch_history(wt, cache: cache)
+      entry = cache[wt]
+
+      File.delete(File.join(entry[0], "logs", "HEAD")) # a live worktree with no reflog
+      assert_empty Git.branch_history(wt, cache: cache)
+      assert_equal entry, cache[wt]
+
+      FileUtils.rm_rf(wt) # no worktree at all: rev-parse prints nothing
+      assert_empty Git.branch_history(wt, cache: cache)
+      assert_equal entry, cache[wt]
+    end
+
     # A detached-HEAD checkout records the commit-ish (full or abbreviated SHA) in
     # the reflog `to` token; it must not surface as a branch row. Covers the #21
     # regression (abbreviated SHA) plus the 4-char and full-SHA cases — the latter
