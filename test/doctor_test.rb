@@ -1079,6 +1079,67 @@ module Switchboard
       assert_includes out, "remote links (⇅): 0 linked (1 Claude sessions in"
     end
 
+    # Doctor.run with a config that is NOT the one at Config.path, so a row from the wrong one shows.
+    # Only the probes are stubbed: gh's presence and auth, the tmux options, the prune report.
+    def doctor_run_given(given, options: {}, &on_prune)
+      stub_method(Doctor, :`, ->(cmd) { cmd.include?("command -v gh") ? "/usr/bin/gh\n" : "" }) do
+        stub_method(Pr, :authenticated?, -> { false }) do
+          stub_method(Installer, :tmux_wired?, ->(*) { true }) do
+            stub_method(Installer, :tmux_server?, -> { true }) do
+              stub_method(Reconcile, :prune, on_prune || ->(_cfg, **) { Reconcile::Report.new(reachable: false, sb_count: 0, orphans: []) }) do
+                with_key_stubs(live: true, options: options) { capture { Doctor.run(given) } }
+              end
+            end
+          end
+        end
+      end
+    end
+
+    # Value: protects=every config-reading row of `doctor` answering from the config it was
+    # handed; fails_when=a helper or a call down from run reads Config.new or drops config: (the
+    # stray read goes unseen when both name one file); why_new=all but doctor_hooks' tests pass
+    # Config.new of the same file; seam=none; no_claim=that a real tmux server reports these options
+    def test_doctor_run_reads_every_row_from_the_config_it_was_given
+      File.write(Config.path, YAML.dump(
+        "projects" => [{ "name" => "ignored-project", "path" => path("ignored") }],
+        "ignored_stray" => 1, "sounds" => { "done" => "/ignored/done.aiff" }, "tmux_keys" => { "toggle" => "x", "home" => "z" },
+        "sidebar_keys" => { "new_workspace" => "Q", "delete" => "Q" }
+      ))
+      File.write(path("given.yml"), YAML.dump(
+        "projects" => [{ "name" => "given-project", "path" => path("given") }],
+        "given_stray" => 1, "sounds" => { "done" => "/given/done.aiff" }, "tmux_keys" => { "toggle" => "T", "home" => "g" },
+        "sidebar_keys" => { "new_workspace" => "W" }
+      ))
+      given = Config.new(path("given.yml"))
+      pruned = nil
+      out = doctor_run_given(given, options: { "@switchboard-config-path" => File.expand_path(path("given.yml")),
+                                               "@switchboard-toggle-rejected" => "T", "@switchboard-home-key" => "H",
+                                               "@switchboard-home-clobbered" => "was-bound" }) do |cfg, **|
+        pruned = cfg
+        Reconcile::Report.new(reachable: false, sb_count: 0, orphans: [])
+      end
+
+      ["PR badges given-project", 'config key "given_stray"', "sound done: /given/done.aiff",
+       "sidebar_keys: 1 remapped, no clashes", "tmux_keys.toggle is T in config, but it isn't bound",
+       "tmux_keys.home is g in config, but tmux has prefix-H", "prefix-g (home) replaced a prior binding: was-bound"].each do |row|
+        assert_includes out, row
+      end
+      ["ignored-project", "ignored_stray", "/ignored/", "clashes with"].each { |stray| refute_includes out, stray }
+      assert_same given, pruned
+    end
+
+    # Value: protects=the parse failure doctor reports being the given config's, in the config row
+    # and the tmux_keys note; fails_when=either re-reads Config.new (a healthy file reads ✓ beside a
+    # broken one); why_new=the parse tests write the broken file at Config.path; seam=none;
+    # no_claim=which config the CLI hands in (the verb test above)
+    def test_doctor_run_reports_the_parse_error_of_the_config_it_was_given
+      File.write(Config.path, YAML.dump("worktree_root" => path("wts")))
+      File.write(path("broken.yml"), "sidebar_keys: [unclosed\n")
+      out = doctor_run_given(Config.new(path("broken.yml")))
+      assert_includes out, "config failed to parse"
+      assert_includes out, "config.yml didn't parse"
+    end
+
     # Stub the two tmux shell-outs doctor_binding_live makes: the live-binding probe
     # and the @option reads (clobber markers). Keeps the doctor rows offline.
     def with_key_stubs(live:, options: {}, &blk)
