@@ -234,8 +234,8 @@ module Switchboard
     # foreign; fails_when=the listed form is compared literally, or foreign uses the exact path;
     # why_new=both regressed in review; seam=none; no_claim=tmux, in smoke
     def test_listed_spellings_and_other_installs
-      raw = "bind-key -T prefix \; last-pane\nbind-key -T prefix \"C-;\" display-message c\nbind-key -T prefix \\$ rename\n"
-      assert_equal "bind-key -T prefix \; last-pane", Installer.prefix_line_from(raw, ";")
+      raw = "bind-key -T prefix \\; last-pane\nbind-key -T prefix \"C-;\" display-message c\nbind-key -T prefix \\$ rename\n"
+      assert_equal "bind-key -T prefix \\; last-pane", Installer.prefix_line_from(raw, ";")
       assert_equal "bind-key -T prefix \"C-;\" display-message c", Installer.prefix_line_from(raw, "C-;")
       assert_equal "bind-key -T prefix \\$ rename", Installer.prefix_line_from(raw, "$")
       moved = "bind-key -T prefix s run-shell \"'/old/bin/switchboard' toggle-sidebar\"\n"

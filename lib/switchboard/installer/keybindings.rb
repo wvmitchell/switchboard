@@ -240,7 +240,7 @@ module Switchboard
       raw.to_s.lines.find { |line| unlisted(listed_key(line)) == key }&.strip
     end
 
-    # A key as the config writes it, from how list-keys prints it (`\$`, `;`, `"C-;"`).
+    # A key as the config writes it, from how list-keys prints it (`\$`, `\;`, `"C-;"`).
     def unlisted(key) = key.to_s.delete_prefix('"').delete_suffix('"').delete_prefix("\\")
 
     # `key`'s line, asking tmux for a spelling only it can resolve (`f5` is listed as `F5`). More than
