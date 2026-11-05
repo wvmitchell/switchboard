@@ -380,8 +380,9 @@ defaults to `s`, and `home` is unbound.
 ### Unbinding exactly what we bound
 
 Cleanup remembers the key it bound last in tmux options (`@switchboard-toggle-key`,
-`@switchboard-home-key`) and unbinds exactly that. It never scans `list-keys`, so it can't
-clobber your own `switchboard` binding, and it survives the repo moving. tmux key bindings
+`@switchboard-home-key`) and lets go of exactly that. It finds the key from that record, never
+by searching `list-keys` for our command, so it can't clobber your own `switchboard` binding,
+and it survives the repo moving. tmux key bindings
 and `@options` share a lifetime: both die when the server restarts.
 
 The rest of the rules:
@@ -390,12 +391,17 @@ The rest of the rules:
   losing the key you'd use to recover.
 - **A displaced binding is recorded, then given back.** If binding replaced someone else's,
   that's recorded in `@switchboard-*-clobbered` for `doctor` to warn about, and the whole
-  `list-keys` line goes in `@switchboard-*-displaced`. Moving off the key, or uninstalling,
+  `list-keys` line goes in `@switchboard-*-displaced`. Both survive reloads for as long as the
+  role holds the key. Moving off the key, or uninstalling,
   sources that line, so the key comes back with its flags and quoting (tmux doesn't list a
   binding's `-N` note, so that isn't restored). A binding you made on the key since is newer, so
-  it's left alone. The record follows its key when toggle and home trade keys. `ours?` means our bin path
-  followed by *either* role's exact subcommand, so swapping toggle and home isn't counted as
-  clobbering ourselves.
+  it's left alone. The record follows its key when toggle and home trade keys.
+  `switchboard_binding?` decides what isn't someone else's: any install's path ending in
+  `/switchboard`, followed by *either* role's exact subcommand. So neither swapping toggle and
+  home nor a moved install's old key is counted as clobbering ourselves.
+- **An unsafe install path binds nothing.** A quote or control character in the path can't
+  survive the shell a bound key runs in, so `tmux-bind` refuses it (`tmux_safe_path?`), as
+  `install` does, rather than replace a working key with a dead one.
 - **A refused key is remembered** in `@switchboard-<role>-rejected`.
 - **One role never takes another's key.** Cleanup never unbinds a key another role wants or
   now holds (`taken:`), so swapping toggle and home keeps both.
