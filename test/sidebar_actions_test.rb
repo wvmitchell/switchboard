@@ -204,6 +204,36 @@ module Switchboard
       assert_nil Creation.find(rec["id"]), "no tree on disk: nothing left to guard"
     end
 
+    # Value: protects=a burst can't delete with the prompt unseen; fails_when=read_char
+    # consumes @typeahead; why_new=only a smoke-test comment recorded this; seam=none;
+    # no_claim=none beyond protects
+    def test_a_y_batched_behind_d_cannot_answer_the_prompt
+      refute removal_started?("dy", clean: true, reads: ["n"]), "the prompt read its own n, not the y queued behind d"
+      assert removal_started?("d", clean: true, reads: ["y"]), "its own y still deletes"
+    end
+
+    # Value: protects=a double tap can't force past uncommitted changes; fails_when=keys read
+    # after the answer stay readable by the next prompt; why_new=no test covered the second
+    # confirm's input; seam=none; no_claim=none beyond protects
+    def test_a_double_tapped_y_cannot_answer_the_force_prompt
+      refute removal_started?("d", clean: false, reads: ["yy", "n"]), "the force prompt read its own n"
+      assert removal_started?("d", clean: false, reads: ["y", "y"]), "its own y still forces"
+    end
+
+    # Did these keys get as far as removing the workspace? Stops there, before the session kill.
+    def removal_started?(keys, clean:, reads:)
+      sb = deletable_sidebar
+      sb.define_singleton_method(:start_removal) { |*, **| throw :removal_started, true }
+      catch(:removal_started) do
+        stub_method(WorkspaceBranches, :plan, ->(*) { [] }) do
+          stub_method(Git, :clean?, ->(*) { clean }) do
+            with_reads(sb, *reads) { sb.send(:handle, keys) }
+          end
+        end
+        false
+      end
+    end
+
     def test_delete_dirty_prompts_to_force_and_aborts_when_declined
       sb = deletable_sidebar
       ENV["SWITCHBOARD_BIN"] = "/bin/switchboard"

@@ -219,7 +219,7 @@ module Switchboard
         rows, cols = winsize
         print "\e[#{rows};1H\e[K\e[?25h#{trunc('add — [l] local · [c] clone · [n] new', cols)}"
         $stdout.flush
-        choice = read_char
+        choice = read_char(leaving_closes: true)
         print "\e[?25l"
         case choice&.downcase
         when "l" then add_local

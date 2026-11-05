@@ -10,6 +10,19 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
+## [0.66.5] — The delete prompt stays up until you answer it (2026-11-05)
+
+### Fixed
+- Pressing `d` could flash the delete question and take it away before you could answer. A
+  background refresh landing on the open prompt counted as "no". The same went for the other
+  y/N prompts, which now wait for a real key, including if you switch away and come back, the
+  way `n` and `r` already do.
+- Error messages and the `a` menu no longer vanish on a background refresh. They wait for a key
+  while you're in the pane and close when you leave it.
+- Leaving the pane while one of those prompts was open could open the repo in your browser.
+- A fast double `y` on delete, read as one burst, could also answer the "uncommitted changes —
+  force?" question. That question now only takes a `y` typed after it appears.
+
 ## [0.66.4] — a malformed hook payload can't leave the dot stuck (2026-11-05)
 
 ### Fixed

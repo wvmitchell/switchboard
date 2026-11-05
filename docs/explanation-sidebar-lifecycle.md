@@ -99,6 +99,11 @@ wrongly re-wake it. An un-poked reappearance (a window switch on a tmux too old
 for the hook, a bare `tmux attach`) is caught by the off→on `reappeared` branch in
 `tick` within one `IDLE` tick.
 
+Pokes and tmux's focus reports share stdin with your keystrokes, so anything waiting for a
+key has to skip them. `read_char` runs them once the prompt closes, keeping only the last of
+each kind. A sidebar waiting on a prompt doesn't scan or repaint, so the "any key" errors and
+the `a` menu close when you leave the pane, while a y/N waits for your answer.
+
 ### Pre-warming: fresh on arrival, without the flash
 
 Pure dormancy has a cost you can see: switch into a session and, for a beat, its
