@@ -489,8 +489,8 @@ module Switchboard
         Tmux.respawn_sidebar(target("%7", tagged: false), "MARK")
       end
       assert ok
-      assert_equal [["tmux", "respawn-pane", "-k", "-e", "#{CodeReload::RESUME_ENV}=MARK", "-t", "%7"],
-                    ["tmux", "respawn-pane", "-k", "-t", "%7"]], calls,
+      assert_equal [["tmux", "-u", "respawn-pane", "-k", "-e", "#{CodeReload::RESUME_ENV}=MARK", "-t", "%7"],
+                    ["tmux", "-u", "respawn-pane", "-k", "-t", "%7"]], calls,
                    "-e first, then the bare retry; never a command (the pane reruns its own)"
       calls.clear
       stub_method(Tmux, :system, ->(*argv, **) { calls << argv; true }) { Tmux.respawn_sidebar(target("%7", tagged: false), "M") }
@@ -535,15 +535,15 @@ module Switchboard
         Tmux.tag_sidebar_pane("%3", 0)
         Tmux.flag_failed_reload("%3", "/Cellar/b")
       end
-      assert_equal ["tmux", "set-option", "-p", "-t", "%3", CodeReload::TAG, "42",
+      assert_equal ["tmux", "-u", "set-option", "-p", "-t", "%3", CodeReload::TAG, "42",
                     ";", "set-option", "-p", "-u", "-t", "%3", CodeReload::FAILED_TAG], calls[0]
-      assert_equal ["tmux", "set-option", "-p", "-t", "%3", CodeReload::TAG, "0"], calls[1]
-      assert_equal ["tmux", "set-option", "-p", "-t", "%3", CodeReload::FAILED_TAG, "/Cellar/b"], calls[2]
+      assert_equal ["tmux", "-u", "set-option", "-p", "-t", "%3", CodeReload::TAG, "0"], calls[1]
+      assert_equal ["tmux", "-u", "set-option", "-p", "-t", "%3", CodeReload::FAILED_TAG, "/Cellar/b"], calls[2]
       calls.clear
       stub_method(Tmux, :system, ->(*argv, **) { calls << argv; false }) do
         refute Tmux.tag_sidebar_pane("%3", 42, clear_failed: false), "a tag that didn't land says so"
       end
-      assert_equal [["tmux", "set-option", "-p", "-t", "%3", CodeReload::TAG, "42"]], calls,
+      assert_equal [["tmux", "-u", "set-option", "-p", "-t", "%3", CodeReload::TAG, "42"]], calls,
                    "old code re-tagging itself leaves the failure flag"
     end
 

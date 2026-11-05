@@ -34,7 +34,7 @@ module Switchboard
     # [[pane_id, cwd], ...] for agent-CLI panes. Pane ids let the sidebar's
     # activity fallback capture a specific pane to tell busy from idle.
     def tmux_panes
-      out = `tmux list-panes -a -F '#\{pane_id}#{TAB}#\{pane_current_command}#{TAB}#\{pane_current_path}' 2>/dev/null`
+      out = `tmux -u list-panes -a -F '#\{pane_id}#{TAB}#\{pane_current_command}#{TAB}#\{pane_current_path}' 2>/dev/null`
       out.lines.filter_map do |line|
         id, cmd, path = line.chomp.split("\t", 3)
         [id, path] if path && CLIS.include?(cmd)

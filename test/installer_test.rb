@@ -158,9 +158,9 @@ module Switchboard
         Installer.run_tmux("set-option", "-g", "@switchboard-toggle-rejected", ";")
         Installer.run_tmux("unbind-key", "\\;")
       end
-      assert_equal ["tmux", "bind-key", "C-\\;", "run-shell", "x"], seen[0]
-      assert_equal ["tmux", "set-option", "-g", "@switchboard-toggle-rejected", "\\;"], seen[1]
-      assert_equal ["tmux", "unbind-key", "\\;"], seen[2], "already escaped: left alone"
+      assert_equal ["tmux", "-u", "bind-key", "C-\\;", "run-shell", "x"], seen[0]
+      assert_equal ["tmux", "-u", "set-option", "-g", "@switchboard-toggle-rejected", "\\;"], seen[1]
+      assert_equal ["tmux", "-u", "unbind-key", "\\;"], seen[2], "already escaped: left alone"
     end
 
     # --- run_rebind: bind-first + bind-failure fallback (via the run_tmux seam) -
@@ -387,7 +387,7 @@ module Switchboard
       stub_method(Installer, :tmux_option, ->(name) { name == "@switchboard-toggle-key" ? "C-;" : nil }) do
         stub_method(Installer, :system, ->(*argv, **) { seen << argv; true }) { Installer.teardown_live }
       end
-      assert_includes seen, ["tmux", "unbind-key", "C-\\;"]
+      assert_includes seen, ["tmux", "-u", "unbind-key", "C-\\;"]
     end
 
     def test_key_drift_needs_the_config_tmux_bound_from

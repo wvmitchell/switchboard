@@ -65,7 +65,7 @@ module Switchboard
       ensure_work_pane(HOME) # if home's work pane was closed, re-grow one so we never land on a wedged (sidebar-only) home (#64)
       sidebar = window_sidebar_pane(HOME)
       # Focus the tree before switch, so the exec/attach path keeps it too.
-      system("tmux", "select-pane", "-t", sidebar, out: File::NULL, err: File::NULL) if sidebar
+      system("tmux", "-u", "select-pane", "-t", sidebar, out: File::NULL, err: File::NULL) if sidebar
       switch(HOME) # may exec (attach) when launched outside tmux
       poke(sidebar) # force a fresh tree now (e.g. right after a delete)
       pin(sidebar)
@@ -108,7 +108,7 @@ module Switchboard
       # original edit's origin; moot for the common repeat-`e`-from-home case).
       if (existing = live_editor_pane)
         pin(sidebar)
-        system("tmux", "select-pane", "-t", existing, out: File::NULL, err: File::NULL)
+        system("tmux", "-u", "select-pane", "-t", existing, out: File::NULL, err: File::NULL)
         return switch(HOME)
       end
 
@@ -117,7 +117,7 @@ module Switchboard
       # nest-in-the-tree bug this method exists to avoid.
       target = work_pane(HOME, sidebar)
       pane = target && IO.popen(
-        ["tmux", "split-window", "-b", "-t", target, "-c", home_dir, "-p", "80", "-P", "-F", "#\{pane_id}", command],
+        ["tmux", "-u", "split-window", "-b", "-t", target, "-c", home_dir, "-p", "80", "-P", "-F", "#\{pane_id}", command],
         err: File::NULL, &:read
       ).to_s.strip
       if pane.nil? || pane.empty? # no work pane, or the split failed
@@ -136,7 +136,7 @@ module Switchboard
     # `e` can reuse it. A session option shares the session's lifetime, so a server
     # restart clears it along with the pane it names — no cross-restart staleness.
     def stash_editor_pane(pane)
-      system("tmux", "set-option", "-t", HOME, EDITOR_PANE_OPT, pane, out: File::NULL, err: File::NULL)
+      system("tmux", "-u", "set-option", "-t", HOME, EDITOR_PANE_OPT, pane, out: File::NULL, err: File::NULL)
     end
 
     # The stashed editor pane iff it's still a LIVE pane in home's active window
@@ -149,8 +149,8 @@ module Switchboard
     # home window holding the editor just degrades to a fresh spawn (never worse than
     # pre-fix), never a wrong-pane focus.
     def live_editor_pane
-      want = `tmux show-options -v -t #{Shellwords.escape(HOME)} #{EDITOR_PANE_OPT} 2>/dev/null`.strip
-      raw  = `tmux list-panes -t #{Shellwords.escape(HOME)} -F '#\{pane_id} #\{pane_dead}' 2>/dev/null`
+      want = `tmux -u show-options -v -t #{Shellwords.escape(HOME)} #{EDITOR_PANE_OPT} 2>/dev/null`.strip
+      raw  = `tmux -u list-panes -t #{Shellwords.escape(HOME)} -F '#\{pane_id} #\{pane_dead}' 2>/dev/null`
       live = raw.lines.filter_map { |l| id, dead = l.split; id if dead != "1" }
       reusable_editor_pane(want, live)
     end
@@ -189,7 +189,7 @@ module Switchboard
     # interpolation escaped (#\{...}); a bare #{} would be Ruby string
     # interpolation, not a tmux format, and silently yield junk.
     def sessions
-      raw = `tmux list-sessions -F '#\{session_name}\t#\{session_created}' 2>/dev/null`
+      raw = `tmux -u list-sessions -F '#\{session_name}\t#\{session_created}' 2>/dev/null`
       return nil unless $?.success?
 
       sb_sessions(raw)
@@ -212,7 +212,7 @@ module Switchboard
     # orphans (a sidebar that outlived its pane). nil if tmux is unreachable (no
     # server) — distinct from 0 (server up, no sidebars), so doctor stays honest.
     def sidebar_pane_count
-      raw = `tmux list-panes -a -F '#\{pane_title}' 2>/dev/null`
+      raw = `tmux -u list-panes -a -F '#\{pane_title}' 2>/dev/null`
       return nil unless $?.success?
 
       count_sidebar_panes(raw)
@@ -233,7 +233,7 @@ module Switchboard
     # never mistaken for an orphan. nil when tmux is unreachable (no server) — distinct
     # from an empty set, so a transient miss can't read as "every sidebar is an orphan".
     def live_pane_ttys
-      raw = `tmux list-panes -a -F '#\{pane_tty}' 2>/dev/null`
+      raw = `tmux -u list-panes -a -F '#\{pane_tty}' 2>/dev/null`
       return nil unless $?.success?
 
       parse_ttys(raw)
@@ -278,7 +278,7 @@ module Switchboard
     # This server's own PID (tmux's `#{pid}`), or nil when no server is reachable — the
     # ownership key sidebar_processes scopes the reap to. Read once per reap, not per row.
     def server_pid
-      out = `tmux display-message -p '#\{pid}' 2>/dev/null`.strip
+      out = `tmux -u display-message -p '#\{pid}' 2>/dev/null`.strip
       $?.success? && out.match?(/\A\d+\z/) ? out.to_i : nil
     end
 
@@ -302,7 +302,7 @@ module Switchboard
       # processes) created the session first, new-session fails — and we must
       # NOT type the command into a session we didn't create, or it lands twice.
       created = system(*new_session_cmd(name, dir), out: File::NULL, err: File::NULL)
-      system("tmux", "rename-window", "-t", name, "work", out: File::NULL, err: File::NULL)
+      system("tmux", "-u", "rename-window", "-t", name, "work", out: File::NULL, err: File::NULL)
       # Record the first-creation default (on) explicitly, so new windows in this
       # session inherit a sidebar via the after-new-window hook. Gated on `created`
       # for the same reason as run_in_session: never stamp a session we lost a race
@@ -325,7 +325,7 @@ module Switchboard
     # which would turn a create that used to succeed at the 80x24 default into a
     # no-op; fall back to that default instead.
     def new_session_cmd(name, dir)
-      cmd = ["tmux", "new-session", "-d", "-s", name, "-c", dir]
+      cmd = ["tmux", "-u", "new-session", "-d", "-s", name, "-c", dir]
       w, h = current_window_size
       cmd.push("-x", w.to_s, "-y", h.to_s) if w&.positive? && h&.positive?
       cmd
@@ -340,7 +340,7 @@ module Switchboard
     def current_window_size
       return [nil, nil] unless ENV["TMUX"]
 
-      parse_window_size(`tmux display-message -p '#\{window_width},#\{window_height}' 2>/dev/null`)
+      parse_window_size(`tmux -u display-message -p '#\{window_width},#\{window_height}' 2>/dev/null`)
     end
 
     # Pure: a "W,H" reply parsed to [Integer, Integer], or [nil, nil] on an
@@ -361,12 +361,12 @@ module Switchboard
     # chomp so a trailing newline (a YAML block scalar) doesn't double-submit.
     # tmux buffers the keys until the shell is ready.
     def run_in_session(name, command)
-      system("tmux", "send-keys", "-t", name, "-l", command.chomp, out: File::NULL, err: File::NULL)
-      system("tmux", "send-keys", "-t", name, "Enter", out: File::NULL, err: File::NULL)
+      system("tmux", "-u", "send-keys", "-t", name, "-l", command.chomp, out: File::NULL, err: File::NULL)
+      system("tmux", "-u", "send-keys", "-t", name, "Enter", out: File::NULL, err: File::NULL)
     end
 
     def has_session?(name)
-      system("tmux", "has-session", "-t", "=#{name}", out: File::NULL, err: File::NULL)
+      system("tmux", "-u", "has-session", "-t", "=#{name}", out: File::NULL, err: File::NULL)
     end
 
     # The session a pane belongs to (this process's own pane by default), or nil.
@@ -375,7 +375,7 @@ module Switchboard
     def session_of(pane = ENV["TMUX_PANE"])
       return nil unless pane
 
-      name = `tmux display-message -p -t #{Shellwords.escape(pane)} '#\{session_name}' 2>/dev/null`.strip
+      name = `tmux -u display-message -p -t #{Shellwords.escape(pane)} '#\{session_name}' 2>/dev/null`.strip
       name.empty? ? nil : name
     end
 
@@ -388,7 +388,7 @@ module Switchboard
     # a tmux prefix match, which would over-kill. Array form (no shell) so the
     # name can't inject. The single kill path for worktree delete, prune, and quit.
     def kill_session(name)
-      system("tmux", "kill-session", "-t", "=#{name}", out: File::NULL, err: File::NULL)
+      system("tmux", "-u", "kill-session", "-t", "=#{name}", out: File::NULL, err: File::NULL)
     end
 
     # Tear down every switchboard session, the current one LAST so running this
@@ -432,12 +432,12 @@ module Switchboard
     def rename_session(old_name, new_name)
       return if old_name == new_name
 
-      system("tmux", "rename-session", "-t", "=#{old_name}", new_name, out: File::NULL, err: File::NULL)
+      system("tmux", "-u", "rename-session", "-t", "=#{old_name}", new_name, out: File::NULL, err: File::NULL)
     end
 
     def switch(name)
       if ENV["TMUX"]
-        system("tmux", "switch-client", "-t", name)
+        system("tmux", "-u", "switch-client", "-t", name)
       else
         exec("tmux", "attach-session", "-t", name)
       end
@@ -463,14 +463,14 @@ module Switchboard
         if on && !pane
           pin(spawn_sidebar(target: window))
         elsif !on && pane
-          system("tmux", "kill-pane", "-t", pane, out: File::NULL, err: File::NULL)
+          system("tmux", "-u", "kill-pane", "-t", pane, out: File::NULL, err: File::NULL)
         end
       end
     end
 
     # Window ids of a session, oldest first. [] if the session is gone.
     def windows(session)
-      `tmux list-windows -t #{Shellwords.escape(session)} -F '#\{window_id}' 2>/dev/null`
+      `tmux -u list-windows -t #{Shellwords.escape(session)} -F '#\{window_id}' 2>/dev/null`
         .split("\n").map(&:strip).reject(&:empty?)
     end
 
@@ -478,7 +478,7 @@ module Switchboard
     # a session name) — NO -s, so it answers "does *this window* have one?" rather
     # than the old session-wide check that suppressed per-window spawns.
     def window_sidebar_pane(target)
-      `tmux list-panes -t #{Shellwords.escape(target)} -F '#\{pane_id} #\{pane_title}' 2>/dev/null`
+      `tmux -u list-panes -t #{Shellwords.escape(target)} -F '#\{pane_id} #\{pane_title}' 2>/dev/null`
         .lines.find { |line| line.include?(SIDEBAR_TITLE) }&.split&.first
     end
 
@@ -487,7 +487,7 @@ module Switchboard
     # than trust split-window's cwd inheritance (it takes the invoking client's
     # directory). Tab-delimited so paths with spaces survive the split.
     def window_work_dir(target)
-      work_dir(`tmux list-panes -t #{Shellwords.escape(target)} -F '#\{pane_title}\t#\{pane_current_path}' 2>/dev/null`)
+      work_dir(`tmux -u list-panes -t #{Shellwords.escape(target)} -F '#\{pane_title}\t#\{pane_current_path}' 2>/dev/null`)
     end
 
     # Pure: the first non-sidebar pane's cwd from `list-panes` output (one
@@ -507,7 +507,7 @@ module Switchboard
     # split-window fail and leave the window with no sidebar.
     def window_cols(target = nil)
       t = target ? " -t #{Shellwords.escape(target)}" : ""
-      out = `tmux display-message -p#{t} '#\{window_width}' 2>/dev/null`.strip
+      out = `tmux -u display-message -p#{t} '#\{window_width}' 2>/dev/null`.strip
       out.empty? ? nil : Integer(out, 10)
     rescue StandardError
       nil
@@ -530,13 +530,13 @@ module Switchboard
     # preserving the historic auto-show-on-switch behavior.
 
     def set_sidebar_flag(session, value)
-      system("tmux", "set-option", "-t", session, "@sb_sidebar", value, out: File::NULL, err: File::NULL)
+      system("tmux", "-u", "set-option", "-t", session, "@sb_sidebar", value, out: File::NULL, err: File::NULL)
     end
 
     # Raw flag value ("on"/"off"/""), "" when unset (the tmux "invalid option"
     # error lands on stderr, which we swallow).
     def sidebar_flag(session)
-      `tmux show-options -v -t #{Shellwords.escape(session)} @sb_sidebar 2>/dev/null`.strip
+      `tmux -u show-options -v -t #{Shellwords.escape(session)} @sb_sidebar 2>/dev/null`.strip
     end
 
     def sidebar_on?(session)
@@ -557,12 +557,12 @@ module Switchboard
       return unless sidebar && active_pane(name) == sidebar
 
       pane = work_pane(name, sidebar)
-      system("tmux", "select-pane", "-t", pane, out: File::NULL, err: File::NULL) if pane
+      system("tmux", "-u", "select-pane", "-t", pane, out: File::NULL, err: File::NULL) if pane
     end
 
     # The pane id of a session's active (current-window) pane, or nil.
     def active_pane(name)
-      id = `tmux display-message -p -t #{Shellwords.escape(name)} '#\{pane_id}' 2>/dev/null`.strip
+      id = `tmux -u display-message -p -t #{Shellwords.escape(name)} '#\{pane_id}' 2>/dev/null`.strip
       id.empty? ? nil : id
     end
 
@@ -570,7 +570,7 @@ module Switchboard
     # one, else the first. Keeps you on the terminal you were actually using when
     # a workspace has several splits, instead of snapping to the leftmost.
     def work_pane(name, sidebar)
-      panes = `tmux list-panes -t #{Shellwords.escape(name)} -F '#\{pane_id} #\{pane_last}' 2>/dev/null`
+      panes = `tmux -u list-panes -t #{Shellwords.escape(name)} -F '#\{pane_id} #\{pane_last}' 2>/dev/null`
               .lines.map(&:split).reject { |id, _| id == sidebar }
       (panes.find { |_, last| last == "1" } || panes.first)&.first
     end
@@ -579,7 +579,7 @@ module Switchboard
     def pane_path(pane)
       return unless pane
 
-      path = `tmux display-message -p -t #{Shellwords.escape(pane)} '#\{pane_current_path}' 2>/dev/null`.strip
+      path = `tmux -u display-message -p -t #{Shellwords.escape(pane)} '#\{pane_current_path}' 2>/dev/null`.strip
       path.empty? ? nil : path
     end
 
@@ -591,7 +591,7 @@ module Switchboard
     def pin(pane, width = Width.resolved)
       return unless pane
 
-      system("tmux", "resize-pane", "-t", pane, "-x", width.to_s, out: File::NULL, err: File::NULL)
+      system("tmux", "-u", "resize-pane", "-t", pane, "-x", width.to_s, out: File::NULL, err: File::NULL)
     end
 
     # prefix-s is switchboard's ONE sidebar verb (the in-sidebar `h` is retired):
@@ -619,7 +619,7 @@ module Switchboard
     def focus_current_sidebar
       pane = current_sidebar_pane or return
 
-      system("tmux", "select-pane", "-t", pane, out: File::NULL, err: File::NULL)
+      system("tmux", "-u", "select-pane", "-t", pane, out: File::NULL, err: File::NULL)
     end
 
     # Give a freshly created window its sidebar if the session opts in — bound to
@@ -637,7 +637,7 @@ module Switchboard
 
     # The session a window id belongs to ("" if it's gone).
     def session_of_window(window)
-      `tmux display-message -p -t #{Shellwords.escape(window)} '#\{session_name}' 2>/dev/null`.strip
+      `tmux -u display-message -p -t #{Shellwords.escape(window)} '#\{session_name}' 2>/dev/null`.strip
     end
 
     # Poke the sidebar of a specific window — bound to the session-window-changed
@@ -657,12 +657,12 @@ module Switchboard
     # against the current client, like poke_current_sidebar — fine for the single
     # attached client that prefix-s comes from.
     def current_session
-      name = `tmux display-message -p '#\{session_name}' 2>/dev/null`.strip
+      name = `tmux -u display-message -p '#\{session_name}' 2>/dev/null`.strip
       name.empty? ? nil : name
     end
 
     def current_sidebar_pane
-      `tmux list-panes -F '#\{pane_id} #\{pane_title}' 2>/dev/null`
+      `tmux -u list-panes -F '#\{pane_id} #\{pane_title}' 2>/dev/null`
         .lines.find { |line| line.include?(SIDEBAR_TITLE) }&.split&.first
     end
 
@@ -675,7 +675,7 @@ module Switchboard
 
     # Tell a specific sidebar pane to reload (C-l, a non-user key — `r` renames).
     def poke(pane)
-      system("tmux", "send-keys", "-t", pane, "C-l", out: File::NULL, err: File::NULL) if pane
+      system("tmux", "-u", "send-keys", "-t", pane, "C-l", out: File::NULL, err: File::NULL) if pane
     end
 
     # Broadcast the warm poke (C-w) to every sidebar pane except `except` — used when
@@ -687,7 +687,7 @@ module Switchboard
       all_sidebar_panes.each do |pane|
         next if pane == except
 
-        system("tmux", "send-keys", "-t", pane, WARM_POKE, out: File::NULL, err: File::NULL)
+        system("tmux", "-u", "send-keys", "-t", pane, WARM_POKE, out: File::NULL, err: File::NULL)
       end
     end
 
@@ -703,7 +703,7 @@ module Switchboard
     def tag_sidebar_pane(pane, value, clear_failed: true)
       return false unless pane
 
-      cmd = ["tmux", "set-option", "-p", "-t", pane, CodeReload::TAG, value.to_s]
+      cmd = ["tmux", "-u", "set-option", "-p", "-t", pane, CodeReload::TAG, value.to_s]
       cmd += [";", "set-option", "-p", "-u", "-t", pane, CodeReload::FAILED_TAG] if clear_failed && value.to_s != "0"
       system(*cmd, out: File::NULL, err: File::NULL) == true
     end
@@ -712,14 +712,14 @@ module Switchboard
     def flag_failed_reload(pane, root)
       return unless pane
 
-      system("tmux", "set-option", "-p", "-t", pane, CodeReload::FAILED_TAG, root.to_s, out: File::NULL, err: File::NULL)
+      system("tmux", "-u", "set-option", "-p", "-t", pane, CodeReload::FAILED_TAG, root.to_s, out: File::NULL, err: File::NULL)
     end
 
     ReloadTarget = Struct.new(:pane, :pid, :tag, :tagged, :between, :tag_pid, :failed, :bin, keyword_init: true)
 
     # Every sidebar pane, split by whether it can reload itself. nil off a server.
     def sidebar_reload_targets
-      out = IO.popen(["tmux", "list-panes", "-a", "-F",
+      out = IO.popen(["tmux", "-u", "list-panes", "-a", "-F",
                       "\#{pane_id}\t\#{pane_pid}\t\#{#{CodeReload::TAG}}\t\#{#{CodeReload::FAILED_TAG}}\t" \
                       "\#{pane_dead}\t\#{pane_title}\t\#{pane_start_command}"],
                      err: File::NULL, &:read)
@@ -778,7 +778,7 @@ module Switchboard
     # take time, and `respawn-pane -k` kills whatever runs there now (an editor, or a sidebar
     # that tagged itself meanwhile and should be signaled instead).
     def same_reload_target?(target)
-      out = IO.popen(["tmux", "display-message", "-p", "-t", target.pane,
+      out = IO.popen(["tmux", "-u", "display-message", "-p", "-t", target.pane,
                       "\#{pane_pid}\t\#{#{CodeReload::TAG}}\t\#{pane_dead}\t\#{pane_title}\t\#{pane_start_command}"],
                      err: File::NULL, &:read)
       return false unless $?.success?
@@ -794,14 +794,14 @@ module Switchboard
     # checkout's sidebar stays on its checkout. The resume marker makes the new process
     # skip its clear and pace its first warm paint. tmux < 3.0 has no -e: retry without.
     def respawn_sidebar(target, marker)
-      ok = system("tmux", "respawn-pane", "-k", "-e", "#{CodeReload::RESUME_ENV}=#{marker}", "-t", target.pane,
+      ok = system("tmux", "-u", "respawn-pane", "-k", "-e", "#{CodeReload::RESUME_ENV}=#{marker}", "-t", target.pane,
                   out: File::NULL, err: File::NULL)
-      ok || system("tmux", "respawn-pane", "-k", "-t", target.pane, out: File::NULL, err: File::NULL)
+      ok || system("tmux", "-u", "respawn-pane", "-k", "-t", target.pane, out: File::NULL, err: File::NULL)
     end
 
     # Every live sidebar pane id across all sessions/windows (title == SIDEBAR_TITLE).
     def all_sidebar_panes
-      `tmux list-panes -a -F '#\{pane_id} #\{pane_title}' 2>/dev/null`.lines.filter_map do |line|
+      `tmux -u list-panes -a -F '#\{pane_id} #\{pane_title}' 2>/dev/null`.lines.filter_map do |line|
         id, title = line.split(" ", 2)
         id if id && title.to_s.strip == SIDEBAR_TITLE
       end
@@ -814,7 +814,7 @@ module Switchboard
     # reports its version, e.g. "2.1.201", not "claude"). Tab-delimited so a
     # title/path with spaces survives the split (titles are Claude's turn text).
     def work_panes
-      parse_work_panes(`tmux list-panes -a -F '#\{pane_id}\t#\{pane_title}\t#\{pane_current_path}' 2>/dev/null`)
+      parse_work_panes(`tmux -u list-panes -a -F '#\{pane_id}\t#\{pane_title}\t#\{pane_current_path}' 2>/dev/null`)
     rescue StandardError
       [] # degrade like every other shell-out — a raise here would blank every dot for a scan
     end
@@ -836,7 +836,7 @@ module Switchboard
       pane = window_sidebar_pane(session) or return
 
       key = reload_config ? RELOAD_CONFIG_POKE : "C-l"
-      system("tmux", "send-keys", "-t", pane, key, out: File::NULL, err: File::NULL)
+      system("tmux", "-u", "send-keys", "-t", pane, key, out: File::NULL, err: File::NULL)
     end
 
     # Surface a short message on tmux's status line — visible no matter which
@@ -848,8 +848,8 @@ module Switchboard
     # client types until the delay ends (verified, tmux 3.8).
     def notify(message, client: nil, display_time: self.display_time)
       target = client ? ["-c", client] : []
-      system("tmux", *notify_args(message, display_time, target: target), out: File::NULL, err: File::NULL) ||
-        system("tmux", "display-message", *target, literal(message), out: File::NULL, err: File::NULL)
+      system("tmux", "-u", *notify_args(message, display_time, target: target), out: File::NULL, err: File::NULL) ||
+        system("tmux", "-u", "display-message", *target, literal(message), out: File::NULL, err: File::NULL)
     end
 
     # notify on every attached client. A daemonized worker's own "current client" is whatever
@@ -857,7 +857,7 @@ module Switchboard
     # goes to every screen instead. No client listed: the plain notify.
     # The caller names the hold: -A here would resolve the worker's own session, not each client's.
     def notify_everyone(message, display_time:)
-      names = IO.popen(["tmux", "list-clients", "-F", "\#{client_name}"], err: File::NULL, &:read).to_s.split("\n")
+      names = IO.popen(["tmux", "-u", "list-clients", "-F", "\#{client_name}"], err: File::NULL, &:read).to_s.split("\n")
       names = [] unless $?.success?
       return notify(message, display_time: display_time) if names.empty?
 
@@ -873,8 +873,8 @@ module Switchboard
     # The display-time in effect here: a session can set its own (-A resolves it from inside a
     # pane); outside one there's only the global.
     def display_time
-      v = `tmux show-options -Aqv display-time 2>/dev/null`.strip
-      v.empty? ? `tmux show-options -gqv display-time 2>/dev/null`.strip : v
+      v = `tmux -u show-options -Aqv display-time 2>/dev/null`.strip
+      v.empty? ? `tmux -u show-options -gqv display-time 2>/dev/null`.strip : v
     end
 
     # Pure: the user's display-time → our hold. Never shorter than theirs, and their 0
@@ -897,7 +897,7 @@ module Switchboard
     def visible?(pane)
       return true unless pane
 
-      out = `tmux display-message -p -t #{Shellwords.escape(pane)} '#\{window_active},#\{session_attached}' 2>/dev/null`.strip
+      out = `tmux -u display-message -p -t #{Shellwords.escape(pane)} '#\{window_active},#\{session_attached}' 2>/dev/null`.strip
       active, attached = out.split(",")
       active == "1" && attached.to_i.positive?
     end
@@ -922,17 +922,17 @@ module Switchboard
     # (synchronize-panes — keys go to every pane in the window) and `width` are nil when
     # unreadable, too.
     def panes_by_tty
-      raw = IO.popen(["tmux", "list-panes", "-a", "-F",
+      raw = IO.popen(["tmux", "-u", "list-panes", "-a", "-F",
                       "\#{pane_id}\t\#{pane_tty}\t\#{window_active}\t\#{session_attached}\t\#{pane_in_mode}\t" \
                       "\#{pane_width}\t\#{pane_synchronized}\t\#{pane_active}\t\#{session_name}"],
                      err: File::NULL, &:read)
       return nil unless $?.success?
 
-      clients = IO.popen(["tmux", "list-clients", "-F",
+      clients = IO.popen(["tmux", "-u", "list-clients", "-F",
                           "\#{client_activity}\t\#{client_control_mode}\t\#{client_flags}\t\#{client_session}"],
                          err: File::NULL, &:read)
       clients = nil unless $?.success?
-      sessions = IO.popen(["tmux", "list-sessions", "-F", "\#{session_id}\t\#{session_activity}"], err: File::NULL, &:read)
+      sessions = IO.popen(["tmux", "-u", "list-sessions", "-F", "\#{session_id}\t\#{session_activity}"], err: File::NULL, &:read)
       parse_panes_by_tty(raw, clients, Time.now.to_i, sessions: $?.success? ? sessions : nil)
     rescue StandardError
       nil
@@ -1025,7 +1025,7 @@ module Switchboard
     # The pane's visible screen WITH its SGR escapes (SessionName tells a dim placeholder
     # from typed text by them), or nil when the capture failed.
     def capture_pane(pane)
-      out = IO.popen(["tmux", "capture-pane", "-p", "-e", "-t", pane], err: File::NULL, &:read)
+      out = IO.popen(["tmux", "-u", "capture-pane", "-p", "-e", "-t", pane], err: File::NULL, &:read)
       $?.success? ? out.force_encoding(Encoding::UTF_8).scrub : nil
     rescue StandardError
       nil
@@ -1034,12 +1034,12 @@ module Switchboard
     # Type `text` into a pane as ONE literal send-keys — tmux runs it atomically, so a
     # key the user presses lands before or after it, never inside.
     def send_literal(pane, text)
-      system("tmux", "send-keys", "-t", pane, "-l", text, out: File::NULL, err: File::NULL)
+      system("tmux", "-u", "send-keys", "-t", pane, "-l", text, out: File::NULL, err: File::NULL)
     end
 
     # Named keys (Enter, BSpace, …) in one send-keys.
     def send_keys(pane, *keys)
-      system("tmux", "send-keys", "-t", pane, *keys, out: File::NULL, err: File::NULL)
+      system("tmux", "-u", "send-keys", "-t", pane, *keys, out: File::NULL, err: File::NULL)
     end
 
     # The pane's pseudo-terminal (e.g. /dev/ttys007) — tmux's stable per-pane
@@ -1051,7 +1051,7 @@ module Switchboard
     def pane_tty(pane)
       return nil unless pane
 
-      tty = `tmux display-message -p -t #{Shellwords.escape(pane)} '#\{pane_tty}' 2>/dev/null`.strip
+      tty = `tmux -u display-message -p -t #{Shellwords.escape(pane)} '#\{pane_tty}' 2>/dev/null`.strip
       tty.empty? ? nil : tty
     end
 
@@ -1064,7 +1064,7 @@ module Switchboard
     def window_panes(pane)
       return nil unless pane
 
-      parse_window_panes(`tmux display-message -p -t #{Shellwords.escape(pane)} '#\{window_panes}' 2>/dev/null`)
+      parse_window_panes(`tmux -u display-message -p -t #{Shellwords.escape(pane)} '#\{window_panes}' 2>/dev/null`)
     end
 
     # Pure: a tmux count reply parsed to an Integer, or nil on an empty/garbled line.
@@ -1091,7 +1091,7 @@ module Switchboard
       return unless pane && window_panes(pane) == 1
 
       dir ||= window_work_dir(session) || home_dir
-      work = `tmux split-window -h -d -P -F '#\{pane_id}' -t #{Shellwords.escape(session)} -c #{Shellwords.escape(dir)} 2>/dev/null`.strip
+      work = `tmux -u split-window -h -d -P -F '#\{pane_id}' -t #{Shellwords.escape(session)} -c #{Shellwords.escape(dir)} 2>/dev/null`.strip
       pin(pane) # the split reflows the row; re-assert the sidebar's fixed width
       work.empty? ? nil : work
     end
@@ -1111,7 +1111,7 @@ module Switchboard
     # movement command. It does NOT chase if-shell-wrapped / sequenced / aliased binds
     # or the root table (no-prefix nav like vim-tmux-navigator) — those just omit their
     # row rather than guess. The row is correct-or-absent, never a fabricated key.
-    def pane_switch_keys(raw = `tmux list-keys -T prefix 2>/dev/null`)
+    def pane_switch_keys(raw = `tmux -u list-keys -T prefix 2>/dev/null`)
       # scrub first: a key bound to a non-ASCII char in a non-UTF-8 locale can put
       # invalid bytes in list-keys output, and a regex match on those raises
       # ArgumentError — crashing the overlay render. Degrade, never crash (the
@@ -1137,7 +1137,7 @@ module Switchboard
     def focused?(pane)
       return true unless pane
 
-      out = `tmux display-message -p -t #{Shellwords.escape(pane)} '#\{pane_active},#\{window_active},#\{session_attached}' 2>/dev/null`.strip
+      out = `tmux -u display-message -p -t #{Shellwords.escape(pane)} '#\{pane_active},#\{window_active},#\{session_attached}' 2>/dev/null`.strip
       pane_active, window_active, attached = out.split(",")
       pane_active == "1" && window_active == "1" && attached.to_i.positive?
     end
@@ -1145,7 +1145,7 @@ module Switchboard
     # Ask tmux to deliver focus in/out to the program in a pane, so the sidebar
     # can dim its cursor the instant it loses focus. Idempotent, best-effort.
     def enable_focus_events
-      system("tmux", "set", "-g", "focus-events", "on", out: File::NULL, err: File::NULL)
+      system("tmux", "-u", "set", "-g", "focus-events", "on", out: File::NULL, err: File::NULL)
     end
 
     # Split a narrow sidebar pane on the left running `switchboard sidebar`, and
@@ -1170,7 +1170,7 @@ module Switchboard
       # but clamp it to the window so a width chosen on a wide client can't make the
       # split fail (and leave no sidebar) on a narrow one.
       width = fit_width(Width.resolved, window_cols(target))
-      cmd = +"tmux split-window -hb -d -l #{width} -P -F '#\{pane_id}'"
+      cmd = +"tmux -u split-window -hb -d -l #{width} -P -F '#\{pane_id}'"
       cmd << " -t #{Shellwords.escape(target)}" if target
       cmd << " -c #{Shellwords.escape(dir)}" if dir
       cmd << " #{Shellwords.escape(bin)} sidebar"
@@ -1178,7 +1178,7 @@ module Switchboard
       pane = `#{cmd} 2>/dev/null`.strip
       return if pane.empty?
 
-      system("tmux", "select-pane", "-t", pane, "-T", SIDEBAR_TITLE, out: File::NULL, err: File::NULL)
+      system("tmux", "-u", "select-pane", "-t", pane, "-T", SIDEBAR_TITLE, out: File::NULL, err: File::NULL)
       pane
     end
   end

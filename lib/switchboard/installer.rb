@@ -622,17 +622,17 @@ module Switchboard
       # tmux reads an argument ending in `;` as the end of a command: `bind-key C-;` binds
       # "C-" (and fails), `set-option … C-;` stores "C-". Escaped, tmux takes the `;` literally.
       argv = argv.map { |a| a.is_a?(String) && a.end_with?(";") && !a.end_with?("\\;") ? "#{a.chop}\\;" : a }
-      system("tmux", *argv, out: File::NULL, err: File::NULL)
+      system("tmux", "-u", *argv, out: File::NULL, err: File::NULL)
     end
 
     # Raw `tmux list-keys -T prefix` output (a stubbable seam; offline tests fake it).
     def list_prefix_keys
-      `tmux list-keys -T prefix 2>/dev/null`
+      `tmux -u list-keys -T prefix 2>/dev/null`
     end
 
     # A global tmux user option's value, or nil when unset / no server.
     def tmux_option(name)
-      v = `tmux show-options -gqv #{Shellwords.escape(name)} 2>/dev/null`.strip
+      v = `tmux -u show-options -gqv #{Shellwords.escape(name)} 2>/dev/null`.strip
       $?.success? && !v.empty? ? v : nil
     end
 
@@ -673,7 +673,7 @@ module Switchboard
     # live: false here while tmux_wired? still says true. `doctor` surfaces the gap.
     # A server op (show-hooks -g), so it works from a plain shell too, no client needed.
     def live_hooks
-      raw = `tmux show-hooks -g 2>/dev/null`
+      raw = `tmux -u show-hooks -g 2>/dev/null`
       $?.success? ? live_hooks_from(raw) : nil
     end
 
@@ -696,11 +696,11 @@ module Switchboard
       # accepts (`^B`, `M-#`, `f5`) resolves; an unbound key exits non-zero.
       # A trailing `;` ends a tmux command (leaving `list-keys -T prefix`, the whole table), so
       # it's escaped the way bind-key needs it.
-      one = `tmux list-keys -T prefix -- #{Shellwords.escape(key.to_s.sub(/;\z/) { "\\;" })} 2>/dev/null`
+      one = `tmux -u list-keys -T prefix -- #{Shellwords.escape(key.to_s.sub(/;\z/) { "\\;" })} 2>/dev/null`
       return one.scrub.include?("toggle-sidebar") if $?.success?
 
       # Unbound, or a tmux too old to take a key here: read the whole table.
-      all = `tmux list-keys -T prefix 2>/dev/null`
+      all = `tmux -u list-keys -T prefix 2>/dev/null`
       $?.success? ? toggle_key_live_from?(all, key) : nil # a failed read says nothing either way
     end
 
@@ -785,7 +785,7 @@ module Switchboard
 
     # Major.minor as a Float (e.g. "3.6a" → 3.6); nil if tmux is absent.
     def tmux_version
-      parse_version(`tmux -V 2>/dev/null`)
+      parse_version(`tmux -u -V 2>/dev/null`)
     end
 
     # Pull major.minor out of a `tmux -V` string as a Float, or nil. Split out
@@ -821,7 +821,7 @@ module Switchboard
     def real_target(path)      = MarkerBlock.real_target(path)
 
     def reload(conf)
-      system("tmux", "source-file", conf, out: File::NULL, err: File::NULL) if ENV["TMUX"]
+      system("tmux", "-u", "source-file", conf, out: File::NULL, err: File::NULL) if ENV["TMUX"]
     end
 
     # The tmux.conf to edit: an explicit override, else the conf the running server loaded
@@ -850,7 +850,7 @@ module Switchboard
       home = File.expand_path("~")
       return nil if home == "/" # every path would read as "under $HOME"
 
-      files = `tmux display-message -p '#\{config_files}' 2>/dev/null`.strip
+      files = `tmux -u display-message -p '#\{config_files}' 2>/dev/null`.strip
               .split(",").map(&:strip).select { |f| File.exist?(f) }
       files.find { |f| default_confs.include?(f) } || files.find { |f| f.start_with?(File.join(home, "")) }
     end
@@ -860,7 +860,7 @@ module Switchboard
     def prefix_binding(key)
       return nil unless ENV["TMUX"]
 
-      prefix_binding_from(`tmux list-keys -T prefix 2>/dev/null`, key)
+      prefix_binding_from(`tmux -u list-keys -T prefix 2>/dev/null`, key)
     end
 
     # Pure: the command `key` is bound to in `tmux list-keys -T prefix` output, or

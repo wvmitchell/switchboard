@@ -204,7 +204,7 @@ module Switchboard
     # nil (not a constant like "".hash / 0) so pane_delta can tell a genuine read from
     # a tmux hiccup — else two failed captures would compare equal and read as static.
     def capture_hash(pane_id)
-      out = `tmux capture-pane -p -t #{Shellwords.escape(pane_id)} 2>/dev/null`
+      out = `tmux -u capture-pane -p -t #{Shellwords.escape(pane_id)} 2>/dev/null`
       $?.success? && !out.empty? ? out.hash : nil
     rescue StandardError
       nil

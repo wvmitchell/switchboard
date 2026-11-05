@@ -119,12 +119,12 @@ module Switchboard
 
       puts "  \e[33m–\e[0m remote links (⇅): CLAUDE_CONFIG_DIR is #{mine.empty? ? 'unset' : mine.inspect} here but " \
            "#{theirs.empty? ? 'unset' : theirs.inspect} in tmux, where sidebars run — export it in .zshenv " \
-           "or `tmux set-environment -g CLAUDE_CONFIG_DIR …` so the ⇅ reads the right dir"
+           "or `tmux -u set-environment -g CLAUDE_CONFIG_DIR …` so the ⇅ reads the right dir"
     end
 
     # A tmux global environment value, or nil when unset (`-NAME` / unknown variable).
     def tmux_global_env(name)
-      out = IO.popen(["tmux", "show-environment", "-g", name], err: File::NULL, &:read).to_s.strip
+      out = IO.popen(["tmux", "-u", "show-environment", "-g", name], err: File::NULL, &:read).to_s.strip
       out.start_with?("#{name}=") ? out.delete_prefix("#{name}=") : nil
     rescue StandardError
       nil
