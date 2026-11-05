@@ -79,6 +79,58 @@ module Switchboard
       DATA.each { |store, leaf| assert_equal path(".local/share/switchboard", leaf), read(store), store }
     end
 
+    # The other path variables follow the same rule. Only the path is read here: DEFAULT_PATH
+    # is the real config, frozen at load, so nothing may open it.
+    def test_an_empty_config_bin_or_codex_variable_counts_as_unset
+      %w[SWITCHBOARD_CONFIG SWITCHBOARD_BIN_DIR CODEX_HOME].each { |k| ENV[k] = "" }
+      assert_equal Config::DEFAULT_PATH, Config.path
+      assert_equal path(".local/bin"), Installer.bin_dir
+      assert_equal path(".codex"), CodexHook.home
+      assert_equal path(".codex", "config.toml"), CodexHook.config_path
+    end
+
+    # Value: protects=uninstall never removes a dangling switchboard or sb link from the current directory when SWITCHBOARD_BIN_DIR is exported empty; fails_when=bin_dir takes "" literally again; why_new=the path pin passes even if unlink_symlink stops using bin_dir; seam=none; no_claim=a dangling link in the real bin dir, which uninstall still treats as ours
+    def test_uninstall_with_an_empty_bin_dir_leaves_the_current_directory_alone
+      ENV["SWITCHBOARD_BIN_DIR"] = ""
+      cwd = path("a-worktree")
+      FileUtils.mkdir_p(cwd)
+      %w[switchboard sb].each { |name| File.symlink("/nonexistent/mine", File.join(cwd, name)) }
+      Dir.chdir(cwd) { capture_io { Installer.unlink_symlink } }
+      assert_equal %w[sb switchboard], Dir.children(cwd).sort
+    end
+
+    # Value: protects=an empty CODEX_HOME doesn't read as Codex being installed; fails_when=codex_present? expands "" to the current directory, which always exists; why_new=config_path alone was pinned; seam=none; no_claim=the codex CLI's own handling, checked live on 0.165.0
+    def test_an_empty_codex_home_does_not_read_as_codex_present
+      ENV["CODEX_HOME"] = ""
+      stub_method(Installer, :system, ->(*) { false }) do
+        refute Installer.codex_present?
+        FileUtils.mkdir_p(path(".codex"))
+        assert Installer.codex_present?
+      end
+    end
+
+    # Under a C locale PATH arrives BINARY and bin_dir is UTF-8, and Ruby calls the same
+    # non-ASCII bytes in those two encodings unequal.
+    def test_warn_path_under_a_c_locale
+      bin = path("zoë-bin")
+      assert_includes warn_path_output(bin, "/usr/bin:/bin"), "isn't on your PATH", "it does warn when bin_dir is missing"
+      refute_includes warn_path_output(bin, "#{bin}:/usr/bin:/bin"), "isn't on your PATH", "a non-ASCII bin_dir is found"
+      refute_includes warn_path_output(bin, "/opt/caf\xE9/bin:#{bin}"), "isn't on your PATH", "an invalid byte in PATH doesn't stop the search"
+    end
+
+    def warn_path_output(bin, path_value)
+      env = { "LC_ALL" => "C", "LANG" => "C", "SWITCHBOARD_BIN_DIR" => bin, "PATH" => path_value }
+      probe = <<~RUBY
+        Encoding.default_external = Encoding::UTF_8
+        require "switchboard"
+        Switchboard::Installer.define_singleton_method(:homebrew?) { false }
+        Switchboard::Installer.warn_path
+      RUBY
+      out = IO.popen([env, RbConfig.ruby, "-I#{LIB}", "-e", probe], err: %i[child out], in: File::NULL, &:read)
+      assert $?.success?, out
+      out
+    end
+
     # Value: protects=quit and a marker scan never delete files in the current directory when a store variable is exported empty; fails_when=Paths.state takes "" literally again; why_new=the path pins would pass if a store bypassed Paths; seam=none; no_claim=a variable set to a real directory, which is honored
     def test_cleanup_with_empty_overrides_leaves_the_current_directory_alone
       STATE.each_value { |env, _| ENV[env] = "" }
@@ -216,18 +268,20 @@ module Switchboard
     # strings built from these paths. Every store reads as UTF-8, whatever the locale.
     def test_every_store_is_utf8_under_a_c_locale_with_a_non_ascii_root
       root = path("zoë")
-      assert_every_store_is_utf8("XDG_STATE_HOME" => root, "XDG_CACHE_HOME" => root, "XDG_DATA_HOME" => root)
+      assert_every_store_is_utf8({ "XDG_STATE_HOME" => root, "XDG_CACHE_HOME" => root, "XDG_DATA_HOME" => root })
     end
 
     # With no XDG root the path comes from `~`, which expands from a BINARY $HOME.
     def test_every_store_is_utf8_under_a_c_locale_with_a_non_ascii_home
-      assert_every_store_is_utf8("HOME" => path("zoë"), "XDG_STATE_HOME" => nil, "XDG_CACHE_HOME" => nil, "XDG_DATA_HOME" => nil)
+      assert_every_store_is_utf8({ "HOME" => path("zoë"), "XDG_STATE_HOME" => nil, "XDG_CACHE_HOME" => nil, "XDG_DATA_HOME" => nil,
+                                   "SWITCHBOARD_BIN_DIR" => nil, "CODEX_HOME" => nil },
+                                 also: %w[Installer.bin_dir CodexHook.home])
     end
 
-    def assert_every_store_is_utf8(roots)
+    def assert_every_store_is_utf8(roots, also: [])
       env = { "LC_ALL" => "C", "LANG" => "C" }.merge(roots)
       (STATE.values + CACHE.values).each { |name, _| env[name] = nil }
-      stores = STATE.keys + CACHE.keys + DATA.keys
+      stores = STATE.keys + CACHE.keys + DATA.keys + also
       probe = <<~RUBY
         require "switchboard"
         #{stores.inspect}.each do |s|

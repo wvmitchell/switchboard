@@ -515,12 +515,12 @@ A few more files and behaviors can be redirected the same way:
 | Background update check | on, for a Homebrew install | `$SWITCHBOARD_NO_UPDATE_CHECK` set to anything but empty or `0` turns it off (the test suite, smoke runs and the sandbox set it) |
 | How long an off-screen sidebar may wait before a code reload | up to 30 seconds | `$SWITCHBOARD_RELOAD_SPREAD` (seconds; the reload smoke test sets 0) |
 
-For the state, cache and data locations above, an exported-but-empty variable counts as
-unset. That covers `$XDG_STATE_HOME`, `$XDG_CACHE_HOME`, `$XDG_DATA_HOME` and those
-stores' own overrides, including `$SWITCHBOARD_UPDATE_CACHE`, so `SWITCHBOARD_STATE_DIR=`
-means the default location, not the current directory. `$SWITCHBOARD_CONFIG`,
-`$SWITCHBOARD_BIN_DIR` and `$CODEX_HOME` don't follow this rule: they take an empty value
-literally, so leave them unset instead.
+An exported-but-empty variable counts as unset for every file and folder location above.
+That covers the `$XDG_*` roots, each store's own override, `$SWITCHBOARD_CONFIG`,
+`$SWITCHBOARD_BIN_DIR` and `$CODEX_HOME`, so `SWITCHBOARD_STATE_DIR=` means the default
+location, not the current directory. It also means a redirect whose value came out empty,
+such as `SWITCHBOARD_CONFIG="$SCRATCH"` with `SCRATCH` unset, reaches your real files, so
+check a script's variable is set before relying on it for throwaway state.
 
 These env overrides also make it safe to run switchboard locally against throwaway
 state without touching your real config — the same walls the test suite uses (see

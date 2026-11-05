@@ -10,6 +10,22 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
+## [0.66.1] — empty install, config and Codex path variables count as unset (2026-11-05)
+
+### Fixed
+- An exported-but-empty `SWITCHBOARD_BIN_DIR` used to mean the current directory, so
+  `switchboard uninstall` could remove dangling `switchboard` and `sb` links there, and
+  `install` wrote them there. It now means `~/.local/bin`.
+- An empty `SWITCHBOARD_CONFIG` used to read as zero projects with no error. It now means
+  your real config.
+- An empty `CODEX_HOME` used to mean `/config.toml`, and made Codex look installed. It now
+  means `~/.codex`, which is what Codex itself does.
+
+A redirect whose value came out empty now reaches your real files, so check a script's
+variable is set before relying on it for throwaway state. If you ran an older version with
+one of these empty, look in that directory for stray `switchboard` and `sb` links, or a
+`[hooks]` block in a `config.toml`.
+
 ## [0.66.0] — deleting a workspace deletes its branches (2026-11-04)
 
 ### Changed

@@ -3,6 +3,7 @@
 require "yaml"
 require "fileutils"
 require_relative "marker_block"
+require_relative "paths"
 
 module Switchboard
   # Switchboard's own project registry — what lets it stand alone, with no
@@ -43,7 +44,7 @@ module Switchboard
     }.freeze
 
     def self.path
-      ENV["SWITCHBOARD_CONFIG"] || DEFAULT_PATH
+      Paths.set_value("SWITCHBOARD_CONFIG") || DEFAULT_PATH
     end
 
     def self.exist?
