@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "json"
+require "shellwords"
 require "tempfile"
 require_relative "latest_release"
 require_relative "root"
@@ -92,11 +93,11 @@ module Switchboard
     # signal that failed (the sidebar closed after the listing) and, among the sidebars asked
     # again, those a previous reload couldn't switch. nil off a server.
     def reload_all
-      targets = Tmux.sidebar_reload_targets or return nil
+      targets = sidebar_reload_targets or return nil
       counts = { signaled: 0, respawned: 0, left: 0, unreached: 0, failed: 0 }
       marker = encode
       checked = Hash.new { |memo, bin| memo[bin] = restartable(bin, marker) }
-      parents = Tmux.parent_pids(targets.filter_map(&:tag_pid))
+      parents = parent_pids(targets.filter_map(&:tag_pid))
       # Signal first: a pid read from the listing must be signaled before the seconds of
       # restart checks below, or a sidebar that exits meanwhile could have its pid reused by
       # another process of yours, which SIGUSR1 would quit.
@@ -107,7 +108,7 @@ module Switchboard
           counts[:signaled] += 1 # mid-exec from another reload: already on its way
           counts[:failed] += 1 if t.failed
         elsif signal_pid
-          asked = Tmux.signal_sidebar(signal_pid) # false: it closed after the listing (EPERM means its pid is someone else's now)
+          asked = signal_sidebar(signal_pid) # false: it closed after the listing (EPERM means its pid is someone else's now)
           counts[asked ? :signaled : :unreached] += 1
           counts[:failed] += 1 if asked && t.failed # "asked again" only when it was
         else
@@ -115,9 +116,9 @@ module Switchboard
         end
       end
       restarts.each do |t|
-        if t.bin && (real = checked[t.bin]) && Tmux.same_reload_target?(t) &&
+        if t.bin && (real = checked[t.bin]) && same_reload_target?(t) &&
               start_file(t.bin) == real && # a link that moved since the check: leave it
-              Tmux.respawn_sidebar(t, marker)
+              respawn_sidebar(t, marker)
           counts[:respawned] += 1
         else
           counts[:left] += 1
@@ -260,6 +261,107 @@ module Switchboard
       Time.at(sec, nsec, :nsec)
     rescue ArgumentError, RangeError
       nil
+    end
+
+    # --- the panes a reload reaches ---
+
+    # Our pid on our own pane (TAG): a sender signals only a pane whose tag is
+    # its pane_pid (or a child of it), so a pane respawned or recycled since, or a sidebar
+    # older than 0.59 (no tag; the signal's default action would kill it), is never
+    # signaled. A new image's real pid also clears an earlier failed reload's flag: this is
+    # new code. The old code's re-tag after a failed exec (and any retry of it) passes
+    # clear_failed: false; a retry keeps the clear_failed of the tag it retries.
+    # Whether the tag landed, so the sidebar can retry one that didn't.
+    def tag_sidebar_pane(pane, value, clear_failed: true)
+      return false unless pane
+
+      args = ["set-option", "-p", "-t", pane, TAG, value.to_s]
+      args += [";", "set-option", "-p", "-u", "-t", pane, FAILED_TAG] if clear_failed && value.to_s != "0"
+      Tmux.run(*args) == true
+    end
+
+    # A reload this pane's sidebar couldn't make (doctor and the next reload report it).
+    def flag_failed_reload(pane, root)
+      return unless pane
+
+      Tmux.run("set-option", "-p", "-t", pane, FAILED_TAG, root.to_s)
+    end
+
+    ReloadTarget = Struct.new(:pane, :pid, :tag, :tagged, :between, :tag_pid, :failed, :bin, keyword_init: true)
+
+    # Every sidebar pane, split by whether it can reload itself. nil off a server.
+    def sidebar_reload_targets
+      out = Tmux.query("list-panes", "-a", "-F",
+                       "\#{pane_id}\t\#{pane_pid}\t\#{#{TAG}}\t\#{#{FAILED_TAG}}\t" \
+                       "\#{pane_dead}\t\#{pane_title}\t\#{pane_start_command}")
+      out && parse_reload_targets(out)
+    end
+
+    # Pure: the rows of that list-panes. `between` is a sidebar mid-exec (its tag reads 0
+    # until the new image is up): it's reloading already, and a respawn would kill the boot.
+    # `tag_pid` is a tag that isn't the pane's pid: a sidebar under a shell that didn't exec
+    # it, if that pid's parent turns out to be the pane (the caller checks, in one ps). A dead
+    # pane (remain-on-exit) is skipped: its pid may already belong to something else.
+    def parse_reload_targets(raw)
+      raw.to_s.lines.filter_map do |line|
+        id, pid, tag, failed, dead, title, command = line.chomp.split("\t", 7)
+        next unless id && dead != "1" && title.to_s.strip == Tmux::SIDEBAR_TITLE && pid.to_s.match?(/\A\d+\z/)
+
+        other = tag.to_s.match?(/\A[1-9]\d*\z/) && tag != pid ? tag.to_i : nil
+        ReloadTarget.new(pane: id, pid: pid.to_i, tag: tag.to_s, tagged: tag == pid, between: tag == "0", tag_pid: other,
+                         failed: !failed.to_s.empty?, bin: start_bin(command))
+      end
+    end
+
+    # The binary a sidebar pane was started with, or nil unless the command has exactly the
+    # shape spawn_sidebar writes (`<…/switchboard> sidebar`): any program can title its pane
+    # sb-sidebar, and a respawn kills whatever runs there.
+    def start_bin(command)
+      bin, verb, *rest = Shellwords.split(command.to_s)
+      bin if verb == "sidebar" && rest.empty? && File.basename(bin.to_s) == "switchboard"
+    rescue ArgumentError
+      nil
+    end
+
+    # { pid => parent pid } for the live ones among `pids`, in one ps.
+    def parent_pids(pids)
+      return {} if pids.empty?
+
+      out = IO.popen(["ps", "-o", "pid=,ppid=", "-p", pids.join(",")], err: File::NULL, &:read)
+      out.to_s.lines.filter_map do |line|
+        pid, ppid = line.split
+        [pid.to_i, ppid.to_i] if pid.to_s.match?(/\A\d+\z/) && ppid.to_s.match?(/\A\d+\z/)
+      end.to_h
+    rescue SystemCallError
+      {}
+    end
+
+    def signal_sidebar(pid)
+      Process.kill(SIGNAL, pid)
+      true
+    rescue SystemCallError
+      false
+    end
+
+    # Is the pane still what the listing saw? The preflights between the listing and a respawn
+    # take time, and `respawn-pane -k` kills whatever runs there now (an editor, or a sidebar
+    # that tagged itself meanwhile and should be signaled instead).
+    def same_reload_target?(target)
+      out = Tmux.query("display-message", "-p", "-t", target.pane,
+                       "\#{pane_pid}\t\#{#{TAG}}\t\#{pane_dead}\t\#{pane_title}\t\#{pane_start_command}")
+      return false unless out
+
+      pid, tag, dead, title, command = out.chomp.split("\t", 5)
+      dead != "1" && title.to_s.strip == Tmux::SIDEBAR_TITLE && pid.to_i == target.pid &&
+        tag.to_s == target.tag.to_s && start_bin(command) == target.bin # any tag change (a sidebar tagging itself) aborts
+    end
+
+    # Restart a pane by rerunning ITS OWN start command (no command given), so a
+    # checkout's sidebar stays on its checkout. The resume marker makes the new process
+    # skip its clear and pace its first warm paint. tmux < 3.0 has no -e: retry without.
+    def respawn_sidebar(target, marker)
+      ok = Tmux.run("respawn-pane", "-k", "-e", "#{RESUME_ENV}=#{marker}", "-t", target.pane)
+      ok || Tmux.run("respawn-pane", "-k", "-t", target.pane)
     end
   end
 end

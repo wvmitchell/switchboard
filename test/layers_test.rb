@@ -18,7 +18,8 @@ module Switchboard
       support: %w[keyed_marker_store marker_block paths process_identity root stable_path version
                   view_flag],
       adapters: %w[agent_hooks agent_state agents claude_history claude_hook claude_sessions
-                   codex_hook editor git hook_file latest_release pr qr tmux width],
+                   codex_hook editor git hook_file latest_release pr qr tmux tmux/keys tmux/notify
+                   tmux/presence tmux/sessions tmux/sidebar_panes width],
       state: %w[attention branch_fold collapse config creation dispatch_args dispatch_nudge
                 full_header keymap model monitoring monitoring_nudge notify offstage_hold
                 pending_delete placeholder remote_link rename_nudge sound tree view],
@@ -31,9 +32,7 @@ module Switchboard
 
     # [file, referenced file] => what removes it. An entry covers the whole file pair, so a new
     # reference between the same two files goes unnoticed until the entry is deleted.
-    ALLOWED = {
-      %w[tmux code_reload] => "the reload-pane ops move from Tmux into CodeReload"
-    }.freeze
+    ALLOWED = {}.freeze
 
     # Only root.rb may locate files from its own position: such a file changes meaning when
     # it moves (a CodeReload root that shifts makes stale? true on every tick, so every
@@ -175,7 +174,7 @@ module Switchboard
     def tokens(src) = Ripper.lex(src, raise_errors: true).reject { |_, type, _| %i[on_sp on_nl on_ignored_nl on_comment].include?(type) }
 
     # sidebar/* are concern files of Sidebar, so they're one unit.
-    def family(file) = file.start_with?("sidebar/") ? "sidebar" : file
+    def family(file) = file[%r{\A(sidebar|tmux)/}, 1] || file
 
     # Constant tokens naming one of `names`: not a definition (`module X`), and not nested
     # under something else (`Sidebar::Edges`), except under `Switchboard::`.

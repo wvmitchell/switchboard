@@ -1029,7 +1029,7 @@ module Switchboard
     # Our pane's tag: our pid, or "0" while we're between images (R4). A pid tag that didn't
     # land is owed: a "0" left by our own exec would make every later reload skip us.
     def tag_pane(value = Process.pid, clear_failed: true)
-      landed = Tmux.tag_sidebar_pane(ENV["TMUX_PANE"], value, clear_failed: clear_failed)
+      landed = CodeReload.tag_sidebar_pane(ENV["TMUX_PANE"], value, clear_failed: clear_failed)
       return landed if value.to_s == "0" # exec replaces us right after: nothing to retry
 
       @tag_pending, @tag_tries, @tag_clears = landed ? [nil, 0, false] : [value, 1, clear_failed]
@@ -1043,7 +1043,7 @@ module Switchboard
       return unless @tag_pending
 
       @tag_tries += 1
-      landed = Tmux.tag_sidebar_pane(ENV["TMUX_PANE"], @tag_pending, clear_failed: @tag_clears)
+      landed = CodeReload.tag_sidebar_pane(ENV["TMUX_PANE"], @tag_pending, clear_failed: @tag_clears)
       @tag_pending = nil if landed || @tag_tries >= TAG_TRIES
     end
 
@@ -1107,7 +1107,7 @@ module Switchboard
     def reload_failed(root, block: true)
       @reexec_blocked_root = root if block
       @tag_clears = false # a boot tag still owed must not erase the flag written below
-      Tmux.flag_failed_reload(ENV["TMUX_PANE"], root)
+      CodeReload.flag_failed_reload(ENV["TMUX_PANE"], root)
     end
 
     def exec_in_place(real, root, payload)

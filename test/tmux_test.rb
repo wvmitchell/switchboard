@@ -528,6 +528,20 @@ module Switchboard
       assert_nil Tmux.work_dir(""), "no panes (server gone) -> nil, so -c is just omitted"
     end
 
+    # Value: protects=the door reload and editor code use to reach tmux; fails_when=query returns a failed call's output, so a reload parses an error as panes; why_new=the seam is new; seam=stubs IO.popen and Tmux.system; no_claim=a real tmux
+    def test_the_seam_answers_with_output_or_nil_and_stays_stubbable
+      argv = nil
+      ok = stub_method(IO, :popen, ->(cmd, **, &_b) { argv = cmd; system("true"); "x\n" }) { Tmux.query("list-panes") }
+      assert_equal "x\n", ok
+      assert_equal %w[tmux -u list-panes], argv
+      assert_nil stub_method(IO, :popen, ->(*, **, &_b) { system("false"); "x\n" }) { Tmux.query("list-panes") }
+      assert_nil stub_method(IO, :popen, ->(*, **, &_b) { raise Errno::ENOENT }) { Tmux.query("list-panes") }
+
+      sent = nil
+      assert_equal :answer, stub_method(Tmux, :system, ->(*a, **) { sent = a; :answer }) { Tmux.run("select-pane") }
+      assert_equal %w[tmux -u select-pane], sent
+    end
+
     # Value: protects=every scripted tmux call reading UTF-8 whatever the locale (#92), because tmux
     # otherwise prints a format's tab as "_" to a non-UTF-8 client, and non-English names with it,
     # and attach staying without -u; fails_when=a new call in any quoting (array, %w, single quotes,
@@ -572,18 +586,18 @@ module Switchboard
     # a live home pane, so editor panes can't pile up (the accumulation bug).
 
     def test_reusable_editor_pane_returns_the_stashed_id_when_still_live
-      assert_equal "%3", Tmux.reusable_editor_pane("%3", ["%0", "%1", "%3"])
+      assert_equal "%3", Editor.reusable_editor_pane("%3", ["%0", "%1", "%3"])
     end
 
     def test_reusable_editor_pane_is_nil_when_the_editor_pane_is_gone
       # :q closed the pane; the retired id is absent -> spawn a fresh editor.
-      assert_nil Tmux.reusable_editor_pane("%3", ["%0", "%1"])
+      assert_nil Editor.reusable_editor_pane("%3", ["%0", "%1"])
     end
 
     def test_reusable_editor_pane_is_nil_when_nothing_is_stashed
       # Option unset -> show-options -v yields "" -> no pane to reuse.
-      assert_nil Tmux.reusable_editor_pane("", ["%0", "%1"])
-      assert_nil Tmux.reusable_editor_pane("", [])
+      assert_nil Editor.reusable_editor_pane("", ["%0", "%1"])
+      assert_nil Editor.reusable_editor_pane("", [])
     end
 
     # --- pane_switch_keys: the user's own select-pane bindings, surfaced in the ?

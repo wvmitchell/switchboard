@@ -181,16 +181,16 @@ fails the test instead of being half-read. Nested names don't count either:
 (`CodeReload::VERSION`) doesn't count as the top-level one. Only constants count: a
 `require_relative` or a method called on `Switchboard` itself isn't an edge.
 
-A few violations predate the test. They're listed in the test's `ALLOWED` table, each with
-a note on what removes it. That list only shrinks: once an entry is fixed, the test fails
-until the entry is deleted. An entry covers a whole pair of files, though, so a *new*
-reference between those same two files goes unnoticed until the entry is removed. Keep
-the entries few and short-lived. This is the same idea as Packwerk's constant analysis,
+The violations that predated the test went in its `ALLOWED` table, each with a note on what
+removes it. The last one is now fixed, so the table is empty. It only shrinks: once an entry
+is fixed, the test fails until the entry is deleted. An entry covers a whole pair of files,
+though, so a *new* reference between those same two files goes unnoticed until the entry is
+removed. Keep the entries few and short-lived. This is the same idea as Packwerk's constant analysis,
 done with the standard library to keep switchboard free of gems.
 
 ## The binary re-invokes itself to spawn the sidebar
 
-`bin/switchboard` exports its own absolute path as `$SWITCHBOARD_BIN`. `tmux.rb`
+`bin/switchboard` exports its own absolute path as `$SWITCHBOARD_BIN`. `Tmux.spawn_sidebar`
 uses that to `split-window` a pane running `switchboard sidebar` beside each
 session. So the sidebar is just the same binary in a different mode, and tmux —
 not a daemon — owns its lifecycle. The same trick lets the tmux hooks call back
@@ -206,7 +206,12 @@ and flag is in [Reference: the `switchboard` command](reference-cli.md).
 ## tmux is the window manager
 
 Each worktree maps to exactly one tmux session named `sb/<project>/<leaf>`
-(`tmux.rb`).
+(`Tmux.session_name`).
+
+`tmux.rb` holds the shared constants and two small doors, `Tmux.run` and `Tmux.query`. The rest of
+the module is split by concern under `tmux/` (`sessions`, `sidebar_panes`, `presence`, `notify`,
+`keys`), still one `Tmux`. The reload code in `CodeReload` and the `e` pane in `Editor` reach tmux
+through those doors, so a test that stubs `Tmux.system` or `IO.popen` still catches their calls.
 
 - **Switching** (`↵`) creates the session on demand and attaches a fixed-width
   sidebar pane. On a session switch, a tmux hook "pokes" the sidebar with `C-l`

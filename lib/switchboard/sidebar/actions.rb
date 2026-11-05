@@ -330,7 +330,7 @@ module Switchboard
         bin    = Shellwords.escape(ENV["SWITCHBOARD_BIN"] || "switchboard")
         path   = Shellwords.escape(Config.path)
         origin = Shellwords.escape(Tmux.session_of.to_s) # the session `e` was pressed from
-        Tmux.edit_in_home("#{Editor::SHELL_COMMAND} #{path}; #{bin} reload-config #{origin}")
+        Editor.edit_in_home("#{Editor::SHELL_COMMAND} #{path}; #{bin} reload-config #{origin}")
       end
 
       # Re-read the (possibly hand-edited) config and rebuild — driven by the
