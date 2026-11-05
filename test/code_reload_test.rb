@@ -243,6 +243,7 @@ module Switchboard
         stub_method(IO, :popen, ->(*_a, **_k, &_b) { system("true"); line }) { CodeReload.same_reload_target?(t) }
       end
       assert live.call("10\t\t0\tsb-sidebar\t/x/bin/switchboard sidebar\n")
+      refute stub_method(Tmux, :query, ->(*) { nil }) { CodeReload.same_reload_target?(t) }, "the pane is gone"
       refute live.call("11\t\t0\tsb-sidebar\t/x/bin/switchboard sidebar\n"), "a new process"
       refute live.call("10\t\t0\tsb-sidebar\tvim notes.md\n"), "a different command"
       refute live.call("10\t\t1\tsb-sidebar\t/x/bin/switchboard sidebar\n"), "dead"
@@ -447,7 +448,7 @@ module Switchboard
       File.symlink(path("Cellar/new"), path("opt/switchboard"))
       run = lambda do |bin|
         File.write(calls, "")
-        targets = [target("%1", tagged: false, bin: bin)] # outside the stub: its body runs as Tmux
+        targets = [target("%1", tagged: false, bin: bin)] # outside the stub: its body runs as CodeReload
         stub_method(CodeReload, :sidebar_reload_targets, -> { targets }) do
           stub_method(CodeReload, :same_reload_target?, ->(_t) { true }) do
             stub_method(CodeReload, :parent_pids, ->(_pids) { {} }) do

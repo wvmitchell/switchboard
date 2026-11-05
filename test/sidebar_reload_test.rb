@@ -513,7 +513,7 @@ module Switchboard
       flags = []
       calls = []
       order = []
-      lands = @tag_lands.nil? || @tag_lands # a local: the stub runs with Tmux as self
+      lands = @tag_lands.nil? || @tag_lands # a local: the stub runs with CodeReload as self
       stub_method(CodeReload, :preflight, ->(*args, **kw) { calls << [args, kw]; preflight }) do
         stub_method(CodeReload, :real_bin, ->(*) { root && "#{root}/bin/switchboard" }) do
           stub_method(CodeReload, :flag_failed_reload, ->(_p, r) { flags << r; order << [:flag, r] }) do

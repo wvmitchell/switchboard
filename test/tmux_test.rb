@@ -528,15 +528,7 @@ module Switchboard
       assert_nil Tmux.work_dir(""), "no panes (server gone) -> nil, so -c is just omitted"
     end
 
-    # Value: protects=every scripted tmux call reading UTF-8 whatever the locale (#92), because tmux
-    # otherwise prints a format's tab as "_" to a non-UTF-8 client, and non-English names with it,
-    # and attach staying without -u; fails_when=a new call in any quoting (array, %w, single quotes,
-    # backtick, %x, heredoc, a shell string, a variable holding "tmux") leaves off -u, attach gains
-    # it, or the scan stops finding calls; why_new=one missed call breaks only under a C locale,
-    # which no developer sees; seam=none; no_claim=shell in switchboard.tmux, whose tmux calls set
-    # hooks and read nothing, a one-word subcommand with no flag in a shell string ("tmux ls"), or
-    # a command assembled from fragments
-    # Value: protects=the door reload and editor code use to reach tmux; break=query returning output from a failed call makes a reload parse an error as panes; seam=stubs IO.popen and Tmux.system; no_claim=a real tmux
+    # Value: protects=the door reload and editor code use to reach tmux; fails_when=query returns a failed call's output, so a reload parses an error as panes; why_new=the seam is new; seam=stubs IO.popen and Tmux.system; no_claim=a real tmux
     def test_the_seam_answers_with_output_or_nil_and_stays_stubbable
       argv = nil
       ok = stub_method(IO, :popen, ->(cmd, **, &_b) { argv = cmd; system("true"); "x\n" }) { Tmux.query("list-panes") }
@@ -550,6 +542,14 @@ module Switchboard
       assert_equal %w[tmux -u select-pane], sent
     end
 
+    # Value: protects=every scripted tmux call reading UTF-8 whatever the locale (#92), because tmux
+    # otherwise prints a format's tab as "_" to a non-UTF-8 client, and non-English names with it,
+    # and attach staying without -u; fails_when=a new call in any quoting (array, %w, single quotes,
+    # backtick, %x, heredoc, a shell string, a variable holding "tmux") leaves off -u, attach gains
+    # it, or the scan stops finding calls; why_new=one missed call breaks only under a C locale,
+    # which no developer sees; seam=none; no_claim=shell in switchboard.tmux, whose tmux calls set
+    # hooks and read nothing, a one-word subcommand with no flag in a shell string ("tmux ls"), or
+    # a command assembled from fragments
     def test_every_scripted_tmux_call_passes_u
       interactive = %w[attach attach-session]
       unchecked = /(?<![`\w-])tmux (?!-u\b)(?!attach\b)(?:-|[a-z]+-[a-z]+|[a-z]+ -)/ # a backtick inside text is advice to a person
