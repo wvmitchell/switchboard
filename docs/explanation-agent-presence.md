@@ -127,8 +127,8 @@ opposite sides of that:
   load a *linked* git worktree's own `<worktree>/.codex/hooks.json`: it redirects
   a linked worktree's project hooks to the main checkout's `.codex/` folder, and only when
   the worktree has a `.codex/` folder and is trusted (`config/src/loader/mod.rs` in Codex).
-  Switchboard is nothing but linked worktrees, so the per-worktree file was dead on
-  arrival; the v0.39.0 codex feature never fired in practice. A **config-level** hook
+  Switchboard is nothing but linked worktrees, so a per-worktree file would never fire.
+  A **config-level** hook
   isn't project-discovered, so it fires everywhere, including linked worktrees. So
   `CodexHook` delivers **one** marker-delimited `[hooks]` block in your global
   `~/.codex/config.toml` (`CODEX_HOME`-aware). It's written through the shared
@@ -229,9 +229,9 @@ session command that bypasses *all* approvals suppresses it.
 ### Subagents don't move the main dot
 
 A subagent's tool calls fire the parent worktree's Claude hooks too, with an `agent_id`
-in the payload. So do Claude's internal agents (probed live, 2.1.310). They used to turn
-the main dot into a spinner claiming the *main* agent was working, and it stuck after the
-subagent ended.
+in the payload. So do Claude's internal agents (probed live, 2.1.310). Counted, they'd turn
+the main dot into a spinner claiming the *main* agent was working, and it would stick after
+the subagent ended.
 
 So the reporter (`sb-agent-hook v6`) drops a `thinking` whose payload carries an
 `agent_id`. That means `thinking` reads stdin, guarded by `[ ! -t 0 ]` so a manual run
@@ -257,13 +257,12 @@ whenever it's missing or stale (versioned in the script header), so an upgrade
 self-heals.
 
 Every worktree switchboard creates gets the Claude hook: the dispatch worker runs
-`Creator.work` → `enable_hooks` → `AgentHooks.enable`, with no setting in the way. It used
-to be gated on an OR of `agent_state_hooks`, `auto_rename` and `background_presence`, so
-each instruction's setting also decided whether hooks were installed at all. That made a
-new default-on instruction a quiet way to re-enable hooks for someone who had turned the
-rest off. Now the hooks are simply part of switchboard (the dots and every instruction
-ride them), the instruction settings only decide at runtime what gets planted, and
-`agent_state_hooks` is retired. A worktree opts out with `switchboard disable-hooks`;
+`Creator.work` → `enable_hooks` → `AgentHooks.enable`, with no setting in the way. The hooks
+are simply part of switchboard (the dots and every instruction ride them), the instruction
+settings only decide at runtime what gets planted, and `agent_state_hooks` is retired. If
+those settings also decided whether hooks were installed, a new default-on instruction
+would be a quiet way to re-enable hooks for someone who had turned the rest off. A worktree
+opts out with `switchboard disable-hooks`;
 a whole project can run it from its setup script, which goes after the hooks are written
 and before the agent starts. Existing worktrees made elsewhere get the hook via
 `switchboard enable-hooks`.
@@ -277,7 +276,7 @@ untouched with a warning that names where it leads, so anyone hooked through one
 this check can clean that file. `disable-hooks` exits 1 while switchboard's hooks are still
 at the link's target, instead of deleting the link and reporting success. A link you made yourself,
 say into a dotfiles repo, is untracked (switchboard adds the file to `.git/info/exclude`),
-so it's still written through as before. Codex
+so it's still written through. Codex
 needs no per-worktree step — its global block already covers them.
 
 ## Inside the global codex block
@@ -328,10 +327,10 @@ asserts that an untrusted block writes no state.
 Codex edits `config.toml` with toml_edit, which renders every *new* top-level table after
 the document's last table but *before* its trailing comments. Our block sits at the end of
 the file with a comment for an end marker, so `[desktop]`, `[marketplaces.*]` and
-`[plugins."…"]` land inside our markers. v0.50.1 and earlier silently dropped them on
-install and deleted them on uninstall.
+`[plugins."…"]` land inside our markers. Those tables aren't ours, so they have to survive
+install and uninstall.
 
-Now `install_global` and `remove_global` split the region (`movable_parts`) into three
+So `install_global` and `remove_global` split the region (`movable_parts`) into three
 kinds of lines:
 
 - **ours:** the note and any `hooks` table, regenerated;
@@ -395,8 +394,8 @@ uninstall never reports a removal that didn't happen.
 
 The Codex desktop app, for one, writes `config.toml` whenever it likes. So both verbs
 re-read the file before writing, and return `:conflict` rather than ever restoring a
-snapshot over a newer write. That replaced the old `:corrupt` torn-write rollback:
-temp+rename can't tear, so a read-back mismatch means someone else wrote. It isn't a lock,
+snapshot over a newer write. Temp+rename can't tear, so a read-back mismatch means someone
+else wrote. It isn't a lock,
 though: a write in the last instant before our rename can't be seen.
 
 ### Failures are loud, and never "delete the block"
@@ -448,14 +447,14 @@ refresh runs *first*, then `play_sounds_for`, fully rescued.
 
 - **One per worktree per scan.** Sounds are deduped per `[worktree, state]`, so every
   distinct worktree's completion is heard, but one worktree can't double-fire in a scan.
-- **Every open permission prompt.** Since v0.51.1, a Claude permission prompt enters
+- **Every open permission prompt.** A Claude permission prompt enters
   `waiting` the instant it opens (`PermissionRequest`, not the ~6-second
   `permission_prompt` Notification). So `waiting` rings once per prompt still open at the
   next scan, including in the workspace you're viewing, like every other sound. That's
   deliberate: an open prompt is exactly what the chime is for, and muting the viewed
   workspace would be a separate sound rule.
 - **Only from the sidebar you're watching.** A catch-up scan re-baselines silently. How
-  that works, and the recycled-pane-id bug that once made sounds ring twice, is in
+  that works, and why a sidebar has to check that it still owns its pane, is in
   [the sidebar's lifecycle](explanation-sidebar-lifecycle.md#catch-up-scans-must-not-re-ring).
 
 **The sounds themselves.** The two defaults are *synthesized* (16-bit PCM WAV via
@@ -538,9 +537,9 @@ compaction.
 
 ### The backstop, on `Stop`
 
-A `SessionStart` plant fires *before* the agent knows anything, and then never again. So
-the moment of most understanding (the work is done and you're about to walk away) had no
-reminder, which is exactly how a real session here shipped a fix and left its workspace on
+A `SessionStart` plant fires *before* the agent knows anything, and then never again. On
+its own it leaves no reminder at the moment of most understanding (the work is done and
+you're about to walk away), so a session could finish its work and leave its workspace on
 the placeholder name. The `Stop` hook catches that moment.
 
 **One command owns `Stop`.** Stop hooks run in parallel with no ordering, so a plain sh
@@ -631,10 +630,10 @@ test runs each one through `DispatchArgs.parse`, the parser the command itself u
 ## Background monitors: the `∞`
 
 A workspace where an agent runs a background monitor, a recurring loop or a scheduled tick
-(a `/loop`, a self-paced wakeup, the Monitor tool, a background bash) used to look exactly
-like a finished, idle one: a resting `●`.
+(a `/loop`, a self-paced wakeup, the Monitor tool, a background bash) would otherwise look
+exactly like a finished, idle one: a resting `●`.
 
-The dot couldn't tell them apart because *hooks can't*. A background loop fires the same
+The dot can't tell them apart because *hooks can't*. A background loop fires the same
 `SessionStart` and `Stop` events as an interactive turn, and there's no `source: routine` or
 `is_autonomous` signal. Cloud routines never touch the local reporter at all.
 
@@ -740,8 +739,8 @@ So an agent that starts a monitor *after* either still knows to run `monitoring 
 
 **Renames carry the marker.** `Rename.perform` carries it via the shared
 `KeyedMarkerStore.carry`, capturing the old realpath *before* `move_worktree`, since the
-bridge symlink resolves it to the new folder afterwards. That also fixed an older bug where
-a rename silently dropped `Attention`'s bold.
+bridge symlink resolves it to the new folder afterwards. `Attention`'s bold is carried the
+same way, so a rename doesn't drop it.
 
 The session-boundary behavior (nudge and clears) is gated on the `background_presence`
 setting (global plus per-project, on by default, like `auto_rename`). The setting only
@@ -822,18 +821,18 @@ unsettled (the edge scan usually lands inside the window), is a hand-off to a ba
 agent (`ClaudeSessions::HANDOFF_STATUS`; `@offstage_raw` holds only these).
 
 A background **shell** (`shell`) shows the `◷` but rings as usual. It may be a dev server
-that never ends, and holding its chime would mute the very turn you were waiting on. Every
-heuristic review tried for telling a long-lived shell from a short job leaked (per-process
-memory, respawns, chained turns). An agent, on the other hand, always reports back with a
+that never ends, and holding its chime would mute the very turn you were waiting on. No
+heuristic reliably tells a long-lived shell from a short job (per-process memory, respawns
+and chained turns all leak). An agent, on the other hand, always reports back with a
 follow-up turn, so its hold always resolves.
 
 **The hold lives on disk.** `Edges#on_scan` writes an `OffstageHold` marker
 (`offstage_hold.rb`, a `KeyedMarkerStore` keyed by realpath, holding
 `realpath\tepoch\tpid`) instead of ringing or bolding, on *every* scan, warm and catch-up
 included. It's on disk because the pane on screen when the work finishes may never have
-seen the hand-off: it was hidden, and its baseline already read `done`. An outside review
-found that a per-process hold lost it. A hold that fails to be written rings at once
-instead, since early beats never.
+seen the hand-off: it was hidden, and its baseline already read `done`. A per-process hold
+would lose it. A hold that fails to be written rings at once instead, since early beats
+never.
 
 **`Edges#settle_holds` resolves each hold on every scan, one of two ways:**
 
@@ -858,8 +857,7 @@ A few more rules keep it from ringing twice or never:
   releases that path's hold (`release_rung_holds`). Otherwise a hold another pane wrote
   inside the done-before-idle race would ring that end a second time.
 - **Never released by a silent pane.** A pane that sees the hand-off edge late, after the work
-  ended, reads it as a plain completion and would take the only ring with it (found by an
-  adversarial review).
+  ended, reads it as a plain completion and would take the only ring with it.
 - **Nothing is released on a failed session read** (`sessions_ok:`).
 - **Monitored and first-turn paths never hold,** since they're already suppressed.
 
@@ -968,8 +966,8 @@ the parsed `procStart`, then pid. A bad ordering field only demotes a link.
   which shows as an off-shade block in the bar.
 
 **The name gives way, not the cues.** `fit_plain` gives up name columns, never the trailing
-cues. The old `trunc(plain(node))` cut `⇅` and `▸N` first, so they vanished under the cursor
-bar on a long name. The cues drop only when no name column would be left.
+cues, so `⇅` and `▸N` don't vanish under the cursor bar on a long name. The cues drop only
+when no name column would be left.
 
 **The home console counts them.** It adds `N idle links` and `N linked`, and, given `cols`,
 drops *whole* clauses (`linked`, then `PRs`, then `active`) before it would cut mid-word. The
@@ -1049,7 +1047,7 @@ it lands on the claude.ai sign-in page (checked 2026-10-24). So a QR on screen o
 someone already signed in as you.
 
 `:phone_link` sits *last* in `Keymap::ACTIONS`, because an earlier action's default beats a
-later one's remap. Added mid-list, `p` would have taken the key from anyone who had remapped
+later one's remap. Added mid-list, `p` would take the key from anyone who had remapped
 `rename` (or any later action) to it.
 
 ## The dot glyphs

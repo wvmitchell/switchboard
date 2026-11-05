@@ -4,7 +4,7 @@ The sidebar feels like one persistent panel that follows you around. It isn't.
 There's a **separate sidebar process per window**, most of them asleep at any
 moment, coordinating through tmux hooks and on-disk state. This explains why it's
 built that way, how a sidebar stays cheap while off screen, how it swaps in new code
-without restarting, and the subtle bug that the design exists to prevent.
+without restarting, and why a sidebar has to check that it still owns its pane.
 
 This is the deepest part of the codebase. If you're changing visibility, poking,
 or the run loop in `sidebar.rb` (or its `sidebar/` concern files — the #57
@@ -131,7 +131,7 @@ PR-cache and collapse directories, plus:
 - each tracked worktree's `logs/HEAD` mtime.
 
 So it sees agent dots, bold names, badges, commits, the project registry and the
-shared view state move. Nothing changed: the pane stays as dormant as before, costing
+shared view state move. Nothing changed: the pane stays dormant, costing
 about one `Tmux.visible?` call per `IDLE`. Something moved: it does one quiet reload
 and repaints into the hidden buffer. The fingerprint deliberately doesn't cover a
 *worktree* added or removed in another session; that still refreshes on the switch-in
@@ -139,16 +139,16 @@ reload.
 
 ### Why the warm reload isn't `reload` with flags
 
-"Quiet" is doing real work here. The obvious implementation, calling the normal
-`reload` off screen, caused two real bugs that a review caught:
+"Quiet" is doing real work here. The normal `reload` can't run off screen, for two
+reasons:
 
-- **It erased notifications before you saw them.** `reload` calls `locate` to find
+- **It would erase notifications before you saw them.** `reload` calls `locate` to find
   "you are here", and locating a workspace *clears its bold attention marker* for
   `@current_path` (you're looking at it, so it's been seen). Off screen you are *not*
   looking at it, so a warm reload would erase the bold the on-screen sidebar had just
   set for that workspace's completion. `warm_reload` skips `locate` entirely, since an
   off-screen pane's `@current_path` can't change while you're away.
-- **It suppressed the switch-in's PR refresh.** `reload` stamps `@last_reload`, which
+- **It would suppress the switch-in's PR refresh.** `reload` stamps `@last_reload`, which
   the switch-in path uses to *skip* a redundant reload within `POKE_TTL`. A warm just
   before you switched in would make `reload_and_refresh` skip its PR refresh. So
   `warm_reload` stamps only `@last_warm`, and the switch-in still does its full reload
@@ -181,25 +181,23 @@ Each one handles it in `warm_poke`:
 So an off-screen sidebar shows the fold within about 0.2 seconds, before you can switch
 to it.
 
-That's the fix for "collapse a project, switch session, and it still flashed." The first
-version of pre-warming shipped without the broadcast, and its fingerprint left out view
-state entirely, so a collapse never warmed off-screen panes and every switch-in repainted
-the fold: a flash in exactly the case people test first. The broadcast fires only on the
-rare toggle, so it costs nothing at rest, and the view-state entries in the fingerprint
-are the backstop if a broadcast is missed.
+The lazy fingerprint alone could leave a fold unpainted if you switch right after making
+it, and the switch-in would repaint it: a flash in exactly the case people test first. The
+broadcast fires only on the rare toggle, so it costs nothing at rest, and the view-state
+entries in the fingerprint are the backstop if a broadcast is missed.
 
 ### A project added in another session
 
 Each sidebar process caches `@config`, since git is the runtime truth and the config is
-just the project registry. That meant a project registered in another session stayed
-invisible until the pane's process was respawned.
+just the project registry. A project registered in another session still has to show up
+without respawning the pane's process.
 
-Now `rebuild`, the one place every reload path goes through (the switch-in poke, the
+So `rebuild`, the one place every reload path goes through (the switch-in poke, the
 ~15-second tree tick, the off-screen warm), calls `refresh_config` (`sidebar/actions.rb`).
 It's an mtime-gated re-read: one `stat` when the file hasn't changed, and a `Config.new`
 only when it has. On a parse error it keeps the last good `@config`, like `reload_config`,
-which shares the same `@config_mtime` baseline. So the frequent `C-l` reload stays as cheap
-as before, yet a changed registry lands on the next reload.
+which shares the same `@config_mtime` baseline. So the frequent `C-l` reload stays cheap,
+yet a changed registry lands on the next reload.
 
 It propagates the same way as shared view state:
 
@@ -208,7 +206,7 @@ It propagates the same way as shared view state:
   so every other sidebar re-reads right away.
 - **A fingerprint backstop.** The config's mtime is part of `warm_fingerprint`.
 
-Because peers now read the config while a writer may be writing it,
+Because peers read the config while a writer may be writing it,
 `Config.add_project`, `remove_project` and `scaffold` write atomically
 (`MarkerBlock.atomic_write`: temp+rename, aware of symlinks and file modes). That's the
 same rule the marker stores, `HookFile` and `MarkerBlock` already follow. A plain
@@ -227,7 +225,7 @@ config with zero projects and blank its whole tree.
   screen. The fingerprint tracks it as a backstop, but the resize lands on the switch-in
   `pin`.
 - **Worktrees added or removed in another session.** Those refresh on the switch-in
-  reload, as before.
+  reload.
 - **Clients of different sizes.** The warm frame is drawn at the off-screen pane's size.
   That's right for a single client at a stable size, the common case, but with several
   clients of different sizes it can be briefly mis-sized until the switch-in poke
@@ -244,31 +242,26 @@ finished while it slept as a *new* edge — and re-ring sounds you already heard
 from the sidebar that was on screen at the time, spraying duplicates as you move
 between sessions.
 
-The fix: catch-up scans (the switch-in poke `reload_and_refresh`, the off→on
+So catch-up scans (the switch-in poke `reload_and_refresh`, the off→on
 `reappeared` branch) reload with `announce_sounds: false`. They re-baseline the
 state and still refresh PRs and write bold markers, but ring nothing. Only
 continuous *while-visible* scans announce. So a completion is heard exactly once,
 from wherever you're watching when it lands.
 
-## The bug this all exists to prevent: recycled pane ids
+## Recycled pane ids: a sidebar has to exit with its pane
 
 "One visible sidebar rings at a time" assumes a dead sidebar process actually
-exits. One almost didn't, and it produced an intermittent duplicate-sound bug
-worth understanding because it shaped the run loop.
+exits, and it matters because **tmux recycles `%pane-id`s.** A sidebar that outlived
+its pane would still hold a frozen `ENV["TMUX_PANE"]`, which could later name a
+*different, live* pane. If that pane were on the attached, active window, the orphan's
+`Tmux.visible?` would read **true**, so it would run announcing scans and ring
+completions *in parallel with the real owner*: duplicate sounds, and only sometimes,
+depending on which pane the recycled id names.
 
-A sidebar whose pane closed used to keep looping: `read_key` swallowed the stdin
-`EOFError`, and nothing checked the pane still existed. Harmless on its own — but
-**tmux recycles `%pane-id`s.** The orphan's frozen `ENV["TMUX_PANE"]` would later
-name a *different, live* pane. When that recycled id happened to map to a pane on
-the attached, active window, the orphan's `Tmux.visible?` read **true** — so it
-ran announcing scans and rang completions *in parallel with the real owner*.
-Duplicate, sometimes triple, sounds. Intermittent, because it depended on which
-recycled id currently mapped to a visible pane.
+Two guards stop that:
 
-Two guards close it:
-
-1. **Clean exit on pane close.** `read_key` now returns `:eof` (the run loop
-   exits) instead of swallowing the EOF.
+1. **Clean exit on pane close.** `read_key` returns `:eof` on the stdin `EOFError`,
+   and the run loop exits.
 2. **`owns_pane?` confirms identity by pty.** It compares the pane's current
    `#{pane_tty}` against the pty captured at startup. tmux keeps a pane's pty
    stable for its whole life but recycles ids — so a *confirmed different* tty
@@ -280,8 +273,8 @@ self-terminating a healthy sidebar on a flaky shell-out is worse than the leak i
 would prevent. Every other tmux call here degrades on a transient miss rather than
 acting on it. A genuinely dead pane reads `visible? = false` (silent, never rings)
 and is reaped the instant its id is recycled onto a live pane — exactly when it
-could otherwise turn harmful. So the orphan that rings duplicates stops within one
-`IDLE` tick, before it can ring.
+could otherwise turn harmful. So an orphan on a recycled id stops within one `IDLE`
+tick, before it can ring.
 
 `doctor` also surfaces these as "orphaned sidebar processes" by diffing the
 running-process count (`pgrep`) against the sidebar-pane count, so a straggler is
@@ -292,7 +285,8 @@ visible before it can misbehave.
 Every sidebar is a long-lived process, so after an upgrade each one would keep running
 the code it started with. Everything else switchboard runs (hooks, PR-refresh children,
 dispatch workers) re-invokes the binary, so it picks up new code by itself. The sidebars
-can't, and upgrades used to end with "press the toggle key twice in each session".
+can't, so without help every upgrade would end with "press the toggle key twice in each
+session".
 
 ### The sidebar execs itself in place
 
@@ -446,8 +440,8 @@ If it ends `:failed` or `:timeout`:
 
 - **That root is blocked for the backstop** (`@reexec_blocked_root`). A newer keg gets its
   own try, and a signal (`reload-sidebars`) still asks again, which is how a timed-out check
-  is retried. There's deliberately no retry clock: in review, a second wake time that every
-  gate had to honor produced a spin and a stale tree.
+  is retried. There's deliberately no retry clock: a second wake time that every gate had
+  to honor would invite a spin and a stale tree.
 - **The pane is flagged** `@sb_reload_failed=<root>`, after the failed exec's re-tag.
   `doctor` lists those panes, and the next reload's summary reports those it signals again
   or finds mid-reload.
