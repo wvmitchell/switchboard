@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "test_helper"
+require "ripper"
 
 module Switchboard
   # Tmux is almost all shell-outs, so the unit-testable surface is the pure
@@ -312,7 +313,7 @@ module Switchboard
     def test_new_session_cmd_sizes_the_session_to_the_current_window
       stub_method(Tmux, :current_window_size, -> { [220, 50] }) do
         cmd = Tmux.new_session_cmd("sb/app/x", "/wt/x")
-        assert_equal ["tmux", "new-session", "-d", "-s", "sb/app/x", "-c", "/wt/x", "-x", "220", "-y", "50"], cmd
+        assert_equal ["tmux", "-u", "new-session", "-d", "-s", "sb/app/x", "-c", "/wt/x", "-x", "220", "-y", "50"], cmd
       end
     end
 
@@ -321,7 +322,7 @@ module Switchboard
       # window on attach exactly as before.
       stub_method(Tmux, :current_window_size, -> { [nil, nil] }) do
         cmd = Tmux.new_session_cmd("sb/app/x", "/wt/x")
-        assert_equal ["tmux", "new-session", "-d", "-s", "sb/app/x", "-c", "/wt/x"], cmd
+        assert_equal ["tmux", "-u", "new-session", "-d", "-s", "sb/app/x", "-c", "/wt/x"], cmd
       end
     end
 
@@ -331,7 +332,7 @@ module Switchboard
       # Only a positive pair is applied; otherwise fall back to the default.
       stub_method(Tmux, :current_window_size, -> { [0, 50] }) do
         cmd = Tmux.new_session_cmd("sb/app/x", "/wt/x")
-        assert_equal ["tmux", "new-session", "-d", "-s", "sb/app/x", "-c", "/wt/x"], cmd,
+        assert_equal ["tmux", "-u", "new-session", "-d", "-s", "sb/app/x", "-c", "/wt/x"], cmd,
                      "a non-positive dimension is dropped, not passed as -x 0"
       end
     end
@@ -367,7 +368,7 @@ module Switchboard
           Tmux.poke_sidebar_of("sb/app/x", reload_config: true)
         end
       end
-      assert_equal ["tmux", "send-keys", "-t", "%7", "C-r"], sent,
+      assert_equal ["tmux", "-u", "send-keys", "-t", "%7", "C-r"], sent,
                    "resolves the pane via window_sidebar_pane and pokes it with C-r (not the old NoMethodError)"
     end
 
@@ -397,7 +398,7 @@ module Switchboard
     def test_notify_holds_the_message_on_the_status_line
       calls = []
       stub_method(Tmux, :system, ->(*args, **) { calls << args }) { Tmux.notify("hello") }
-      assert_equal [["tmux", "display-message", "-d", Tmux::NOTIFY_MS.to_s, "hello"]], calls
+      assert_equal [["tmux", "-u", "display-message", "-d", Tmux::NOTIFY_MS.to_s, "hello"]], calls
     end
 
     # Value: protects=a tmux older than 3.2 (no -d) still shows the notice; fails_when=the
@@ -405,7 +406,7 @@ module Switchboard
     def test_notify_falls_back_to_a_plain_message_when_tmux_refuses_d
       calls = []
       stub_method(Tmux, :system, ->(*args, **) { calls << args; calls.size > 1 }) { Tmux.notify("hello") }
-      assert_equal ["tmux", "display-message", "hello"], calls.last
+      assert_equal ["tmux", "-u", "display-message", "hello"], calls.last
       assert_equal 2, calls.size
     end
 
@@ -430,8 +431,8 @@ module Switchboard
       stub_method(IO, :popen, popen) do
         stub_method(Tmux, :system, ->(*args, **) { sent << args; true }) { Tmux.notify_everyone("hi", display_time: "10000") }
       end
-      assert_equal [["tmux", "display-message", "-c", "/dev/ttys001", "-d", "10000", "hi"],
-                    ["tmux", "display-message", "-c", "/dev/ttys002", "-d", "10000", "hi"]], sent
+      assert_equal [["tmux", "-u", "display-message", "-c", "/dev/ttys001", "-d", "10000", "hi"],
+                    ["tmux", "-u", "display-message", "-c", "/dev/ttys002", "-d", "10000", "hi"]], sent
     end
 
     # Value: protects=notify_everyone still shows the notice (untargeted) when there's no client
@@ -470,8 +471,8 @@ module Switchboard
     def test_a_notice_never_swallows_keys
       sent = []
       stub_method(Tmux, :system, ->(*args, **) { sent << args; false }) { Tmux.notify("hi", client: "/dev/ttys001", display_time: "10000") }
-      assert_equal [["tmux", "display-message", "-c", "/dev/ttys001", "-d", "10000", "hi"],
-                    ["tmux", "display-message", "-c", "/dev/ttys001", "hi"]], sent
+      assert_equal [["tmux", "-u", "display-message", "-c", "/dev/ttys001", "-d", "10000", "hi"],
+                    ["tmux", "-u", "display-message", "-c", "/dev/ttys001", "hi"]], sent
       refute_includes sent.flatten, "-N"
     end
 
@@ -485,10 +486,10 @@ module Switchboard
     # Value: protects=a per-session display-time counts (inside a pane), and outside a session the
     # global is read; fails_when=only -g is read; why_new=ship 4 pass 3 red team; seam=none
     def test_display_time_prefers_the_session_value_then_the_global
-      replies = { "tmux show-options -Aqv display-time 2>/dev/null" => "9000\n",
-                  "tmux show-options -gqv display-time 2>/dev/null" => "750\n" }
+      replies = { "tmux -u show-options -Aqv display-time 2>/dev/null" => "9000\n",
+                  "tmux -u show-options -gqv display-time 2>/dev/null" => "750\n" }
       stub_method(Tmux, :`, ->(cmd) { replies.fetch(cmd) }) { assert_equal "9000", Tmux.display_time }
-      replies["tmux show-options -Aqv display-time 2>/dev/null"] = ""
+      replies["tmux -u show-options -Aqv display-time 2>/dev/null"] = ""
       stub_method(Tmux, :`, ->(cmd) { replies.fetch(cmd) }) { assert_equal "750", Tmux.display_time }
     end
 
@@ -498,7 +499,7 @@ module Switchboard
       row = pane_row("%1", "ttys001", "0", "1", "0")
       clients = client_row("s") # outside the lambda: as the stubbed method its self is IO
       popen = lambda do |argv, **, &blk|
-        ok = argv[1] == "list-panes"
+        ok = argv[2] == "list-panes"
         system(RbConfig.ruby, "-e", ok ? "exit 0" : "exit 1")
         out = ok ? row : clients
         blk ? blk.call(StringIO.new(out)) : out
@@ -525,6 +526,45 @@ module Switchboard
     def test_work_dir_is_nil_when_only_the_sidebar_is_present
       assert_nil Tmux.work_dir("#{Tmux::SIDEBAR_TITLE}\t/repo/primary\n")
       assert_nil Tmux.work_dir(""), "no panes (server gone) -> nil, so -c is just omitted"
+    end
+
+    # Value: protects=every scripted tmux call reading UTF-8 whatever the locale (#92), because tmux
+    # otherwise prints a format's tab as "_" to a non-UTF-8 client, and non-English names with it,
+    # and attach staying without -u; fails_when=a new call in any quoting (array, %w, single quotes,
+    # backtick, %x, heredoc, a shell string, a variable holding "tmux") leaves off -u, attach gains
+    # it, or the scan stops finding calls; why_new=one missed call breaks only under a C locale,
+    # which no developer sees; seam=none; no_claim=shell in switchboard.tmux, whose tmux calls set
+    # hooks and read nothing, a one-word subcommand with no flag in a shell string ("tmux ls"), or
+    # a command assembled from fragments
+    def test_every_scripted_tmux_call_passes_u
+      interactive = %w[attach attach-session]
+      unchecked = /(?<![`\w-])tmux (?!-u\b)(?!attach\b)(?:-|[a-z]+-[a-z]+|[a-z]+ -)/ # a backtick inside text is advice to a person
+      not_a_call = /File\.join|start_with\?|%w\[.*\]\.each/ # a config path, a process name, a tool list
+      checked = 0
+      missing = Dir[File.expand_path("../lib/**/*.rb", __dir__)].flat_map do |file|
+        source = File.read(file)
+        lines = source.lines
+        tokens = Ripper.lex(source).reject { |t| %i[on_sp on_ignored_nl on_nl].include?(t[1]) }
+        tokens.each_with_index.filter_map do |t, i|
+          text = t[2]
+          next unless t[1] == :on_tstring_content
+          next if lines[t[0][0] - 1].match?(not_a_call)
+
+          checked += 1 if text.match?(/\Atmux -u\b/) || text == "tmux"
+          bad = if text == "tmux"
+                  word = tokens[i - 1][1] == :on_qwords_beg
+                  listed = word || tokens[i + 2]&.dig(2) == "," # anything else, like ["tmux"] + args or X = "tmux", hides the flag
+                  following = tokens[i + (word ? 2 : 4)]&.dig(2)
+                  after_u = tokens[i + (word ? 4 : 8)]&.dig(2)
+                  !listed || (following == "-u" ? interactive.include?(after_u) : !interactive.include?(following))
+                else
+                  text.match?(unchecked) || text.match?(/\btmux -u attach/)
+                end
+          "#{File.basename(file)}:#{t[0][0]}" if bad
+        end
+      end
+      assert_empty missing, "scripted tmux calls without -u, or attach with it (see CONTRIBUTING.md)"
+      assert_operator checked, :>, 50, "the scan stopped finding tmux calls"
     end
 
     # --- reusable_editor_pane: the pure `e` reuse gate ------------------------

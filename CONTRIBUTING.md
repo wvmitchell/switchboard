@@ -70,6 +70,12 @@ Helpers you'll use:
   seam, e.g. `Git.branch_history`.
 - `with_stdin(io) { … }` — swap `$stdin` to drive the sidebar's raw-mode reads.
 
+Every scripted `tmux` call in `lib/` passes `-u`. Without it, tmux prints a format's tab as
+`_` to a client under a C locale, and non-English names with it, so what we parse stops
+matching. Interactive `attach` is the exception, because `-u` would change what your terminal
+receives. A test in `test/tmux_test.rb` holds this. The shell in `switchboard.tmux` isn't
+covered and doesn't need to be, since its `tmux` calls set hooks and read nothing back.
+
 Pure decision logic is split out from its shell-out so it's unit-testable without
 a subprocess (e.g. `Reconcile.orphans`, `Installer.rebind_ops`,
 `Doctor.orphan_sidebar_count`). Follow that pattern: keep the decision pure, test it

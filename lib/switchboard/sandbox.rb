@@ -275,7 +275,7 @@ module Switchboard
     # session of THIS server (prune/reconcile only touch sb/), so it dies with the
     # sandbox, and point a session file at it. Returns the pid.
     def park_session(worktree, tmux_session, fields)
-      out = IO.popen(["tmux", "new-session", "-d", "-s", tmux_session, "-c", worktree,
+      out = IO.popen(["tmux", "-u", "new-session", "-d", "-s", tmux_session, "-c", worktree,
                       "-P", "-F", '#{pane_pid}', "exec sleep 2147483647"], err: File::NULL, &:read)
       pid = out.to_s.strip.to_i
       return unless pid.positive?
@@ -314,14 +314,14 @@ module Switchboard
     # paints on the attach → client-session-changed poke; no pre-attach render poll (F5).
     def boot(sock_dir, checkout)
       home = Tmux::HOME
-      system("tmux", "new-session", "-d", "-s", home, "-x", "220", "-y", "50", "-c", sock_dir,
+      system("tmux", "-u", "new-session", "-d", "-s", home, "-x", "220", "-y", "50", "-c", sock_dir,
              out: File::NULL, err: File::NULL)
       IsolatedServer.record_server_pid(sock_dir) # so teardown can pid-kill a socketless daemon
-      system("tmux", "set-option", "-t", home, "@sb_sidebar", "on", out: File::NULL, err: File::NULL)
+      system("tmux", "-u", "set-option", "-t", home, "@sb_sidebar", "on", out: File::NULL, err: File::NULL)
       # run-shell execs its arg via `sh -c`, so a checkout path with a space would
       # word-split and silently drop every keybinding + hook — Shellwords.escape it.
       fragment = File.join(checkout, "switchboard.tmux")
-      system("tmux", "run-shell", Shellwords.escape(fragment), out: File::NULL, err: File::NULL) if File.exist?(fragment)
+      system("tmux", "-u", "run-shell", Shellwords.escape(fragment), out: File::NULL, err: File::NULL) if File.exist?(fragment)
       Tmux.spawn_sidebar(target: home)
     end
 

@@ -94,7 +94,7 @@ module Switchboard
       return if sock_dir.to_s.strip.empty? # an empty dir makes kill_env resolve the DEFAULT socket = real server
 
       pid = recorded_pid(sock_dir) || read_server_pid(sock_dir)
-      system(kill_env(sock_dir), "tmux", "kill-server", out: File::NULL, err: File::NULL)
+      system(kill_env(sock_dir), "tmux", "-u", "kill-server", out: File::NULL, err: File::NULL)
       ensure_dead(pid)
     rescue StandardError
       nil
@@ -146,7 +146,7 @@ module Switchboard
     def read_server_pid(sock_dir)
       return nil if sock_dir.to_s.strip.empty? # empty TMUX_TMPDIR resolves to the DEFAULT socket = the real server
 
-      raw = IO.popen(kill_env(sock_dir), ["tmux", "display-message", "-p", "#\{pid}"],
+      raw = IO.popen(kill_env(sock_dir), ["tmux", "-u", "display-message", "-p", "#\{pid}"],
                      err: File::NULL, &:read).to_s.strip
       raw.match?(/\A\d+\z/) ? raw.to_i : nil
     rescue StandardError

@@ -124,7 +124,7 @@ module Switchboard
 
     # A tmux global environment value, or nil when unset (`-NAME` / unknown variable).
     def tmux_global_env(name)
-      out = IO.popen(["tmux", "show-environment", "-g", name], err: File::NULL, &:read).to_s.strip
+      out = IO.popen(["tmux", "-u", "show-environment", "-g", name], err: File::NULL, &:read).to_s.strip
       out.start_with?("#{name}=") ? out.delete_prefix("#{name}=") : nil
     rescue StandardError
       nil

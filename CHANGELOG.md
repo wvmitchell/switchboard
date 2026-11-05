@@ -10,6 +10,14 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
+## [0.66.6] — `switchboard quit` works under a C locale (2026-11-05)
+
+### Fixed
+- Under a C locale, common in tmux panes started without `LANG`, `switchboard quit` reported
+  closing your sessions but left them all running. Other commands that read from tmux could
+  misread its output the same way. Session names with non-English characters now also read
+  back correctly there.
+
 ## [0.66.5] — The delete prompt stays up until you answer it (2026-11-05)
 
 ### Fixed
