@@ -21,7 +21,7 @@ module Switchboard
   #      miss it" true. Both self-clear the instant the workspace is renamed (placeholder
   #      ⇒ false).
   #
-  # The decisions are pure functions over a seam; CLI#rename_nudge wires the config / cwd
+  # The decisions are pure functions over a seam; HookCommands.rename_nudge wires the config / cwd
   # / event payload around them and prints the payload.
   module RenameNudge
     module_function
@@ -115,7 +115,7 @@ module Switchboard
       session_start_json(message(leaf))
     end
 
-    # Any SessionStart context text in that payload shape (CLI#rename_nudge joins the
+    # Any SessionStart context text in that payload shape (HookCommands.rename_nudge joins the
     # rename and agent-dispatch instructions into one).
     def session_start_json(text)
       JSON.generate(

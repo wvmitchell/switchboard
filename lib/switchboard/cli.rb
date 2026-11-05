@@ -38,10 +38,10 @@ module Switchboard
       when "enable-hooks"      then exit(1) if enable_hooks(argv[1]) == false
       when "disable-hooks"     then exit(1) if disable_hooks(argv[1]) == false
       when "rename"            then exit(1) unless rename(argv[1])
-      when "rename-nudge"      then rename_nudge(argv.drop(1))
+      when "rename-nudge"      then HookCommands.rename_nudge(argv.drop(1))
       when "sync-session-name" then sync_session_name(argv[1], argv[2])
       when "monitoring"        then monitoring(argv[1], argv[2])
-      when "monitoring-nudge"  then monitoring_nudge(argv.drop(1))
+      when "monitoring-nudge"  then HookCommands.monitoring_nudge(argv.drop(1))
       when "sound"             then play_sound(argv[1])
       when "sidebar"           then argv[1] == "--check" ? exit(Sidebar.check ? 0 : 1) : Sidebar.run
       when "reload-sidebars"   then reload_sidebars
@@ -187,8 +187,8 @@ module Switchboard
       return unless dest && name
       # Typing into panes is only for a switchboard workspace — not a parent dir (which
       # would reach every Claude under it) or anything else this public verb is handed.
-      wt = current_worktree(dest)
-      return unless wt && !wt.primary && real_path(wt.path) == real_path(dest)
+      wt = Model.workspace_at(config, dest)
+      return unless wt && !wt.primary && Paths.real_or_nil(wt.path) == Paths.real_or_nil(dest)
 
       Process.daemon(true, true)
       SessionName.work(dest, name)
@@ -217,7 +217,7 @@ module Switchboard
       task = task.dup.force_encoding(Encoding::UTF_8) # valid now; a C-locale ARGV is tagged binary
 
       return warn(config.load_error_message) if config.load_error
-      here = current_worktree&.project
+      here = Model.workspace_at(config)&.project
       project = dispatch_target(target, here) or return false
       # $TMUX names the server the record and the session belong to; without it the
       # worker would start a headless server nobody is attached to.
@@ -282,7 +282,7 @@ module Switchboard
         return true
       end
 
-      here = current_worktree&.project
+      here = Model.workspace_at(config)&.project
       name_w = projects.map { |p| p["name"].length }.max
       paths = projects.map { |p| home_relative(p["path"]) }
       path_w = paths.map(&:length).max
@@ -416,7 +416,7 @@ module Switchboard
     # that liveness window: a loop slower than the ~10-min default passes its own cadence
     # (e.g. `monitoring on 2400` for a 30-min tick) so the dot doesn't go dark between ticks.
     def monitoring(sub, ttl_arg = nil)
-      wt = current_worktree
+      wt = Model.workspace_at(config)
       if wt.nil? || wt.primary
         puts "not inside a switchboard workspace — nothing to mark"
         return
@@ -453,37 +453,6 @@ module Switchboard
       else
         puts "usage: switchboard monitoring on [ttl_seconds] | off | notify"
       end
-    end
-
-    # SessionStart / SessionEnd hook entry (the Layer-2 background-presence handler, wired
-    # by HookFile.command_entries). Makes "monitoring" a per-session declaration: clears
-    # this worktree's marker on a new/resumed/forked session boundary — so a resumed agent
-    # (its old loop dead) must re-declare — and (re)plants the self-report nudge. The clear
-    # and the nudge have DIFFERENT source gates on purpose (MonitoringNudge::CLEARS_ON /
-    # NUDGES_ON): `compact` and `clear` do NOT clear here (compaction continues the same
-    # process; /clear's SessionEnd already dropped the marker) but DO re-nudge (both drop the
-    # original instruction from context). Gated on `background_presence`.
-    # Always exits 0 with only the JSON (or nothing) on stdout — a stray byte poisons the
-    # agent even at exit 0, so the body is rescued to silence.
-    def monitoring_nudge(args = [])
-      payload = parse_hook_stdin
-      cwd = payload["cwd"]
-      cwd = Dir.pwd unless cwd.is_a?(String) && !cwd.strip.empty?
-
-      wt = current_worktree(cwd)
-      return if wt.nil? || wt.primary
-      return unless config.background_presence_for(wt.project)
-
-      if args.include?("--end")
-        Monitoring.clear(wt.path) # SessionEnd: the agent is gone, so it can't still be monitoring
-        return
-      end
-
-      source = payload["source"]
-      Monitoring.clear(wt.path) if MonitoringNudge.clears_on?(source) # new/resumed/forked process only
-      puts MonitoringNudge.context_json if MonitoringNudge.nudges_on?(source) # + clear/compact: re-teach
-    rescue StandardError
-      nil # a hook must never error a session boundary; emit nothing on any fault
     end
 
     # Create an empty config (no projects yet). Add your first project from the
@@ -580,7 +549,7 @@ module Switchboard
     # Wire agent-state hooks into a single worktree's local agent settings
     # (scoped, never global). Defaults to the worktree you're standing in.
     def enable_hooks(path = nil)
-      worktree = worktree_at(path) or return warn("not inside a git worktree (pass a path)")
+      worktree = Git.toplevel(File.expand_path(path || ".")) or return warn("not inside a git worktree (pass a path)")
 
       AgentHooks.enable(worktree) # claude, per-worktree
       # current?, not enabled?: an older release's hooks would still read as enabled after a
@@ -614,7 +583,7 @@ module Switchboard
     # The per-worktree opt-out: every new worktree gets the hooks, so this is how one goes
     # without. False (exit 1) when they're still there, since disable swallows a failed write.
     def disable_hooks(path = nil)
-      worktree = worktree_at(path) or return warn("not inside a git worktree (pass a path)")
+      worktree = Git.toplevel(File.expand_path(path || ".")) or return warn("not inside a git worktree (pass a path)")
 
       AgentHooks.disable(worktree) # claude, per-worktree
       # disable leaves a file it can't parse or read untouched, and enabled? reads that as off:
@@ -628,13 +597,6 @@ module Switchboard
       puts "  (codex hooks are global — `switchboard uninstall` removes them)" if CodexHook.installed?
     end
 
-    # The worktree root for a path (or cwd) — what agent hooks treat as the project.
-    def worktree_at(path)
-      dir = path ? File.expand_path(path) : Dir.pwd
-      top = `git -C #{Shellwords.escape(dir)} rev-parse --show-toplevel 2>/dev/null`.strip
-      top.empty? ? nil : top
-    end
-
     # Rename the workspace the cwd is in (issue #42) — the agent verb: a running
     # agent has the best context for a good name, so let it (re)name its own live
     # workspace. Resolves the workspace from cwd, refuses the primary checkout,
@@ -642,7 +604,7 @@ module Switchboard
     # Returns true on success so `run` can exit non-zero on failure — an agent's
     # `switchboard rename x && cd …` must not proceed past a failed rename.
     def rename(newname)
-      wt = current_worktree
+      wt = Model.workspace_at(config)
       return warn("not inside a switchboard-managed worktree (cd into one first)") unless wt
       return warn("can't rename the primary checkout") if wt.primary
 
@@ -709,158 +671,11 @@ module Switchboard
            "a note that the session was named #{leaf} is switchboard syncing it, not a new request"
     end
 
-    # Agent hook entry (#92): nudge the agent to `switchboard rename` while this
-    # workspace still has a generated placeholder name and `auto_rename` is on. Two events
-    # dispatch here, selected by `--stop`:
-    #   • SessionStart (no flag) — print an `additionalContext` instruction (the soft
-    #     plant), gated on the event source. Rides alongside the sh state reporter. The
-    #     agent-dispatch instruction (DispatchNudge) joins the same payload, so it reaches
-    #     every hooked worktree with no new hook entry; each piece is built under its own
-    #     rescue, so a fault in one never drops the other.
-    #   • Stop (`--stop`) — see rename_nudge_stop: this command IS the Stop state reporter
-    #     AND the backstop (the sh reporter is off the Stop event, hook.rb), so it can
-    #     report `thinking` when it blocks instead of a racing `done`.
-    # The worktree is resolved from the hook's cwd (via `git rev-parse --show-toplevel`,
-    # so a subdir/bridge/moved path resolves) — NOT Dir.pwd, which the hook process
-    # doesn't reliably inherit.
-    #
-    # Two hard contracts (a hook runs on the critical path of a session boundary):
-    # ALWAYS exit 0, and print ONLY the JSON or nothing. A stray byte on stdout — a
-    # warning, a partial object, a backtrace — can poison an agent even at exit 0, so the
-    # whole body is rescued to silence and nothing else writes stdout.
-    def rename_nudge(args = [])
-      payload = parse_hook_stdin
-      cwd = payload["cwd"]
-      cwd = Dir.pwd unless cwd.is_a?(String) && !cwd.strip.empty?
-
-      return rename_nudge_stop(payload, cwd) if args.include?("--stop")
-
-      wt = current_worktree(cwd)
-      return if wt.nil? || wt.primary # not a managed worktree, or the trunk checkout
-
-      pieces = [rename_piece(wt, payload["source"]), dispatch_piece(wt, payload["source"])].compact
-      puts RenameNudge.session_start_json(pieces.join("\n\n")) unless pieces.empty?
-    rescue StandardError
-      nil # a hook must never error a session boundary; emit nothing on any fault
-    end
-
-    def rename_piece(wt, source)
-      leaf = File.basename(wt.path)
-      return nil unless RenameNudge.decide(auto_rename: config.auto_rename_for(wt.project),
-                                           placeholder: Placeholder.generated?(leaf), source: source)
-
-      RenameNudge.message(leaf)
-    rescue StandardError
-      nil
-    end
-
-    def dispatch_piece(wt, source)
-      return nil unless DispatchNudge.decide(enabled: config.agent_dispatch_for(wt.project), source: source)
-
-      # The env var lives as long as the agent. Resume, fork and compaction keep the
-      # conversation that opened on the other agent's brief, so the label stays; only /clear
-      # starts fresh, where the next first message is the user's own.
-      DispatchNudge.message(brief_from_agent: ENV["SWITCHBOARD_BRIEF_FROM"] == "cli" && source != "clear")
-    rescue StandardError
-      nil
-    end
-
-    # The Stop event, unified: report the agent state ourselves (the job the sh reporter
-    # does on every OTHER event) AND, when gated, block. Stop hooks run in parallel with
-    # no ordering, so we can't have a sibling sh reporter writing `done` while we block —
-    # it could record a forced-to-continue agent as finished and ring a false completion.
-    # So we report `thinking` when blocking (accurate — the agent IS about to keep going)
-    # and `done` otherwise. State is ALWAYS reported (every hooked worktree, even when not
-    # a placeholder / auto_rename off), since the dot depends on it. `stop_block_leaf` is
-    # fully rescued ⇒ any fault degrades to a plain `done`, never trapping the agent.
-    def rename_nudge_stop(payload, cwd)
-      leaf = stop_block_leaf(payload, cwd)
-      report_stop_state(leaf ? "thinking" : "done")
-      return puts(RenameNudge.stop_json(leaf)) if leaf
-
-      stamp_first_turn(cwd)
-    end
-
-    # A dispatched task's first turn just ended (a real Stop, not the rename block —
-    # that one reports "thinking"), so its Creation record can ping. Matched by
-    # realpath: the agent's cwd keeps the pre-rename path. Hook-less records never
-    # reach here, and one whose agent hasn't started, or that's already stamped or
-    # bare, no-ops (Creation.stamp_first_turn).
-    def stamp_first_turn(cwd)
-      top = worktree_at(cwd) or return
-      rec = Creation.for_path(top)
-      Creation.stamp_first_turn(rec["id"]) if rec
-    rescue StandardError
-      nil
-    end
-
-    # The placeholder leaf this Stop should block on, or nil if it should NOT block (the
-    # common case — and the safe default on any fault, so a glitch never blocks).
-    def stop_block_leaf(payload, cwd)
-      wt = current_worktree(cwd)
-      return nil if wt.nil? || wt.primary
-
-      leaf = File.basename(wt.path)
-      return nil unless RenameNudge.decide_stop(auto_rename: config.auto_rename_for(wt.project),
-                                                placeholder: Placeholder.generated?(leaf),
-                                                stop_hook_active: payload["stop_hook_active"])
-
-      leaf
-    rescue StandardError
-      nil
-    end
-
-    # Report agent state by running the SAME sh reporter every other event uses. The
-    # child inherits our cwd (the hook's invocation dir), so its `pwd -P`/cksum key
-    # matches the file the other events write — no Ruby-side key reproduction, and its
-    # stdout is suppressed so only our block JSON (if any) reaches the agent.
-    def report_stop_state(state)
-      system(HookFile.script_path, state, in: File::NULL, out: File::NULL, err: File::NULL)
-    rescue StandardError
-      nil
-    end
-
-    # The SessionStart event JSON from stdin, or {} on anything empty/unreadable.
-    def parse_hook_stdin
-      raw = $stdin.read
-      raw.to_s.strip.empty? ? {} : (JSON.parse(raw) || {})
-    rescue StandardError
-      {}
-    end
-
-    # The workspace the cwd is in, as a Worktree (project, path, primary), or nil
-    # if cwd isn't inside any registered project's worktree. Reuses Model (same
-    # tree the sidebar navigates). Both sides are realpath-normalized so a match
-    # holds across macOS symlinked roots (/tmp, symlinked HOME); `primary` is
-    # re-derived from realpath too, not trusted from Model's raw string compare.
-    def current_worktree(at = nil)
-      top = worktree_at(at)
-      real = top && real_path(top)
-      return nil unless real
-
-      Model.new(config, with_dirty: false).projects.each do |project|
-        project.worktrees.each do |w|
-          wp = real_path(w.path)
-          next unless wp == real
-
-          w.primary = wp == real_path(project.path)
-          return w
-        end
-      end
-      nil
-    end
-
-    # File.realpath, degrading to nil (not the raw path, unlike the realpath
-    # helpers in reconcile/attention/agent_state) on a vanished path: a cwd that
-    # no longer resolves must match NO worktree, so `current_worktree` returns nil
-    # rather than risk a bogus match against an unresolved string.
-    def real_path(path) = Paths.real_or_nil(path)
-
     # cwd relative to a worktree root ("" when standing at the root), so the
     # rename cd hint can return the user to the same subdir under the new path.
     def subpath_in(root)
-      cwd = real_path(Dir.pwd)
-      base = real_path(root)
+      cwd = Paths.real_or_nil(Dir.pwd)
+      base = Paths.real_or_nil(root)
       return "" unless cwd && base && cwd.start_with?("#{base}/")
 
       cwd[(base.length + 1)..]
@@ -1397,7 +1212,7 @@ module Switchboard
     # one-time `/hooks` trust — so a bare "enabled" line would be false confidence.
     def doctor_hooks
       doctor_reporter
-      here = worktree_at(nil)
+      here = Git.toplevel(Dir.pwd)
       AgentHooks::ADAPTERS.each do |adapter| # claude, per-worktree
         next unless here # the codex block below is global, so it reports from any shell
 

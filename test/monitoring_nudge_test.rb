@@ -4,7 +4,7 @@ require_relative "test_helper"
 require "json"
 
 module Switchboard
-  # The pure gate + message behind the Layer-2 background-presence nudge. CLI#monitoring_nudge
+  # The pure gate + message behind the Layer-2 background-presence nudge. HookCommands.monitoring_nudge
   # wires config/cwd/payload around these; here we pin the decision and the payload shape.
   class MonitoringNudgeTest < SandboxTest
     # The clear fires only on a genuinely new/resumed PROCESS — never compact (same

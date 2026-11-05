@@ -57,6 +57,7 @@ require_relative "switchboard/dispatch_args"
 require_relative "switchboard/reconcile"
 require_relative "switchboard/sandbox"
 require_relative "switchboard/sidebar"
+require_relative "switchboard/hook_commands"
 require_relative "switchboard/cli"
 
 # Keyboard-only, standalone switcher/creator over git worktrees. Reads its own

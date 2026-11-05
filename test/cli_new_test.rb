@@ -27,7 +27,7 @@ module Switchboard
       spawned = []
       result = out = err = nil
       stub_method(CLI, :config, -> { Config.new }) do
-        stub_method(CLI, :current_worktree, ->(*) { here }) do
+        stub_method(Model, :workspace_at, ->(*) { here }) do
           stub_method(Tmux, :has_session?, ->(_n) { false }) do
             stub_method(Tmux, :broadcast_warm, ->(**_k) {}) do
               stub_method(Creator, :spawn_worker, ->(id) { spawned << id && spawn_ok }) do
@@ -227,7 +227,7 @@ module Switchboard
     def run_projects(args = [], here: wt("govly"))
       out = nil
       stub_method(CLI, :config, -> { Config.new }) do
-        stub_method(CLI, :current_worktree, ->(*) { here }) { out = capture { @result = CLI.list_projects(args) } }
+        stub_method(Model, :workspace_at, ->(*) { here }) { out = capture { @result = CLI.list_projects(args) } }
       end
       out
     end

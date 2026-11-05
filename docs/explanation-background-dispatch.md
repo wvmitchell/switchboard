@@ -112,7 +112,7 @@ A ringing transition bumps `ring_gen` and bolds the row via Attention right away
 ringing transitions are:
 
 - **`ready`,** for a bare create or one without hooks. It plays your `done` sound.
-- **`turn_done`,** for a hooked claude task. `CLI#rename_nudge_stop` stamps it, but only
+- **`turn_done`,** for a hooked claude task. `HookCommands.rename_nudge_stop` stamps it, but only
   on its non-blocking path.
 - **any failure.** It plays its own soft, falling `failed` built-in, not the notify
   `alert`.

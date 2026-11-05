@@ -22,13 +22,11 @@ module Switchboard
 
     def stop(worktree_dir, leaf: File.basename(worktree_dir))
       wt = Worktree.new(project: "proj", path: File.join(path("wts"), "proj", leaf), primary: false)
-      stub_method(CLI, :current_worktree, ->(*) { wt }) do
-        stub_method(CLI, :worktree_at, ->(_cwd) { worktree_dir }) do
-          stub_method(CLI, :config, -> { Config.new }) do
-            stub_method(CLI, :report_stop_state, ->(*) {}) do
-              with_stdin(StringIO.new(%({"stop_hook_active":false,"cwd":"#{worktree_dir}/sub"}))) do
-                capture { CLI.rename_nudge(["--stop"]) }
-              end
+      stub_method(Model, :workspace_at, ->(*) { wt }) do
+        stub_method(Git, :toplevel, ->(_cwd) { worktree_dir }) do
+          stub_method(HookCommands, :report_stop_state, ->(*) {}) do
+            with_stdin(StringIO.new(%({"stop_hook_active":false,"cwd":"#{worktree_dir}/sub"}))) do
+              capture { HookCommands.rename_nudge(["--stop"]) }
             end
           end
         end

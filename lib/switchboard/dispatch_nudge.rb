@@ -7,7 +7,7 @@ module Switchboard
   # MonitoringNudge). When a project has `agent_dispatch` on, a session in one of its
   # workspaces learns that `switchboard new` can start another workspace, here or in
   # another registered project, when the user asks. It rides the `rename-nudge`
-  # SessionStart command (CLI#rename_nudge joins the two texts into one payload), so it
+  # SessionStart command (HookCommands.rename_nudge joins the two texts into one payload), so it
   # reaches every hooked worktree without rewiring.
   #
   # Deliberately separate from subagents: the text tells the agent to keep using its own

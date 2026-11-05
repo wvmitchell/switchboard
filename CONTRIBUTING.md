@@ -176,6 +176,7 @@ the new binary re-wire tmux and every hooked worktree — the CHANGELOG header s
 | Area | File(s) |
 |------|---------|
 | Command dispatch | `lib/switchboard/cli.rb` |
+| What the agent hooks print and record | `lib/switchboard/hook_commands.rb` (the decisions: `rename_nudge.rb`, `dispatch_nudge.rb`, `monitoring_nudge.rb`) |
 | Config / registry | `lib/switchboard/config.rb` |
 | The data model + tree | `lib/switchboard/model.rb`, `tree.rb` |
 | The sidebar TUI | `lib/switchboard/sidebar.rb` (run-loop core) + `lib/switchboard/sidebar/{edges,render,input,actions,prompt,rows}.rb` (its test files: `test/sidebar_*_test.rb`, sharing `test/support/sidebar_case.rb`) |

@@ -79,7 +79,9 @@ Pr  ────┘   (project    (ordered      (hand-rolled ANSI TUI in a
   its PR badge, and whether it's the project's primary checkout. (The struct also
   carries a dirty flag, but the sidebar builds the model `with_dirty: false` — 16
   per-worktree `git status` calls would be too slow on the synchronous paint, so
-  dirty is left unread.)
+  dirty is left unread.) `Model.workspace_at` answers which registered workspace a path
+  is in, for the commands and hooks that start from a folder. A caller that wants the git
+  root, registered or not, asks `Git.toplevel` instead.
 - **`Tree.nodes`** (`tree.rb`) flattens that into an ordered list of `Node`
   structs: a project header, its workspaces, and — for a workspace that has held
   more than one branch — inline branch rows. The branch history comes from the
@@ -120,7 +122,7 @@ a lower one, never a higher one:
 | **Adapters** | One module per outside thing, answering questions about it and degrading to `[]`/`{}`/`nil` | `Tmux`, `Git`, `Pr` (gh), `ClaudeSessions`, `AgentState`, `Width` |
 | **State** | Switchboard's own nouns: the workspace model, dispatch records, the per-workspace markers | `Model`, `Tree`, `Creation`, `Attention`, `Config` |
 | **Operations** | One module per thing a person or agent can trigger | `Creator`, `Rename`, `Installer`, `Upgrade`, `CodeReload` |
-| **Interfaces** | Turn keys, commands or hook calls into operations and show the result | `CLI`, `Sidebar` and its concern files |
+| **Interfaces** | Turn keys, commands or hook calls into operations and show the result | `CLI`, `HookCommands`, `Sidebar` and its concern files |
 
 The sidebar is still the one front-end a person navigates with (see
 [above](#one-data-model-one-front-end)). The CLI is the other interface: the commands you
