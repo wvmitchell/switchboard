@@ -483,15 +483,20 @@ module Switchboard
     # would keep firing poke-window at the now-removed install on every window switch.
     # No server ⇒ the tmux calls no-op (errors swallowed), and they never start one.
     def teardown_live
+      raw = list_prefix_keys
+      restored = []
       %w[toggle home].each do |role|
         recorded = tmux_option("@switchboard-#{role}-key")
-        run_tmux("unbind-key", recorded) if recorded
+        restore = restorable(role, recorded, raw)
+        restored << recorded if restore
+        run_op(restore ? [:restore, recorded, restore] : [:unbind, recorded]) if recorded
         run_tmux("set-option", "-gu", "@switchboard-#{role}-key")
         run_tmux("set-option", "-gu", "@switchboard-#{role}-clobbered")
+        run_tmux("set-option", "-gu", "@switchboard-#{role}-displaced")
         run_tmux("set-option", "-gu", "@switchboard-#{role}-rejected")
       end
       run_tmux("set-option", "-gu", "@switchboard-config-path")
-      run_tmux("unbind-key", "s") # legacy default — covers installs predating the @option record
+      run_tmux("unbind-key", "s") unless restored.include?("s") # legacy default — covers installs predating the @option record
       HOOK_SLOTS.each { |slot| run_tmux("set-hook", "-gu", slot) }
     end
 

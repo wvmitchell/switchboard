@@ -113,7 +113,7 @@ in the running server — the "prefix-s stopped working after a `git pull`" case
   as `toggle`; `home` is left unbound (the toggle wins). Pick a different home key.
 - **`doctor` says a binding "replaced a prior binding".** Your chosen key was
   already bound to something else (yours or a plugin's); switchboard took it and
-  recorded what it displaced. Choose another key if you want the old one back.
+  recorded what it displaced. Choose another key and the old binding comes back.
 - **`doctor` says a key "isn't bound (tmux refused it)".** tmux didn't accept that
   key name, so switchboard kept (or fell back to) a working toggle. For `home` the
   reason can also be "the toggle fell back onto it": your toggle key was refused, its

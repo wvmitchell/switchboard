@@ -388,8 +388,11 @@ The rest of the rules:
 
 - **It binds before it unbinds,** so a key tmux rejects falls back to the default without
   losing the key you'd use to recover.
-- **A displaced binding is recorded.** If binding replaced someone else's, that's recorded
-  in `@switchboard-*-clobbered` for `doctor` to warn about. `ours?` means our bin path
+- **A displaced binding is recorded, then given back.** If binding replaced someone else's,
+  that's recorded in `@switchboard-*-clobbered` for `doctor` to warn about, and the whole
+  `list-keys` line goes in `@switchboard-*-displaced`. Moving off the key, or uninstalling,
+  sources that line, so the key comes back with its flags and quoting. It's skipped if the key
+  is no longer ours, since a binding you made since is newer. `ours?` means our bin path
   followed by *either* role's exact subcommand, so swapping toggle and home isn't counted as
   clobbering ourselves.
 - **A refused key is remembered** in `@switchboard-<role>-rejected`.
