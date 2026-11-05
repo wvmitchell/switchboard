@@ -181,11 +181,11 @@ fails the test instead of being half-read. Nested names don't count either:
 (`CodeReload::VERSION`) doesn't count as the top-level one. Only constants count: a
 `require_relative` or a method called on `Switchboard` itself isn't an edge.
 
-A few violations predate the test. They're listed in the test's `ALLOWED` table, each with
-a note on what removes it. That list only shrinks: once an entry is fixed, the test fails
-until the entry is deleted. An entry covers a whole pair of files, though, so a *new*
-reference between those same two files goes unnoticed until the entry is removed. Keep
-the entries few and short-lived. This is the same idea as Packwerk's constant analysis,
+The violations that predated the test went in its `ALLOWED` table, each with a note on what
+removes it. The last one is now fixed, so the table is empty. It only shrinks: once an entry
+is fixed, the test fails until the entry is deleted. An entry covers a whole pair of files,
+though, so a *new* reference between those same two files goes unnoticed until the entry is
+removed. Keep the entries few and short-lived. This is the same idea as Packwerk's constant analysis,
 done with the standard library to keep switchboard free of gems.
 
 ## The binary re-invokes itself to spawn the sidebar
