@@ -618,6 +618,26 @@ module Switchboard
       refute Config.new.project("app"), "the project is gone from the config"
     end
 
+    # Value: protects=`switchboard remove` only unregistering, unlike the sidebar's remove-project
+    # (D17): your builds and sessions survive it; fails_when=CLI remove starts sharing the sidebar's
+    # teardown; why_new=nothing pinned this difference; seam=none; no_claim=whether the two should
+    # differ, which is a product call
+    def test_remove_cancels_no_build_and_kills_no_session
+      File.write(Config.path, YAML.dump("projects" => [{ "name" => "app", "path" => "/repos/app" }]))
+      rec = Creation.create(project: "app", name: "x", path: path("x"), task: "")
+      torn_down = []
+      stub_method(Tmux, :kill_all, ->(*) { torn_down << :kill_all }) do
+        stub_method(Creation, :cancel_all, ->(*) { torn_down << :cancel_all }) do
+          stub_method(Tmux, :kill_project_sessions, ->(*) { torn_down << :kill_project_sessions }) do
+            capture { CLI.run(["remove", "app"]) }
+          end
+        end
+      end
+      assert_empty torn_down
+      assert_equal "queued", Creation.find(rec["id"])["state"]
+      refute Config.new.project("app"), "it did still unregister"
+    end
+
     def test_remove_warns_on_unknown_project
       Config.scaffold
       err = capture_err { CLI.run(["remove", "ghost"]) }

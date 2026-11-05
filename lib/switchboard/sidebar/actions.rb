@@ -61,13 +61,7 @@ module Switchboard
       def quit
         return true unless confirm("quit all switchboard sessions?")
 
-        Creation.cancel_all   # BEFORE the kill: an in-flight build must not open a session after it
-        AgentState.clear_all  # killing every agent makes their last hook state stale — drop it now
-        Monitoring.clear_all  # ...and every monitoring declaration is now stale too
-        Notify.clear_all      # ...and any pending "come look" alert is moot once the agents are gone
-        OffstageHold.clear_all # ...and any held ◷ chime
-        PendingDelete.clear_all # ...and any in-flight delete's row-hide (its daemon still finishes)
-        Tmux.kill_all
+        Workspaces.quit_all
         false
       end
 
@@ -525,7 +519,7 @@ module Switchboard
       # self-invoke — no SWITCHBOARD_BIN, or the spawn raises — so delete always works.
       def start_removal(repo, path, branch, force_branch: false, branches: nil)
         bin = ENV["SWITCHBOARD_BIN"]
-        return sync_remove(repo, path, branch, force_branch: force_branch, branches: branches) unless bin
+        return Workspaces.remove!(repo, path, branch, force_branch: force_branch, branches: branches) unless bin
 
         PendingDelete.mark(path)      # shared: hides the row in every pane
         @pending_delete.add(path)     # ...and this pane same-frame, before the reaper runs
@@ -536,17 +530,7 @@ module Switchboard
       rescue SystemCallError
         PendingDelete.clear(path)     # spawn failed: un-hide and remove synchronously instead
         @pending_delete.delete(path)
-        sync_remove(repo, path, branch, force_branch: force_branch, branches: branches)
-      end
-
-      # `branches:` is what you confirmed deleting with the workspace. Without it the delete
-      # is the safe -d (unmerged branches are kept) unless the caller proved there's nothing
-      # on it to lose (a canceled dispatch, untouched?).
-      def sync_remove(repo, path, branch, force_branch: false, branches: nil)
-        removed = Git.remove_worktree(repo, path, force: true, locked: Creation.unfinished_at?(path))
-        return Git.delete_branch(repo, branch, force: force_branch) unless branches
-
-        WorkspaceBranches.delete_and_report(repo, branches) if removed
+        Workspaces.remove!(repo, path, branch, force_branch: force_branch, branches: branches)
       end
 
       # Rename a workspace: move its worktree directory (the display name) + rename
