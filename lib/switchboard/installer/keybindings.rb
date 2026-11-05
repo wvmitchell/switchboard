@@ -246,8 +246,6 @@ module Switchboard
     # `key`'s line, asking tmux for a spelling only it can resolve (`f5` is listed as `F5`). More than
     # one line back isn't this key: tmux read something as a separator and listed the whole table.
     def line_on(raw, key)
-      return if raw.to_s.strip.empty? # an empty table: nothing's bound, so nothing to ask
-
       prefix_line_from(raw, key) || begin
         lines = `tmux -u list-keys -T prefix -- #{Shellwords.escape(key)} 2>/dev/null`.lines
         lines.first.strip if lines.size == 1

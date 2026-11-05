@@ -163,6 +163,9 @@ module Switchboard
       assert_equal ["tmux", "-u", "unbind-key", "\\;"], seen[2], "already escaped: left alone"
     end
 
+    # The per-key query shells out, and tmux answers it with no server, so these keep it off the machine's tmux.
+    def without_key_query(&block) = stub_method(Installer, :`, ->(_cmd) { "" }, &block)
+
     # --- what we displaced: kept while we hold the key, restored when we let go ---
 
     # Value: protects=doctor's warning and the restore outliving a tmux reload; fails_when=rebinding
@@ -242,13 +245,15 @@ module Switchboard
       assert_nil Installer.foreign_binding(moved, "s")
     end
 
-    # Value: protects=the suite staying offline and an empty table not asking tmux; fails_when=the empty
-    # case shells out, which on a tmux answering with no server reads its default table as this key's;
-    # why_new=this failed on CI only; seam=stubs the query; no_claim=real tmux
-    def test_an_empty_table_never_asks_tmux
-      stub_method(Installer, :`, ->(_cmd) { flunk "asked tmux" }) do
-        assert_nil Installer.line_on("", "t")
-        assert_nil Installer.line_on(nil, "t")
+    # Value: protects=one failed table read not costing you a binding; fails_when=an empty table reads as
+    # nothing bound, so a saved or newer binding is unbound; why_new=a review caught that regression;
+    # seam=stubs the query; no_claim=how often a read really fails
+    def test_a_failed_table_read_still_finds_the_key
+      line = "bind-key -T prefix g display-message newer"
+      stub_method(Installer, :`, ->(_cmd) { "#{line}\n" }) do
+        assert_equal line, Installer.line_on("", "g")
+        assert Installer.kept_key?("g", "")
+        assert_equal "display-message newer", Installer.foreign_binding("", "g")
       end
     end
 
@@ -283,8 +288,10 @@ module Switchboard
       ran = []
       stub_method(Installer, :restore_binding, ->(key, l) { restores << [key, l]; true }) do
         stub_method(Installer, :run_tmux, ->(*argv) { ran << argv; argv[1] != "Frobnicate" }) do
-          Installer.run_rebind("toggle", "Frobnicate", recorded: "g", legacy_toggle: false, clobbered: nil, restore: line)
-          Installer.run_rebind("home", nil, recorded: "g", legacy_toggle: false, clobbered: nil, restore: line)
+          without_key_query do
+            Installer.run_rebind("toggle", "Frobnicate", recorded: "g", legacy_toggle: false, clobbered: nil, restore: line)
+            Installer.run_rebind("home", nil, recorded: "g", legacy_toggle: false, clobbered: nil, restore: line)
+          end
         end
       end
       assert_equal [["g", line], ["g", line]], restores
@@ -478,7 +485,7 @@ module Switchboard
       opts = { "@switchboard-toggle-key" => "t", "@switchboard-home-key" => "H" }
       stub_method(Installer, :list_prefix_keys, -> { "" }) do
         stub_method(Installer, :tmux_option, ->(name) { opts[name] }) do
-          stub_method(Installer, :run_tmux, ->(*argv) { cmds << argv; true }) { Installer.teardown_live }
+          stub_method(Installer, :run_tmux, ->(*argv) { cmds << argv; true }) { without_key_query { Installer.teardown_live } }
         end
       end
       assert_includes cmds, ["unbind-key", "t"]
@@ -581,7 +588,7 @@ module Switchboard
       stub_method(Installer, :list_prefix_keys, -> { "" }) do
         stub_method(Installer, :tmux_option, ->(name) { recorded[name] }) do
           stub_method(Installer, :run_tmux, ->(*argv) { cmds << argv; true }) do
-            Installer.apply_keybindings(config: Config.new)
+            without_key_query { Installer.apply_keybindings(config: Config.new) }
           end
         end
       end
@@ -624,7 +631,7 @@ module Switchboard
       seen = []
       stub_method(Installer, :list_prefix_keys, -> { "" }) do
         stub_method(Installer, :tmux_option, ->(name) { name == "@switchboard-toggle-key" ? "C-;" : nil }) do
-          stub_method(Installer, :system, ->(*argv, **) { seen << argv; true }) { Installer.teardown_live }
+          stub_method(Installer, :system, ->(*argv, **) { seen << argv; true }) { without_key_query { Installer.teardown_live } }
         end
       end
       assert_includes seen, ["tmux", "-u", "unbind-key", "C-\\;"]
@@ -815,7 +822,7 @@ module Switchboard
     end
 
     def test_foreign_binding_nil_when_key_unbound
-      assert_nil Installer.foreign_binding("", "b")
+      without_key_query { assert_nil Installer.foreign_binding("", "b") }
     end
 
     # Value: protects=doctor reading back exactly the fragment install wired; fails_when=
