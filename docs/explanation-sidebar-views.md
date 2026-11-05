@@ -187,8 +187,10 @@ The cache is keyed on the worktree's `logs/HEAD` mtime, stat'd fresh in `refresh
 It deliberately doesn't reuse `@branch_cache[path][1]`, which refreshes only on
 `rebuild`. The agent-edge caller has no rebuild, so a cached mtime would compare stale to
 stale and miss the commit that just landed. Only the gitdir (`@branch_cache[path][0]`) is
-reused; it's stable and already absolute. (A relative `.git` path is the bug that once
-blanked the tree.)
+reused, because it's already absolute. (A relative `.git` path is the bug that once
+blanked the tree.) It can still go out of date: a new worktree can take a deleted one's
+path under a different admin directory. So `Git.branch_history` resolves the gitdir again
+on `rebuild` whenever the cached one has no `logs/HEAD`.
 
 `refresh_diffs` computes a value or nil, and deletes the entry on nil, so a row that
 loses its cache slot, its base or its ability to diff clears instead of painting a ghost
