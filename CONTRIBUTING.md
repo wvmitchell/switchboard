@@ -177,6 +177,7 @@ the new binary re-wire tmux and every hooked worktree — the CHANGELOG header s
 |------|---------|
 | Command dispatch | `lib/switchboard/cli.rb` |
 | `switchboard doctor`'s checks | `lib/switchboard/doctor.rb` |
+| Quitting and removing a workspace, for both front-ends | `lib/switchboard/workspaces.rb` |
 | What the agent hooks print and record | `lib/switchboard/hook_commands.rb` (the decisions: `rename_nudge.rb`, `dispatch_nudge.rb`, `monitoring_nudge.rb`) |
 | Config / registry | `lib/switchboard/config.rb` |
 | The data model + tree | `lib/switchboard/model.rb`, `tree.rb` |

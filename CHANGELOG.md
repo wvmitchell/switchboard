@@ -10,6 +10,17 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
+## [0.66.4] — a malformed hook payload can't leave the dot stuck (2026-11-05)
+
+### Fixed
+- A hook payload that's valid JSON but not an object, such as `[1]`, used to skip the Stop
+  report, which could leave a workspace's dot on thinking, and left a SessionEnd's monitoring
+  marker in place. Now it counts as an empty payload. No agent is known to send one.
+
+### Changed
+- The rest is internal. The sidebar's `q` and `switchboard quit` now share one teardown, and
+  deleting a workspace shares one removal, so the two can't drift apart.
+
 ## [0.66.3] — `switchboard doctor` moved, no behavior change (2026-11-05)
 
 ### Changed
