@@ -10,6 +10,13 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
+## [0.66.2] — agent hook handling moved, no behavior change (2026-11-05)
+
+### Changed
+- Internal only. What switchboard does when an agent's session starts or stops now has its own
+  file, and "which workspace is this folder" has one answer for the commands and hooks that
+  ask it. Installed hooks keep calling the same commands, so there's nothing to re-wire.
+
 ## [0.66.1] — empty install, config and Codex path variables count as unset (2026-11-05)
 
 ### Fixed
