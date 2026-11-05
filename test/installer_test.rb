@@ -242,15 +242,25 @@ module Switchboard
       assert_nil Installer.foreign_binding(moved, "s")
     end
 
+    # Value: protects=the suite staying offline and an empty table not asking tmux; fails_when=the empty
+    # case shells out, which on a tmux answering with no server reads its default table as this key's;
+    # why_new=this failed on CI only; seam=stubs the query; no_claim=real tmux
+    def test_an_empty_table_never_asks_tmux
+      stub_method(Installer, :`, ->(_cmd) { flunk "asked tmux" }) do
+        assert_nil Installer.line_on("", "t")
+        assert_nil Installer.line_on(nil, "t")
+      end
+    end
+
     # Value: protects=a whole-table reply never reading as one key's line; fails_when=the line count isn't
     # checked; why_new=the table lookup now catches ; first, so nothing reached it; seam=stubs the query;
     # no_claim=which keys make tmux list everything
     def test_a_query_listing_many_keys_is_not_a_keys_line
       stub_method(Installer, :`, ->(_cmd) { "bind-key -T prefix a x\nbind-key -T prefix b y\n" }) do
-        assert_nil Installer.line_on("", "f5")
+        assert_nil Installer.line_on("bind-key -T prefix z y\n", "f5")
       end
       stub_method(Installer, :`, ->(_cmd) { "bind-key -T prefix F5 x\n" }) do
-        assert_equal "bind-key -T prefix F5 x", Installer.line_on("", "f5")
+        assert_equal "bind-key -T prefix F5 x", Installer.line_on("bind-key -T prefix z y\n", "f5")
       end
     end
 
@@ -466,8 +476,10 @@ module Switchboard
     def test_teardown_live_unbinds_and_forgets_every_recorded_option
       cmds = []
       opts = { "@switchboard-toggle-key" => "t", "@switchboard-home-key" => "H" }
-      stub_method(Installer, :tmux_option, ->(name) { opts[name] }) do
-        stub_method(Installer, :run_tmux, ->(*argv) { cmds << argv; true }) { Installer.teardown_live }
+      stub_method(Installer, :list_prefix_keys, -> { "" }) do
+        stub_method(Installer, :tmux_option, ->(name) { opts[name] }) do
+          stub_method(Installer, :run_tmux, ->(*argv) { cmds << argv; true }) { Installer.teardown_live }
+        end
       end
       assert_includes cmds, ["unbind-key", "t"]
       assert_includes cmds, ["unbind-key", "H"]
@@ -610,8 +622,10 @@ module Switchboard
     # prefix-C-; bound to a removed binary; why_new=ship 4 pass 3 state machines; seam=system
     def test_teardown_unbinds_a_recorded_semicolon_key
       seen = []
-      stub_method(Installer, :tmux_option, ->(name) { name == "@switchboard-toggle-key" ? "C-;" : nil }) do
-        stub_method(Installer, :system, ->(*argv, **) { seen << argv; true }) { Installer.teardown_live }
+      stub_method(Installer, :list_prefix_keys, -> { "" }) do
+        stub_method(Installer, :tmux_option, ->(name) { name == "@switchboard-toggle-key" ? "C-;" : nil }) do
+          stub_method(Installer, :system, ->(*argv, **) { seen << argv; true }) { Installer.teardown_live }
+        end
       end
       assert_includes seen, ["tmux", "-u", "unbind-key", "C-\\;"]
     end
