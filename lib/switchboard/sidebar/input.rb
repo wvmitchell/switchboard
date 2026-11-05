@@ -37,9 +37,8 @@ module Switchboard
       # broadcast, it targets the just-focused pane); focus is cosmetic under the overlay.
       # If C-r ever becomes broadcast, revisit this (it'd then need honoring). (issue #62)
       # The p overlay is different: there these bytes run their handlers (`poke`, which
-      # must have an arm for every one), so a switch-in reload re-checks its link. A prompt
-      # waiting on one key (read_char) holds them until it closes: they aren't its answer,
-      # though a focus-out closes a message or menu.
+      # must have an arm for every one), so a switch-in reload re-checks its link. A one-key
+      # prompt holds them until it closes (read_char).
       POKE_BYTES = ["\f", RELOAD_CONFIG_BYTE, WARM_POKE_BYTE, "\e[I", "\e[O"].freeze
 
       # The keys that turn the ? overlay's pages (→ / Space forward, ← back) when it

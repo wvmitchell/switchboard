@@ -260,15 +260,10 @@ module Switchboard
         read_char(leaving_closes: true)
       end
 
-      # The next real key in raw mode (nil if the read fails or the pane is gone). Tmux's
-      # pokes and focus reports share this stream and aren't an answer, so they wait in
-      # @typeahead for the prompt to close, along with anything read after the key. A
-      # long-open prompt can collect many pokes that all mean "catch up now", so only the
-      # last of each kind runs (the last, so focus ends right).
-      #
-      # The sidebar does nothing else while this waits. A y/N is worth that, but a message
-      # or a menu isn't: with `leaving_closes`, a focus-out returns nil and still runs, so
-      # walking away can't silently stop this pane's dots, chimes and reap.
+      # The next real key (nil on a dead pane). Tmux's pokes and focus reports share stdin but
+      # aren't answers: they run after the prompt closes, only the last of each kind, since a
+      # long-open prompt collects many. The sidebar is paused meanwhile, which a message or
+      # menu isn't worth, so `leaving_closes` lets a focus-out end the wait.
       def read_char(leaving_closes: false)
         held = []
         after = []

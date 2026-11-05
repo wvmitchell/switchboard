@@ -99,17 +99,10 @@ wrongly re-wake it. An un-poked reappearance (a window switch on a tmux too old
 for the hook, a bare `tmux attach`) is caught by the off→on `reappeared` branch in
 `tick` within one `IDLE` tick.
 
-Pokes arrive on the same stdin as your keystrokes, and so do tmux's focus reports. That
-matters to anything waiting for a key. The y/N prompts, the `a` menu and the "any key"
-errors all wait through `read_char`, which used to take whatever byte came next, so a
-broadcast landing on an open delete prompt read as "no" and the prompt vanished. Now it
-skips those bytes and runs them once the prompt closes. A prompt can sit open for hours, so
-it keeps only the last of each kind, because they all mean "catch up now", and the last
-focus report is the true one. If a typed prompt opens straight after, as the `a` menu's does,
-it drops them, and the next tick catches up. While a y/N prompt is open, that sidebar doesn't scan or repaint,
-and a pending code reload waits too, so its tree catches up when you answer. That's worth it
-for a question you might want to come back to, but not for a message or a menu, so the "any
-key" errors and the `a` menu close when you leave the pane.
+Pokes and tmux's focus reports share stdin with your keystrokes, so anything waiting for a
+key has to skip them. `read_char` runs them once the prompt closes, keeping only the last of
+each kind. A sidebar waiting on a prompt doesn't scan or repaint, so the "any key" errors and
+the `a` menu close when you leave the pane, while a y/N waits for your answer.
 
 ### Pre-warming: fresh on arrival, without the flash
 
