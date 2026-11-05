@@ -242,6 +242,18 @@ module Switchboard
       assert_nil Installer.foreign_binding(moved, "s")
     end
 
+    # Value: protects=a whole-table reply never reading as one key's line; fails_when=the line count isn't
+    # checked; why_new=the table lookup now catches ; first, so nothing reached it; seam=stubs the query;
+    # no_claim=which keys make tmux list everything
+    def test_a_query_listing_many_keys_is_not_a_keys_line
+      stub_method(Installer, :`, ->(_cmd) { "bind-key -T prefix a x\nbind-key -T prefix b y\n" }) do
+        assert_nil Installer.line_on("", "f5")
+      end
+      stub_method(Installer, :`, ->(_cmd) { "bind-key -T prefix F5 x\n" }) do
+        assert_equal "bind-key -T prefix F5 x", Installer.line_on("", "f5")
+      end
+    end
+
     # Value: protects=a path with a quote saying why nothing was bound; fails_when=the notice goes;
     # why_new=the no-announce case passes either way; seam=notify; no_claim=the notice on a status line
     def test_a_path_with_a_quote_says_so_when_asked
