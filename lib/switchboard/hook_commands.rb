@@ -150,10 +150,12 @@ module Switchboard
       nil
     end
 
-    # The event JSON from stdin, or {} on anything empty/unreadable.
+    # The event JSON from stdin, or {} on anything empty, unreadable or not an object. A valid
+    # `[1]` would otherwise raise on the first field read, before a Stop reports its state.
     def parse_hook_stdin
       raw = $stdin.read
-      raw.to_s.strip.empty? ? {} : (JSON.parse(raw) || {})
+      parsed = raw.to_s.strip.empty? ? {} : JSON.parse(raw)
+      parsed.is_a?(Hash) ? parsed : {}
     rescue StandardError
       {}
     end

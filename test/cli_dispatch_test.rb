@@ -81,14 +81,10 @@ module Switchboard
       assert_equal "ready", Creation.find(rec["id"])["state"]
     end
 
-    def test_quit_cancels_in_flight_builds_before_killing_sessions
-      rec = Creation.create(project: "proj", name: "x", path: path("x"), task: "")
-      state_at_kill = nil
-      stub_method(Tmux, :kill_all, lambda {
-        state_at_kill = Creation.find(rec["id"])&.dig("state")
-        []
-      }) { capture { CLI.quit } }
-      assert_equal "canceled", state_at_kill, "the real cancel_all ran before any session was killed"
+    def test_quit_goes_through_quit_all
+      called = false
+      stub_method(Workspaces, :quit_all, -> { called = true; [] }) { capture { CLI.quit } }
+      assert called
     end
 
     def test_launch_without_a_path_is_a_quiet_zero

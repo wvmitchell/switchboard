@@ -319,20 +319,6 @@ module Switchboard
       assert_empty PendingDelete.pending(["/wt/a"]), "the sync fallback leaves no hide marker"
     end
 
-    # Value: protects=the sidebar's own removal forces past a lock only on our un-set-up build, like the reaper; fails_when=sync_remove drops or hardcodes `locked:`, so an interrupted add's ✘ can't be deleted without the binary, or a lock you set is overridden; why_new=the delete tests stub remove_worktree ignoring kwargs; seam=none; no_claim=git honoring the second --force (cli_test covers that against a real lock)
-    def test_sync_remove_forces_past_a_lock_only_on_an_unfinished_build
-      sb = deletable_sidebar
-      rec = Creation.create(project: "app", name: "half", path: "/wt/half", task: "t")
-      Creation.update(rec["id"], state: "failed", reason: "interrupted")
-      locks = {}
-      stub_method(Git, :remove_worktree, ->(_repo, p, **kw) { locks[p] = kw[:locked]; true }) do
-        stub_method(Git, :delete_branch, ->(*, **) { true }) do
-          %w[/wt/half /wt/a].each { |p| sb.send(:sync_remove, "/repos/app", p, "b") }
-        end
-      end
-      assert_equal({ "/wt/half" => true, "/wt/a" => false }, locks)
-    end
-
     # Value: protects=you see the branches, unmerged ones flagged, before answering, and the reaper gets exactly that list; fails_when=delete skips the listing, paints it after the confirm, or drops the pins from the spawn; why_new=the prompt is what makes deleting unmerged work acceptable; seam=confirm + Process.spawn; no_claim=terminal rendering
     def test_delete_names_the_branches_before_asking_and_hands_them_to_the_reaper
       sb = deletable_sidebar
@@ -513,7 +499,7 @@ module Switchboard
       assert_empty PendingDelete.pending(["/wt/a"])
     end
 
-    # Value: protects=the sync fallback deletes exactly what you confirmed when the reaper can't spawn; fails_when=the rescue calls sync_remove without branches:, leaking visited branches and running -d on the current one; why_new=the spawn-failure test asserts nothing about branches; seam=Process.spawn; no_claim=why the spawn fails
+    # Value: protects=the sync fallback deletes exactly what you confirmed when the reaper can't spawn; fails_when=the rescue calls remove! without branches:, leaking visited branches and running -d on the current one; why_new=the spawn-failure test asserts nothing about branches; seam=Process.spawn; no_claim=why the spawn fails
     def test_a_failed_spawn_keeps_the_confirmed_branches
       sb = deletable_sidebar
       ENV["SWITCHBOARD_BIN"] = "/bin/switchboard"
@@ -531,30 +517,26 @@ module Switchboard
       ENV.delete("SWITCHBOARD_BIN")
     end
 
-    # Value: protects=a removal that failed keeps its branches in the no-binary path too; fails_when=sync_remove stops checking the removal and force-deletes branches for a workspace that still exists; why_new=only the reaper path had this test; seam=Git.remove_worktree; no_claim=why git refused
-    def test_sync_remove_keeps_the_branches_when_the_removal_fails
-      sb = deletable_sidebar
-      planned = [WorkspaceBranches::Entry.new(name: "old", sha: "abc", merged: true)]
-      deleted = false
-      stub_method(Git, :remove_worktree, ->(*, **) { false }) do
-        stub_method(WorkspaceBranches, :delete_and_report, ->(*) { deleted = true }) do
-          sb.send(:sync_remove, "/repos/app", "/wt/a", "feature", branches: planned)
-        end
-      end
-      refute deleted
-    end
-
-    # Value: protects=a canceled build without the binary still cleans its branch, forced only when asked; fails_when=sync_remove drops the legacy delete_branch call or its force flag; why_new=the old assertion moved to the plan path; seam=Git.delete_branch; no_claim=git's -d semantics
-    def test_sync_remove_without_a_plan_uses_the_callers_branch_and_force
+    # Value: protects=canceling a build without a working reaper still drops its placeholder
+    # branch; fails_when=either synchronous call in start_removal stops passing force_branch:, so
+    # the safe -d leaks one branch per cancel; why_new=the sync_remove test that covered this
+    # moved to Workspaces.remove!, which can't see what start_removal hands it; seam=none;
+    # no_claim=git's -D
+    def test_both_synchronous_removals_keep_the_force_flag
       sb = deletable_sidebar
       calls = []
       stub_method(Git, :remove_worktree, ->(*, **) { true }) do
         stub_method(Git, :delete_branch, ->(_repo, b, force: false) { calls << [b, force] }) do
-          sb.send(:sync_remove, "/repos/app", "/wt/a", "safe")
-          sb.send(:sync_remove, "/repos/app", "/wt/b", "placeholder", force_branch: true)
+          sb.send(:start_removal, "/repos/app", "/wt/a", "no-binary", force_branch: true)
+          ENV["SWITCHBOARD_BIN"] = "/bin/switchboard"
+          stub_method(Process, :spawn, ->(*_a, **_k) { raise Errno::ENOENT }) do
+            sb.send(:start_removal, "/repos/app", "/wt/a", "no-spawn", force_branch: true)
+          end
         end
       end
-      assert_equal [["safe", false], ["placeholder", true]], calls
+      assert_equal [["no-binary", true], ["no-spawn", true]], calls
+    ensure
+      ENV.delete("SWITCHBOARD_BIN")
     end
 
     # Value: protects=canceling a dispatched build still spawns with --force-branch and no --branches; fails_when=to_args is called on nil and raises, or the flag is dropped and placeholder branches leak; why_new=sidebar_dispatch_test stubs start_removal; seam=Process.spawn; no_claim=the reaper's handling, which cli_test covers

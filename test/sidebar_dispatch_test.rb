@@ -435,17 +435,18 @@ module Switchboard
       assert_equal "queued", Creation.find(theirs["id"])["state"], "another project's build is untouched"
     end
 
-    # Value: protects=the sidebar's q cancels every in-flight build before Tmux.kill_all (D17); fails_when=Sidebar#quit drops or moves Creation.cancel_all after the kill, so a build in flight opens a fresh session after the teardown; why_new=only CLI#quit's ordering is tested — the sidebar quit is a separate code path; seam=none; no_claim=the worker's lock-serialized cancel check
-    def test_sidebar_quit_cancels_builds_before_killing_sessions
-      rec = record(path: "/wt/quiet-otter", state: "building")
+    # Value: protects=the sidebar's q tearing down through the shared op, and only once you
+    # confirm; fails_when=Sidebar#quit stops calling quit_all or calls it unconfirmed; why_new=the
+    # ordering now lives in workspaces_test; seam=none; no_claim=the kill itself
+    def test_sidebar_quit_goes_through_quit_all_only_once_confirmed
       sb = hydrated([proj("app")])
-      state_at_kill = nil
-      stub_method(sb, :confirm, ->(_m) { true }) do
-        stub_method(Tmux, :kill_all, -> { state_at_kill = Creation.find(rec["id"])["state"]; [] }) do
-          refute sb.send(:quit), "a confirmed quit leaves the loop"
-        end
+      calls = 0
+      stub_method(Workspaces, :quit_all, -> { calls += 1; [] }) do
+        stub_method(sb, :confirm, ->(_m) { false }) { assert sb.send(:quit), "an unconfirmed quit stays in the loop" }
+        assert_equal 0, calls
+        stub_method(sb, :confirm, ->(_m) { true }) { refute sb.send(:quit), "a confirmed quit leaves the loop" }
       end
-      assert_equal "canceled", state_at_kill
+      assert_equal 1, calls
     end
 
     # rebuild hands GC the configured project NAMES, so a removed project's finished

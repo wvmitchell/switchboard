@@ -101,8 +101,8 @@ hooked). So a hooked agent (Claude *or* Codex) gets exact state, an un-hooked on
 The hook signal's one weak spot is a mass kill. Because a fresh file is trusted without
 a liveness check, a `quit` that kills every agent would leave their last states behind,
 and a lingering `:thinking` would read as a live, working agent for up to the TTL. So
-both quit paths (`Sidebar#quit`, `CLI#quit`) call `AgentState.clear_all` to wipe the
-state dir before tearing down. A restarted agent re-reports on `SessionStart`.
+both quit paths (the sidebar's `q` and `switchboard quit`) go through `Workspaces.quit_all`,
+which calls `AgentState.clear_all` to wipe the state dir before tearing down. A restarted agent re-reports on `SessionStart`.
 
 ## Hook delivery splits by agent: Claude per-worktree, Codex global
 
