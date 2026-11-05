@@ -132,7 +132,8 @@ let the dots, sounds, and bold names tell you who needs you.
 ## Step 6: Clean up
 
 When you're done experimenting, delete the practice worktree: highlight its row
-and press **`d`**, then confirm. That removes the worktree and closes its session.
+and press **`d`**, then confirm. That removes the worktree and its local branches, and
+closes its session.
 
 To shut everything down at once:
 

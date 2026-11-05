@@ -1025,7 +1025,7 @@ module Switchboard
       refute ok, "uninstall exits 1 with the block still there, as install does"
       assert_includes out, "codex hooks block is still there"
       # Never "delete it by hand": codex keeps its own tables inside the block (plan R8).
-      refute_match(/by hand|delete/i, out)
+      refute_match(/by hand|delete/i, out.gsub(Installer.repo_root, "")) # the checkout's path can hold anything
       assert_includes out, "#{File.dirname(CodexHook.config_path)} (and the file) writable"
       assert_includes out, "#{File.join(Installer.repo_root, 'bin', 'switchboard')} uninstall"
       refute_includes out, "removed global codex hooks"

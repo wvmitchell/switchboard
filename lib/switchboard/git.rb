@@ -195,6 +195,32 @@ module Switchboard
       system("git", "-C", repo, "branch", force ? "-D" : "-d", branch, out: File::NULL, err: File::NULL)
     end
 
+    # Every name this worktree's own HEAD has moved between, newest first. Reflog subjects
+    # aren't localized. Detached shas and renamed-away names come along: callers keep only
+    # what still resolves as a branch. nil when the reflog can't be read, which isn't the
+    # same as a worktree that never moved. A name that isn't valid UTF-8 is left out, not
+    # repaired: repaired, it could match a different branch.
+    def visited_branches(worktree)
+      log = capture(worktree, "reflog", "show", "--format=%gs", "HEAD")
+      return nil unless $?&.success?
+
+      log.each_line.select(&:valid_encoding?).flat_map do |line|
+        line.strip.match(/\Acheckout: moving from (\S+) to (\S+)\z/)&.captures.to_a.reverse
+      end.uniq
+    end
+
+    # Every local branch, spelled the way git stores it. Empty when git can't say. Skips a
+    # name that isn't valid UTF-8, as visited_branches does.
+    def local_branches(repo)
+      lines = capture(repo, "for-each-ref", "--format=%(refname)", "refs/heads").each_line(chomp: true)
+      lines.select(&:valid_encoding?).map { |r| r.delete_prefix("refs/heads/") }
+    end
+
+    # Is `commit` contained in `ref`? False when either can't be read.
+    def ancestor?(repo, commit, ref)
+      system("git", "-C", repo, "merge-base", "--is-ancestor", commit, ref, out: File::NULL, err: File::NULL) == true
+    end
+
     def current_branch(worktree)
       capture(worktree, "rev-parse", "--abbrev-ref", "HEAD").strip
     end

@@ -163,6 +163,11 @@ module Switchboard
       leaf = sess.split("/").last
       wt = worktree_path(leaf)
       pane = sidebar_pane_ids(sess).first or flunk "no sidebar in the workspace to drive"
+      # Both the branch it started on and a later, unmerged one go with it.
+      started_on = Git.current_branch(wt)
+      assert system("git", "-C", wt, "checkout", "-q", "-b", "later-unmerged"), "moved to a second branch"
+      assert system("git", "-C", wt, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "ahead"),
+             "put work on it"
 
       # Re-drive `g` `j` `d` until the DELETE prompt is up, as switch_client re-issues its
       # switch. One shot can lose to the background build (CI flake on #30): until the
@@ -196,6 +201,9 @@ module Switchboard
       refute session?(sess), "the deleted workspace's session is gone"
       assert_equal HOME, client_session, "and we've fallen back to home"
       refute Dir.exist?(wt), "the daemon removed the worktree dir off-loop"
+      wait_until("the daemon deletes the workspace's branches") do
+        [started_on, "later-unmerged"].none? { |b| Git.rev_parse(@project, "refs/heads/#{b}") }
+      end
     end
 
     # quit: full teardown — every sb/ session gone (current one last), agent state cleared.

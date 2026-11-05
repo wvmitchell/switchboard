@@ -10,7 +10,7 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
-## [0.65.4] — empty install, config and Codex path variables count as unset (2026-11-04)
+## [0.66.1] — empty install, config and Codex path variables count as unset (2026-11-05)
 
 ### Fixed
 - An exported-but-empty `SWITCHBOARD_BIN_DIR` used to mean the current directory, so
@@ -25,6 +25,22 @@ A redirect whose value came out empty now reaches your real files, so check a sc
 variable is set before relying on it for throwaway state. If you ran an older version with
 one of these empty, look in that directory for stray `switchboard` and `sb` links, or a
 `[hooks]` block in a `config.toml`.
+
+## [0.66.0] — deleting a workspace deletes its branches (2026-11-04)
+
+### Changed
+- Pressing `d` on a workspace now deletes the local branches it used, meaning the one it's
+  on and any it checked out earlier. Before, branches were routinely left behind, even
+  merged ones, and always when a branch had been squash-merged.
+- This can delete unmerged work. When there's anything to weigh, the confirm lists the
+  branches and marks with `!` any that aren't in the project's base. A squash-merged branch
+  always carries that mark, so read the list before answering.
+- Your base branch, `main` and `master` are never deleted. Nor is a branch another
+  workspace is on or has used, until the last workspace that used it is deleted. A branch
+  your project's own checkout is on or has used always stays. Branches on your remote are
+  left alone.
+- If there are too many branches to list in the pane, `d` offers to delete the workspace
+  and keep its branches. It offers the same if another workspace's folder can't be read.
 
 ## [0.65.3] — empty path variables can't delete your files (2026-11-04)
 

@@ -119,9 +119,21 @@ agent does it for you once it understands the work. See
 
 From the sidebar, press `d` on the highlighted row (confirms first):
 
-- On a **workspace** row: deletes the worktree and closes its session. If it has
-  uncommitted changes or untracked files (even ones your git config hides from
-  `git status`), it asks again before forcing the delete.
+- On a **workspace** row: deletes the worktree, closes its session, and deletes the local
+  branches the workspace used: the one it's on and any it checked out earlier. The
+  confirm lists them when there's anything to weigh, and marks with `!` any that aren't
+  in the project's base. Those are deleted too if you say yes, and a squash-merged branch
+  always carries that mark, so check the list before answering. If there are too many to
+  list in the pane, it offers to delete the workspace and keep its branches instead. Your
+  base branch, `main` and `master` are never deleted. A branch another workspace is on,
+  or has used, stays until the last workspace that used it is deleted. One your project's
+  own checkout is on, or has used, stays too, since that checkout is never deleted. If
+  another workspace's folder can't be read (say, it's on an unmounted disk), it offers to
+  delete the workspace and keep its branches, because there's no way to tell what that
+  workspace used. A workspace already being deleted doesn't count, so you can delete
+  several in a row. Branches on your
+  remote are left alone. If it has uncommitted changes or untracked files (even ones your
+  git config hides from `git status`), it asks again before forcing the delete.
 - On a **project** header: unregisters the project *and* closes its sessions. The
   repo on disk is untouched.
 

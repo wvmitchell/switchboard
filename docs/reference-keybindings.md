@@ -59,7 +59,7 @@ drifts from a remap.
 | `z` | `toggle_branch_fold` | Fold / unfold **every** workspace's branch-history rows at once — tree-wide, regardless of where the cursor is. A folded multi-branch workspace collapses to a single row that shows its own diff/PR badge plus a dim `▸N` cue (N branches tucked away). A shared on-disk view preference, so all sessions follow and it survives restarts. |
 | `H` | `toggle_full_header` | Toggle the full header (wordmark + greeting + console + rule) on **every** session, not just home. A shared on-disk view preference, so all sessions follow and it survives restarts. |
 | `r` | `rename` | Rename the highlighted workspace (moves the worktree dir, keeps branch + PR). |
-| `d` | `delete` | Remove the highlighted row — delete a workspace, or unregister a project (and close its sessions). Confirms first. On a `◌` row it cancels the build (after a confirm); on a `✘` row with no worktree yet it just dismisses it. |
+| `d` | `delete` | Remove the highlighted row — delete a workspace and its local branches, or unregister a project (and close its sessions). Confirms first. On a `◌` row it cancels the build (after a confirm); on a `✘` row with no worktree yet it just dismisses it. |
 | `e` | `edit_config` | Edit `config.yml` in `$EDITOR` (opens beside the home tree, returns you on quit). |
 | `?` | `help` | Show the full key map overlay (nav + actions + filter/prompt modes + the tmux keys that operate the sidebar). On a short pane it pages: `→`/`Space` next, `←` back. Any other key closes it. |
 | `q` | `quit` | Quit switchboard — tear down every `sb/` session. Confirms first. |
