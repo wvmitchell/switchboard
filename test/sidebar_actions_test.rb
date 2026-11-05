@@ -469,7 +469,7 @@ module Switchboard
       assert_empty PendingDelete.pending(["/wt/a"])
     end
 
-    # Value: protects=the sync fallback deletes exactly what you confirmed when the reaper can't spawn; fails_when=the rescue calls sync_remove without branches:, leaking visited branches and running -d on the current one; why_new=the spawn-failure test asserts nothing about branches; seam=Process.spawn; no_claim=why the spawn fails
+    # Value: protects=the sync fallback deletes exactly what you confirmed when the reaper can't spawn; fails_when=the rescue calls remove! without branches:, leaking visited branches and running -d on the current one; why_new=the spawn-failure test asserts nothing about branches; seam=Process.spawn; no_claim=why the spawn fails
     def test_a_failed_spawn_keeps_the_confirmed_branches
       sb = deletable_sidebar
       ENV["SWITCHBOARD_BIN"] = "/bin/switchboard"
@@ -483,6 +483,28 @@ module Switchboard
         end
       end
       assert_equal planned, deleted
+    ensure
+      ENV.delete("SWITCHBOARD_BIN")
+    end
+
+    # Value: protects=canceling a build without a working reaper still drops its placeholder
+    # branch; fails_when=either synchronous call in start_removal stops passing force_branch:, so
+    # the safe -d leaks one branch per cancel; why_new=the Workspaces.remove! test that covered this was
+    # moved to Workspaces.remove!, which can't see what start_removal hands it; seam=none;
+    # no_claim=git's -D
+    def test_both_synchronous_removals_keep_the_force_flag
+      sb = deletable_sidebar
+      calls = []
+      stub_method(Git, :remove_worktree, ->(*, **) { true }) do
+        stub_method(Git, :delete_branch, ->(_repo, b, force: false) { calls << [b, force] }) do
+          sb.send(:start_removal, "/repos/app", "/wt/a", "no-binary", force_branch: true)
+          ENV["SWITCHBOARD_BIN"] = "/bin/switchboard"
+          stub_method(Process, :spawn, ->(*_a, **_k) { raise Errno::ENOENT }) do
+            sb.send(:start_removal, "/repos/app", "/wt/a", "no-spawn", force_branch: true)
+          end
+        end
+      end
+      assert_equal [["no-binary", true], ["no-spawn", true]], calls
     ensure
       ENV.delete("SWITCHBOARD_BIN")
     end

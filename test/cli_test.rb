@@ -63,16 +63,34 @@ module Switchboard
 
     # If the removal fails, the marker is still cleared so the (undeleted) row
     # REAPPEARS rather than staying hidden — a delete that didn't take mustn't be masked.
+    # Value: protects=every sidebar repaints the row back right after a failed delete;
+    # fails_when=the repaint is gated on the removal's result, so the row lags to the next tick;
+    # why_new=this test stubbed the repaint and only checked the marker; seam=none;
+    # no_claim=how a sidebar handles the broadcast
     def test_reap_worktree_clears_the_marker_even_when_removal_fails
       PendingDelete.mark("/wt/gone")
+      bcast = 0
       stub_method(Git, :remove_worktree, ->(*, **) { false }) do
         stub_method(Git, :delete_branch, ->(*, **) { false }) do
-          stub_method(Tmux, :broadcast_warm, ->(**) {}) do
+          stub_method(Tmux, :broadcast_warm, ->(**) { bcast += 1 }) do
             CLI.send(:reap_worktree!, "/repos/app", "/wt/gone", "feature")
           end
         end
       end
       assert_empty PendingDelete.pending(["/wt/gone"]), "marker cleared so the row reappears"
+      assert_equal 1, bcast, "and every pane repaints it now"
+    end
+
+    # Value: protects=a removal that raises still un-hides the row, quietly; fails_when=
+    # reap_worktree! loses its rescue or the clear inside it, so the row stays hidden for a
+    # workspace that still exists; why_new=the failure test only sees a false return, never a
+    # raise; seam=none; no_claim=what raised
+    def test_reap_worktree_clears_the_marker_when_the_removal_raises
+      PendingDelete.mark("/wt/gone")
+      stub_method(Workspaces, :remove!, ->(*, **) { raise "boom" }) do
+        assert_nil CLI.send(:reap_worktree!, "/repos/app", "/wt/gone", "feature")
+      end
+      assert_empty PendingDelete.pending(["/wt/gone"]), "never stuck hidden"
     end
 
     # --- create: the CLI twin of the sidebar's add → [n] new ------------------

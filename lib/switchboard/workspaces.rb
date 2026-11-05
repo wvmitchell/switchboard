@@ -21,7 +21,7 @@ module Switchboard
     # Remove a worktree and the branches that go with it. `branches:` is what you confirmed
     # deleting with the workspace, and a failed removal keeps them all. Without it (a canceled
     # dispatch, an older caller) `delete_branch` is the safe `-d`: git refuses a still-checked-out
-    # or unmerged branch, so it's a no-op when the removal failed. `force_branch:` is for a
+    # or unmerged branch, even after a failed removal. `force_branch:` is for a
     # dispatched tree already proven untouched (nothing past its base): a placeholder branch
     # never reads as merged into your local base, so the safe -d would leak one per canceled build.
     def remove!(repo, path, branch, force_branch: false, branches: nil)

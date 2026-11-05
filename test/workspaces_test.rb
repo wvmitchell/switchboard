@@ -70,5 +70,23 @@ module Switchboard
       end
       assert_equal [["safe", false], ["placeholder", true]], calls
     end
+
+    # Value: protects=without a plan, a failed removal still leaves the branch to git: a branch
+    # whose tree is already gone gets cleaned, a still-checked-out one survives even -D;
+    # fails_when=remove! gates this delete on the removal as the plan path does, leaking the first,
+    # or forces past git, losing the second; why_new=the other no-plan tests stub git or remove
+    # successfully; seam=none; no_claim=why a removal failed
+    def test_remove_without_a_plan_leaves_the_branch_to_git_when_the_removal_fails
+      repo = temp_git_repo("app")
+      git(repo, "branch", "treeless")
+      git(repo, "worktree", "add", "-q", path("mine"), "-b", "mine")
+      git(repo, "worktree", "lock", path("mine"))
+      Workspaces.remove!(repo, path("never-made"), "treeless", force_branch: true)
+      Workspaces.remove!(repo, path("mine"), "mine", force_branch: true)
+      branches = git(repo, "branch", "--format=%(refname:short)").split
+      refute_includes branches, "treeless"
+      assert_includes branches, "mine"
+      assert File.exist?(path("mine")), "a lock you set still holds"
+    end
   end
 end

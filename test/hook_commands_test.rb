@@ -356,14 +356,14 @@ module Switchboard
     end
 
     # Value: protects=the dot leaving "thinking" and the ∞ marker clearing whatever JSON shape the
-    # hook sends; fails_when=parse_hook_stdin hands a non-object on, which raises on the first
-    # field read; why_new=the real-binary row only checks silence and exit 0; seam=none;
-    # no_claim=that either agent ever sends one
+    # hook sends, or when it isn't JSON at all; fails_when=parse_hook_stdin hands a non-object on,
+    # which raises on the first field read, or lets a parse error out; why_new=the real-binary row
+    # only checks silence and exit 0; seam=none; no_claim=that either agent ever sends one
     def test_a_payload_that_is_not_an_object_still_reports_the_stop_and_clears_the_marker
       nudge_config("background_presence" => true)
       wt = monitoring_wt
       Monitoring.mark(wt.path)
-      %w[[1] "x" 7 true null].each do |stdin|
+      ['[1]', '"x"', "7", "true", "null", "{ not json", ""].each do |stdin|
         reported = :none
         stub_method(Model, :workspace_at, ->(*) { nil }) do
           stub_method(HookCommands, :report_stop_state, ->(s) { reported = s }) do
@@ -374,8 +374,11 @@ module Switchboard
         end
         assert_equal "done", reported, stdin
       end
-      assert_equal "", run_monitoring_nudge(worktree: wt, stdin: "[1]", args: ["--end"])
-      assert_empty Monitoring.monitored([wt.path]), "SessionEnd clears the marker on any shape"
+      ["[1]", "{ not json"].each do |stdin|
+        Monitoring.mark(wt.path)
+        assert_equal "", run_monitoring_nudge(worktree: wt, stdin: stdin, args: ["--end"])
+        assert_empty Monitoring.monitored([wt.path]), "SessionEnd clears the marker on #{stdin}"
+      end
     end
 
     # The real binary, as an installed hook calls it: stdout carries nothing and it exits 0,
