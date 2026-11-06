@@ -66,13 +66,13 @@ module Switchboard
     # window to the final read→rename; an entry lost in that residue reads as
     # missing again next refresh and self-heals. The file's mtime still marks
     # the last *successful* fetch.
-    def refresh(name, repo_path)
+    def refresh(name, repo_path, branch_limit:)
       fresh = fetch(repo_path)
       return if fresh.nil?
 
       repo = repo_slug(repo_path)
       data = previous_map(name, repo).merge(fresh)
-      backfill(data, repo_path, fresh)
+      backfill(data, repo_path, fresh, branch_limit: branch_limit)
       data = previous_map(name, repo).merge(data)
       data[REPO_KEY] = repo if repo
       MarkerBlock.atomic_write(cache_file(name), JSON.dump(data))
@@ -142,11 +142,11 @@ module Switchboard
     # query writes nothing (failure and "no PR" must never be conflated) — it
     # just retries next refresh, and can't fail the whole refresh: the windowed
     # data already merged, and backfill rows are additive-or-corrective.
-    def backfill(data, repo_path, fresh = {})
+    def backfill(data, repo_path, fresh = {}, branch_limit: nil)
       repo = repo_slug(repo_path)
       return unless repo
 
-      branches = rendered_branches(repo_path)
+      branches = rendered_branches(repo_path, limit: branch_limit)
       missing = branches - data.keys
       # A cached OPEN badge for a branch the open query no longer returns cannot
       # still be open — its close/merge aged out of the sweep unseen, and the
@@ -177,19 +177,20 @@ module Switchboard
     end
 
     # The branches the sidebar actually renders for this repo: each non-primary
-    # worktree's reflog lineage (what Tree expands into branch rows, same cap)
-    # plus its current branch. These rows are the badge contract, so backfill
-    # covers exactly this set — the primary checkout never renders (Tree rejects
-    # it), and querying --head on its trunk branch would happily match a fork PR
-    # whose head happens to share the name. That bare-name keying is DELIBERATE
+    # worktree's reflog lineage (what Tree expands into branch rows; `limit` is the
+    # same cap, handed down because this layer can't read Config) plus its current
+    # branch. These rows are the badge contract, so backfill covers exactly this
+    # set — the primary checkout never renders (Tree rejects it), and querying
+    # --head on its trunk branch would happily match a fork PR whose head happens
+    # to share the name. That bare-name keying is DELIBERATE
     # for the rendered branches themselves (a `gh pr checkout`'d fork branch
     # should badge its fork PR); the trunk is the one name where collision is
     # likely and the row never shows.
-    def rendered_branches(repo_path)
+    def rendered_branches(repo_path, limit: nil)
       # identical?, not string equality: git prints resolved paths, the config
       # may hold a symlinked spelling of the same checkout.
       Git.worktrees(repo_path).reject { |w| w[:bare] || File.identical?(w[:path], repo_path) }.flat_map do |w|
-        Git.branch_history(w[:path], limit: Git::MAX_BRANCH_HISTORY) | [w[:branch]].compact
+        Git.branch_history(w[:path], limit: limit) | [w[:branch]].compact
       end.uniq
     end
 

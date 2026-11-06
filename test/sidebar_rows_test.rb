@@ -433,5 +433,39 @@ module Switchboard
       end
       assert_equal 2, calls, "kind-keyed entries never ping-pong into a per-reload recompute"
     end
+
+    # Value: protects=a config edit reaches a running sidebar's rows and diff counts in both
+    # directions, with no restart; fails_when=rebuild stops passing the configured cap, or
+    # refresh_diffs skips a row that newly appeared; why_new=no test changed the cap on a running
+    # sidebar; seam=none; no_claim=other windows and off-screen panes (manual check)
+    def test_a_config_edit_changes_the_branch_rows_and_new_rows_get_diff_counts
+      repo = temp_git_repo("app")
+      wt = path("wt-many")
+      git(repo, "worktree", "add", "-q", "-b", "b0", wt)
+      (1..6).each { |i| git(wt, "checkout", "-q", "-b", "b#{i}") }
+      write = lambda do |cap|
+        File.write(Config.path, YAML.dump("max_branch_history" => cap, "base" => "main",
+                                          "projects" => [{ "name" => "app", "path" => repo }]))
+      end
+      sb = sidebar(nodes: [])
+      branch_rows = -> { rows_of(sb).select { |n| n.kind == "br" } }
+
+      write.call(3)
+      sb.send(:rebuild)
+      assert_equal %w[b6 b5 b4], branch_rows.call.map(&:branch)
+      sb.send(:refresh_diffs)
+
+      write.call(5)
+      bump_mtime(Config.path)
+      sb.send(:rebuild)
+      assert_equal %w[b6 b5 b4 b3 b2], branch_rows.call.map(&:branch), "raising the cap adds the older rows"
+      sb.send(:refresh_diffs)
+      branch_rows.call.each { |n| assert sb.send(:diff_for, n), "#{n.branch} has a diff count" }
+
+      write.call(2)
+      bump_mtime(Config.path, by: 4)
+      sb.send(:rebuild)
+      assert_equal %w[b6 b5], branch_rows.call.map(&:branch), "lowering the cap drops them again"
+    end
   end
 end

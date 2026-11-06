@@ -43,7 +43,7 @@ module Switchboard
     def test_scaffold_template_advertises_the_optional_knobs
       %w[tmux_keys sidebar_keys sounds session_command worktree_creation_command base prune_on_launch
          projects_root auto_rename diff_counts prewarm remote_link_stale_after update_check
-         sync_session_name count_indicator agent_dispatch].each do |knob|
+         sync_session_name count_indicator agent_dispatch max_branch_history].each do |knob|
         assert_includes Config::SCAFFOLD_TEMPLATE, knob, "a fresh config should advertise #{knob}"
       end
     end
@@ -276,6 +276,25 @@ module Switchboard
       assert cfg({}).prune_on_launch?
       assert cfg("prune_on_launch" => true).prune_on_launch?
       refute cfg("prune_on_launch" => false).prune_on_launch?
+    end
+
+    # Value: protects=the cap's default and that any positive whole number is used as written;
+    # fails_when=the default moves or a bound creeps in; why_new=the key is new; seam=none;
+    # no_claim=that the value reaches the rows (tree and sidebar tests)
+    def test_max_branch_history_defaults_to_10_and_uses_a_valid_value_as_written
+      assert_equal 10, cfg({}).max_branch_history
+      assert_equal 10, cfg("max_branch_history" => nil).max_branch_history, "a bare key reads as unset"
+      [1, 16, 500, 2**63 - 1].each { |n| assert_equal n, cfg("max_branch_history" => n).max_branch_history }
+      assert_empty cfg("max_branch_history" => 12).unknown_keys, "a known key, so doctor never flags it"
+    end
+
+    # Value: protects=no bad value reaches Git, where -1, "10", true and 2**63 raise on the
+    # rebuild path and false means no cap; fails_when=the validation loosens; why_new=the key is
+    # new; seam=none; no_claim=none beyond protects
+    def test_max_branch_history_falls_back_on_anything_but_a_usable_count
+      [0, -1, 10.5, "10", "abc", true, false, 2**63, [3], { "a" => 1 }].each do |bad|
+        assert_equal 10, cfg("max_branch_history" => bad).max_branch_history, "#{bad.inspect} should fall back"
+      end
     end
 
     # Minutes in the file, seconds out; false / 0 turn the grey stale ⇅ off, and a

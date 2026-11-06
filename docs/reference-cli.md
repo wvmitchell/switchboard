@@ -329,7 +329,7 @@ trap), PATH symlinks (under Homebrew: that `switchboard` and `sb` on PATH are th
 missing or shadowed by an old clone's link, a clone's `bin/` directory, or another program), which install tmux.conf is wired to (this
 one ✓, another that still exists –, or one that's gone ✗), tmux wiring (bound keys +
 hooks, and whether they're *live* in the running server vs only in config; a `tmux_keys` key
-edited by hand that tmux hasn't applied, or one tmux refused), a bad or clashing `sidebar_keys` remap,
+edited by hand that tmux hasn't applied, or one tmux refused), a bad or clashing `sidebar_keys` remap, a bad `max_branch_history` value,
 whether a newer release is out (Homebrew installs: a `git ls-remote` to GitHub, bounded
 to 5s, and it says so when it can't check; a clone or `--HEAD` install says which branch
 it follows instead), the Claude hooks in the worktree you're standing in (missing,

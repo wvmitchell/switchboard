@@ -351,7 +351,7 @@ module Switchboard
         # C-r is sent only after the client is switched back to us, so we're on screen:
         # mark visible (consume the off->on edge so tick won't reload again, ungate paint).
         set_visible(true)
-        reload(announce_sounds: false)
+        keep_cursor { reload(announce_sounds: false) } # the edit may have added rows above the cursor
       rescue StandardError => e
         Tmux.notify("switchboard: config not reloaded — #{e.message}")
       end

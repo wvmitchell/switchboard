@@ -137,12 +137,40 @@ module Switchboard
       end
     end
 
-    def test_lineage_caps_at_max_branches_and_appends_current
+    def test_lineage_defaults_to_the_config_default_and_appends_current
       seen_limit = nil
       stub_method(Git, :branch_history, ->(_path, limit:, cache: nil) { seen_limit = limit; %w[x y] }) do
         line = Tree.lineage(wt(path: "/wt/a", branch: "z"))
-        assert_equal Git::MAX_BRANCH_HISTORY, seen_limit
+        assert_equal Config::BRANCH_HISTORY_DEFAULT, seen_limit
         assert_equal %w[x y z], line # current appended via dedup union
+      end
+    end
+
+    # Value: protects=the documented soft cap, a full history without the current branch
+    # shows cap + 1 rows; fails_when=lineage caps after appending, hiding the checked-out
+    # branch; why_new=the test above uses a short history; seam=stub of Git.branch_history;
+    # no_claim=real reflog parsing (git_test)
+    def test_nodes_pass_the_limit_down_and_the_current_branch_can_add_one_row
+      history = ->(_path, limit:, cache: nil) { %w[a b c d].first(limit) }
+      model = FakeModel.new([project([wt(path: "/wt/a", branch: "z")])])
+      stub_method(Git, :branch_history, history) do
+        rows = Tree.nodes(model, branch_limit: 2).select { |n| n.kind == "br" }
+        assert_equal %w[a b z], rows.map(&:branch)
+      end
+    end
+
+    # Value: protects=the documented meaning of the smallest cap, a plain workspace row that keeps
+    # its PR badge; fails_when=the expansion check or badge placement changes for one branch;
+    # why_new=the other tests use caps of 2 or more; seam=stub of Git.branch_history;
+    # no_claim=a renamed branch, which still adds its one row
+    def test_a_cap_of_one_shows_no_branch_rows_and_keeps_the_badge_on_the_workspace
+      history = ->(_path, limit:, cache: nil) { %w[z y x].first(limit) }
+      badge = { "identifier" => "#1" }
+      model = FakeModel.new([project([wt(path: "/wt/a", branch: "z", pr: badge)])])
+      stub_method(Git, :branch_history, history) do
+        nodes = Tree.nodes(model, branch_limit: 1)
+        assert_equal %w[proj ws], nodes.map(&:kind)
+        assert_equal badge, nodes.last.pr
       end
     end
   end

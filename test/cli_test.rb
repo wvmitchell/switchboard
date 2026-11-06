@@ -347,6 +347,19 @@ module Switchboard
       assert_nil CLI.refresh("ghost")
     end
 
+    # Value: protects=badge lookups follow the configured cap, the only path from the config to
+    # Pr; fails_when=CLI#refresh hardcodes or drops the limit; why_new=the refresh tests above
+    # have no project to refresh; seam=stub of Pr.refresh; no_claim=gh behavior
+    def test_refresh_passes_the_configured_branch_cap_to_pr
+      File.write(Config.path, YAML.dump("max_branch_history" => 7, "projects" => [{ "name" => "app", "path" => temp_git_repo }]))
+      CLI.instance_variable_set(:@config, nil)
+      seen = nil
+      stub_method(Pr, :refresh, ->(_name, _path, branch_limit:) { seen = branch_limit }) { CLI.refresh("app") }
+      assert_equal 7, seen
+    ensure
+      CLI.instance_variable_set(:@config, nil)
+    end
+
     # --- sound: the demo/diagnostic command ----------------------------------
 
     def test_sound_rejects_an_unknown_state

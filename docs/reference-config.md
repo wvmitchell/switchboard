@@ -34,6 +34,7 @@ or `e` in the sidebar — both reload on save.
 | `background_presence` | bool | `true` | Tell agents (a `SessionStart` hook) to declare background monitors and loops with `switchboard monitoring on`, so the sidebar shows a `∞`, and clear that declaration at session boundaries. `false` drops the instruction and the clears; `switchboard monitoring` still works by hand. Per-project override wins. See [background monitors](explanation-agent-presence.md#background-monitors-the-). |
 | `diff_counts` | bool | `true` | Show the `+adds −dels` diff count on each workspace/branch row. `false` hides it and skips the per-worktree `git diff` entirely. |
 | `count_indicator` | bool | `true` | Show a half-typed movement count (the `3` of `3j`) in the sidebar footer. `false` hides it; counts still work. Global only. |
+| `max_branch_history` | whole number | `10` | How many branch rows a workspace that has held several branches shows. Older rows drop off the list; the branches stay. Global only. See [`max_branch_history`](#max_branch_history). |
 | `prewarm` | bool | `true` | Keep off-screen sidebars warm so switching sessions doesn't flash a stale tree. `false` restores full dormancy (no off-screen work). See [`prewarm`](#prewarm). |
 | `remote_link_stale_after` | minutes or `false` | `120` | How long a `/remote-control`-linked Claude session can sit idle before its `⇅` turns grey and it counts as an **idle link**. `false` or `0` turns that off; anything else invalid uses 120. Global only. See [`remote_link_stale_after`](#remote_link_stale_after). |
 | `update_check` | bool | `true` | Homebrew installs: check for a newer release in the background (one `git ls-remote` of switchboard's public release tags every 4 hours, nothing else sent) and show `↑ 0.58.0 available · switchboard upgrade` under the wordmark. `false` stops the check and hides the line; `SWITCHBOARD_NO_UPDATE_CHECK=1` in the environment stops the check too. Clone and `--HEAD` installs never check. Global only. |
@@ -67,6 +68,7 @@ auto_rename: true                        # let the agent name a placeholder work
 agent_dispatch: true                     # tell agents `switchboard new` exists (on by default)
 diff_counts: true                        # show +adds −dels on each row (false skips the git diff)
 count_indicator: true                    # show a half-typed count (the 3 of 3j) in the footer
+max_branch_history: 10                   # branch rows per workspace; older rows drop off the list
 prewarm: true                            # keep off-screen sidebars warm (false = full dormancy)
 remote_link_stale_after: 120             # minutes before an idle /rc link's ⇅ turns grey
 update_check: true                       # Homebrew: a line under the wordmark when a newer release is out
@@ -178,6 +180,38 @@ than via pre-warming.
 Set `prewarm: false` to restore full off-screen dormancy (the flash returns). It's
 a global knob — there's no per-project override. For the full mechanism see
 `docs/explanation-sidebar-lifecycle.md`.
+
+---
+
+## `max_branch_history`
+
+```yaml
+max_branch_history: 10    # default
+```
+
+A workspace that has held several branches expands into one row per branch, newest first.
+This sets how many of those rows it shows, so a workspace running a long series of PRs may
+want it higher. When a branch passes the limit, its row drops off the list with no marker;
+the branch itself isn't touched, and deleting the workspace still offers it. The value also
+decides which branches get their own PR lookup when the regular PR queries miss them.
+
+Any whole number above 0 works, and there's no upper limit. Anything else (`0`, a negative
+number, `10.5`, `"10"`, `true`, `false`) uses 10, and `switchboard doctor` names the bad
+value. A limit of 1 shows no branch rows, just the workspace; to hide them for the moment,
+press `z`. A change reaches running sidebars without a restart. New rows usually have their badges straight away, but a large jump can take
+several refreshes to fill in, since each refresh looks up at most 10 branches per project.
+
+The count is of names in the workspace's HEAD reflog, and it isn't always exact:
+
+- Every name counts, including a deleted branch, the old name of a renamed branch, and
+  `main` if you check it out between PRs.
+- The branch you're on always shows, so it can add one row beyond the limit.
+
+**A high limit has a cost.** Each row runs one `git diff` on the sidebar's main loop. A
+sidebar recomputes every row of a workspace when its reflog moves, and every row in the tree
+when it starts or you press `R`. At roughly 20 ms a diff, a workspace with 50 branches and a
+limit to match would stall each sidebar for about a second per commit. This only applies to
+workspaces with that much history. `diff_counts: false` removes the cost.
 
 ---
 

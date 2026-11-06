@@ -124,7 +124,7 @@ module Switchboard
     def refresh(name = nil, poke_pane = nil)
       projects = name ? config.projects.select { |p| p["name"] == name } : config.projects
       projects.each do |p|
-        Pr.refresh(p["name"], p["path"]) if Dir.exist?(p["path"])
+        Pr.refresh(p["name"], p["path"], branch_limit: config.max_branch_history) if Dir.exist?(p["path"])
       end
       poke_after(poke_pane)
     end

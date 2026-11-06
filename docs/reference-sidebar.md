@@ -68,7 +68,9 @@ Three row kinds, indented by depth:
   (trunk) checkout, which is never a switch target. This is the row you act on.
 - **Branch-history row** — when a workspace has held more than one branch over
   its life (you `git checkout -b` in place), it expands into inline child rows
-  read from its HEAD reflog. Drawn with a `├`/`└` tree connector; a filled `●`
+  read from its HEAD reflog, newest first, up to
+  [`max_branch_history`](reference-config.md#max_branch_history) of them. Drawn with a
+  `├`/`└` tree connector; a filled `●`
   before the branch name marks the branch **checked out right now**. `↵` on any
   of them switches to that one shared session — switchboard navigates you there,
   it doesn't check the branch out. Press [`z`](reference-keybindings.md) to fold

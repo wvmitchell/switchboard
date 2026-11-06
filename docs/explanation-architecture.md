@@ -55,7 +55,9 @@ replacing it. Around that:
 
 - **Rows the windows never saw get backfilled.** A branch that renders but never appeared
   in a query gets a capped per-branch `--head` lookup. `rendered_branches` is each
-  non-primary worktree's reflog lineage. A branch with no PR is cached as null, so it's
+  non-primary worktree's reflog lineage, under the same `max_branch_history` cap as the
+  rows. `Pr` sits below `Config` in the layers, so `CLI#refresh` passes that value down. A
+  branch with no PR is cached as null, so it's
   asked about only once.
 - **Stale open badges are re-checked.** A cached OPEN badge missing from an open query
   that *wasn't* full is provably stale, so it's queried again.

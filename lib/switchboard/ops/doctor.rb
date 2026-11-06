@@ -26,6 +26,7 @@ module Switchboard
       doctor_version
       doctor_config(config)
       doctor_unknown_keys(config)
+      doctor_max_branch_history(config)
       doctor_install(config)
       doctor_sidebar_keys(config)
       doctor_hooks(config)
@@ -152,6 +153,14 @@ module Switchboard
                end
         puts "  \e[33m–\e[0m config key #{key.inspect} at the top level does nothing: #{hint}"
       end
+    end
+
+    # The sidebar quietly uses the default for a bad value, so doctor is where it shows.
+    def doctor_max_branch_history(config)
+      raw = config.raw_max_branch_history
+      return if raw.nil? || config.valid_max_branch_history?(raw)
+
+      puts "  \e[33m–\e[0m max_branch_history #{raw.inspect} isn't a whole number above 0 — using #{Config::BRANCH_HISTORY_DEFAULT}"
     end
 
     # Surface a bad `sidebar_keys` remap (issue #108) so a binding that didn't take
