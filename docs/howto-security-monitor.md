@@ -240,24 +240,45 @@ Re-verifying one doesn't advance the others.
   must still show `N linked` with no warning while a `/rc` session is open
   (`RemoteLink.health` is the canary).
 
-  The other two checks take the maintainer's hands, and Claude moves every couple of
-  days, so ask for them only when that version's changelog hits the ◷ or session-name
-  terms above, or otherwise in Monday's digest if the installed version has moved since
-  the last live run. A changelog entry that isn't published yet counts as no hit until it
-  is. Between runs a real break still shows: a failed rename leaves a `session name:` line
-  in `doctor`, and a broken ◷ chimes at the hand-off in everyday use.
+  Claude moves every couple of days, so the other two run only when that version's
+  changelog hits the ◷ or session-name terms above, or otherwise on Monday if the installed
+  version has moved since the last live run. A changelog entry that isn't published yet
+  counts as no hit until it is. Between runs a real break still shows: a failed rename
+  leaves a `session name:` line in `doctor`, and a broken ◷ chimes at the hand-off in
+  everyday use.
 
-  - **◷ background work**: in a hooked workspace, start a background agent and end the
-    turn. The row must show `◷` once the turn settles, with no chime yet, then a
-    resting dot and one chime once the agent's follow-up turn ends. A `●` and a chime
-    at the hand-off means the `status` contract moved. (A `run_in_background` shell
-    also shows `◷`, but its chime rings at the hand-off by design, so it can't test the
-    hold.)
+  - **◷ background work**: the monitor runs this one itself, on the 12:xx check with a
+    tmux client attached, because it makes real chimes and needs a sidebar on screen. If
+    no client is attached, try again next check. Dispatch it with `switchboard new . -`:
+
+    > This workspace is a live check run by the security monitor, so the order and turn
+    > boundaries matter. No repo changes, commits or PR. Turn 1: run `switchboard rename
+    > bg-check-<date>`, run `sleep 20` with run_in_background set, and end your turn. Turn 2,
+    > on its notification: start one background agent (the Agent tool) with the task "Run
+    > this with the Bash tool in the FOREGROUND, timeout 180000, without run_in_background:
+    > ruby -e 'sleep 120'. Then report that the wait finished. Edit nothing." End your turn
+    > at once. Turn 3, on its notification: reply in one line and stop.
+
+    Then poll for about 4 minutes, reading the session's `status`, any file in
+    `offstage_hold` under switchboard's state directory that names the workspace, and its
+    row in the attached client's sidebar (`tmux capture-pane`, read-only). It passes when
+    the marker appears at the turn 2 hand-off, stays while `status` reads `busy` and the row
+    reads `◷`, and goes once `idle` settles, which is the chime being claimed. No marker, or
+    `shell` or `idle` at the hand-off, means the `status` contract moved.
+
+    The brief's shape avoids two false results. A hand-off on the first turn is never an
+    edge (a first appearance only seeds the sidebar's baseline), so it writes no marker
+    whatever Claude does. And a subagent that backgrounds its own wait leaves only a shell
+    running, which reads `shell`, whose chime rings at the hand-off by design.
+
+    Nothing can delete a workspace from the CLI, so ask the maintainer to delete it in the
+    next digest.
   - **Session-name sync**: rename a workspace that has an idle Claude session with the
     sidebar's `r`, then keep the pane in view without typing. Within a few seconds the
     Claude session must carry the new name (the `name` in its sessions file, or the `/resume` picker), and
     `doctor` must show no `session name:` line. Any `session name:` line (`unrecognized`,
-    `unconfirmed`, `failed_send`, `ceiling`) means the screen contract moved. `doctor`'s
+    `unconfirmed`, `failed_send`, `ceiling`) means the screen contract moved, though a lone `failed_send` can
+    also mean someone was typing (any client's key stops the send), so retry once first. `doctor`'s
     canaries for `status`, `name` and `kind` read only the sessions file, never the
     screen, so this run is the only check on the screen. A placeholder workspace that's
     due for a name is the natural one to use.
@@ -386,4 +407,5 @@ schedule, scope or cost, or two defensible options.
   isolated server and is safe; the monitor never runs `switchboard quit` or `prune`.
 - **A check doesn't change the repo.** Findings become a write-up and a notify (then an
   issue or PR if the maintainer agrees). A check writes only the state file, plus the
-  fast-forward of its own checkout ([Sync the checkout](#sync-the-checkout)).
+  fast-forward of its own checkout ([Sync the checkout](#sync-the-checkout)) and the ◷ run's
+  throwaway workspace.
