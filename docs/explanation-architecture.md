@@ -115,7 +115,7 @@ a lower one, never a higher one:
 |---|---|---|
 | **Support** | Plumbing with no switchboard concepts: atomic writes, marker stores, process identity | `MarkerBlock`, `KeyedMarkerStore`, `ProcessIdentity` |
 | **Adapters** | One module per outside thing, answering questions about it and degrading to `[]`/`{}`/`nil` | `Tmux`, `Git`, `Pr` (gh), `ClaudeSessions`, `AgentState`, `Width` |
-| **State** | Switchboard's own nouns: the workspace model, dispatch records, the per-workspace markers | `Model`, `Tree`, `Creation`, `Attention`, `Config` |
+| **State** | Switchboard's own nouns: the workspace model, dispatch records, the per-workspace markers, and the snapshot of what's running where | `Model`, `Tree`, `Creation`, `Attention`, `Config`, `Presence` |
 | **Operations** | One module per thing a person or agent can trigger | `Creator`, `Rename`, `Workspaces`, `Installer`, `Upgrade`, `CodeReload`, `Doctor` |
 | **Interfaces** | Turn keys, commands or hook calls into operations and show the result | `CLI`, `HookCommands`, `Sidebar` and its concern files |
 

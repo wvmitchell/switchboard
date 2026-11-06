@@ -22,7 +22,7 @@ module Switchboard
                    tmux/presence tmux/sessions tmux/sidebar_panes width],
       state: %w[attention branch_fold collapse config creation dispatch_args dispatch_nudge
                 full_header keymap model monitoring monitoring_nudge notify offstage_hold
-                pending_delete placeholder remote_link rename_nudge sound tree view],
+                pending_delete placeholder presence remote_link rename_nudge sound tree view],
       operations: %w[code_reload creator doctor installer installer/keybindings isolated_server reconcile registrar rename
                      sandbox session_name update_check upgrade workspace_branches
                      workspaces],
