@@ -10,6 +10,13 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
+## [0.68.4] — Keys that land with `n` or `r` can't submit the prompt by themselves (2026-11-06)
+
+### Fixed
+- A pasted or fast-typed line that holds `n` or `r` no longer starts an agent or renames a workspace before
+  you've seen the prompt. The text waits in the prompt for your `↵`, and anything after its newline is dropped.
+- Keys batched around a confirm's answer no longer fire on the tree once it closes.
+
 ## [0.68.3] — `/` searches names only, and branch rows stay out of the matches (2026-11-06)
 
 ### Changed

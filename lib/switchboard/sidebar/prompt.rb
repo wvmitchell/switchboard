@@ -61,8 +61,7 @@ module Switchboard
         paste = { on: false }
         print "\e[?2004h" if task
         draw_prompt(label, display_text(buf, task), hint: hint, tail: task)
-        typed = @typeahead&.join.to_s # keys already read past the one that opened us
-        @typeahead&.clear
+        typed = take_typeahead
         loop do
           chunk = typed.empty? ? read_prompt_key : typed
           typed = ""
@@ -80,6 +79,22 @@ module Switchboard
       ensure
         print "\e[?2004l" if task
         print "\e[?25l"
+      end
+
+      # Keys already read past the one that opened the prompt fill it, but can't act on it:
+      # only a ↵ read after the prompt is up may submit, so you always see what would run.
+      # So the batch stops at its first newline outside a paste, and the rest is dropped.
+      def take_typeahead
+        tokens = @typeahead.to_a.dup
+        @typeahead&.clear
+        carried = @pending.to_s
+        @pending = ""
+        in_paste = false
+        kept = tokens.take_while do |token|
+          in_paste = token == PASTE_START || (in_paste && token != PASTE_END)
+          in_paste || !["\r", "\n"].include?(token)
+        end
+        kept.size == tokens.size ? kept.join + carried : kept.join
       end
 
       def display_text(buf, task)
@@ -264,7 +279,11 @@ module Switchboard
       # aren't answers: they run after the prompt closes, only the last of each kind, since a
       # long-open prompt collects many. The sidebar is paused meanwhile, which a message or
       # menu isn't worth, so `leaving_closes` lets a focus-out end the wait.
+      #
+      # Keys batched before the prompt appeared or behind its answer are dropped: they can't
+      # answer something you hadn't seen, and they mustn't fire on the tree once it closes.
       def read_char(leaving_closes: false)
+        @typeahead&.select! { |key| Input::POKE_BYTES.include?(key) }
         held = []
         after = []
         loop do
@@ -283,7 +302,7 @@ module Switchboard
       rescue StandardError
         nil
       ensure
-        @typeahead&.concat(held.reverse.uniq.reverse, after)
+        @typeahead&.concat(held.reverse.uniq.reverse, after.select { |key| Input::POKE_BYTES.include?(key) })
       end
     end
     include Prompt

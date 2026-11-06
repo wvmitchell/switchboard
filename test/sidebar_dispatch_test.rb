@@ -644,10 +644,8 @@ module Switchboard
       tasks = []
       flashes = []
       stub_method(Creator, :dispatch, ->(_c, _p, task) { tasks << task; :no_name }) do
-        stub_method(sb, :read_prompt_key, -> { flunk "the batch already held the whole task" }) do
-          stub_method(sb, :flash, ->(m) { flashes << m }) do
-            capture_stdout { sb.send(:handle, "nfix it\r") }
-          end
+        stub_method(sb, :flash, ->(m) { flashes << m }) do
+          with_reads(sb, "\r") { sb.send(:handle, "nfix it") }
         end
       end
       assert_equal ["fix it"], tasks
