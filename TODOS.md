@@ -1038,3 +1038,12 @@ safe today; each is narrow).
   collapsed-header clone in `Sidebar::Rows#visible_tree`, which can tally the hidden
   rows' attention the same way it tallies the `(N)` count. *Depends on:* the folded
   project `(N)` count landing first. **Priority:** P3.
+
+## Sidebar search follow-ups
+
+- **A key that walks the workspaces waiting on you.** *Why:* search gives the sidebar a way
+  to step through a set of rows, and that set could also be every workspace in a waiting or
+  unviewed state, so one key takes you to the next agent that needs you. Worth judging only
+  after living with search. *Start in:* the stepping in `Sidebar::Input` (`step_search`),
+  reading `@attention` and the dot states; it needs its own key, since `n` is scoped to a
+  search. **Priority:** P3.

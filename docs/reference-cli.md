@@ -377,7 +377,7 @@ its own pane. `upgrade` does this itself. Use it by hand after a clone's `git pu
 inside `switchboard sandbox` to see a sidebar code edit without detaching.
 
 - A sidebar from 0.59.0 on gets a signal (`SIGUSR1`). It waits for its next safe moment
-  (no prompt, `?` overlay, QR code or filter open). Then it test-runs the new code
+  (no prompt, `?` overlay or QR code open, and no search being typed). Then it test-runs the new code
   (`switchboard sidebar --check`, which builds a sidebar off screen and applies the reload's
   payload, 3 seconds
   at most) and execs it in place, keeping its pid, cursor and agent state.

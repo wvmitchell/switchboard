@@ -78,7 +78,7 @@ Then the new version finishes the setup:
 - swaps the new code into every running sidebar, which keeps its pane and its place.
   A sidebar from 0.59.0 on reloads itself in place, keeping your cursor, its folds and
   what it knows about running agents. It waits until you close an open prompt, the `?`
-  overlay, the QR code or the filter. Sidebars you aren't looking at reload over the next
+  overlay or the QR code, or finish typing a search. Sidebars you aren't looking at reload over the next
   half minute, or as soon as you switch to them. An older sidebar is restarted in its
   pane. It reports how many of each (`sidebars: 12 asked to reload in place, 3
   restarted`). A sidebar whose switchboard was deleted, won't start, or moved just as

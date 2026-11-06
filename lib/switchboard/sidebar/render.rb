@@ -59,6 +59,7 @@ module Switchboard
       CURRENT_MARK = "»"
 
       BRANCH_FG = "\e[90m"         # branch rows: bright-black, a theme-relative dim (#23)
+      SEARCH_MATCH = "\e[30;43m"   # a / search match: black on yellow, vim's usual look, and apart from the bold-yellow text of an unviewed row
 
       MIN_NAME_COLS = 3            # below this many cols left for the name, drop the diff
                                    # badge so a row never overruns the pane (issue #79)
@@ -123,7 +124,7 @@ module Switchboard
       # count (the 3 of 3j) takes the nav verb's place until it's used, unless
       # count_indicator: false.
       def footer
-        return filter_footer if @filter
+        return [search_footer] if @search.active?
         # empty tree: invite the first project (the add key resolved live, #108)
         return ["#{key_hint(:add_project)} add a project · #{help_hint}"] unless current
 
@@ -150,20 +151,24 @@ module Switchboard
         @bindings[action] || Keymap::DEFAULTS[action]
       end
 
-      # The filter-mode legend: the live query, then the in-mode keys. j/k are query
-      # input here (unlike the tree, where they move), so movement is the arrows
-      # / ^N^P. ↵ is context-sensitive — opens a highlighted workspace, or creates a
-      # new one on a highlighted project header — so the label tracks the row. The
-      # count is workspaces only (headers don't count) — it reassures you the query is
-      # biting (and a 0-match query isn't a frozen pane). Three lines: filter mode is
-      # live state (query + action + count), not key-teaching, so unlike the slimmed
-      # one-line normal footer it keeps the room it needs; entering/leaving the mode is
-      # a deliberate switch, so the height change there is fine (the tree changes too).
-      def filter_footer
-        n = @rows.count { |node| node.kind != "proj" }
-        count = n == 1 ? "1 match" : "#{n} matches"
-        action = current&.kind == "proj" ? "↵ new workspace" : "↵ open"
-        ["/#{@filter}", "#{action} · esc cancel", "↑↓ ^n/^p move · #{count}"]
+      # The search's one line, so starting a search never moves the tree. A narrow pane shortens
+      # the query and keeps the count. It has no ? help: the query is what this line is for,
+      # and the overlay is one key away.
+      def search_footer
+        tail = search_footer_tail
+        "/#{trunc(@search.query, [winsize.last - tail.length - 1, 1].max)}#{tail}"
+      end
+
+      def search_footer_tail
+        return " · esc" if @search.query.empty?
+        return @search.typing? ? " · no matches" : " · no matches · esc" if @search_hits.empty?
+
+        at = @search_hits.index(@cursor)
+        count = " [#{at ? at + 1 : '-'}/#{@search_hits.size}]"
+        return "#{count} · ↵ · esc" if @search.typing?
+        return "#{count} · #{@count}…" if @count && @config.count_indicator?
+
+        "#{count} · n/N · esc"
       end
 
       # The brand header above the tree. EVERY session leads with the wordmark, so the
@@ -517,7 +522,7 @@ module Switchboard
       # The three right-hand columns are a property of the whole visible row set,
       # not a single row (#118), so they're measured once here and threaded into
       # every line — letting the +adds, −dels, and #n numbers each stack into a
-      # straight column. Measured over the full @rows (collapse-/filter-aware), NOT
+      # straight column. Measured over the full @rows (collapse-aware), NOT
       # the on-screen slice, so the columns stay put while you scroll instead of
       # reflowing each keypress; folding a noisy project naturally tightens them.
       # Projects carry no cells and so don't size the columns. Returns the adds /
@@ -583,7 +588,7 @@ module Switchboard
         if active && @focused
           right = right_region(counts, node.pr, adds_w, dels_w, pr_w, with_color: false)
           bar = region_w.zero? ? text : "#{ljust_columns(text, left_cols)} #{right}"
-          return "\e[7m#{ljust_columns(bar, cols)}\e[0m"
+          return cursor_bar(ljust_columns(bar, cols), name_spans(node, text))
         end
 
         body = colored(node, text, current: node.kind == "ws" && node.path == @current_path)
@@ -621,7 +626,7 @@ module Switchboard
         fitted = (" " * (room - columns(fitted))) + fitted
         if active && @focused
           body = "#{text} #{fitted}"
-          return "\e[7m#{body}#{' ' * [cols - columns(body), 0].max}\e[0m" # padded in COLUMNS, like the note
+          return cursor_bar("#{body}#{' ' * [cols - columns(body), 0].max}", name_spans(node, text)) # padded in COLUMNS, like the note
         end
 
         body = colored(node, text, current: node.kind == "ws" && node.path == @current_path)
@@ -662,7 +667,7 @@ module Switchboard
       end
 
       def line_without_note(node, active, cols, text)
-        return "\e[7m#{ljust_columns(text, cols)}\e[0m" if active && @focused
+        return cursor_bar(ljust_columns(text, cols), name_spans(node, text)) if active && @focused
 
         colored(node, text, current: node.kind == "ws" && node.path == @current_path)
       end
@@ -725,7 +730,7 @@ module Switchboard
 
       # The dim " (N)" trailing a folded project's name: the N workspace rows its fold
       # hides (`folded` on the visible_tree clone). Nothing for an empty fold, nor for
-      # an expanded or filtered header (no clone there).
+      # an expanded or revealed header (no clone there).
       def proj_cue(node)
         node.folded.to_i.positive? ? " (#{node.folded})" : ""
       end
@@ -752,10 +757,7 @@ module Switchboard
       end
 
       def proj_parts(node, name = shown(node.project))
-        # In filter mode the children show regardless of fold, so the header always
-        # reads expanded (▾); the ▸ collapsed glyph only applies to the normal tree.
-        folded = @filter.nil? && @collapsed.include?(node.project)
-        ["#{folded ? '▸' : '▾'} ", name, proj_cue(node)]
+        ["#{folded?(node.project) ? '▸' : '▾'} ", name, proj_cue(node)]
       end
 
       # The one rule both draw paths (fit_plain, colored) and both cue-bearing row kinds
@@ -813,7 +815,7 @@ module Switchboard
           # The bold name, then the dim (N) only if fit_plain kept it in `text`.
           kept = kept_cues(text, proj_cue(node))
           cue = kept.empty? ? "" : "\e[2m#{kept}\e[0m"
-          "\e[1m#{text.delete_suffix(kept)}\e[0m#{cue}"
+          "\e[1m#{mark_search(text.delete_suffix(kept), name_spans(node, text), "\e[1m")}\e[0m#{cue}"
         when "ws"
           dot = sparkling?(node.path) ? SPARKLE_COLORED[(@pulse / 2) % SPARKLE_COLORED.size] : dot_for(render_state(node.path))
           # The trailing cues (the " ⇅" link, then the " ▸N" fold) are appended ONLY when
@@ -826,15 +828,50 @@ module Switchboard
           name_cols = columns(text) - WS_PREFIX_COLS - columns(link + cue)
           name = fit_columns(shown(node.name), [name_cols, 1].max)
           ptr = " "
+          name_fg = nil
           if current
             ptr  = "#{BRAND}#{CURRENT_MARK}\e[0m"  # "you are here" pointer — bold-cyan, switchboard's signature accent
-            name = "\e[36m#{name}\e[0m"            # ...and the name cyan, matching the prompt's directory color
+            name_fg = "\e[36m"                     # ...and the name cyan, matching the prompt's directory color
           elsif @attention.include?(node.path) || unseen_failure?(node.path)
-            name = "\e[1;33m#{name}\e[0m"          # unviewed completion — bold yellow until you look (the current row is never marked)
+            name_fg = "\e[1;33m"                   # unviewed completion — bold yellow until you look (the current row is never marked)
           end
+          name = mark_search(name, @search.spans(name), name_fg.to_s)
+          name = "#{name_fg}#{name}\e[0m" if name_fg
           "#{ptr} #{dot} #{name}#{styled_link(node.path, link)}#{cue.empty? ? '' : "\e[2m#{cue}\e[0m"}" # cues last (link, then dim ▸N), widths already reserved
-        else "#{BRANCH_FG}#{text}\e[0m"
+        else "#{BRANCH_FG}#{mark_search(text, name_spans(node, text), BRANCH_FG)}\e[0m"
         end
+      end
+
+      # The focused cursor row, its matches still marked. `plain` is already padded: marking
+      # comes last, because `columns` would count the escapes as width.
+      def cursor_bar(plain, spans)
+        "\e[7m#{mark_search(plain, spans, "\e[7m")}\e[0m"
+      end
+
+      # The search's matches within a row's name in `text`, as character ranges over `text`.
+      # The name is what's left between the row's prefix and the cues fit_plain kept, so a query
+      # can't mark a glyph, a ▸3 or a note.
+      def name_spans(node, text)
+        prefix, cues = case node.kind
+                       when "ws"   then parts = ws_parts(node); [parts.first, parts.last]
+                       when "proj" then parts = proj_parts(node); [parts.first, parts.last]
+                       else ["     #{node.last ? '└' : '├'}#{node.active ? '●' : ' '}", ""]
+                       end
+        name = text[prefix.length...(text.length - kept_cues(text, cues).length)].to_s
+        @search.spans(name).map { |at, length| [at + prefix.length, length] }
+      end
+
+      # `str` with each span in the match style, then back to the row's own `base` style.
+      def mark_search(str, spans, base)
+        return str if spans.empty?
+
+        out = +""
+        from = 0
+        spans.each do |at, length|
+          out << str[from...at] << "\e[0m#{SEARCH_MATCH}" << str[at, length] << "\e[0m#{base}"
+          from = at + length
+        end
+        out << str[from..]
       end
 
       # A ✘ you haven't viewed yet. Attention bolds real rows; this covers the pre-worktree

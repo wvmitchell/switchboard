@@ -10,6 +10,28 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
+## [0.68.0] — `/` searches the sidebar like vim (2026-11-06)
+
+### Changed
+- `/` now highlights matches where they are, in the full tree, instead of narrowing the list. Nothing is
+  hidden, and a folded project with a match opens in that sidebar only, so your shared folds never change.
+- `↵` takes two presses to open a row. The first keeps the search on, and the second opens the row under the
+  cursor. In between, `j`, `k`, `r`, `d` and every other key work as usual, with the matches still highlighted.
+- Matching looks for a case-insensitive piece of the text on the row, meaning a workspace name, a project name
+  or a visible branch row. It no longer matches scattered letters, so `afb` won't find `app-feat-branch`.
+- A sidebar that reloads itself after an upgrade now puts a row that has gone on its project header, ahead of
+  the workspace you're in.
+
+### Added
+- `n` and `N` step through matches while a search is on, wrapping at the ends, and take a count (`3n`). The
+  footer shows your place, as in `/auth [2/5]`. `Esc` ends the search and leaves the cursor where it is, and `n`
+  is new workspace again.
+
+### Removed
+- Finding a workspace by a branch name it doesn't show. A branch only matches when its row is on screen.
+- Creating a workspace by pressing `↵` on a project header during a search. `↵` there now ends the search.
+  Press `Esc` and then `n`, with the cursor in that project.
+
 ## [0.67.0] — how many branch rows a workspace shows is now a setting, and the default is 10 (2026-11-06)
 
 ### Added

@@ -193,11 +193,25 @@ module Switchboard
       assert_nil sb.instance_variable_get(:@resume_cursor), "once only"
     end
 
-    def test_a_vanished_cursor_row_falls_back_to_the_current_workspace
-      sb = sidebar(nodes: [proj("app"), ws("a"), ws("b")], current_path: "/wt/a")
+    def test_a_vanished_cursor_row_falls_back_to_its_project_header
+      sb = sidebar(nodes: [proj("app"), ws("a"), ws("b")], current_path: "/wt/a", cursor: 2)
       sb.instance_variable_set(:@resume_cursor, { "kind" => "ws", "project" => "app", "path" => "/wt/gone", "branch" => nil })
       sb.send(:restore_resumed_cursor)
+      assert_equal "proj", current_node(sb).kind, "a row a search was showing, or one just deleted"
+    end
+
+    def test_a_vanished_cursor_row_with_no_header_falls_back_to_the_current_workspace
+      sb = sidebar(nodes: [proj("app"), ws("a"), ws("b")], current_path: "/wt/a", cursor: 2)
+      sb.instance_variable_set(:@resume_cursor, { "kind" => "ws", "project" => "gone", "path" => "/wt/gone", "branch" => nil })
+      sb.send(:restore_resumed_cursor)
       assert_equal "a", current_node(sb).name
+    end
+
+    def test_a_row_only_a_search_was_showing_comes_back_on_its_header_after_a_reload
+      sb = sidebar(nodes: [proj("app"), proj("api"), ws("oauth", project: "api")], collapsed: ["api"], cursor: 0)
+      sb.instance_variable_set(:@resume_cursor, { "kind" => "ws", "project" => "api", "path" => "/wt/oauth", "branch" => nil })
+      sb.send(:restore_resumed_cursor)
+      assert_equal %w[proj api], [current_node(sb).kind, current_node(sb).project]
     end
 
     # --- when it execs ------------------------------------------------------------
@@ -366,8 +380,8 @@ module Switchboard
       assert_equal [[:reload, { announce_sounds: false }], :move, :exec], execs
     end
 
-    def test_an_overlay_or_the_filter_holds_the_reload
-      [[:@help, true], [:@link_view, { path: "/wt/a" }], [:@filter, ""]].each do |ivar, value|
+    def test_an_overlay_holds_the_reload
+      [[:@help, true], [:@link_view, { path: "/wt/a" }]].each do |ivar, value|
         sb, execs = reloading(visible: true)
         sb.instance_variable_set(ivar, value)
         request(sb)
@@ -377,6 +391,19 @@ module Switchboard
         sb.send(:maybe_reexec)
         assert_equal [:exec], execs, "#{ivar} closed: go"
       end
+    end
+
+    def test_typing_a_search_holds_the_reload_and_committing_it_lets_go
+      sb, execs = reloading(visible: true)
+      sb.send(:dispatch, "/")
+      sb.send(:handle, "a")
+      request(sb)
+      sb.send(:maybe_reexec)
+      assert_empty execs, "typing: wait"
+      sb.send(:handle, "\r")
+      refute sb.instance_variable_get(:@search).typing?
+      sb.send(:maybe_reexec)
+      assert_equal [:exec], execs, "done typing: go"
     end
 
     # Value: protects=a held reload never spins the CPU (R8); fails_when=frame_timeout honors a
@@ -406,7 +433,7 @@ module Switchboard
     def test_the_switch_poke_still_reloads_while_an_overlay_holds_the_exec
       sb, = reloading(visible: false)
       request(sb)
-      sb.instance_variable_set(:@filter, "")
+      sb.instance_variable_get(:@search).start(nil) # a typing search holds the exec
       reloads = 0
       sb.define_singleton_method(:reload) { |**| reloads += 1 }
       sb.define_singleton_method(:reload_due?) { true }

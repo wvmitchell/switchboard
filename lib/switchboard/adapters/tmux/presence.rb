@@ -14,6 +14,21 @@ module Switchboard
       active == "1" && attached.to_i.positive?
     end
 
+    # Positively off screen: tmux answered, and said so. Unlike `visible?`, a failed query is
+    # not a yes, for a caller that would throw state away on the answer.
+    def hidden?(pane)
+      return false unless pane
+
+      hidden_reply?(`tmux -u display-message -p -t #{Shellwords.escape(pane)} '#\{window_active},#\{session_attached}' 2>/dev/null`)
+    end
+
+    def hidden_reply?(out)
+      active, attached = out.to_s.strip.split(",")
+      return false unless %w[0 1].include?(active) && attached.to_s.match?(/\A\d+\z/)
+
+      active == "0" || attached.to_i.zero?
+    end
+
     # { bare tty => { pane:, focused:, recent_input:, last_input:, sessions:, in_mode:, synchronized:, width: } } for
     # every pane on the server, or nil when tmux is unreachable. SessionName finds an agent's
     # pane by its process's tty — a dispatched agent is the launcher's child, a grandchild of

@@ -951,13 +951,6 @@ module Switchboard
     # --- n (background dispatch) and switch -----------------------------------
 
     # A sidebar whose @config is the given YAML data.
-    def sidebar_with_config(data, nodes: [proj("app")])
-      File.write(Config.path, YAML.dump(data))
-      sb = sidebar(nodes: nodes)
-      sb.instance_variable_set(:@config, Config.new)
-      sb
-    end
-
     # REGRESSION: setup runs once per WORKTREE, not once per session. Re-entering an
     # existing workspace must carry the agent command only.
     def test_switch_never_carries_the_setup_command
@@ -998,7 +991,7 @@ module Switchboard
           stub_method(Process, :detach, ->(_pid) {}) do
             stub_method(Tmux, :go, ->(*_a, **_k) { switched = true }) do
               stub_method(Tmux, :broadcast_warm, ->(**_k) {}) do
-                stub_method(sb, :reload, -> {}) { sb.send(:create, proj("app")) }
+                stub_method(sb, :reload, -> {}) { sb.send(:create) }
               end
             end
           end
@@ -1014,7 +1007,7 @@ module Switchboard
     def test_create_esc_dispatches_nothing
       sb = sidebar_with_config({ "worktree_root" => path("wts"),
                                  "projects" => [{ "name" => "app", "path" => "/p" }] })
-      stub_method(sb, :prompt_line, ->(*_a, **_k) {}) { sb.send(:create, proj("app")) }
+      stub_method(sb, :prompt_line, ->(*_a, **_k) {}) { sb.send(:create) }
       assert_empty Creation.all
     end
 
@@ -1024,7 +1017,7 @@ module Switchboard
       stub_method(sb, :prompt_line, lambda { |label, hint:, task:|
         seen = [label, hint, task]
         nil
-      }) { sb.send(:create, proj("app")) }
+      }) { sb.send(:create) }
       assert_equal ["app task", " (↵ = no task · esc)", true], seen
     end
 
@@ -1037,7 +1030,7 @@ module Switchboard
       stub_method(sb, :flash, ->(msg) { flashed << msg }) do
         stub_method(sb, :prompt_line, ->(*_a, **_k) { "" }) do
           stub_method(Tmux, :broadcast_warm, ->(**_k) {}) do
-            stub_method(sb, :reload, -> {}) { sb.send(:create, proj("app")) }
+            stub_method(sb, :reload, -> {}) { sb.send(:create) }
           end
         end
       end

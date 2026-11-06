@@ -6,10 +6,9 @@ require "set"
 module Switchboard
   # The persistent, rendered tree sidebar (no fzf). Lives in a narrow tmux
   # pane, repaints on a short interval to keep agent-activity dots live, and
-  # navigates with ↑/↓ (or ^N/^P — j/k are NOT movers, so they're free to type
-  # into the filter). ↵ opens a workspace's session (or collapses a project);
-  # / filters the tree by name for a direct jump (in-sidebar, not the old fzf
-  # popup — see "/ filter mode" below); a adds a project (register a local repo,
+  # navigates with ↑/↓, ^N/^P or j/k. ↵ opens a workspace's session (or collapses
+  # a project); / searches the tree by name, highlighting matches for n/N to step
+  # through (Sidebar::Search); a adds a project (register a local repo,
   # or clone one); n dispatches a workspace in the background (task → ◌ → ping); d removes the
   # highlighted row — a workspace's worktree, or a whole project from the
   # registry. The legend tracks the row.
@@ -27,7 +26,7 @@ module Switchboard
   #             │                                 └─▶ keg moved? (CodeReload.stale?) ─▶ reload requested
   #   loop top: maybe_reexec ─ due + no overlay ─▶ Reloader (reloader.rb): preflight ─▶ exec self in place (#48)
   #                                             │
-  #        rebuild ─▶ Rows (rows.rb: fold/filter rows + @diffs cache)
+  #        rebuild ─▶ Rows (rows.rb: fold rows, search reveals + @diffs cache)
   #        refresh_agents ─▶ Presence.scan ─▶ @edges.on_scan (edges.rb:
   #             │               completion edges ─▶ bold/sound/sparkle/PR-spawn)
   #             └─▶ returned edges ─▶ refresh_diffs
@@ -81,22 +80,6 @@ module Switchboard
       false
     end
 
-    # The / filter match: a case-insensitive subsequence (fzf-style fuzzy) — every
-    # character of `query` appears in `text` in order, not necessarily adjacent, so
-    # "afb" finds "app-feat-branch". An empty query matches everything, so entering
-    # filter mode shows the full switch-target list before you type. Pure, so the
-    # match logic is unit-testable without a tree (issue #60).
-    def self.fuzzy_match?(text, query)
-      text = text.downcase
-      i = 0
-      query.downcase.each_char do |c|
-        return false unless (i = text.index(c, i))
-
-        i += 1
-      end
-      true
-    end
-
     def initialize
       @config = Config.new
       @config_mtime = config_mtime # config file's mtime at load; refresh_config re-reads on change
@@ -126,13 +109,12 @@ module Switchboard
       @collapsed = Set.new # collapsed project names; hydrated from the shared
                            # on-disk store (Collapse) on every rebuild, so all
                            # windows' sidebars fold the same and a respawn keeps it
-      @filter = nil        # / filter mode: nil = off, else a (possibly empty) query
-                           # string. Pure per-process UI state — not shared on disk
-                           # like @collapsed, because a search is a transient act, not
-                           # a view preference (issue #60).
+      @search = Search.new # the / search; per-process, never on disk (see search.rb)
+      @revealed = Set.new  # collapsed projects a search shows anyway, in this sidebar only
+      @search_hits = []    # indexes into @rows that match the search, derived by recompute_rows
       @help = false        # ? help overlay: when set, render paints the full key map
                            # over the tree and the next real keystroke dismisses it
-                           # (issue #62). Per-process + transient, like @filter.
+                           # (issue #62). Per-process + transient, like @search.
       @link_view = nil     # p: the phone-link QR overlay, { path:, bridge_id:, qr: { url => matrix } }
                            # while open. Transient like @help; the link is held by id, not
                            # index, so a re-sorted scan keeps showing the same session.
@@ -316,6 +298,7 @@ module Switchboard
     # a hidden pane), instead of waiting the full REFRESH for the next tick to notice.
     def recheck_visibility
       set_visible(Tmux.visible?(ENV["TMUX_PANE"]))
+      end_search_if_hidden
     end
 
     def monotonic
@@ -339,6 +322,7 @@ module Switchboard
       @count = nil unless @focused # a half-typed 3j left behind; focus-out may never have arrived
       reappeared = visible && !@visible
       set_visible(visible)
+      end_search_if_hidden
       if reappeared
         # Catch-up: off-screen -> on-screen via an UN-poked path (a same-session
         # window switch the poke hooks don't cover). Re-baseline SILENTLY:
@@ -769,6 +753,19 @@ module Switchboard
       Creation.ack_path(@current_path) # you're looking at it: no ping for this dispatch, however it ends
     end
 
+    # A search doesn't outlive its pane's time on screen: it would greet you later, still
+    # holding n. Checked wherever visibility is sampled. A sample reads a failed tmux query as
+    # hidden, which is harmless for painting but would hand n back with you still at the keys,
+    # so this asks for a real answer first. The repaint is here because the warm gate can't see
+    # in-memory state, and a hidden pane keeps its last frame until switch-in.
+    def end_search_if_hidden
+      return if @visible || !(@search.active? || @search.sticky)
+      return unless Tmux.hidden?(ENV["TMUX_PANE"])
+
+      end_search(to_origin: @search.typing?, leave_open: false)
+      render
+    end
+
     # Land the selection bar on the workspace this session is in, so summoning or
     # refocusing the sidebar starts on "here" rather than wherever the cursor last
     # sat. Edge-triggered (focus-in / first paint), NOT on every reload — running
@@ -810,6 +807,7 @@ module Switchboard
       # visibility; don't assume the poke means visible, or we'd re-wake a hidden pane
       # (paint + reload) and reintroduce the off-screen work this change removes.
       set_visible(Tmux.visible?(ENV["TMUX_PANE"]))
+      end_search_if_hidden
       return locate unless @visible    # hidden background poke: badges are cached, nothing to paint
       unless reload_due? # coalesce a rapid switch storm into one heavy reload
         @reloader.silence_pending_reload
@@ -872,7 +870,7 @@ module Switchboard
     # `O` from focus-out) as a key. Here, not only in maybe_reexec, so frame_timeout can't spin
     # on an overdue deadline while it waits for the rest of the sequence.
     def reexec_allowed?
-      !@help && !@link_view && @filter.nil? && @pending.empty?
+      !@help && !@link_view && !@search.typing? && @pending.empty?
     end
 
     def maybe_reexec
@@ -921,11 +919,13 @@ module Switchboard
     end
 
     # Once, after the first reload's locate: the cursor goes back on the row it was on
-    # before the exec, or — that row gone — where a freshly summoned sidebar starts.
+    # before the exec; that row gone (a search may have been showing it), on its project's
+    # header; failing that, where a freshly summoned sidebar starts.
     def restore_resumed_cursor
       want = @resume_cursor or return
       @resume_cursor = nil
-      i = @rows.index { |n| CodeReload::CURSOR_FIELDS.all? { |f| n[f] == want[f] } }
+      i = @rows.index { |n| CodeReload::CURSOR_FIELDS.all? { |f| n[f] == want[f] } } ||
+          @rows.index { |n| n.kind == "proj" && n.project == want["project"] }
       i ? @cursor = i : cursor_to_current
     end
 
@@ -940,6 +940,7 @@ end
 require_relative "sidebar/edges"
 require_relative "sidebar/update_cue"
 require_relative "sidebar/reloader"
+require_relative "sidebar/search"
 require_relative "sidebar/render"
 require_relative "sidebar/input"
 require_relative "sidebar/actions"

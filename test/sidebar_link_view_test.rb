@@ -532,7 +532,7 @@ module Switchboard
         sb = linked
         opener.call(sb)
         fired = []
-        stub_method(sb, :start_filter, ->(*) { fired << :filter }) do
+        stub_method(sb, :start_search, ->(*) { fired << :filter }) do
           assert sb.send(:handle, "x/")
         end
         refute still_open.call(sb), "the overlay closed"
@@ -565,7 +565,7 @@ module Switchboard
         opener.call(sb)
         ran = []
         stub_method(sb, :reload_and_refresh, ->(*) { ran << :reload }) do
-          stub_method(sb, :start_filter, ->(*) { ran << :filter }) { assert sb.send(:handle, "x\f/") }
+          stub_method(sb, :start_search, ->(*) { ran << :filter }) { assert sb.send(:handle, "x\f/") }
         end
         assert_equal [:reload], ran, "the poke ran, the / aimed at the overlay didn't"
       end
@@ -573,7 +573,7 @@ module Switchboard
 
     # Value: protects=keys typed at the QR don't run on the tree when a scan (not a key) closes it
     # because the link ended; fails_when=only a dismissing key fences the batch; why_new=Codex
-    # review of v0.54.1 (handle("\f/") started a filter); seam=reload_and_refresh stubbed to end the
+    # review of v0.54.1 (handle("\f/") started a search); seam=reload_and_refresh stubbed to end the
     # link; no_claim=the real scan
     def test_keys_after_a_scan_closes_the_qr_do_not_reach_the_tree
       sb = open(linked)
@@ -583,7 +583,7 @@ module Switchboard
         sb.send(:revalidate_link_view)
       end
       stub_method(sb, :reload_and_refresh, ended) do
-        stub_method(sb, :start_filter, ->(*) { fired << :filter }) { assert sb.send(:handle, "\f/") }
+        stub_method(sb, :start_search, ->(*) { fired << :filter }) { assert sb.send(:handle, "\f/") }
       end
       assert_nil view(sb)
       assert_empty fired

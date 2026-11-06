@@ -259,6 +259,38 @@ module Switchboard
       assert_includes names.lines.map(&:chomp), "sb/é/x"
     end
 
+    # The whole key loop through a real PTY: nothing is hidden, n/N step, and Esc is what gives
+    # n back. The bytes tmux actually delivers are what the stubbed suite can not reach.
+    def test_search_highlights_steps_and_only_esc_gives_n_back
+      2.times { create_workspace }
+      pane = sidebar_pane_ids(HOME).first
+      rows = capture(pane).lines.count { |l| l.include?("-") }
+
+      tmux!("send-keys", "-t", pane, "/")
+      tmux!("send-keys", "-t", pane, "-l", "-")
+      wait_until("the live count") { capture(pane).include?("/- [1/2]") }
+      tmux!("send-keys", "-t", pane, "Enter")
+      wait_until("the committed footer") { capture(pane).include?("[1/2] · n/N") }
+      assert_equal rows, capture(pane).lines.count { |l| l.include?("-") } - 1, "no row hidden (the footer adds a line with a -)"
+
+      tmux!("send-keys", "-t", pane, "n")
+      wait_until("n stepped") { capture(pane).include?("[2/2]") }
+      tmux!("send-keys", "-t", pane, "N")
+      wait_until("N stepped back") { capture(pane).include?("[1/2]") }
+      tmux!("send-keys", "-t", pane, "j")
+      wait_until("j moves, the search stays on") { capture(pane).include?("[2/2]") || capture(pane).include?("[-/2]") }
+      assert_match(/\e\[(?:30;43|30m\e\[43)m-/, tmux("capture-pane", "-e", "-p", "-t", pane), "the match wears the search style")
+
+      dispatched = Creation.all.size
+      tmux!("send-keys", "-t", pane, "Escape")
+      wait_until("Esc ended the search") { !capture(pane).include?("n/N") }
+      tmux!("send-keys", "-t", pane, "n")
+      wait_until("n is new workspace again") { capture(pane).include?("task ›") }
+      tmux!("send-keys", "-t", pane, "Escape")
+      wait_until("the prompt closed") { !capture(pane).include?("task ›") }
+      assert_equal dispatched, Creation.all.size, "nothing was created along the way"
+    end
+
     private
 
     def open_delete_prompt(pane, leaf)

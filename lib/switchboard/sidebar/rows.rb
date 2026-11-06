@@ -4,7 +4,7 @@ module Switchboard
   class Sidebar
     # Rows (#57): the view-model half between the Tree and the paint — rebuild
     # (hydrating every shared on-disk view preference), the collapse/branch-fold
-    # row transforms (#107), the / filter rows (#60), and the off-paint
+    # row transforms (#107), what the / search reveals and matches, and the off-paint
     # diff-count cache with its mtime gate (#79). A concern module on Sidebar
     # (see CLAUDE.md conventions); what a row SHOWS stays here, what a row
     # LOOKS like lives in Render.
@@ -23,10 +23,12 @@ module Switchboard
         # names (the stable registry, not the git-built tree, so a project that
         # momentarily fails to build doesn't lose its fold).
         @collapsed = Collapse.collapsed(@config.projects.map { |p| p["name"] })
+        # A project another window unfolded is no longer ours to hold open: ↵ on it should fold.
+        @search.sticky = nil unless @collapsed.include?(@search.sticky)
         # Workspaces mid-deletion: hidden in every window while a detached daemon runs
         # the slow `git worktree remove` (the marker is cleared when it finishes, or
         # aged out by TTL if the daemon dies). Git still lists the worktree until the
-        # removal lands, so it's in @nodes — the filter below drops it from the rows.
+        # removal lands, so it's in @nodes — visible_tree below drops it from the rows.
         @pending_delete = PendingDelete.pending(@nodes.select { |n| n.kind == "ws" }.map(&:path))
         # Background dispatches (n → task): GC the lifecycle records, then show each one
         # git doesn't list yet as a synthetic row LAST in its project (DR2), and map the
@@ -52,7 +54,7 @@ module Switchboard
       end
 
       # Splice a synthetic ws row into @nodes for every live record whose worktree git
-      # doesn't list, after its project's last row — so collapse, filter and the cursor
+      # doesn't list, after its project's last row — so collapse, search and the cursor
       # treat it like any other workspace — then index records by row path.
       def inject_creations(records)
         real = @nodes.select { |n| n.kind == "ws" }.to_h { |n| [Creation.real_path(n.path), n.path] }
@@ -79,18 +81,70 @@ module Switchboard
         end
       end
 
-      # Visible rows. Normally: all nodes, minus the children of collapsed projects.
-      # In / filter mode: each project's matching workspaces, kept UNDER their
-      # project header so the grouping stays visible. Collapse is ignored (the point
-      # is reaching any workspace fast, even a folded one). Headers ARE selectable
-      # here — ↵ on a header creates a new workspace in that project, ↵ on a workspace
-      # switches to it (see switch_to_filtered).
+      # Visible rows: all nodes, minus the children of folded projects. A search hides no row;
+      # it only changes which projects count as folded. Matches and reveals move rows under a
+      # search's cursor, so it stays on its row by identity (normal-tree callers use keep_cursor).
       def recompute_rows
-        @rows = @filter ? filtered_rows : visible_tree
+        here = [row_key(current), current.project] if @search.active? && current
+        @revealed = revealed_projects
+        @rows = visible_tree
+        @search_hits = @search.active? ? @rows.each_index.select { |i| @search.match?(search_text(@rows[i])) } : []
+        restore_cursor(*here) if here
         @cursor = @cursor.clamp(0, [@rows.size - 1, 0].max)
       end
 
-      # The normal (non-filter) rows: the full tree, minus the children of collapsed
+      # Back onto the row `key` names. Gone: its workspace (a folded branch row), else a neighbor
+      # in its project, else its header. A neighbor before the header, because the header is the
+      # one row where a repeated d y removes a whole project. With none of those, the workspace
+      # this session is in, else the top: n and d act on whatever the cursor is on, so it never
+      # keeps a stale index into rows that have changed.
+      def restore_cursor(key, project)
+        i = @rows.index { |n| row_key(n) == key } ||
+            @rows.index { |n| n.kind == "ws" && n.path == key[1] } ||
+            neighbor_index(project) ||
+            @rows.index { |n| n.kind == "proj" && n.project == project }
+        return @cursor = i if i
+
+        @cursor = 0
+        cursor_to_current
+      end
+
+      def neighbor_index(project)
+        sibling = ->(i) { i >= 0 && @rows[i] && @rows[i].kind != "proj" && @rows[i].project == project }
+        [@cursor, @cursor - 1].find(&sibling) || @rows.each_index.to_a.reverse.find(&sibling)
+      end
+
+      # Folded as drawn: collapsed on disk and not being shown by a search in this sidebar.
+      def folded?(project)
+        @collapsed.include?(project) && !@revealed.include?(project)
+      end
+
+      # Collapsed projects with a matching child, plus the one a finished search left open. A
+      # header that matches on its own name is already on screen, so it reveals nothing.
+      def revealed_projects
+        revealed = Set.new([@search.sticky].compact)
+        return revealed unless @search.active?
+
+        @nodes.each do |n|
+          next if n.kind == "proj" || !@collapsed.include?(n.project) || @pending_delete.include?(n.path)
+          next if n.kind == "br" && @fold_branches
+
+          revealed << n.project if @search.match?(search_text(n))
+        end
+        revealed
+      end
+
+      # The one piece of a row a search reads: its drawn name, so a match always has something
+      # to highlight. Render's name_spans reads the same part of the row.
+      def search_text(node)
+        shown(case node.kind
+              when "proj" then node.project
+              when "ws" then node.name
+              else node.branch
+              end)
+      end
+
+      # The rows: the full tree, minus the children of collapsed
       # projects, and — when the global `z` branch-fold is on (issue #107) — minus
       # every workspace's branch-history rows, each multi-branch workspace folded down
       # to a single row. Folding is a cheap row transform (like project collapse), NOT
@@ -104,9 +158,9 @@ module Switchboard
         rows = []
         @nodes.each do |n|
           next if n.kind != "proj" && @pending_delete.include?(n.path) # being deleted: hide the ws + its branch rows
-          next if n.kind != "proj" && @collapsed.include?(n.project) # collapsed project hides its children
+          next if n.kind != "proj" && folded?(n.project) # a folded project hides its children
           next if n.kind == "br" && @fold_branches                   # folded: hide every branch row
-          rows << if n.kind == "proj" && @collapsed.include?(n.project) then fold_proj(n, hidden[n.project])
+          rows << if n.kind == "proj" && folded?(n.project) then fold_proj(n, hidden[n.project])
                   elsif foldable_ws?(n) then fold_ws(n, active_pr[n.path], counts[n.path])
                   else n
                   end
@@ -122,7 +176,7 @@ module Switchboard
         return hidden if @collapsed.empty?
 
         @nodes.each do |n|
-          next unless n.kind == "ws" && @collapsed.include?(n.project) && !@pending_delete.include?(n.path)
+          next unless n.kind == "ws" && folded?(n.project) && !@pending_delete.include?(n.path)
 
           hidden[n.project] += 1
         end
@@ -165,47 +219,6 @@ module Switchboard
       # intact (rebuild reuses it; the @diffs cache keys on path/branch/kind, unchanged).
       def fold_ws(node, pr, count)
         node.class.new(**node.to_h.merge(expanded: false, pr: pr, folded: count))
-      end
-
-      # Filter rows: walk the tree and, per project, emit its header plus its matching
-      # workspaces. A header shows when its OWN name matches — so a project with no
-      # (matching) workspaces still appears, and you can ↵ to create its first one — OR
-      # when it has matching workspaces (grouping context). Neither ⇒ dropped. Branch-
-      # history rows are deliberately skipped: switching to one is identical to
-      # switching to its workspace, so a lone branch match would just orphan under a
-      # header with no workspace above it.
-      def filtered_rows
-        rows = []
-        header = nil
-        keep_header = false
-        matches = []
-        @nodes.each do |n|
-          if n.kind == "proj"
-            rows.push(header, *matches) if header && (keep_header || matches.any?)
-            header = n
-            keep_header = self.class.fuzzy_match?(n.project, @filter)
-            matches = []
-          elsif n.kind == "ws" && !@pending_delete.include?(n.path) && self.class.fuzzy_match?(filter_text(n), @filter)
-            matches << n
-          end
-        end
-        rows.push(header, *matches) if header && (keep_header || matches.any?)
-        rows
-      end
-
-      # Where the cursor lands after a query keystroke: the first workspace match (so
-      # type-then-↵ jumps), not the leading project header. Entry (start_filter) lands
-      # on the first row instead; you can arrow up onto a header to create. 0 when
-      # there's no match.
-      def first_selectable
-        @rows.index { |n| n.kind != "proj" } || 0
-      end
-
-      # The text a workspace is matched against in filter mode: project + its name +
-      # its current branch, so typing a project name narrows to its workspaces and
-      # typing a workspace (or current-branch) name jumps straight to it.
-      def filter_text(node)
-        [node.project, node.name, node.branch].compact.join(" ")
       end
 
       # Per-worktree diff counts (issue #79): "+adds −dels" of each row's branch vs

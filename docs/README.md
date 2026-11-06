@@ -55,7 +55,7 @@ depth behind it.
   `switchboard new`) builds a workspace in the background, and why cancel and failure
   never destroy work.
 - [The sidebar's views and keys](explanation-sidebar-views.md) — folds, width, diff
-  counts, the filter, the `?` overlay and remappable keys.
+  counts, the search, the `?` overlay and remappable keys.
 - [Session-name sync](explanation-session-name-sync.md) — how a rename reaches the
   Claude session's own name, and why typing into its pane fails closed.
 

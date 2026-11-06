@@ -85,11 +85,10 @@ module Switchboard
       assert_equal 0, folded_header(sb).folded
     end
 
-    def test_filter_mode_never_carries_the_folded_count
+    def test_a_revealed_project_never_carries_the_folded_count
       sb = sidebar(nodes: [proj("app"), ws("alpha")], collapsed: ["app"])
-      sb.instance_variable_set(:@filter, "alp")
-      sb.send(:recompute_rows)
-      assert_nil folded_header(sb).folded, "filtering shows the children, so the header reads expanded"
+      sb.send(:handle, "/alp")
+      assert_nil folded_header(sb).folded, "a search shows the children, so the header reads expanded"
     end
 
     def test_a_single_branch_ws_is_unchanged_by_the_fold
