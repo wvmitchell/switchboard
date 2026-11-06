@@ -107,7 +107,7 @@ tracks these lines; update them when you re-verify one.
 - **Codex is global:** Codex (verified 0.142 through 0.167) doesn't load a *linked*
   worktree's own hooks, so switchboard writes one `[hooks]` block into
   `~/.codex/config.toml`. An empty `CODEX_HOME` means `~/.codex` to Codex (checked live on
-  0.165.0) and to us.
+  0.167.0) and to us.
 - **⇅ remote link** (`bridgeSessionId`, `procStart` in `~/.claude/sessions/<pid>.json`):
   verified live on Claude Code 2.1.308 (`doctor`'s canary still clean on 2.1.319).
 - **◷ sessions-file `status`:** last verified live against **Claude Code 2.1.308–2.1.310**

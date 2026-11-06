@@ -222,6 +222,11 @@ reporter prints nothing, and a silent hook leaves the answer to you. Claude also
 accepted cost is a dot that stays magenta until an approved tool finishes (or, after an
 Esc rejection, until the next prompt).
 
+`PermissionRequest` has one side effect in Claude: [its docs](https://code.claude.com/docs/en/permission-modes#why-the-critical-path-removal-prompt-stays-on)
+list any such hook as switching off `CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS`, so in a
+hooked worktree dangerous `rm` commands keep their usual checks. That fails safe, and refreshing a
+worktree's hooks puts the entry back if you remove it.
+
 Codex has no `Notification` event, so `PermissionRequest` is its only `waiting` signal.
 The magenta dot shows whenever Codex blocks on you for approval, which is best-effort: a
 session command that bypasses *all* approvals suppresses it.
