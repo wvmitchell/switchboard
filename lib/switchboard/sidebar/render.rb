@@ -191,9 +191,9 @@ module Switchboard
       # nothing newer. Fit on the plain text: a narrow pane drops the dim command half
       # first, then cuts the message, so an escape is never split.
       def update_line(cols)
-        return [] unless @update_cue
+        return [] unless @update.cue
 
-        message = "↑ #{@update_cue} available"
+        message = "↑ #{@update.cue} available"
         return ["#{UPDATE_FG}#{trunc(message, cols)}\e[0m"] if message.length + UPDATE_HINT.length > cols
 
         ["#{UPDATE_FG}#{message}\e[0m#{NOTE_FG}#{UPDATE_HINT}\e[0m"]

@@ -8,7 +8,7 @@ without restarting, and why a sidebar has to check that it still owns its pane.
 
 This is the deepest part of the codebase. If you're changing visibility, poking,
 or the run loop in `sidebar.rb` (or its `sidebar/` concern files — the #57
-split: `edges`, `render`, `input`, `actions`, `prompt`, `rows`), read this first.
+split: `edges`, `update_cue`, `render`, `input`, `actions`, `prompt`, `rows`), read this first.
 
 ## Why one process per window
 
