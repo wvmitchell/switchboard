@@ -720,7 +720,7 @@ module Switchboard
 
         in the sidebar
           ↑↓ ^N/^P move (projects, workspaces, and a workspace's branches)
-          /        filter — type to jump to a workspace by name (↵ open, esc cancel)
+          /        search — highlight matches by name (n/N step, ↵ then ↵ open, esc end)
           ↵        switch to the workspace's tmux session (or collapse a project)
           a        add a project (register a local repo, clone a URL, or create a new one)
           n        create a new worktree in the highlighted project

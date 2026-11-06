@@ -45,10 +45,10 @@ drifts from a remap.
 
 | Default | Action | What it does |
 |---------|--------|--------------|
-| `↑` / `↓` / `Ctrl-N` / `Ctrl-P` / `j` / `k` | `down` / `up` | Move the highlight down/up (across projects, workspaces, and a workspace's branch rows). Arrow, emacs, and vi spellings all work; only the `j`/`k` letters are remappable (the `↑`/`↓`/`Ctrl-N`/`Ctrl-P` aliases are fixed). Type a count first to move that many rows, as in vim: `3j` moves down three, `10k` up ten. The footer shows a count you've started (`3…`; [`count_indicator: false`](reference-config.md#top-level-keys) hides it), and any other key or leaving the pane drops it. A digit you've bound to an action in `sidebar_keys` keeps doing that action instead of counting. In filter mode `j`/`k` type into the query instead. |
+| `↑` / `↓` / `Ctrl-N` / `Ctrl-P` / `j` / `k` | `down` / `up` | Move the highlight down/up (across projects, workspaces, and a workspace's branch rows). Arrow, emacs, and vi spellings all work; only the `j`/`k` letters are remappable (the `↑`/`↓`/`Ctrl-N`/`Ctrl-P` aliases are fixed). Type a count first to move that many rows, as in vim: `3j` moves down three, `10k` up ten. The footer shows a count you've started (`3…`; [`count_indicator: false`](reference-config.md#top-level-keys) hides it), and any other key or leaving the pane drops it. A digit you've bound to an action in `sidebar_keys` keeps doing that action instead of counting. While you type a search, `j`/`k` go into the query instead. |
 | `g` / `G` | `top` / `bottom` | Jump to the top / bottom of the tree. |
-| `←` / `→` | _(fixed)_ | Narrow / widen the sidebar pane (2 cols per press; hold to resize smoothly). The width is shared across every window's sidebar and survives a restart. Inert in filter mode. |
-| `/` | `filter` | Filter the tree — type to jump straight to a workspace by name. See [Filter mode](#filter-mode) below. |
+| `←` / `→` | _(fixed)_ | Narrow / widen the sidebar pane (2 cols per press; hold to resize smoothly). The width is shared across every window's sidebar and survives a restart. Inert while you type a search. |
+| `/` | `filter` | Search the tree by name, highlighting matches. See [Search](#search) below. |
 | `↵` (Enter) | _(fixed)_ | On a workspace/branch row: switch to its tmux session (creating it if needed). On a project header: collapse/expand it. |
 | `a` | `add_project` | Add a project — register a local repo, clone a URL, or create a new repo (a small prompt). |
 | `n` | `new_workspace` | Dispatch a new worktree + branch in the highlighted project, in the background: type a task for the agent (or `↵` for none, `Esc` to cancel). You stay put; the row shows `◌` while it builds and pings you when it's ready (`✘` if it fails). No name prompt — it gets a throwaway placeholder name you rename later with `r` (or let the agent name it). |
@@ -61,7 +61,7 @@ drifts from a remap.
 | `r` | `rename` | Rename the highlighted workspace (moves the worktree dir, keeps branch + PR). |
 | `d` | `delete` | Remove the highlighted row — delete a workspace and its local branches, or unregister a project (and close its sessions). Confirms first. On a `◌` row it cancels the build (after a confirm); on a `✘` row with no worktree yet it just dismisses it. |
 | `e` | `edit_config` | Edit `config.yml` in `$EDITOR` (opens beside the home tree, returns you on quit). |
-| `?` | `help` | Show the full key map overlay (nav + actions + filter/prompt modes + the tmux keys that operate the sidebar). On a short pane it pages: `→`/`Space` next, `←` back. Any other key closes it. |
+| `?` | `help` | Show the full key map overlay (nav + actions + search and prompt keys + the tmux keys that operate the sidebar). On a short pane it pages: `→`/`Space` next, `←` back. Any other key closes it. |
 | `q` | `quit` | Quit switchboard — tear down every `sb/` session. Confirms first. |
 
 A `sidebar_keys` value is a **single printable character**. That rule is what
@@ -102,44 +102,45 @@ so every window agrees and it survives restarts; it is *not* cleared on `q`.
 The canonical trunk checkout (the project's primary worktree) is never shown as a
 switch target.
 
-### Filter mode
+### Search
 
-`/` turns the sidebar into an incremental filter — fzf-style, but **in the
-sidebar** (no popup, no external `fzf`; it's plain string matching). Useful once
-you have enough workspaces that scrolling to one is slow.
+`/` searches the tree the way vim searches a buffer: matches are highlighted where they are,
+and no row is hidden.
 
-| Key | Action while filtering |
+| Key | While typing the query |
 |-----|------------------------|
-| _(any printable key)_ | Append to the query. The rows narrow to fuzzy matches. |
-| `Backspace` | Delete the last query character — and backspacing past an empty query exits filter mode (same as `Esc`). |
-| `↑` / `↓` / `Ctrl-N` / `Ctrl-P` | Move the highlight (over matching workspaces *and* their project headers). |
-| `↵` (Enter) | On a **workspace**: switch to it. On a **project header**: ask for a task and build a new workspace there in the background (a `◌` row, then a ping). Either way, leave filter mode. |
-| `Esc` | Cancel — restore the full tree, no switch. |
+| _(any printable key)_ | Add to the query. The cursor previews the first match from where you started. |
+| `Backspace` | Delete the last character. Pressed on an empty query, it cancels. |
+| `↵` (Enter) | Keep the search on and go back to the normal keys. With no matches, cancel. |
+| `Esc` | Cancel and go back to where you started. |
+
+The arrows, `Ctrl-N` and `Ctrl-P` do nothing while you type.
+
+| Key | Once the search is on |
+|-----|-----------------------|
+| `n` / `N` | Next / previous match, wrapping at the ends. Takes a count, as in `3n`. These two aren't remappable, and they mean new workspace again once the search ends. A `filter` key bound to `n` or `N` won't start a new search until this one ends. |
+| `Esc` | End the search and leave the cursor where it is. |
+| `↵` (Enter) | On a workspace or branch: end the search and open it. On a project header: end the search and stop; a further `↵` folds as usual. |
+| `/` | Start a new search from the current row. |
+| _(everything else)_ | Works as usual, with the matches still highlighted. |
 
 What it matches:
 
-- **Fuzzy (subsequence), case-insensitive** — `afb` finds `app-feat-branch`.
-- Against the **project name + each workspace's name** (and its current branch),
-  so typing a project name narrows to its workspaces and typing a workspace name
-  jumps straight to it. A project also matches on its name *alone*, so one with no
-  workspaces yet still appears — that's how you reach it to create its first.
-  (A workspace's older branch-history rows aren't separate matches — you reach the
-  workspace, and its branches are there in the full tree.)
-- Across the **whole tree, collapsed projects included** — the point is reaching
-  *any* workspace fast, even one folded away. Matches stay grouped **under their
-  project header** so you can see which project each belongs to. You enter on the
-  first row (the top header) and the cursor snaps to the first workspace match as
-  soon as you type, so type-then-`↵` jumps. Headers are selectable too: arrow up
-  onto one and `↵` creates a new workspace in that project (the project-level
-  action, since collapsing makes no sense while filtering).
+- **A literal, case-insensitive piece of what's drawn:** a workspace's name, a project's name
+  or a visible branch row. A workspace's branch isn't searched unless its branch row is on
+  screen, and neither are task notes or PR numbers.
+- **Across the whole tree.** A project with a match inside unfolds while the search is on, in
+  this sidebar only. When the search ends it folds again, except the project your cursor is
+  in, which stays open until you fold it, press `Esc` on a search elsewhere or leave the
+  pane. Your shared folds never change.
 
-The footer swaps to the filter legend (`↵ open · esc cancel`) and echoes your
-live query plus a match count. Every printable key feeds the query (just like
-fzf), so `j`/`k` type rather than move here — unlike the tree, where they're vi
-movers; in filter mode navigation is the arrows or `Ctrl-N`/`Ctrl-P`. A welcome
-side effect: no destructive key (`d`, `q`) can fire
-by accident mid-search. The query is per-pane and transient — it isn't shared
-across windows or remembered after you switch.
+With no matches left, say because a workspace was renamed, the search stays on and `n`/`N`
+do nothing until you press `Esc`, so `n` can't turn into new workspace behind your back.
+
+The footer shows the query, your place among the matches (`[2/5]`, or `[-/5]` when the cursor
+isn't on one) and the keys. A search belongs to one pane and ends when that pane leaves the
+screen, though a quick switch away and back can find it still on. A sidebar hot reload also
+ends it.
 
 ### How keys reach the sidebar
 

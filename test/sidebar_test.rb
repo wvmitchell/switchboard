@@ -51,11 +51,11 @@ module Switchboard
     def test_sidebar_core_constants_and_singletons_are_pinned
       expected = %i[
         Actions Edges IDLE Input NAV_TTL POKE_TTL PULSE Prompt REFRESH Reloader Render
-        Rows TREE_TICKS UpdateCue VIS_POLL WARM_TTL
+        Rows Search TREE_TICKS UpdateCue VIS_POLL WARM_TTL
       ]
       assert_equal expected, Sidebar.constants(false).sort,
                    "the core constant set moved — if deliberate, update this pin"
-      assert_equal %i[check fuzzy_match? run], Sidebar.singleton_methods(false).sort,
+      assert_equal %i[check run], Sidebar.singleton_methods(false).sort,
                    "the class-level surface moved — if deliberate, update this pin"
     end
 
@@ -402,17 +402,16 @@ module Switchboard
       refute_nil sb.instance_variable_get(:@geom), "an unchanged width leaves the pin cache intact (no redundant re-pin)"
     end
 
-    # ←/→ are inert while filtering (issue #60 keeps movement off j/k there; resize
-    # stays off too) — they neither resize nor leak into the query.
-    def test_resize_keys_are_inert_while_filtering
+    # ←/→ are inert while typing a search: they neither resize nor leak into the query.
+    def test_resize_keys_are_inert_while_typing_a_search
       sb = sidebar(nodes: [proj("app"), ws("a")])
       sb.send(:dispatch, "/")
       start = width_of(sb)
       sb.send(:dispatch, "\e[C")
       sb.send(:dispatch, "\e[D")
-      assert_equal start, width_of(sb), "←/→ don't resize while filtering"
+      assert_equal start, width_of(sb), "←/→ don't resize while typing a search"
       refute sb.instance_variable_get(:@resized), "...and queue no commit"
-      assert_equal "", sb.instance_variable_get(:@filter), "...nor leak into the query"
+      assert_equal "", sb.instance_variable_get(:@search).query, "...nor leak into the query"
     end
 
     def test_jump_keys_stay_in_bounds_on_an_empty_tree

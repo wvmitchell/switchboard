@@ -122,7 +122,7 @@ module Switchboard
     # The `?` overlay's [key_label, description] rows, built from the resolved
     # `bindings` so the shown keys never drift from what `dispatch` honors. A row
     # with an empty key is a section heading. Keys that aren't configurable (↵,
-    # ←/→, ^n/^p, the filter- and prompt-mode escapes) are literal here — they're
+    # ←/→, ^n/^p, the search and prompt keys) are literal here — they're
     # reserved structural keys. A collision-dropped action shows an em-dash.
     def help_rows(bindings)
       k = ->(name) { bindings[name] || "—" }
@@ -133,7 +133,7 @@ module Switchboard
         ["←  →", "narrow · widen pane"],
         ["", "open"],
         ["↵", "open · collapse"],
-        [k[:filter], "filter by name"],
+        [k[:filter], "search by name"],
         ["", "the selected row"],
         [k[:add_project], "add a project"],
         [k[:new_workspace], "new workspace"],
@@ -149,13 +149,17 @@ module Switchboard
         [k[:toggle_full_header], "toggle full header"],
         [k[:help], "this help"],
         [k[:quit], "quit all sessions"],
-        # the filter and the prompts share ↵/Esc, but only an empty filter exits
+        # a search and the prompts share ↵/Esc, but only an empty search exits
         # on Bksp and only a prompt clears on ^u — so those two stay separate rows
-        ["", "in a prompt or filter"],
-        ["↵", "open · create · submit"],
+        ["", "in a search"],
+        ["n  N", "next · previous match"],
+        ["↵", "search · then open the row"],
+        ["Esc", "end the search"],
+        ["Bksp", "erase · exits empty search"],
+        ["", "in a prompt"],
+        ["↵", "submit"],
         ["Esc", "cancel"],
-        ["Bksp", "erase · exits empty filter"],
-        ["^u", "clear (prompts)"],
+        ["^u", "clear"],
         ["", "diff counts"],
         ["+/−", "committed diff vs base"]
       ]

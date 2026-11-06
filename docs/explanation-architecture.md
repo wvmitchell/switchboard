@@ -92,8 +92,9 @@ Pr  ────┘   (project    (ordered      (hand-rolled ANSI TUI in a
 - **`Sidebar`** draws the nodes as a 3-level tree in a fixed-width tmux pane. No
   fzf, no curses — a hand-rolled ANSI renderer. It is the *only* navigator.
   `sidebar.rb` is the run-loop core. The #57 split carved the rest into concern files
-  under `sidebar/`: `edges`, `update_cue` and `reloader`, collaborator classes that own the
-  agent-edge fan-out state, the update line's and the code reload's, and the `render`, `input`, `actions`, `prompt` and
+  under `sidebar/`: `edges`, `update_cue`, `reloader` and `search`, collaborator classes that
+  own the agent-edge fan-out state, the update line's, the code reload's and the `/` search's,
+  and the `render`, `input`, `actions`, `prompt` and
   `rows` mixins. It's one class in several files, each with its own
   `test/sidebar_*_test.rb` built on the shared `test/support/sidebar_case.rb`.
 - **`view.rb`** holds the compact badge helpers the sidebar uses: the PR's state shown by
@@ -594,7 +595,7 @@ unit-tested offline.
 - Every file starts with `# frozen_string_literal: true`.
 - Stateless helpers are `module_function` modules (`ClaudeHook`, `Tmux`, `Installer`,
   `Git`, `Pr`, …). Only `Model`, `Config`, `Sidebar` (plus its `Sidebar::Edges`,
-  `Sidebar::UpdateCue` and `Sidebar::Reloader` collaborators — see above), and `AgentState` are classes — they hold
+  `Sidebar::UpdateCue`, `Sidebar::Reloader` and `Sidebar::Search` collaborators — see above), and `AgentState` are classes — they hold
   state.
 - Comments explain *why* a non-obvious thing is done, not *what* the code does.
   Match that density.

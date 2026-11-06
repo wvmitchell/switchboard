@@ -175,10 +175,9 @@ module Switchboard
       # (reserving a name is only local branch/session lookups), so the loop never
       # freezes, and we never switch you in: the row appears as ◌ and pings when it's
       # ready (or ✘ if it isn't). A blank ↵ is a bare create (no task); Esc
-      # cancels. The cursor stays on the row it was on (DR1). Filter-mode ↵ on a project
-      # header lands here too, with that header.
-      def create(node = current)
-        return unless node
+      # cancels. The cursor stays on the row it was on (DR1).
+      def create
+        node = current or return
 
         task = prompt_line("#{node.project} task", hint: " (↵ = no task · esc)", task: true)
         return if task.nil?

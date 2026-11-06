@@ -125,8 +125,8 @@ without it and asserts an untrusted block writes no state (the case behind `doct
   `Installer`, `Git`, `Pr`, `Reconcile`, `Creator`, `Registrar`, `Sound`,
   `Attention`, `Collapse`, …). Only `Model`, `Config`, `Sidebar` (plus its
   `Sidebar::Edges` collaborator, the #57 carve-out of the agent-edge fanout
-  state, `Sidebar::UpdateCue`, the update line's, and `Sidebar::Reloader`, the code
-  reload's), and `AgentState` are classes — they
+  state, `Sidebar::UpdateCue`, the update line's, `Sidebar::Reloader`, the code
+  reload's, and `Sidebar::Search`, the `/` search's), and `AgentState` are classes — they
   hold state. Don't make a class for something that doesn't need instance state.
 - **Every file under `lib/switchboard/` has a layer** (support, adapters, state,
   operations, interfaces) and may reference only its own layer or a lower one.
@@ -188,7 +188,7 @@ the new binary re-wire tmux and every hooked worktree — the CHANGELOG header s
 | What the agent hooks print and record | `lib/switchboard/hook_commands.rb` (the decisions: `state/rename_nudge.rb`, `state/dispatch_nudge.rb`, `state/monitoring_nudge.rb`) |
 | Config / registry | `lib/switchboard/state/config.rb` |
 | The data model + tree | `lib/switchboard/state/model.rb`, `state/tree.rb` |
-| The sidebar TUI | `lib/switchboard/sidebar.rb` (run-loop core) + `lib/switchboard/sidebar/{edges,update_cue,reloader,render,input,actions,prompt,rows}.rb` (its test files: `test/sidebar_*_test.rb`, sharing `test/support/sidebar_case.rb`) |
+| The sidebar TUI | `lib/switchboard/sidebar.rb` (run-loop core) + `lib/switchboard/sidebar/{edges,update_cue,reloader,search,render,input,actions,prompt,rows}.rb` (its test files: `test/sidebar_*_test.rb`, sharing `test/support/sidebar_case.rb`) |
 | tmux integration | `lib/switchboard/adapters/tmux.rb`, `adapters/tmux/`, `switchboard.tmux` |
 | Install / keybindings | `lib/switchboard/ops/installer.rb`, `lib/switchboard/ops/installer/keybindings.rb`, `support/stable_path.rb` (Homebrew `opt/` paths) |
 | Upgrade / release check | `lib/switchboard/ops/upgrade.rb`, `adapters/latest_release.rb` |

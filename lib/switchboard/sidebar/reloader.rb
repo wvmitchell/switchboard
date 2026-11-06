@@ -6,7 +6,7 @@ module Switchboard
     # which only signal a pane whose tag is our pid) or by the backstop in tick (the Homebrew
     # keg moved). Due at once on screen; off screen after a random spread, so a fleet doesn't
     # boot and rescan at once — but a switch-in makes it due right away. Never under an overlay
-    # or the filter, and never mid-prompt (prompts block the loop, so the request waits).
+    # or while a search is being typed, and never mid-prompt (prompts block the loop, so the request waits).
     # The why behind each step: docs/explanation-sidebar-lifecycle.md.
     #
     # The sidebar owns what the payload carries and whether its overlays allow a swap, and

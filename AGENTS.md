@@ -41,7 +41,7 @@ Files sit in a folder per layer under `lib/switchboard/` (`support`, `adapters`,
 
 - **Dispatch:** `lib/switchboard/cli.rb`; agent hook entries in `hook_commands.rb`, `doctor` in `doctor.rb`
 - **Data model → tree → TUI:** `model.rb` → `tree.rb` → `sidebar.rb` (+ its
-  `sidebar/` concern files: `edges`, `update_cue`, `reloader`, `render`, `input`, `actions`,
+  `sidebar/` concern files: `edges`, `update_cue`, `reloader`, `search`, `render`, `input`, `actions`,
   `prompt`, `rows` — one class in several files, #57)
 - **Config / registry:** `config.rb`
 - **tmux / global config blocks:** `tmux.rb`, `tmux/`, `switchboard.tmux` · **install/keys:** `installer.rb`, `installer/keybindings.rb` · **upgrade:** `upgrade.rb`, `latest_release.rb` · **marker-block surgery:** `marker_block.rb`
@@ -52,7 +52,7 @@ Files sit in a folder per layer under `lib/switchboard/` (`support`, `adapters`,
 ## Conventions
 
 - Stateless helpers are `module_function` modules; only `Model`, `Config`,
-  `Sidebar` (plus its `Sidebar::Edges`, `Sidebar::UpdateCue` and `Sidebar::Reloader` collaborators),
+  `Sidebar` (plus its `Sidebar::Edges`, `Sidebar::UpdateCue`, `Sidebar::Reloader` and `Sidebar::Search` collaborators),
   `AgentState` are classes (they hold state).
 - Every `lib/switchboard/` file belongs to one layer (support → adapters → state →
   operations → interfaces) and references only its own layer or lower.

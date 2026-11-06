@@ -4,7 +4,7 @@ module Switchboard
   class Sidebar
     # Input (#57): everything between raw stdin bytes and an action — the
     # nonblocking read, the terminal-grammar tokenizer, dispatch (structural
-    # sequences first, then the #108 keymap), the / filter and ? help key
+    # sequences first, then the #108 keymap), the / search and ? help key
     # modes, focus handling, and keymap resolution. A concern module on
     # Sidebar (see CLAUDE.md conventions); the input-grammar constants live
     # here WITH their consumers — POKE_BYTES references the poke
@@ -41,6 +41,10 @@ module Switchboard
       # prompt holds them until it closes (read_char).
       POKE_BYTES = ["\f", RELOAD_CONFIG_BYTE, WARM_POKE_BYTE, "\e[I", "\e[O"].freeze
 
+      # The keys a committed search takes ahead of the keymap. n and N are literal, not actions:
+      # new_workspace owns n, and they mean next and previous only while a search is on.
+      SEARCH_KEYS = ["n", "N", "\e", "\r", "\n"].freeze
+
       # The keys that turn the ? overlay's pages (→ / Space forward, ← back) when it
       # spans more than one; every other real key closes it.
       HELP_PAGE_STEPS = { "\e[C" => 1, " " => 1, "\e[D" => -1 }.freeze
@@ -58,7 +62,7 @@ module Switchboard
       # plus any non-`[` byte is consumed TOGETHER (a 2-byte token), so the `O` in an
       # SS3 `\eO…` can't escape alone either. A lone trailing `\e` is emitted as the
       # Esc key, not carried: terminals write a sequence's bytes as one unit, so a `\e`
-      # with nothing after it is the key — and carrying it would stall Esc (filter /
+      # with nothing after it is the key — and carrying it would stall Esc (search /
       # prompt cancel) waiting for bytes that never come. The one case this leaves open
       # is a CSI split BEFORE its `[` (a read ending on a lone `\e`, the next starting
       # `[O`): the `\e` flushes as Esc and the `O` could re-orphan. That needs tmux to
@@ -153,7 +157,7 @@ module Switchboard
       def dispatch(key)
         return link_view_key(key) if @link_view # p overlay is open: Tab/←/→ act, pokes run, other keys close
         return help_key(key) if @help     # ? overlay is open: a real key closes it, pokes pass through
-        return filter_key(key) if @filter # / filter mode swallows the normal bindings
+        return search_key(key) if @search.typing? # typing a / search swallows the normal bindings
 
         # Pokes aren't keystrokes, so they never touch a pending count: a switch-in C-l
         # can land between the 3 and the j.
@@ -162,6 +166,8 @@ module Switchboard
 
         # Every other key uses up the count, so none can leave a stale one behind.
         count = take_count
+        return search_command(key, count) if @search.committed? && SEARCH_KEYS.include?(key)
+
         # Structural sequences first: reserved keys with their own control flow that
         # are NOT user-remappable (issue #108) — the resize arrows and the ↵ context-
         # action. They're non-printable, so a printable sidebar_keys override
@@ -220,7 +226,7 @@ module Switchboard
         when :up                 then move(-count)
         when :top                then @cursor = 0
         when :bottom             then @cursor = [@rows.size - 1, 0].max # clamp: empty tree → 0, not -1
-        when :filter             then start_filter # type-to-filter the tree (issue #60)
+        when :filter             then start_search
         when :add_project        then add
         when :new_workspace      then create
         when :open_pr            then open_pr # open the PR in the browser
@@ -250,9 +256,9 @@ module Switchboard
         reappeared = !@visible
         set_visible(true)
         reload(announce_sounds: false) if reappeared
-        # Going back to the sidebar selects the workspace you're in; under the p overlay,
-        # keep the row p was pressed on, so closing the QR lands where you left.
-        cursor_to_current unless @link_view
+        # Going back to the sidebar selects the workspace you're in; under the p overlay or a
+        # search, keep the row you were on, so you land where you left.
+        cursor_to_current unless @link_view || @search.committed?
         # #64 fast reap: we may have just gained focus BECAUSE our work sibling closed and
         # we became the lone (active) pane. Check now so the wedge is caught within a frame
         # instead of up to one REFRESH tick. Returns true (=> dispatch exits the loop) only
@@ -267,9 +273,9 @@ module Switchboard
       end
 
       # ↵: collapse/expand a project header, or switch to a workspace/branch.
-      def enter
-        node = current
+      def enter(node = current)
         return unless node
+        return release_sticky if node.kind == "proj" && node.project == @search.sticky
         return toggle_collapse(node.project) if node.kind == "proj"
         return enter_dispatch(node) if dispatch_pending?(node)
 
@@ -314,8 +320,8 @@ module Switchboard
       # dispatch routes every key here: a real keystroke closes it, but a synthetic
       # tmux byte (POKE_BYTES — the C-l/C-r pokes, focus in/out) is ignored so a
       # background PR-refresh poke or a focus change can't dismiss it out from under
-      # the reader — the same robustness filter_key has. `?` can't open while filtering
-      # (there it's a query char), so @help and @filter are never both set.
+      # the reader — the same robustness search_key has. `?` can't open while typing a search
+      # (there it's a query char), so @help and a typing search are never both on.
 
       # `?`: open the overlay on its first page. No recompute — the overlay doesn't
       # read @rows.
@@ -451,25 +457,27 @@ module Switchboard
         view_links.find { |l| held?(l) }
       end
 
-      # --- / filter mode (issue #60) -------------------------------------------
+      # --- / search --------------------------------------------------------------
       #
-      # An in-sidebar, fzf-style incremental filter — NOT the removed external fzf
-      # popup. `/` enters; printable keys extend a query that narrows the rows to
-      # matching switch targets; ↵ jumps to the highlighted match; Esc restores the
-      # full tree. Like fzf, j/k are query input here (not motion — unlike the tree,
-      # where they move) — movement is the arrows / ^N / ^P — so any name is reachable
-      # by typing, and no destructive key (d, q) can fire mid-search.
+      # Vim's search over the tree: / types a query, each edit previews the next match from
+      # where you started, ↵ commits, and then the normal keys work with the matches highlighted
+      # and n/N stepping through them. Nothing is hidden. Only a key you press ends a search on
+      # screen, because the prompt n opens accepts an empty task: a search ending by itself
+      # between your n and your ↵ would build a real workspace.
 
-      # Key handling while filtering. Always returns true: filter mode never quits
-      # the loop — a typed 'q' is just a query character, not a teardown.
-      def filter_key(key)
+      # /: from a committed search this is a new search, starting from the row you're on.
+      def start_search
+        end_search if @search.committed?
+        @search.start(current && [row_key(current), current.project])
+      end
+
+      # Key handling while typing. Always true: a typed q is a query character, not a teardown.
+      def search_key(key)
         case key
-        when "\e"           then end_filter            # Esc: cancel, restore the full tree
-        when "\r", "\n"     then switch_to_filtered    # ↵: open the highlighted match
-        when "\e[B", "\x0E" then move(1)               # ↓ / ^N within the matches
-        when "\e[A", "\x10" then move(-1)              # ↑ / ^P
-        when "\x7F", "\b"   then backspace_filter       # Backspace (DEL / ^H): trim the query
-        else append_filter(key) if printable?(key) # any printable ASCII char -> query
+        when "\e"       then end_search(to_origin: true)
+        when "\r", "\n" then commit_search
+        when "\x7F", "\b" then erase_search
+        else edit_search { @search.append(key) } if printable?(key)
         end
         true
       end
@@ -482,57 +490,78 @@ module Switchboard
         key.bytesize == 1 && key.getbyte(0).between?(0x20, 0x7E)
       end
 
-      # /: enter filter mode with an empty query (matches everything, so the full
-      # tree shows) and the cursor on the first row. The leap-to-first-match only
-      # happens once you type (append_filter) — entry leaves you at the top.
-      def start_filter
-        @filter = +""
+      # Each query previews from the fixed origin, so typing more can't drift through matches.
+      def edit_search
+        yield
         recompute_rows
-        @cursor = 0
+        origin = @search.origin or return
+
+        restore_cursor(*origin)
+        @cursor = @search_hits.find { |i| i >= @cursor } || @search_hits.first || @cursor
       end
 
-      # Esc: leave filter mode, restore the full collapse-aware tree, and land back
-      # on the workspace this session is in (cursor_to_current) rather than wherever
-      # the filtered cursor sat.
-      def end_filter
-        @filter = nil
-        @cursor = 0
-        recompute_rows
-        cursor_to_current
+      # Backspacing past the start is the same gesture as Esc.
+      def erase_search
+        return end_search(to_origin: true) if @search.query.empty?
+
+        edit_search { @search.erase }
       end
 
-      # A printable char extends the query; re-select the top workspace match
-      # (fzf-style), so the best result is always one ↵ away as you type.
-      def append_filter(ch)
-        @filter += ch
-        recompute_rows
-        @cursor = first_selectable
+      def commit_search
+        return end_search(to_origin: true) if @search_hits.empty?
+
+        @search.commit
       end
 
-      # Backspace trims the query; backspacing past the start exits filter mode —
-      # erasing your way back through the `/` is the same gesture as Esc.
-      def backspace_filter
-        return end_filter if @filter.empty?
-
-        @filter = @filter[0..-2]
-        recompute_rows
-        @cursor = first_selectable
+      def search_command(key, count)
+        case key
+        when "n"  then step_search(count)
+        when "N"  then step_search(-count)
+        when "\e" then end_search
+        else open_from_search
+        end
+        true
       end
 
-      # ↵ in filter mode is context-sensitive, like the normal tree's ↵ but repurposed
-      # for search: on a workspace it switches (open the existing one); on a project
-      # header it CREATES a new workspace there (collapse is meaningless while
-      # filtering, so ↵-on-project becomes the project-level action). Grab the row
-      # before end_filter rebuilds @rows; both paths then act on the normal tree.
-      def switch_to_filtered
+      def step_search(delta)
+        return if @search_hits.empty?
+
+        delta.abs.times do
+          @cursor = if delta.positive? then @search_hits.find { |i| i > @cursor } || @search_hits.first
+                    else @search_hits.reverse_each.find { |i| i < @cursor } || @search_hits.last
+                    end
+        end
+      end
+
+      # ↵ on a row. Grab it first: ending the search can re-fold the rows and move what's under
+      # the cursor. A header only ends the search, so ↵↵ on a match can't write a shared fold.
+      # A dispatch you can't switch into yet goes nowhere, so the search stays.
+      def open_from_search
         node = current
-        return unless node
+        return enter(node) if node && node.kind != "proj" && dispatch_pending?(node)
 
-        end_filter
-        return create(node) if node.kind == "proj"
-        return enter_dispatch(node) if dispatch_pending?(node)
+        end_search
+        enter(node) if node && node.kind != "proj"
+      end
 
-        switch(node)
+      # The one way a search ends. A row inside a project collapsed on disk stays on screen
+      # (the sticky project) unless the pane is leaving, so the cursor keeps its row and any
+      # earlier sticky project folds again. Nothing here writes the shared fold store.
+      def end_search(to_origin: false, leave_open: true)
+        restore_cursor(*@search.origin) if to_origin && @search.origin
+        row = current
+        @search.clear
+        held_open = leave_open && row && row.kind != "proj" && @collapsed.include?(row.project)
+        @search.sticky = held_open ? row.project : nil
+        recompute_rows
+        restore_cursor(row_key(row), row.project) if row
+      end
+
+      # ↵ on the sticky project's header folds it here, with no disk write: it's still folded
+      # everywhere else, and toggling would unfold it for every window.
+      def release_sticky
+        @search.sticky = nil
+        recompute_rows
       end
     end
     include Input

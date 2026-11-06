@@ -8,7 +8,7 @@ without restarting, and why a sidebar has to check that it still owns its pane.
 
 This is the deepest part of the codebase. If you're changing visibility, poking,
 or the run loop in `sidebar.rb` (or its `sidebar/` concern files — the #57
-split: `edges`, `update_cue`, `reloader`, `render`, `input`, `actions`, `prompt`, `rows`), read this first.
+split: `edges`, `update_cue`, `reloader`, `search`, `render`, `input`, `actions`, `prompt`, `rows`), read this first.
 
 ## Why one process per window
 
@@ -409,7 +409,9 @@ on the same row (`keep_cursor`). Inside `POKE_TTL` there's no catch-up scan, so 
 pending the switch-in drops `@last_announce_scan` (`silence_pending_reload`) and the swap's first
 scan is silent instead.
 
-**It never swaps at a bad moment.** Never under `?`, the QR code or the `/` filter; never
+**It never swaps at a bad moment.** Never under `?` or the QR code, or while a `/` search is
+being typed; a committed search can sit for hours, so it doesn't hold a swap, and the swap
+ends it. Never
 mid-prompt (prompts block the loop); and never with half an escape sequence in `@pending`,
 since the new image would read its tail (`O`, from a focus-out) as a key. All of these live
 in `reexec_allowed?`. `frame_timeout` consults it too, and honors the deadline
@@ -503,7 +505,7 @@ deletes* it before anything spawns.
 **It carries:**
 
 - **The cursor,** by identity (`CodeReload::CURSOR_FIELDS`). It's restored after the first
-  reload's `locate`, falling back to `cursor_to_current`. A respawn's marker carries no
+  reload's `locate`, falling back to its project's header and then `cursor_to_current`. A respawn's marker carries no
   cursor, so it starts on the current workspace.
 - **The scroll offset.**
 - **The Edges baseline** (`Edges#baseline` / `restore_baseline`): the sticky hook states past

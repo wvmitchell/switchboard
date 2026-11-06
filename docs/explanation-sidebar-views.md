@@ -1,7 +1,7 @@
 # Explanation: the sidebar's views and keys
 
 How the sidebar decides what to show: folds, the full header and the pane width, which
-every window's sidebar shares, and the diff counts, the filter and the `?` overlay,
+every window's sidebar shares, and the diff counts, the search and the `?` overlay,
 which each sidebar keeps to itself. It also covers how the in-sidebar keys are remapped.
 
 ## Shared view state lives on disk
@@ -46,9 +46,8 @@ built the way the branch fold's `▸N` is (below): `visible_tree` swaps the head
 shallow clone carrying the count in `folded`, the same field that means "N child rows
 are hidden here" on a folded workspace, so `@nodes` stays untouched and no new field or
 on-disk state is needed. The count is what unfolding would show: in-flight and failed
-dispatch rows count, a workspace being deleted and every branch row don't. Filter mode
-builds its rows without `visible_tree`, so a filtered header never carries a count,
-which matches its `▾`.
+dispatch rows count, a workspace being deleted and every branch row don't. A project a
+search is showing isn't folded as drawn, so its header carries no count and reads `▾`.
 
 `collapsed` cleans up a fold whose project is no longer configured, but only when it's
 handed a non-empty project list. The key is a name, not a path it could check, so a
@@ -105,8 +104,7 @@ only in `@rows`.
 
 The dim `▸N` cue (`fold_cue`) trails the folded workspace's name in both `plain` and
 `colored`. Its width is taken from the name's budget, so the two render paths stay the
-same visible width, which the `line` and right-region alignment depend on. Filter mode is
-unaffected, since it already leaves out branch rows.
+same visible width, which the `line` and right-region alignment depend on.
 
 That rule lives in one place, `cue_budget`, shared by workspace rows (the `⇅` and `▸N`
 cues) and project headers (the `(N)` count). A long name gives up name columns, never
@@ -155,8 +153,8 @@ once per key, and then the run loop calls `commit_resize` *once* (one `Width.set
 doesn't spawn a subprocess and write the disk on every repeat. `@geom` fixes itself on the
 next `pin_if_resized`, which pins to the same `@width` and so never fights the resize.
 
-In `/` filter mode, `←`/`→` do nothing. Their escape sequences aren't printable, so
-`filter_key` ignores them; like `j`/`k`, they don't move anything there.
+While you type a `/` search, `←`/`→` do nothing. Their escape sequences aren't printable,
+so `search_key` ignores them. Once the search is committed they resize as usual.
 
 ## Workspace diff counts
 
@@ -224,7 +222,7 @@ of all the visible rows, not one row, so `line` can't size it alone. Flush-right
 - the `−dels` sub-column,
 - the `#pr` column.
 
-It measures over the full `@rows`, which respects folds and the filter, not just the
+It measures over the full `@rows`, which respects folds, not just the
 rows on screen, so columns hold steady while you scroll; folding a noisy project tightens
 them. The widths are passed into every `line`. Each cell right-justifies (`rjust`) into its column
 (`right_region` → `diff_cell` / `pad_cell`), padding by the *plain* width and then
@@ -260,55 +258,115 @@ The redundant `git diff` for an expanded workspace is still *computed*, just nev
 That was the deliberate trade in #90: gate it at render, and leave the mtime-checked
 cache logic alone.
 
-## Type-to-filter
+## Vim-style search
 
-`/` starts an incremental filter inside the sidebar (issue #60). It works like fzf, but
-it's the same navigator, made searchable.
+`/` searches the tree the way vim searches a buffer: matches light up where they are, and
+`n`/`N` step through them. It replaced an fzf-style filter that narrowed the list and turned
+every key into query text. That filter broke the habit it was meant to serve, because `j`
+and `k` typed letters, and hiding rows took away the tree you navigate by.
 
-`@filter` is `nil` when off, or the query string. `recompute_rows` switches on it to
-`filtered_rows`, which keeps each project's matching workspace rows *under their header*,
-so the grouping you navigate by stays visible. Branch rows are left out, and a header stays
-only if its own name matches or it has matches. Matching is the pure `Sidebar.fuzzy_match?` (a case-insensitive subsequence
-match) over `filter_text` (the project plus the name or branch). The filter covers the
-whole tree and ignores folds, since the point is to reach any workspace fast, folded or
-not.
+A search has two states, and `Sidebar::Search` (`sidebar/search.rb`) holds them. While you
+type, every printable key extends the query, and the cursor previews the first match at or
+after where you started. Each query previews from that fixed origin, so typing more can't
+drift through matches. `↵` commits. From then on the normal keys work with the matches
+highlighted, so a second `↵` opens the row and `j`, `k`, `r` and `d` do what they always do.
+`Esc` while typing goes back to the origin; `Esc` once committed leaves the cursor where it
+is. The class owns the state, the query and the origin. The rows and the cursor stay with
+`Sidebar`, in the `Input` and `Rows` concerns.
 
-How it behaves:
+**Matching is a literal, case-insensitive substring of what's drawn:** a workspace's name, a
+project's name, a visible branch row. Fuzzy matching suited a list that narrowed, but with
+every row still on screen a short query would stop `n` on nearly everything. And matching
+text that isn't on the row would leave a match with nothing to highlight, so a single-branch
+workspace can't be found by a branch name it doesn't show. One `search_text` supplies the
+text, and `name_spans` finds the same name in the drawn row, so the two can't disagree. A
+name truncated past its match is still a stop; it just shows no highlight.
 
-- **The cursor jumps to the first match.** Starting the filter (`start_filter`) leaves the
-  cursor on the first row, and each query keystroke moves it to the first matching
-  workspace, so typing then pressing `↵` jumps straight there.
-- **↵ depends on the row.** Headers are still selectable, and `↵`
-  (`switch_to_filtered`) does the row's main action: a workspace switches, and a project
-  header *creates a new workspace there* (`create(node)`). Folding means nothing mid-filter,
-  so that's the useful project-level action.
-- **Leaving is easy.** Backspacing past an empty query exits, like Esc.
-- **Nothing destructive fires mid-search.** While `@filter` is set, `dispatch` sends every
-  key to `filter_key`: printable keys extend the query, `↵` opens or creates, `Esc` cancels,
-  and `d` and `q` are just letters.
-- **The footer shows the search.** `footer` swaps to `filter_footer`: the live query, a
-  `↵` label that follows the selected row, and a count of matching workspaces. The normal
-  footer is the one-line `nav · ? help`; the `/` key itself is taught in the `?` overlay.
+### `n` means two things, and only a key switches it
 
-Movement in the tree is the arrows, `^N`/`^P`, or `j`/`k` (vi-style down and up). In
-filter mode `j` and `k` are query letters, so movement there is the arrows and `^N`/`^P`
-only, and any name stays reachable by typing (#60).
+`new_workspace` owns `n`, the tool's most-used key, so `n` and `N` aren't entries in
+`Keymap::ACTIONS`. A committed search takes them as literal keys ahead of the keymap, and
+they aren't configurable. A `filter` key bound to `n` or `N` starts a search but is
+shadowed once one is committed.
 
-**The filter is deliberately not shared.** A search is something you're doing right now,
-not a view preference, so it's a plain per-process variable. A background reload
-re-applies it (recompute is filter-aware), but it's never saved, cleaned up, or seen by
-another window's pane.
+The rule that shapes everything else: **on screen, only a key you press ends a search.** The
+prompt `n` opens accepts an empty task, so `n` then `↵` builds a real workspace and starts an
+agent. If a search could end by itself between those two keys, stepping through matches could
+do that. So a search whose last match disappears stays on: `n`/`N` do nothing, the footer
+says `no matches`, and matches returning (pressing `z` twice, say) pick up where it was.
+A query that matches nothing when you press `↵` is different, since you pressed a key: it
+ends the search and goes back to the origin.
+
+A hot reload is the one exception. The new image starts with no search and the resume
+payload doesn't carry one, so `n` then `↵` during an upgrade can still create a workspace.
+The highlights going away is the cue, and an upgrade landing in those seconds is rare enough
+not to justify growing a cross-version contract.
+
+### Reaching folded rows without touching the shared folds
+
+Folds are shared on disk across every window, and a search is a private act in one pane, so
+a search must never write them. `Sidebar#folded?` is the one question everything drawn asks:
+collapsed on disk, and not currently shown by a search here. `recompute_rows` works out
+`@revealed` from the collapsed projects holding a matching child. A header matching on its
+own name reveals nothing, since it's already on screen.
+
+Ending a search re-folds what it revealed, which could remove the row under the cursor. So
+every on-screen end goes through `end_search`, which keeps the cursor's project open if that
+project is collapsed on disk: the *sticky* project. There's at most one, and each on-screen
+end sets or clears it. It also goes when the pane leaves the screen, when `↵` on its header
+folds it back (locally, with no disk write, since `toggle_collapse` would unfold it for every
+window), and when `rebuild` finds another window has unfolded the project.
+
+`↵` on a project header during a search ends the search and stops. `/name` `↵` `↵` lands
+there easily, and toggling would write a shared fold. A further `↵` folds as usual.
+
+While a search is on, the cursor follows its row by identity (`row_key`), since matches and
+reveals move rows. If the row is gone, it goes to that project's header, then the current
+workspace: never an unrelated row, because `n` and `d` act on whatever it's on.
+
+### A search doesn't outlive its time on screen
+
+A search left behind in another session's sidebar would greet you later, still holding `n`.
+So `end_search_if_hidden` ends it wherever visibility is sampled: `tick`,
+`recheck_visibility`, and the hidden branch of `reload_and_refresh`. Visibility is sampled,
+not signaled, so there's no fixed time bound, and a quick return can find the search still
+on. That's fine, because the highlights and footer show it, and `Esc` is one key away. An
+open prompt holds the check until it closes, since prompts block the loop.
+
+That check repaints once, even with `prewarm` off. A hidden pane keeps its last frame until
+switch-in, and the warm gate's fingerprint can't see in-memory state, so without the repaint
+the old highlights would flash on the way back.
+
+Opening a row from the search ends it at once. The row is captured first and handed to
+`enter`, since ending the search can move what's under the cursor. A row you can't switch
+into yet goes nowhere, so the search stays.
+
+Only typing holds a hot reload (`reexec_allowed?`). A committed search can sit on screen for
+hours, and it mustn't block an upgrade.
+
+### Drawing matches
+
+Matches are black on yellow (`SEARCH_MATCH`), vim's usual look, and a background reads
+differently from the bold yellow text of an unviewed row. Marking is always the last step:
+`columns` counts escape bytes as width, so padding a marked string would overrun the pane
+and staircase the columns. `mark_search` works by character range over the finished plain
+string and then reopens the row's own style, whether that's bold, cyan, bold yellow, branch
+grey or the reverse-video cursor bar. Only the name is ever marked, so a query of `3` can't
+light up a `▸3`.
+
+The footer stays one line in every state, so starting a search doesn't move the tree. A
+narrow pane shortens the query, not the count.
 
 ## The `?` help overlay
 
 `?` draws a full-pane key map over the tree (`render_help`, issue #62). Any real
 keystroke closes it, except `→`, Space and `←`, which turn pages when the map doesn't fit
-(below). The `@help` flag is per-process and short-lived, like `@filter`, because opening
+(below). The `@help` flag is per-process and short-lived, like a search, because opening
 help is an action, not a preference.
 
 It exists because the footer is limited by the pane's width, with no room to teach every
 key. Every key the footer can't fit lives in the overlay: `g`/`G`, `←`/`→`, the `^N`/`^P`
-aliases, the keys for the filter and prompt modes, what the diff counts mean, and the tmux
+aliases, the keys for a search and a prompt, what the diff counts mean, and the tmux
 keys that operate the sidebar.
 
 ### The footer points to it, in one line
@@ -318,8 +376,8 @@ And since the overlay holds the full reference, the footer doesn't list action k
 one line that changes with context (`↑↓ move · ↵ open · ? help`, with `↵ open/collapse` on
 a project header; on the home sidebar, the title; in an empty tree, the invitation to add a
 first project; while you type a movement count, `3…`), which leaves
-more rows for the tree. The `/ filter` and `+/− vs base` hints live in the overlay.
-`filter_footer` keeps its three lines, since it shows the live query, not key hints.
+more rows for the tree. The `/` and `+/− vs base` hints live in the overlay.
+`search_footer` is one line too, and shows the live query in place of `? help`.
 
 ### Real keys close it; background pokes don't
 
@@ -329,7 +387,7 @@ While `@help` is set, `dispatch` sends every key to `help_key`. A real keystroke
 The input loop also receives bytes that aren't keystrokes (`POKE_BYTES`): the `C-l` poke
 for a switch or background refresh, the `C-r` config poke, a peer's `C-w` broadcast, and focus in and out. Those
 must *not* close the overlay, or a background PR refresh would close it while you're
-reading. (`filter_key` is robust against non-printables the same way.) Ignoring them is
+reading. (`search_key` is robust against non-printables the same way.) Ignoring them is
 safe:
 
 - **`C-l` and `C-w`:** the visibility update fixes itself through the `tick` backstop within
@@ -338,8 +396,9 @@ safe:
   (`e` closes help first), and `C-r` isn't broadcast.
 - **Focus:** cosmetic under a full-pane overlay.
 
-`?` can't open mid-filter (there it's a query letter), so `@help` and `@filter` are never
-both set.
+`?` can't open while you type a search (there it's a query letter), so the overlay and a
+typing search are never both up. Over a committed search it opens as usual, and closing it
+leaves the search on.
 
 ### It doesn't animate
 

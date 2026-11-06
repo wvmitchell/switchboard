@@ -660,7 +660,7 @@ module Switchboard
       flashes = []
       stub_method(Creator, :dispatch, ->(*) { raise Errno::EACCES, "creation" }) do
         stub_method(sb, :prompt_line, ->(*, **) { "fix it" }) do
-          stub_method(sb, :flash, ->(m) { flashes << m }) { sb.send(:create, proj("app")) }
+          stub_method(sb, :flash, ->(m) { flashes << m }) { sb.send(:create) }
         end
       end
       assert_equal ["couldn't record the dispatch"], flashes

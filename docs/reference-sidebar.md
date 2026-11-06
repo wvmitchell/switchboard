@@ -232,18 +232,19 @@ the one cached signal.
 
 ## The footer
 
-One line, always ending in the `? help` gateway:
+One line, ending in the `? help` gateway except during a search:
 
 - **Normal:** the highlighted row's nav hint + `? help` — `↑↓ move · ↵ open · ? help` on
   a workspace or branch row, `↑↓ move · ↵ open/collapse · ? help` on a project. On the home session it shows the
   title; on an empty tree, the "press `a` to add a project" invite. While you're
   typing a movement count (the `3` of `3j`), the count takes the nav verb's or title's
   place, as `3… · ? help`, until the next key uses it; `count_indicator: false` hides it.
-- **Filter mode (`/`):** three lines — your live query, an `↵ open · esc cancel`
-  legend that tracks the highlighted row, and a workspace match count.
+- **During a `/` search:** one line — the query, your place among the matches and the keys:
+  `/auth [2/5] · n/N · esc`, or `[-/5]` when the cursor isn't on a match. While you type it
+  ends `· ↵ · esc`, and with nothing to find, `no matches`.
 
 The footer only has room for the common keys. Everything else — `g`/`G`, `←`/`→`
-resize, the `Ctrl-N`/`Ctrl-P` movement aliases, the filter and prompt sub-modes,
+resize, the `Ctrl-N`/`Ctrl-P` movement aliases, the search and prompt keys,
 the diff-count meaning, and the tmux keys that operate the sidebar — lives in the
 `?` overlay. Press `?` for the full key map; when it fits on one page, any key closes it. On a
 pane too short for the whole map it splits into pages (the bottom row reads

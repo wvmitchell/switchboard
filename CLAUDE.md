@@ -58,7 +58,7 @@ locally without touching real state:
 | The rename nudge, the agent-dispatch instruction, completion sounds, bold until viewed, `KeyedMarkerStore` | [explanation-agent-presence § One edge, four consumers](docs/explanation-agent-presence.md#one-edge-four-consumers), [§ The self-naming nudge](docs/explanation-agent-presence.md#the-self-naming-nudge-issue-92), [§ The agent-dispatch instruction](docs/explanation-agent-presence.md#the-agent-dispatch-instruction) |
 | ∞ monitoring + `monitoring notify`, ⇅ remote links + QR, ◷ background work | [explanation-agent-presence § Background monitors](docs/explanation-agent-presence.md#background-monitors-the-), [§ ◷](docs/explanation-agent-presence.md#waiting-on-background-work-the-), [§ ⇅](docs/explanation-agent-presence.md#remote-links-the-) |
 | Session-name sync (typing `/rename` into Claude's pane) | [explanation-session-name-sync](docs/explanation-session-name-sync.md) |
-| Folds, full header, width, diff counts, `/` filter, `?` overlay, `sidebar_keys` | [explanation-sidebar-views](docs/explanation-sidebar-views.md) |
+| Folds, full header, width, diff counts, `/` search, `?` overlay, `sidebar_keys` | [explanation-sidebar-views](docs/explanation-sidebar-views.md) |
 | Baked paths (`StablePath`), releases, the update line, `switchboard upgrade` | [explanation-distribution](docs/explanation-distribution.md), [reference-release](docs/reference-release.md) |
 | Config keys | [reference-config](docs/reference-config.md) |
 | What each sidebar row shows | [reference-sidebar](docs/reference-sidebar.md) |

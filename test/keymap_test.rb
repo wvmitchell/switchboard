@@ -89,16 +89,16 @@ module Switchboard
       assert_equal "—", del.first, "an unbound action reads as a dash, never a blank"
     end
 
-    # The filter and the prompts share one section, but only where they really agree:
-    # an empty filter exits on Bksp and only a prompt clears on ^u (filter_key has no
-    # ^u), so those stay separate rows rather than one row that's wrong for the filter.
-    def test_help_rows_merge_the_filter_and_prompt_keys_honestly
+    # A search and the prompts share ↵ and Esc but mean different things by them, and only a
+    # search has n/N or exits on Bksp, and only a prompt clears on ^u: two sections, each honest.
+    def test_help_rows_keep_the_search_and_prompt_keys_apart
       rows = Keymap.help_rows(Keymap.bindings(cfg))
       headings = rows.select { |key, _| key.empty? }.map(&:last)
-      assert_includes headings, "in a prompt or filter"
-      refute(headings.any? { |h| h.start_with?("filter mode") || h == "name prompts" }, "the two old sections are merged")
-      assert_includes rows, ["Bksp", "erase · exits empty filter"]
-      assert_includes rows, ["^u", "clear (prompts)"]
+      assert_includes headings, "in a search"
+      assert_includes headings, "in a prompt"
+      assert_includes rows, ["n  N", "next · previous match"]
+      assert_includes rows, ["Bksp", "erase · exits empty search"]
+      assert_includes rows, ["^u", "clear"]
     end
 
     def test_help_rows_section_headings_have_a_blank_key

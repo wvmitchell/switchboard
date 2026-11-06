@@ -51,6 +51,13 @@ module Switchboard
       sb
     end
 
+    def sidebar_with_config(data, nodes: [proj("app")])
+      File.write(Config.path, YAML.dump(data))
+      sb = sidebar(nodes: nodes)
+      sb.instance_variable_set(:@config, Config.new)
+      sb
+    end
+
     def expanded_ws(name = "feature", path: "/wt/a", branch: "feature")
       Tree::Node.new(kind: "ws", project: "app", path: path, name: name, branch: branch,
                      expanded: true)

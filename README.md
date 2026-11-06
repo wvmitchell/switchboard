@@ -61,7 +61,7 @@ new code without a restart. More in
 | `a` | add a project (a local repo or a URL to clone) |
 | `n` | new workspace — type a task for the agent, `↵`, and it builds in the background |
 | `↵` | switch to a workspace (or fold a project) |
-| `/` | filter by name |
+| `/` | search by name (`n`/`N` step through matches) |
 | `?` | every other key |
 
 The rest are in the [key map](docs/reference-keybindings.md), and any of them can be

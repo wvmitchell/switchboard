@@ -120,7 +120,7 @@ module Switchboard
         # up: k                   # move up
         # top: g                  # jump to top
         # bottom: G               # jump to bottom
-        # filter: "/"             # type-to-filter by name
+        # filter: "/"             # search by name
         # add_project: a          # add a project
         # new_workspace: n        # new workspace (task → background build)
         # open_pr: o              # open the row's PR
