@@ -103,7 +103,7 @@ The primary trunk checkout (`primary`) is always filtered out as a switch target
 
 ## Layers
 
-`lib/switchboard/` is about sixty files. Most are small, with one job each. In one flat
+`lib/switchboard/` is about seventy-five files. Most are small, with one job each. In one flat
 folder they wouldn't tell you which files talk to tmux, which hold switchboard's own
 state, and which are the commands people run, so every new piece of code would land
 wherever the nearest example was, and the codebase would slowly tangle.
@@ -176,8 +176,9 @@ only appears in a comment, a string, a symbol (`:Config`) or a heredoc, such as 
 script in `HookFile::SCRIPT`, is never counted as a dependency. A file Ripper can't parse
 fails the test instead of being half-read. Nested names don't count either:
 `Sidebar::Edges` is a use of `Sidebar`, and a constant a file defines for itself
-(`CodeReload::VERSION`) doesn't count as the top-level one. Only constants count: a
-`require_relative` or a method called on `Switchboard` itself isn't an edge.
+(`CodeReload::VERSION`) doesn't count as the top-level one. Only constants count here: a
+method called on `Switchboard` itself isn't an edge, and a `require_relative` gets its own
+check against the same layer order.
 
 A known violation goes in the test's `ALLOWED` table, with a note on what removes it. The
 table is empty today, and it only shrinks: once an entry
@@ -207,7 +208,7 @@ Each worktree maps to exactly one tmux session named `sb/<project>/<leaf>`
 (`Tmux.session_name`).
 
 `tmux.rb` holds the shared constants and two small doors, `Tmux.run` and `Tmux.query`. The rest of
-the module is split by concern under `tmux/` (`sessions`, `sidebar_panes`, `presence`, `notify`,
+the module is split by concern under `adapters/tmux/` (`sessions`, `sidebar_panes`, `presence`, `notify`,
 `keys`), still one `Tmux`. The reload code in `CodeReload` and the `e` pane in `Editor` reach tmux
 through those doors, so a test that stubs `Tmux.system` or `IO.popen` still catches their calls.
 
