@@ -189,12 +189,28 @@ module Switchboard
       assert_equal 1, hits(sb).index(cursor_of(sb)), "two matches back"
     end
 
-    def test_headers_and_branch_rows_are_stops
-      nodes = [proj("search-app"), expanded_ws("feature"), br("search-branch", active: true), ws("other")]
+    def test_headers_are_stops_and_branch_rows_are_not
+      nodes = [proj("search-app"), expanded_ws("feature"), br("search-branch", active: true), ws("search-other")]
       sb = committed(sidebar(nodes: nodes), "search")
       assert_equal "proj", current_node(sb).kind
       sb.send(:dispatch, "n")
-      assert_equal "search-branch", current_node(sb).branch
+      assert_equal "search-other", current_node(sb).name
+    end
+
+    # Value: protects=the route to an older branch's PR during a search; fails_when=a branch row becomes a stop or j ends the search; why_new=no test has a cursor on a non-matching branch row; seam=none; no_claim=gh opening a browser (spawn_gh stubbed)
+    def test_a_branch_row_is_reachable_during_a_search_and_opens_its_own_pr
+      nodes = [proj("app"), expanded_ws("feature", path: "/wt/f"), br("wip/feature", active: true).tap { _1[:path] = "/wt/f" }, ws("feature-two")]
+      sb = committed(sidebar(nodes: nodes), "feature")
+      assert_equal "feature", current_node(sb).name
+      sb.send(:dispatch, "j")
+      assert_equal "wip/feature", current_node(sb).branch
+      assert search(sb).committed?
+      assert_includes sb.send(:footer).first, "[-/2]"
+      gh = nil
+      stub_method(sb, :spawn_gh, ->(*args, **) { gh = args }) { sb.send(:dispatch, "o") }
+      assert_equal %w[pr view wip/feature --web], gh
+      sb.send(:dispatch, "n")
+      assert_equal "feature-two", current_node(sb).name
     end
 
     def test_with_no_search_n_creates_and_big_n_is_unbound
@@ -254,7 +270,8 @@ module Switchboard
 
     def test_enter_opens_a_branch_row
       nodes = [proj("app"), expanded_ws("feature"), br("wip-branch", active: true), ws("other")]
-      sb = committed(sidebar(nodes: nodes), "wip")
+      sb = committed(sidebar(nodes: nodes), "feature")
+      sb.send(:dispatch, "j")
       opened = nil
       stub_method(sb, :switch, ->(node) { opened = node.branch }) { sb.send(:dispatch, "\r") }
       assert_equal "wip-branch", opened
@@ -310,17 +327,20 @@ module Switchboard
       assert_equal "api", current_node(sb).project
     end
 
-    def test_text_that_is_not_on_screen_does_not_match
-      nodes = [proj("app"), Tree::Node.new(kind: "ws", project: "app", path: "/wt/a", name: "plain", branch: "hidden")]
+    def test_only_project_and_workspace_names_match
+      nodes = [proj("app"), Tree::Node.new(kind: "ws", project: "app", path: "/wt/a", name: "plain", branch: "hidden"), br("wip", active: true)]
       sb = sidebar(nodes: nodes)
       sb.send(:handle, "/hidden")
       assert_empty hits(sb), "a workspace's unshown branch isn't a match"
+      sb.send(:dispatch, "\e")
+      sb.send(:handle, "/wip")
+      assert_empty hits(sb), "and neither is a branch row on screen"
       sb.send(:dispatch, "\e")
       sb.send(:handle, "/app")
       assert_equal [0], hits(sb), "and its project's name doesn't match its rows"
     end
 
-    def test_rows_being_deleted_and_folded_branches_do_not_match
+    def test_rows_being_deleted_and_branch_rows_reveal_nothing
       nodes = [proj("app"), expanded_ws("feature", path: "/wt/f"), br("wip", active: true).tap { _1[:path] = "/wt/f" }, ws("gone", path: "/wt/g")]
       sb = sidebar(nodes: nodes, collapsed: ["app"])
       sb.instance_variable_set(:@pending_delete, Set.new(["/wt/g"]))
@@ -329,10 +349,13 @@ module Switchboard
       assert_equal 1, rows_of(sb).size, "a row being deleted reveals nothing"
       sb.send(:dispatch, "\e")
 
-      sb.instance_variable_set(:@fold_branches, true)
-      sb.send(:handle, "/wip")
-      assert_empty hits(sb)
-      assert_equal 1, rows_of(sb).size, "a folded branch row reveals nothing"
+      [false, true].each do |fold_branches|
+        sb.instance_variable_set(:@fold_branches, fold_branches)
+        sb.send(:handle, "/wip")
+        assert_empty hits(sb)
+        assert_equal 1, rows_of(sb).size, "a branch row reveals nothing, fold_branches=#{fold_branches}"
+        sb.send(:dispatch, "\e")
+      end
     end
 
     # --- zero matches: only a key gives n back ---------------------------------
@@ -352,16 +375,31 @@ module Switchboard
       assert_equal "gamma", opened, "↵ opens the row under the cursor"
     end
 
-    def test_folding_branches_away_and_back_keeps_the_search
-      nodes = [proj("app"), expanded_ws("feature", path: "/wt/f"), br("wip", active: true).tap { _1[:path] = "/wt/f" }, ws("other")]
-      sb = committed(sidebar(nodes: nodes), "wip")
+    def test_matches_coming_back_find_the_search_still_on
+      sb = committed(tree, "oauth")
+      nodes = sb.instance_variable_get(:@nodes)
+      sb.instance_variable_set(:@nodes, nodes.reject { _1.name == "oauth" })
+      sb.send(:recompute_rows)
+      assert_empty hits(sb)
+      sb.instance_variable_set(:@nodes, nodes)
+      sb.send(:recompute_rows)
+      assert_equal 1, hits(sb).size
+      assert search(sb).committed?
+      sb.send(:dispatch, "n")
+      assert_equal "oauth", current_node(sb).name
+    end
+
+    def test_folding_branches_never_changes_the_matches
+      nodes = [proj("app"), expanded_ws("feature", path: "/wt/f"), br("wip/feature", active: true).tap { _1[:path] = "/wt/f" }, ws("other")]
+      sb = committed(sidebar(nodes: nodes), "feature")
+      assert_equal 1, hits(sb).size
       stub_method(Tmux, :broadcast_warm, ->(**) {}) do
         sb.send(:dispatch, "z")
-        assert_empty hits(sb)
+        assert_equal 1, hits(sb).size
         assert search(sb).committed?
         sb.send(:dispatch, "z")
       end
-      assert_equal 1, hits(sb).size, "the match came back and the search is still on"
+      assert_equal 1, hits(sb).size
     end
 
     # --- the cursor ------------------------------------------------------------
@@ -404,7 +442,8 @@ module Switchboard
 
     def test_a_folded_away_branch_row_goes_to_its_workspace
       nodes = [proj("app"), ws("first"), expanded_ws("feature", path: "/wt/f"), br("wip", active: true).tap { _1[:path] = "/wt/f" }]
-      sb = committed(sidebar(nodes: nodes), "wip")
+      sb = committed(sidebar(nodes: nodes), "feature")
+      sb.send(:dispatch, "j")
       assert_equal "br", current_node(sb).kind
       sb.instance_variable_set(:@fold_branches, true)
       sb.send(:recompute_rows)
@@ -473,6 +512,16 @@ module Switchboard
       sb.send(:handle, "/alpha\r\e")
       assert_nil search(sb).sticky, "the next clear elsewhere folds it again"
       assert_equal 5, rows_of(sb).size
+    end
+
+    # Value: protects=Esc on a branch row of a revealed project keeps that row on screen; fails_when=only a workspace row holds its project open; why_new=the sticky tests only Esc on a workspace row; seam=none; no_claim=none beyond protects
+    def test_esc_on_a_branch_row_keeps_its_folded_project_open
+      nodes = [proj("app"), expanded_ws("feature", path: "/wt/f"), br("wip", active: true).tap { _1[:path] = "/wt/f" }]
+      sb = committed(sidebar(nodes: nodes, collapsed: ["app"]), "feature")
+      sb.send(:dispatch, "j")
+      sb.send(:dispatch, "\e")
+      assert_equal "app", search(sb).sticky
+      assert_equal "wip", current_node(sb).branch
     end
 
     def test_esc_on_a_header_leaves_nothing_open
@@ -758,11 +807,13 @@ module Switchboard
       header, row, branch = rows_of(sb)
       assert_includes sb.send(:line, header, false, 40), "#{style}auth\e[0m\e[1my"
       assert_includes sb.send(:line, row, false, 40), "#{style}auth\e[0m\e[1;33my", "unviewed stays bold yellow"
-      assert_includes sb.send(:line, branch, false, 40), "#{style}auth\e[0m#{Sidebar::BRANCH_FG}y"
+      refute_includes sb.send(:line, branch, false, 40), style, "a branch row is never marked"
+      refute_includes sb.send(:line, branch, true, 40), style, "not under the cursor either"
       sb.instance_variable_set(:@current_path, "/wt/xauthy")
       assert_includes sb.send(:line, row, false, 40), "#{style}auth\e[0m\e[36my", "the current row stays cyan"
     end
 
+    # Value: protects=a query marks only a row's name, on headers too, never its prefix or fold cue; fails_when=name_spans stops subtracting the prefix or a header's cue; why_new=only a workspace's ▸N was checked; seam=none; no_claim=none beyond protects
     def test_a_query_never_marks_a_cue_or_a_glyph
       node = ws("plain3")
       node[:folded] = 3
@@ -772,6 +823,22 @@ module Switchboard
       assert_includes sb.send(:plain, row), "▸3"
       [true, false].each do |active|
         assert_equal 1, sb.send(:line, row, active, 40).scan(Sidebar::Render::SEARCH_MATCH).size, "the name 3, not the ▸3"
+      end
+
+      sb = sidebar(nodes: [proj("app2"), ws("x", project: "app2"), ws("y", project: "app2")], collapsed: ["app2"])
+      sb.send(:handle, "/2\r")
+      header = rows_of(sb).first
+      assert_includes sb.send(:plain, header), "(2)"
+      [true, false].each do |active|
+        assert_equal 1, sb.send(:line, header, active, 40).scan(Sidebar::Render::SEARCH_MATCH).size, "the name 2, not the (2)"
+      end
+
+      sb = sidebar(nodes: [proj("a b"), ws("c d", project: "a b")])
+      sb.send(:handle, "/ \r")
+      rows_of(sb).each do |spaced|
+        [true, false].each do |active|
+          assert_equal 1, sb.send(:line, spaced, active, 40).scan(Sidebar::Render::SEARCH_MATCH).size, "the name's space, not the prefix's"
+        end
       end
     end
 

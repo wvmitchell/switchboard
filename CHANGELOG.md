@@ -10,6 +10,17 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
+## [0.68.3] — `/` searches names only, and branch rows stay out of the matches (2026-11-06)
+
+### Changed
+- A search matches project and workspace names only, so `n`/`N`, the count and the highlight skip branch rows.
+  A branch row is history that shares its workspace's session, and `↵` on one can't take you to that branch.
+- A shared branch prefix no longer lights up every branch, and `z` no longer changes the match count.
+- A folded project whose only match was a branch stays folded, and a query only a branch contains reads as no
+  matches.
+- Branch rows stay on screen. To reach a PR from a search, use `/name` `↵` `o` for a workspace's current branch.
+  For an older one, use `/name` `↵`, then `j` down to its row and `o`.
+
 ## [0.68.2] — tests: a failed reload stays visible in `doctor`, and a resumed sidebar can't freeze on its children (2026-11-06)
 
 ### Changed

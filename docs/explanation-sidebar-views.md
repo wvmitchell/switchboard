@@ -274,13 +274,14 @@ highlighted, so a second `↵` opens the row and `j`, `k`, `r` and `d` do what t
 is. The class owns the state, the query and the origin. The rows and the cursor stay with
 `Sidebar`, in the `Input` and `Rows` concerns.
 
-**Matching is a literal, case-insensitive substring of what's drawn:** a workspace's name, a
-project's name, a visible branch row. Fuzzy matching suited a list that narrowed, but with
-every row still on screen a short query would stop `n` on nearly everything. And matching
-text that isn't on the row would leave a match with nothing to highlight, so a single-branch
-workspace can't be found by a branch name it doesn't show. One `search_text` supplies the
-text, and `name_spans` finds the same name in the drawn row, so the two can't disagree. A
-name truncated past its match is still a stop; it just shows no highlight.
+**Matching is a literal, case-insensitive substring of a name:** a workspace's or a project's.
+Fuzzy matching suited a list that narrowed, but with every row still on screen a short query
+would stop `n` on nearly everything. Branch rows stay out because they're history: every branch
+of a workspace shares its session, so a match on one would promise a branch that `↵` can't take
+you to. Once the search is on, `j` and `k` still reach them, and `o` there opens that branch's
+PR. `search_text` decides what matches and `name_spans` finds the same name in the drawn row.
+Each leaves branch rows out with its own check, so `test/sidebar_search_test.rb` pins the two
+together. A name truncated past its match is still a stop; it just shows no highlight.
 
 ### `n` means two things, and only a key switches it
 
@@ -293,7 +294,7 @@ The rule that shapes everything else: **on screen, only a key you press ends a s
 prompt `n` opens accepts an empty task, so `n` then `↵` builds a real workspace and starts an
 agent. If a search could end by itself between those two keys, stepping through matches could
 do that. So a search whose last match disappears stays on: `n`/`N` do nothing, the footer
-says `no matches`, and matches returning (pressing `z` twice, say) pick up where it was.
+says `no matches`, and matches returning pick up where it was.
 A query that matches nothing when you press `↵` is different, since you pressed a key: it
 ends the search and goes back to the origin.
 
@@ -354,9 +355,9 @@ Matches are black on yellow (`SEARCH_MATCH`), vim's usual look, and a background
 differently from the bold yellow text of an unviewed row. Marking is always the last step:
 `columns` counts escape bytes as width, so padding a marked string would overrun the pane
 and staircase the columns. `mark_search` works by character range over the finished plain
-string and then reopens the row's own style, whether that's bold, cyan, bold yellow, branch
-grey or the reverse-video cursor bar. Only the name is ever marked, so a query of `3` can't
-light up a `▸3`.
+string and then reopens the row's own style, whether that's bold, cyan, bold yellow or the
+reverse-video cursor bar. Only a project's or workspace's name is ever marked, so a query of
+`3` can't light up a `▸3`.
 
 The footer stays one line in every state, so starting a search doesn't move the tree. A
 narrow pane shortens the query, not the count.
