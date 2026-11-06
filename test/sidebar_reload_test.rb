@@ -457,8 +457,13 @@ module Switchboard
           sleep 0.3 # the loop is asleep in select by now
           Process.kill(CodeReload::SIGNAL, Process.pid)
         end
+        Thread.new do # a lost signal fails here instead of hanging the suite
+          sleep Sidebar::IDLE * 2
+          w.close
+        end
       end
       run_sidebar(visible: false, held_stdin: held)
+      refute_nil woke_after, "the signal never produced a swap"
       assert_operator woke_after, :<, Sidebar::IDLE / 2.0, "the signal cut the off-screen sleep short"
       assert drained, "an unread byte would make every select return at once"
     end

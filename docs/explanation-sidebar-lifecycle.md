@@ -291,7 +291,7 @@ session".
 ### The sidebar execs itself in place
 
 A running sidebar execs its own `SWITCHBOARD_BIN` (`CodeReload`, `code_reload.rb`, plus
-the reload section of `sidebar.rb`). The pane runs the binary directly, with no shell in
+`Sidebar::Reloader`, `sidebar/reloader.rb`). The pane runs the binary directly, with no shell in
 between (`Tmux.spawn_sidebar`), so exec keeps the pid, the pty and the `%pane` id. From
 tmux's side nothing changed, and `owns_pane?` stays true.
 
