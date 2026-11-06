@@ -93,11 +93,25 @@ module Switchboard
         @cursor = @cursor.clamp(0, [@rows.size - 1, 0].max)
       end
 
-      # Back onto the row `key` names. Gone, then its project's header, then the workspace this
-      # session is in: never an unrelated row, since n and d act on whatever the cursor is on.
+      # Back onto the row `key` names. Gone: its workspace (a folded branch row), else a neighbor
+      # in its project, else its header. A neighbor before the header, because the header is the
+      # one row where a repeated d y removes a whole project. With none of those, the workspace
+      # this session is in, else the top: n and d act on whatever the cursor is on, so it never
+      # keeps a stale index into rows that have changed.
       def restore_cursor(key, project)
-        i = @rows.index { |n| row_key(n) == key } || @rows.index { |n| n.kind == "proj" && n.project == project }
-        i ? @cursor = i : cursor_to_current
+        i = @rows.index { |n| row_key(n) == key } ||
+            @rows.index { |n| n.kind == "ws" && n.path == key[1] } ||
+            neighbor_index(project) ||
+            @rows.index { |n| n.kind == "proj" && n.project == project }
+        return @cursor = i if i
+
+        @cursor = 0
+        cursor_to_current
+      end
+
+      def neighbor_index(project)
+        sibling = ->(i) { i >= 0 && @rows[i] && @rows[i].kind != "proj" && @rows[i].project == project }
+        [@cursor, @cursor - 1].find(&sibling) || @rows.each_index.to_a.reverse.find(&sibling)
       end
 
       # Folded as drawn: collapsed on disk and not being shown by a search in this sidebar.

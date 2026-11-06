@@ -494,9 +494,7 @@ module Switchboard
       def edit_search
         yield
         recompute_rows
-        origin = @search.origin or return
-
-        restore_cursor(*origin)
+        restore_cursor(*@search.origin) if @search.origin
         @cursor = @search_hits.find { |i| i >= @cursor } || @search_hits.first || @cursor
       end
 

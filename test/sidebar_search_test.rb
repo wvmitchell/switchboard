@@ -343,12 +343,13 @@ module Switchboard
       sb.send(:recompute_rows)
       assert search(sb).committed?
       assert_empty hits(sb)
-      assert_equal "api", current_node(sb).project
-      assert_equal "proj", current_node(sb).kind, "the vanished row's header"
+      assert_equal "gamma", current_node(sb).name, "the vanished row's neighbor"
       assert_includes sb.send(:footer).first, "no matches · esc"
+      opened = nil
       stub_method(sb, :create, -> { flunk "n then ↵ must not create" }) do
-        stub_method(Tmux, :broadcast_warm, ->(**) {}) { sb.send(:handle, "n\r") }
+        stub_method(sb, :switch, ->(node) { opened = node.name }) { sb.send(:handle, "n\r") }
       end
+      assert_equal "gamma", opened, "↵ opens the row under the cursor"
     end
 
     def test_folding_branches_away_and_back_keeps_the_search
@@ -372,20 +373,77 @@ module Switchboard
       assert_equal "oauth", current_node(sb).name
     end
 
-    def test_a_vanished_origin_falls_back_to_its_header_then_the_current_workspace
-      sb = tree(cursor: 6, current_path: "/wt/alpha") # oauth
+    def test_a_vanished_row_goes_to_a_neighbor_not_the_header
+      [[3, "gamma"], [2, "gamma"]].each do |at, want| # with a row left at its index, and as the last row
+        nodes = [proj("api"), ws("first", project: "api"), ws("gamma", project: "api"), ws("oauth", project: "api")]
+        nodes.delete_at(1) if at == 2
+        sb = sidebar(nodes: nodes, cursor: at)
+        sb.send(:handle, "/oauth\r")
+        sb.instance_variable_set(:@nodes, nodes.reject { _1.name == "oauth" })
+        sb.send(:recompute_rows)
+        assert_equal want, current_node(sb).name
+      end
+    end
+
+    # Value: protects=a repeated d y can't reach the project header while a sibling is left; fails_when=the header comes before the neighbor; why_new=remove_project kills every session in the project; seam=none; no_claim=the delete prompts themselves
+    def test_deleting_a_match_never_leaves_the_cursor_on_the_header_with_siblings_left
+      sb = committed(tree, "beta")
+      sb.instance_variable_set(:@nodes, sb.instance_variable_get(:@nodes).reject { _1.name == "beta" })
+      sb.send(:recompute_rows)
+      assert_equal "ws", current_node(sb).kind
+      assert_equal "app", current_node(sb).project
+    end
+
+    def test_a_vanished_row_goes_to_its_header_when_its_project_has_no_other_rows
+      sb = sidebar(nodes: [proj("app"), ws("alpha"), proj("api"), ws("oauth", project: "api")], cursor: 3)
+      sb.send(:handle, "/oauth\r")
+      sb.instance_variable_set(:@nodes, sb.instance_variable_get(:@nodes).reject { _1.name == "oauth" })
+      sb.send(:recompute_rows)
+      assert_equal %w[proj api], [current_node(sb).kind, current_node(sb).project]
+    end
+
+    def test_a_folded_away_branch_row_goes_to_its_workspace
+      nodes = [proj("app"), ws("first"), expanded_ws("feature", path: "/wt/f"), br("wip", active: true).tap { _1[:path] = "/wt/f" }]
+      sb = committed(sidebar(nodes: nodes), "wip")
+      assert_equal "br", current_node(sb).kind
+      sb.instance_variable_set(:@fold_branches, true)
+      sb.send(:recompute_rows)
+      assert_equal "feature", current_node(sb).name
+    end
+
+    # Value: protects=a project gone from under a search never leaves a stale index; fails_when=the top fallback goes; why_new=cursor_to_current no-ops at home; seam=none; no_claim=how the project was removed
+    def test_a_vanished_project_goes_to_the_current_workspace_else_the_top
+      sb = tree(cursor: 6, current_path: "/wt/alpha")
+      sb.send(:handle, "/oauth\r")
+      sb.instance_variable_set(:@nodes, sb.instance_variable_get(:@nodes).reject { _1.project == "api" })
+      sb.send(:recompute_rows)
+      assert_equal "alpha", current_node(sb).name
+
+      nodes = [proj("old"), ws("target", project: "old"), proj("other"), ws("unrelated", project: "other")]
+      sb = sidebar(nodes: nodes, cursor: 1)
+      sb.send(:handle, "/target\r")
+      sb.instance_variable_set(:@nodes, nodes.reject { _1.project == "old" })
+      sb.send(:recompute_rows)
+      assert_equal "proj", current_node(sb).kind, "at home there's no current workspace: the top, never a stale index"
+    end
+
+    def test_a_vanished_origin_is_a_neighbor_after_esc
+      sb = tree(cursor: 6) # oauth
       sb.send(:handle, "/x")
       sb.instance_variable_set(:@nodes, sb.instance_variable_get(:@nodes).reject { _1.name == "oauth" })
       sb.send(:recompute_rows)
       sb.send(:dispatch, "\e")
-      assert_equal %w[proj api], [current_node(sb).kind, current_node(sb).project]
+      assert_equal "gamma", current_node(sb).name
+    end
 
-      sb = tree(cursor: 6, current_path: "/wt/alpha")
-      sb.send(:handle, "/x")
-      sb.instance_variable_set(:@nodes, sb.instance_variable_get(:@nodes).reject { _1.project == "api" })
+    # Value: protects=a search started on an empty tree still previews once rows arrive; fails_when=edit_search returns early with no origin; why_new=the empty-tree test had no rows arrive; seam=none; no_claim=how rows arrive
+    def test_a_search_started_on_an_empty_tree_previews_when_rows_arrive
+      sb = sidebar(nodes: [])
+      sb.send(:handle, "/t")
+      sb.instance_variable_set(:@nodes, [proj("app"), ws("target")])
       sb.send(:recompute_rows)
-      sb.send(:dispatch, "\e")
-      assert_equal "alpha", current_node(sb).name
+      sb.send(:handle, "arget")
+      assert_equal "target", current_node(sb).name
     end
 
     def test_going_back_to_the_sidebar_keeps_a_committed_searchs_row

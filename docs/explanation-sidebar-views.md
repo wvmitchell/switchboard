@@ -321,8 +321,10 @@ window), and when `rebuild` finds another window has unfolded the project.
 there easily, and toggling would write a shared fold. A further `↵` folds as usual.
 
 While a search is on, the cursor follows its row by identity (`row_key`), since matches and
-reveals move rows. If the row is gone, it goes to that project's header, then the current
-workspace: never an unrelated row, because `n` and `d` act on whatever it's on.
+reveals move rows. If the row is gone, it goes to that row's workspace, then a neighbor in
+the same project, then the project's header, then the current workspace, then the top. `n`
+and `d` act on whatever it's on, so it never keeps a stale index. A neighbor comes before
+the header because the header is where a repeated `d` `y` would remove a whole project.
 
 ### A search doesn't outlive its time on screen
 

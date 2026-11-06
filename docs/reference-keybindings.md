@@ -127,7 +127,7 @@ The arrows, `Ctrl-N` and `Ctrl-P` do nothing while you type.
 What it matches:
 
 - **A literal, case-insensitive piece of what's drawn:** a workspace's name, a project's name
-  or a visible branch row. A workspace's branch isn't searched unless its branch row is on
+  or a visible branch row. Only ASCII characters can be typed into the query. A workspace's branch isn't searched unless its branch row is on
   screen, and neither are task notes or PR numbers.
 - **Across the whole tree.** A project with a match inside unfolds while the search is on, in
   this sidebar only. When the search ends it folds again, except the project your cursor is
