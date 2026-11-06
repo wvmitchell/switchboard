@@ -375,6 +375,10 @@ that an idle tick costs no more than it did before (R3, in `sidebar_reload_test`
 
 ### When the swap happens
 
+**All of this lives in `Sidebar::Reloader`** (`sidebar/reloader.rb`), which owns the signal, the
+pane tag, the deadline and the exec. The sidebar decides what the payload carries and whether
+its overlays allow a swap, and passes those in.
+
 **The trap only sets a flag.** The `SIGUSR1` handler sets `@reload_signal` and writes a
 self-pipe (`@wake_r` is in the `IO.select` set). It's installed in `run`, restored in
 `teardown`, and installed *before* the tag goes on.

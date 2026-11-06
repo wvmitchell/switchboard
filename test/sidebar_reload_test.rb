@@ -17,7 +17,7 @@ module Switchboard
 
     # Drives the real `run` against an EOF stdin (the loop exits on its first read).
     # Returns [stdout, call log, sidebar].
-    def run_sidebar(visible:, resume: nil, prewarm: true, session: "sb/app/x")
+    def run_sidebar(visible:, resume: nil, prewarm: true, session: "sb/app/x", held_stdin: nil)
       File.write(ENV["SWITCHBOARD_CONFIG"], "projects: []\n")
       ENV[CodeReload::RESUME_ENV] = resume if resume
       sb = Sidebar.new
@@ -27,10 +27,10 @@ module Switchboard
       sb.define_singleton_method(:reload) { |**kw| log << [:reload, kw] }
       sb.define_singleton_method(:warm_reload) { |*| log << :warm_reload }
       stdin, w = IO.pipe
-      w.close
+      held_stdin ? held_stdin.call(sb, w) : w.close
       stdin.define_singleton_method(:raw!) { nil }
       stdin.define_singleton_method(:cooked!) { nil }
-      tag = ->(_pane, value, **) { log << [:tag, value, sb.instance_variable_get(:@wake_r) ? :trap_first : :tag_first] }
+      tag = ->(_pane, value, **) { log << [:tag, value, sb.instance_variable_get(:@reloader).wake_r ? :trap_first : :tag_first] }
       out = with_stdin(stdin) do
         stub_method(Tmux, :enable_focus_events, -> {}) do
           stub_method(Tmux, :session_of, ->(*) { session }) do
@@ -48,6 +48,8 @@ module Switchboard
     end
 
     def untagged(log) = log.reject { |e| e.is_a?(Array) && e.first == :tag }
+    def reloader(sb) = sb.instance_variable_get(:@reloader)
+    def request(sb) = reloader(sb).request_reload(visible: sb.instance_variable_get(:@visible))
 
     # Value: protects=today's first paint for every normal spawn (R3); fails_when=the resume
     # branch leaks into a cold start; why_new=run's startup had no unit test; seam=none;
@@ -114,13 +116,71 @@ module Switchboard
       ENV[CodeReload::SPREAD_ENV] = "30"
       _, log, sb = run_sidebar(visible: false, resume: CodeReload.encode)
       assert_empty untagged(log)
-      assert_operator sb.instance_variable_get(:@warm_not_before), :>, sb.send(:monotonic)
-      refute sb.send(:warm_spread_over?)
+      assert_operator reloader(sb).instance_variable_get(:@warm_not_before), :>, sb.send(:monotonic)
+      refute reloader(sb).send(:warm_spread_over?)
     end
 
     def test_a_resume_restores_the_carried_baseline
       _, _, sb = run_sidebar(visible: false, resume: CodeReload.encode(hook_states: { "/wt/a" => :thinking }))
       assert_equal :thinking, sb.instance_variable_get(:@edges).last_state("/wt/a")
+    end
+
+    # --- payloads older code handed over (the cross-version contract) -------------
+
+    CARRIED_CURSOR = { "kind" => "ws", "project" => "app", "path" => "/wt/b", "branch" => nil }.freeze
+    # Printed by CodeReload.encode as those releases shipped it. Never regenerate these.
+    FULL_PAYLOADS = {
+      "0.59.0" => '{"v":1,"cursor":{"kind":"ws","project":"app","path":"/wt/b","branch":null},"offset":3,' \
+                  '"hook_states":{"/wt/a":"thinking","/wt/c":"done"},"notify":{"/wt/a":[1790000000,123456789]},"announce":true}',
+      "0.66.11" => '{"v":1,"cursor":{"kind":"ws","project":"app","path":"/wt/b","branch":null},"offset":3,' \
+                   '"hook_states":{"/wt/a":"thinking","/wt/c":"done"},"notify":{"/wt/a":[1790000000,123456789]},"announce":true}'
+    }.freeze
+    # The respawn marker those releases hand a restarted sidebar, and the least decode accepts.
+    BARE_PAYLOAD = '{"v":1,"cursor":null,"offset":0,"hook_states":{},"notify":{},"announce":false}'
+    MINIMAL_PAYLOAD = '{"v":1,"cursor":{"kind":"ws","project":"app","path":"/wt/b","branch":null}}'
+
+    # Value: protects=a sidebar upgraded from any shipped release keeps its cursor, scroll, dots
+    # and alert cursors across the exec; fails_when=the resume path stops reading a shipped field;
+    # why_new=encode and decode were only tested against each other; seam=none;
+    # no_claim=running the old image itself (the sandbox round trip does)
+    def test_a_shipped_full_payload_resumes_with_everything_it_carried
+      FULL_PAYLOADS.each do |release, raw|
+        _, log, sb = run_sidebar(visible: true, resume: raw)
+        edges = sb.instance_variable_get(:@edges)
+        assert_includes log, [:reload, { announce_sounds: true }], release
+        refute_includes log, :cursor_to_current, release
+        assert_equal CARRIED_CURSOR, sb.instance_variable_get(:@resume_cursor), release
+        assert_equal 3, offset_of(sb), release
+        assert_equal :thinking, edges.last_state("/wt/a"), release
+        assert_equal :done, edges.last_state("/wt/c"), release
+        assert_equal({ "/wt/a" => Time.at(1_790_000_000, 123_456_789, :nsec) }, edges.baseline[:notify], release)
+      end
+    end
+
+    def test_a_minimal_payload_resumes_silently_on_its_cursor
+      _, log, sb = run_sidebar(visible: true, resume: MINIMAL_PAYLOAD)
+      assert_includes log, [:reload, { announce_sounds: false }]
+      refute_includes log, :cursor_to_current
+      assert_equal CARRIED_CURSOR, sb.instance_variable_get(:@resume_cursor)
+      assert_equal 0, offset_of(sb)
+    end
+
+    def test_a_bare_respawn_marker_resumes_on_the_current_workspace
+      out, log, = run_sidebar(visible: true, resume: BARE_PAYLOAD)
+      refute_includes out, "\e[2J", "still a reload, not a launch"
+      assert_equal [:pin_if_resized, [:reload, { announce_sounds: false }], :cursor_to_current, :render], untagged(log)
+    end
+
+    # Value: protects=the preflight an older sidebar runs against this code accepts what that
+    # sidebar hands over, or the whole fleet stays on old code and flags itself failed;
+    # fails_when=Sidebar.check stops applying a shipped payload; seam=none
+    def test_the_check_accepts_every_shipped_payload_shape
+      File.write(ENV["SWITCHBOARD_CONFIG"], "projects: []\n")
+      [*FULL_PAYLOADS.values, BARE_PAYLOAD, MINIMAL_PAYLOAD].each do |raw|
+        ENV[CodeReload::RESUME_ENV] = raw
+        assert Sidebar.check, raw
+        refute ENV.key?(CodeReload::RESUME_ENV), "taken, so no child inherits it"
+      end
     end
 
     # --- the carried cursor -------------------------------------------------------
@@ -152,7 +212,7 @@ module Switchboard
 
     def test_a_signal_on_screen_execs_at_the_next_loop_top
       sb, execs = reloading(visible: true)
-      sb.instance_variable_set(:@reload_signal, true)
+      reloader(sb).instance_variable_set(:@reload_signal, true)
       sb.send(:maybe_reexec)
       assert_equal [:exec], execs
     end
@@ -160,10 +220,10 @@ module Switchboard
     def test_off_screen_it_waits_for_its_spread_then_execs
       ENV[CodeReload::SPREAD_ENV] = "30"
       sb, execs = reloading(visible: false)
-      sb.instance_variable_set(:@reload_signal, true)
+      reloader(sb).instance_variable_set(:@reload_signal, true)
       sb.send(:maybe_reexec)
       assert_empty execs, "a hidden pane spreads out"
-      sb.instance_variable_set(:@reexec_at, sb.send(:monotonic) - 1)
+      reloader(sb).instance_variable_set(:@reexec_at, sb.send(:monotonic) - 1)
       sb.send(:maybe_reexec)
       assert_equal [:exec], execs
     end
@@ -171,7 +231,7 @@ module Switchboard
     def test_a_switch_in_makes_a_waiting_reload_due_at_once
       ENV[CodeReload::SPREAD_ENV] = "30"
       sb, execs = reloading(visible: false)
-      sb.send(:request_reload)
+      request(sb)
       sb.instance_variable_set(:@visible, true) # what the C-l switch poke does
       sb.send(:maybe_reexec)
       assert_equal [:exec], execs, "D2: switch in before it reloaded, see it within a second"
@@ -198,7 +258,7 @@ module Switchboard
       sb.define_singleton_method(:reexec) { payload = CodeReload.decode(resume_payload) }
       sounds = []
       stub_method(Sound, :play, ->(spec, **) { sounds << spec }) do
-        sb.send(:request_reload)
+        request(sb)
         stub_method(Tmux, :visible?, ->(*) { true }) { sb.send(:reload_and_refresh) }
         sb.send(:maybe_reexec)
         refute_nil payload, "the swap still happens after the catch-up"
@@ -215,7 +275,7 @@ module Switchboard
 
     def test_a_switch_storm_still_coalesces_with_a_reload_pending
       sb, = reloading(visible: false)
-      sb.send(:request_reload)
+      request(sb)
       sb.instance_variable_set(:@last_reload, sb.send(:monotonic)) # reloaded just now
       log = []
       sb.define_singleton_method(:reload) { |**| log << :reload }
@@ -256,9 +316,9 @@ module Switchboard
     # seam=none
     def test_a_throttled_switch_in_hands_over_a_silent_payload
       sb, = reloading(visible: false)
-      sb.send(:request_reload)
+      request(sb)
       sb.instance_variable_set(:@last_reload, sb.send(:monotonic))
-      sb.instance_variable_set(:@last_announce_scan, sb.send(:monotonic)) # rang just before leaving
+      reloader(sb).instance_variable_set(:@last_announce_scan, sb.send(:monotonic)) # rang just before leaving
       sb.define_singleton_method(:locate) { nil }
       stub_method(Tmux, :visible?, ->(*) { true }) { sb.send(:reload_and_refresh) }
       refute CodeReload.decode(sb.send(:resume_payload))[:announce]
@@ -279,12 +339,26 @@ module Switchboard
       assert_equal %i[render preflight], order.last(2)
     end
 
+    # Value: protects=a hidden pane never paints for a swap (a hidden pane's frame shows on its
+    # switch-in); fails_when=the paint loses its visibility gate; seam=none
+    def test_a_hidden_panes_reexec_paints_nothing
+      sb = sidebar(nodes: [proj("app"), ws("a")])
+      sb.instance_variable_set(:@visible, false)
+      sb.define_singleton_method(:render) { flunk "no paint off screen" }
+      ENV["SWITCHBOARD_BIN"] = "/opt/sb/bin/switchboard"
+      stub_method(CodeReload, :real_bin, ->(*) { "/Cellar/new/bin/switchboard" }) do
+        stub_method(CodeReload, :preflight, ->(*, **) { :failed }) do
+          stub_method(CodeReload, :flag_failed_reload, ->(*) {}) { sb.send(:reexec) }
+        end
+      end
+    end
+
     # Value: protects=a switch-in with a code reload pending catches up silently BEFORE the swap,
     # and a key read in the same batch as the poke acts on that caught-up tree; fails_when=the
     # pending-reload skip comes back, or the catch-up moves to the loop top or after exec; seam=none
     def test_keys_batched_with_the_switch_poke_see_the_caught_up_tree
       sb, execs = reloading(visible: false)
-      sb.send(:request_reload)
+      request(sb)
       sb.define_singleton_method(:reload) { |**kw| execs << [:reload, kw] }
       sb.define_singleton_method(:move) { |*| execs << :move }
       stub_method(Tmux, :visible?, ->(*) { true }) { sb.send(:handle, "\fj") }
@@ -296,7 +370,7 @@ module Switchboard
       [[:@help, true], [:@link_view, { path: "/wt/a" }], [:@filter, ""]].each do |ivar, value|
         sb, execs = reloading(visible: true)
         sb.instance_variable_set(ivar, value)
-        sb.send(:request_reload)
+        request(sb)
         sb.send(:maybe_reexec)
         assert_empty execs, "#{ivar} open: wait"
         sb.instance_variable_set(ivar, ivar == :@help ? false : nil)
@@ -309,8 +383,8 @@ module Switchboard
     # passed deadline while blocked; seam=none
     def test_a_blocked_overdue_reload_keeps_the_normal_timeout
       sb, = reloading(visible: false)
-      sb.instance_variable_set(:@reload_requested, true)
-      sb.instance_variable_set(:@reexec_at, sb.send(:monotonic) - 5)
+      reloader(sb).instance_variable_set(:@reload_requested, true)
+      reloader(sb).instance_variable_set(:@reexec_at, sb.send(:monotonic) - 5)
       sb.instance_variable_set(:@help, true)
       assert_equal Sidebar::IDLE, sb.send(:frame_timeout)
       sb.instance_variable_set(:@help, false)
@@ -319,14 +393,14 @@ module Switchboard
 
     def test_a_spread_reload_shortens_the_off_screen_wait
       sb, = reloading(visible: false)
-      sb.instance_variable_set(:@reload_requested, true)
-      sb.instance_variable_set(:@reexec_at, sb.send(:monotonic) + 2)
+      reloader(sb).instance_variable_set(:@reload_requested, true)
+      reloader(sb).instance_variable_set(:@reexec_at, sb.send(:monotonic) + 2)
       assert_operator sb.send(:frame_timeout), :<=, 2
     end
 
     def test_the_switch_poke_still_reloads_while_an_overlay_holds_the_exec
       sb, = reloading(visible: false)
-      sb.send(:request_reload)
+      request(sb)
       sb.instance_variable_set(:@filter, "")
       reloads = 0
       sb.define_singleton_method(:reload) { |**| reloads += 1 }
@@ -340,7 +414,7 @@ module Switchboard
     def test_a_half_read_escape_sequence_holds_the_exec
       sb, execs = reloading(visible: true)
       sb.instance_variable_set(:@pending, +"\e[")
-      sb.send(:request_reload)
+      request(sb)
       sb.send(:maybe_reexec)
       assert_empty execs
       sb.instance_variable_set(:@pending, +"")
@@ -352,10 +426,47 @@ module Switchboard
     # fails_when=the pending gate lives outside reexec_allowed?; seam=none
     def test_a_pending_escape_keeps_the_normal_timeout_past_the_deadline
       sb, = reloading(visible: false)
-      sb.instance_variable_set(:@reload_requested, true)
-      sb.instance_variable_set(:@reexec_at, sb.send(:monotonic) - 5)
+      reloader(sb).instance_variable_set(:@reload_requested, true)
+      reloader(sb).instance_variable_set(:@reexec_at, sb.send(:monotonic) - 5)
       sb.instance_variable_set(:@pending, +"\e[")
       assert_equal Sidebar::IDLE, sb.send(:frame_timeout)
+    end
+
+    # Value: protects=a signal reaches a pane asleep on its long off-screen wait at once, and the
+    # pipe is emptied so select can sleep again; fails_when=the wake pipe leaves the select set or
+    # is never drained (a spin); why_new=every other test runs the loop against an EOF stdin;
+    # seam=none; no_claim=a signal sent by another process (the smoke test does)
+    def test_a_signal_wakes_the_sleeping_loop_and_the_pipe_is_drained
+      ENV[CodeReload::SPREAD_ENV] = "0"
+      woke_after = drained = nil
+      started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      held = lambda do |sb, w|
+        rl = sb.instance_variable_get(:@reloader)
+        sb.define_singleton_method(:reexec) do
+          woke_after = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
+          drained = IO.select([rl.wake_r], nil, nil, 0).nil?
+          w.close # EOF: the loop exits
+        end
+        Thread.new do
+          sleep 0.01 until rl.wake_r # the trap is in, so the signal can't kill the test run
+          sleep 0.3 # the loop is asleep in select by now
+          Process.kill(CodeReload::SIGNAL, Process.pid)
+        end
+      end
+      run_sidebar(visible: false, held_stdin: held)
+      assert_operator woke_after, :<, Sidebar::IDLE / 2.0, "the signal cut the off-screen sleep short"
+      assert drained, "an unread byte would make every select return at once"
+    end
+
+    # Value: protects=a swap that fails waits for the next ask instead of retrying on every loop
+    # pass; fails_when=the signal flag survives its request; seam=none
+    def test_a_signal_is_one_request
+      sb, execs = reloading(visible: true)
+      reloader(sb).instance_variable_set(:@reload_signal, true)
+      sb.send(:maybe_reexec)
+      reloader(sb).instance_variable_set(:@reload_requested, false) # what a real reexec does first
+      sb.send(:maybe_reexec)
+      assert_equal [:exec], execs
     end
 
     # --- the backstop -------------------------------------------------------------
@@ -370,7 +481,30 @@ module Switchboard
           end
         end
       end
-      assert sb.instance_variable_get(:@reload_requested)
+      assert reloader(sb).instance_variable_get(:@reload_requested)
+    end
+
+    # Value: protects=a `brew upgrade` doesn't reboot a whole hidden fleet at once; fails_when=
+    # tick asks with the wrong visibility; seam=none
+    def test_a_moved_keg_spreads_a_hidden_panes_reload
+      sb, = reloading(visible: false)
+      sb.instance_variable_get(:@config).define_singleton_method(:prewarm?) { false }
+      stub_method(CodeReload, :spread_delay, ->(*) { 25.0 }) do
+        stub_method(CodeReload, :stale?, ->(*) { true }) do
+          stub_method(CodeReload, :current_root, ->(*) { "/Cellar/new" }) do
+            stub_method(Tmux, :visible?, ->(*) { false }) do
+              stub_method(Tmux, :window_panes, ->(*) { 2 }) { sb.send(:tick) }
+            end
+          end
+        end
+      end
+      assert_operator reloader(sb).reexec_wait, :>, 20
+    end
+
+    def test_a_requested_reload_stops_asking_whether_the_keg_moved
+      sb, = reloading(visible: false)
+      request(sb)
+      stub_method(CodeReload, :stale?, ->(*) { flunk "already asked: no stat per tick" }) { refute reloader(sb).code_moved? }
     end
 
     # Value: protects=a half-typed count can't outlive leaving the pane when no focus-out
@@ -409,10 +543,10 @@ module Switchboard
           stub_method(Tmux, :window_panes, ->(*) { 2 }) { sb.send(:tick) }
         end
       end
-      sb.instance_variable_set(:@warm_not_before, sb.send(:monotonic) + 30)
+      reloader(sb).instance_variable_set(:@warm_not_before, sb.send(:monotonic) + 30)
       tick.call
       assert_equal 0, warms, "inside its spread: no warm"
-      sb.instance_variable_set(:@warm_not_before, sb.send(:monotonic) - 1)
+      reloader(sb).instance_variable_set(:@warm_not_before, sb.send(:monotonic) - 1)
       tick.call
       assert_equal 1, warms, "spread over: the normal warm gate applies"
     end
@@ -424,10 +558,10 @@ module Switchboard
       ENV[CodeReload::SPREAD_ENV] = "30"
       sb, = reloading(visible: false)
       first = sb.send(:monotonic) + 1
-      sb.instance_variable_set(:@reexec_at, first)
-      sb.instance_variable_set(:@reload_requested, true)
-      stub_method(CodeReload, :spread_delay, ->(*) { 25.0 }) { sb.send(:request_reload) }
-      assert_equal first, sb.instance_variable_get(:@reexec_at)
+      reloader(sb).instance_variable_set(:@reexec_at, first)
+      reloader(sb).instance_variable_set(:@reload_requested, true)
+      stub_method(CodeReload, :spread_delay, ->(*) { 25.0 }) { request(sb) }
+      assert_equal first, reloader(sb).instance_variable_get(:@reexec_at)
     end
 
     # Value: protects=a reload of an on-screen sidebar keeps ringing (its first scan announces);
@@ -451,10 +585,10 @@ module Switchboard
 
     def test_a_root_whose_preflight_failed_is_not_retried
       sb, = reloading(visible: false)
-      sb.instance_variable_set(:@reexec_blocked_root, "/Cellar/broken")
+      reloader(sb).instance_variable_set(:@reexec_blocked_root, "/Cellar/broken")
       stub_method(CodeReload, :stale?, ->(*) { true }) do
-        stub_method(CodeReload, :current_root, ->(*) { "/Cellar/broken" }) { refute sb.send(:code_moved?) }
-        stub_method(CodeReload, :current_root, ->(*) { "/Cellar/fixed" }) { assert sb.send(:code_moved?), "a newer keg gets its own try" }
+        stub_method(CodeReload, :current_root, ->(*) { "/Cellar/broken" }) { refute reloader(sb).send(:code_moved?) }
+        stub_method(CodeReload, :current_root, ->(*) { "/Cellar/fixed" }) { assert reloader(sb).send(:code_moved?), "a newer keg gets its own try" }
       end
     end
 
@@ -471,7 +605,7 @@ module Switchboard
         end
       end
       assert_equal({ visible?: 1, window_panes: 1 }, calls)
-      refute sb.instance_variable_get(:@reload_requested)
+      refute reloader(sb).instance_variable_get(:@reload_requested)
     end
 
     # Value: protects=the tick is what retries an owed tag (one call while owed, none after),
@@ -481,8 +615,8 @@ module Switchboard
       sb, = reloading(visible: false)
       sb.instance_variable_get(:@config).define_singleton_method(:prewarm?) { false }
       ENV["SWITCHBOARD_BIN"] = File.join(CodeReload::LOADED_ROOT, "bin", "switchboard")
-      sb.instance_variable_set(:@tag_pending, Process.pid)
-      sb.instance_variable_set(:@tag_tries, 1)
+      reloader(sb).instance_variable_set(:@tag_pending, Process.pid)
+      reloader(sb).instance_variable_set(:@tag_tries, 1)
       tags = []
       stub_method(Tmux, :visible?, ->(*) { false }) do
         stub_method(Tmux, :window_panes, ->(*) { 2 }) do
@@ -491,15 +625,15 @@ module Switchboard
       end
       assert_equal [Process.pid], tags, "retried on the next tick, then nothing once it landed"
 
-      sb.instance_variable_set(:@tag_pending, Process.pid)
-      sb.instance_variable_set(:@tag_tries, 1)
+      reloader(sb).instance_variable_set(:@tag_pending, Process.pid)
+      reloader(sb).instance_variable_set(:@tag_tries, 1)
       tries = 0
       stub_method(Tmux, :visible?, ->(*) { false }) do
         stub_method(Tmux, :window_panes, ->(*) { 2 }) do
-          stub_method(CodeReload, :tag_sidebar_pane, ->(*, **) { tries += 1; false }) { (Sidebar::TAG_TRIES + 3).times { sb.send(:tick) } }
+          stub_method(CodeReload, :tag_sidebar_pane, ->(*, **) { tries += 1; false }) { (Sidebar::Reloader::TAG_TRIES + 3).times { sb.send(:tick) } }
         end
       end
-      assert_equal Sidebar::TAG_TRIES - 1, tries, "a tag that never lands (tmux < 3.0) stops costing ticks"
+      assert_equal Sidebar::Reloader::TAG_TRIES - 1, tries, "a tag that never lands (tmux < 3.0) stops costing ticks"
     end
 
     # --- the exec itself ----------------------------------------------------------
@@ -508,9 +642,9 @@ module Switchboard
       ENV["SWITCHBOARD_BIN"] = "/opt/sb/bin/switchboard"
       sb ||= sidebar(nodes: [proj("app"), ws("a"), ws("b")], cursor: 2)
       sb.instance_variable_set(:@visible, true)
-      sb.instance_variable_set(:@reload_requested, true)
+      reloader(sb).instance_variable_set(:@reload_requested, true)
       tags = []
-      sb.define_singleton_method(:exec) { |*argv| on_exec.call(argv) }
+      reloader(sb).define_singleton_method(:exec) { |*argv| on_exec.call(argv) }
       flags = []
       calls = []
       order = []
@@ -552,8 +686,8 @@ module Switchboard
       refute ENV.key?(CodeReload::RESUME_ENV)
       assert_equal "1", ENV["SB_REEXEC"]
       refute_equal "IGNORE", trap(CodeReload::SIGNAL, "DEFAULT"), "the handler is back"
-      assert_equal "/Cellar/new", sb.instance_variable_get(:@reexec_blocked_root)
-      refute sb.instance_variable_get(:@reload_requested)
+      assert_equal "/Cellar/new", reloader(sb).instance_variable_get(:@reexec_blocked_root)
+      refute reloader(sb).instance_variable_get(:@reload_requested)
       assert_equal [[:tag, 0, true], [:tag, Process.pid, false], [:flag, "/Cellar/new"]], @tmux_order,
                    "the old code's re-tag leaves the failure flag alone, and the flag lands last"
     end
@@ -563,11 +697,11 @@ module Switchboard
     def test_a_retried_re_tag_after_a_failed_exec_keeps_the_failure_flag
       @tag_lands = false
       sb, = exec_sidebar { raise Errno::ENOENT, "gone" }
-      assert_equal Process.pid, sb.instance_variable_get(:@tag_pending), "the re-tag didn't land: owed"
+      assert_equal Process.pid, reloader(sb).instance_variable_get(:@tag_pending), "the re-tag didn't land: owed"
       calls = []
-      stub_method(CodeReload, :tag_sidebar_pane, ->(_p, v, clear_failed: true) { calls << [v, clear_failed]; true }) { sb.send(:retry_tag) }
+      stub_method(CodeReload, :tag_sidebar_pane, ->(_p, v, clear_failed: true) { calls << [v, clear_failed]; true }) { reloader(sb).send(:retry_tag) }
       assert_equal [[Process.pid, false]], calls
-      assert_nil sb.instance_variable_get(:@tag_pending)
+      assert_nil reloader(sb).instance_variable_get(:@tag_pending)
     end
 
     # Value: protects=a startup tag that didn't land is retried on later ticks, so later reloads
@@ -578,13 +712,13 @@ module Switchboard
       calls = []
       results = [false, false, true]
       stub_method(CodeReload, :tag_sidebar_pane, ->(_p, v, clear_failed: true) { calls << [v, clear_failed]; results.shift }) do
-        refute sb.send(:tag_pane)
-        2.times { sb.send(:retry_tag) }
-        sb.send(:retry_tag) # landed: nothing owed
+        refute reloader(sb).send(:tag_pane)
+        2.times { reloader(sb).send(:retry_tag) }
+        reloader(sb).send(:retry_tag) # landed: nothing owed
       end
       assert_equal [[Process.pid, true], [Process.pid, true], [Process.pid, true]], calls,
                    "a new image's first tag, retried, may still clear a failure flag"
-      assert_nil sb.instance_variable_get(:@tag_pending)
+      assert_nil reloader(sb).instance_variable_get(:@tag_pending)
     end
 
     # Value: protects=a boot tag still owed can't erase a failure flag a later failed reload
@@ -592,22 +726,32 @@ module Switchboard
     def test_a_failed_reload_revokes_an_owed_boot_tags_clear
       @tag_lands = true
       sb = sidebar(nodes: [proj("app"), ws("a"), ws("b")], cursor: 2)
-      stub_method(CodeReload, :tag_sidebar_pane, ->(*, **) { false }) { sb.send(:tag_pane) } # boot tag owed, may clear
+      stub_method(CodeReload, :tag_sidebar_pane, ->(*, **) { false }) { reloader(sb).send(:tag_pane) } # boot tag owed, may clear
       exec_sidebar(preflight: :failed, sb: sb) { flunk "no exec" }
       calls = []
-      stub_method(CodeReload, :tag_sidebar_pane, ->(_p, v, clear_failed: true) { calls << [v, clear_failed]; true }) { sb.send(:retry_tag) }
+      stub_method(CodeReload, :tag_sidebar_pane, ->(_p, v, clear_failed: true) { calls << [v, clear_failed]; true }) { reloader(sb).send(:retry_tag) }
       assert_equal [[Process.pid, false]], calls, "the flag the failed check just wrote stands"
+    end
+
+    # Value: protects=an owed tag keeps the clear right it was asked with; fails_when=a tag that
+    # didn't land always retries with the clear; seam=none
+    def test_an_owed_tag_that_may_not_clear_retries_without_the_clear
+      sb = sidebar(nodes: [proj("app")])
+      stub_method(CodeReload, :tag_sidebar_pane, ->(*, **) { false }) { reloader(sb).tag_pane(clear_failed: false) }
+      calls = []
+      stub_method(CodeReload, :tag_sidebar_pane, ->(_p, v, clear_failed: true) { calls << [v, clear_failed]; true }) { reloader(sb).retry_tag }
+      assert_equal [[Process.pid, false]], calls
     end
 
     def test_a_mid_exec_tag_that_fails_owes_nothing
       sb = sidebar(nodes: [proj("app")])
-      stub_method(CodeReload, :tag_sidebar_pane, ->(*, **) { false }) { sb.send(:tag_pane, 0) }
-      assert_nil sb.instance_variable_get(:@tag_pending), "exec replaces us right after"
+      stub_method(CodeReload, :tag_sidebar_pane, ->(*, **) { false }) { reloader(sb).send(:tag_pane, 0) }
+      assert_nil reloader(sb).instance_variable_get(:@tag_pending), "exec replaces us right after"
     end
 
     def test_a_failed_preflight_never_execs_and_blocks_that_root
       sb, = exec_sidebar(preflight: :failed) { flunk "a binary that won't load is never exec'd" }
-      assert_equal "/Cellar/new", sb.instance_variable_get(:@reexec_blocked_root)
+      assert_equal "/Cellar/new", reloader(sb).instance_variable_get(:@reexec_blocked_root)
       assert_equal ["/Cellar/new"], @failure_flags, "the pane says so, for doctor and the next reload"
     end
 
@@ -618,8 +762,8 @@ module Switchboard
     # timeout is exec'd, silently dropped, or blocks signals too; seam=none
     def test_a_preflight_timeout_is_handled_like_a_failure
       sb, = exec_sidebar(preflight: :timeout) { flunk "never exec on a timeout" }
-      assert_equal "/Cellar/new", sb.instance_variable_get(:@reexec_blocked_root)
-      refute sb.instance_variable_get(:@reload_requested), "no clock of its own: nothing is left pending"
+      assert_equal "/Cellar/new", reloader(sb).instance_variable_get(:@reexec_blocked_root)
+      refute reloader(sb).instance_variable_get(:@reload_requested), "no clock of its own: nothing is left pending"
       assert_equal ["/Cellar/new"], @failure_flags
       assert_equal 1, @preflight_calls.size
       exec_sidebar(preflight: :ok, sb: sb) { |_argv| raise Errno::ENOENT, "stop" }
@@ -636,7 +780,7 @@ module Switchboard
       File.symlink(File.join(dir, "old"), opt)
       ENV["SWITCHBOARD_BIN"] = File.join(opt, "bin", "switchboard")
       sb = sidebar(nodes: [proj("app"), ws("a")])
-      sb.instance_variable_set(:@reload_requested, true)
+      reloader(sb).instance_variable_set(:@reload_requested, true)
       flags = []
       repoint = lambda do |*, **|
         File.unlink(opt)
@@ -647,7 +791,7 @@ module Switchboard
         stub_method(CodeReload, :flag_failed_reload, ->(_pane, value) { flags << value }) { sb.send(:reexec) }
       end
       old_root = File.realpath(File.join(dir, "old"))
-      assert_equal old_root, sb.instance_variable_get(:@reexec_blocked_root)
+      assert_equal old_root, reloader(sb).instance_variable_get(:@reexec_blocked_root)
       assert_equal [old_root], flags
       assert_equal File.realpath(File.join(dir, "new")), CodeReload.current_root, "the newer keg isn't the blocked one"
     ensure
@@ -664,9 +808,9 @@ module Switchboard
       File.symlink(File.join(dir, "old"), opt)
       ENV["SWITCHBOARD_BIN"] = File.join(opt, "bin", "switchboard")
       sb = sidebar(nodes: [proj("app"), ws("a")])
-      sb.instance_variable_set(:@reload_requested, true)
+      reloader(sb).instance_variable_set(:@reload_requested, true)
       checked = ran = nil
-      sb.define_singleton_method(:exec) { |path, *| ran = path; raise Errno::ENOENT, "stop" }
+      reloader(sb).define_singleton_method(:exec) { |path, *| ran = path; raise Errno::ENOENT, "stop" }
       repoint = lambda do |path, *, **|
         checked = path
         File.unlink(opt)
@@ -691,12 +835,12 @@ module Switchboard
     # seam=none
     def test_an_install_that_will_not_resolve_fails_the_reload_without_a_check
       sb = sidebar(nodes: [proj("app"), ws("a")])
-      sb.instance_variable_set(:@reexec_blocked_root, "/Cellar/broken")
+      reloader(sb).instance_variable_set(:@reexec_blocked_root, "/Cellar/broken")
       sb, = exec_sidebar(root: nil, sb: sb) { flunk "never exec a path nobody checked" }
       assert_empty @preflight_calls, "no check either: there's nothing pinned to check"
       assert_equal ["/opt/sb/bin/switchboard"], @failure_flags, "never an empty flag"
-      assert_equal "/Cellar/broken", sb.instance_variable_get(:@reexec_blocked_root)
-      refute sb.instance_variable_get(:@reload_requested), "no clock of its own: a signal retries"
+      assert_equal "/Cellar/broken", reloader(sb).instance_variable_get(:@reexec_blocked_root)
+      refute reloader(sb).instance_variable_get(:@reload_requested), "no clock of its own: a signal retries"
     end
 
     # Value: protects=the preflight proves the new code can build a sidebar and take its payload, not just load
@@ -713,11 +857,11 @@ module Switchboard
       sb = sidebar(nodes: [proj("app"), ws("a")])
       now = sb.send(:monotonic)
       sb.instance_variable_set(:@visible, true)
-      sb.instance_variable_set(:@last_announce_scan, now)
+      reloader(sb).instance_variable_set(:@last_announce_scan, now)
       assert CodeReload.decode(sb.send(:resume_payload))[:announce]
-      sb.instance_variable_set(:@last_announce_scan, now - 60)
+      reloader(sb).instance_variable_set(:@last_announce_scan, now - 60)
       refute CodeReload.decode(sb.send(:resume_payload))[:announce], "a stale baseline owes a catch-up"
-      sb.instance_variable_set(:@last_announce_scan, now)
+      reloader(sb).instance_variable_set(:@last_announce_scan, now)
       sb.instance_variable_set(:@visible, false)
       refute CodeReload.decode(sb.send(:resume_payload))[:announce], "off screen: silent"
     end
@@ -755,18 +899,18 @@ module Switchboard
     def test_the_signal_only_flags_and_wakes
       sb = sidebar(nodes: [proj("app"), ws("a")])
       sb.define_singleton_method(:reexec) { flunk "nothing runs inside the handler" }
-      sb.send(:install_reload_trap)
+      reloader(sb).send(:install_reload_trap)
       Process.kill(CodeReload::SIGNAL, Process.pid)
       installed = trap(CodeReload::SIGNAL, "DEFAULT")
       trap(CodeReload::SIGNAL, installed)
       assert_kind_of Proc, installed, "a handler is installed (else USR1's default would kill the test run)"
       deadline = Time.now + 2
-      sleep 0.05 until sb.instance_variable_get(:@reload_signal) || Time.now > deadline
-      assert sb.instance_variable_get(:@reload_signal), "the handler set the flag"
-      assert IO.select([sb.instance_variable_get(:@wake_r)], nil, nil, 1), "the loop's select wakes"
-      refute sb.instance_variable_get(:@reload_requested), "turned into a request only at the loop top"
+      sleep 0.05 until reloader(sb).instance_variable_get(:@reload_signal) || Time.now > deadline
+      assert reloader(sb).instance_variable_get(:@reload_signal), "the handler set the flag"
+      assert IO.select([reloader(sb).instance_variable_get(:@wake_r)], nil, nil, 1), "the loop's select wakes"
+      refute reloader(sb).instance_variable_get(:@reload_requested), "turned into a request only at the loop top"
     ensure
-      sb&.send(:restore_reload_trap)
+      reloader(sb).restore_reload_trap if sb
     end
 
     # --- sidebar --check (the exec preflight) and the zombie sweep -----------------
@@ -842,7 +986,7 @@ module Switchboard
       assert_equal pid, Process.wait(pid), "a cold start leaves its children to their waiters"
       pid = zombie
       resumed = sidebar(nodes: [proj("app"), ws("a")])
-      resumed.instance_variable_set(:@resume, { cursor: nil })
+      reloader(resumed).instance_variable_set(:@resume, { cursor: nil })
       idle_tick(resumed)
       assert_raises(Errno::ECHILD) { Process.wait(pid) }
     end

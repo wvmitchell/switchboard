@@ -25,7 +25,7 @@ module Switchboard
   #             │                ├─ wake pipe (SIGUSR1) ─▶ reload requested
   #             │                └─ timeout ─▶ tick ─▶ reload / warm gate (HERE)
   #             │                                 └─▶ keg moved? (CodeReload.stale?) ─▶ reload requested
-  #   loop top: maybe_reexec ─ due + no overlay ─▶ preflight ─▶ exec self in place (#48)
+  #   loop top: maybe_reexec ─ due + no overlay ─▶ Reloader (reloader.rb): preflight ─▶ exec self in place (#48)
   #                                             │
   #        rebuild ─▶ Rows (rows.rb: fold/filter rows + @diffs cache)
   #        refresh_agents ─▶ Presence.scan ─▶ @edges.on_scan (edges.rb:
@@ -59,8 +59,6 @@ module Switchboard
     # only the navigation trigger's gate stays here — reload_and_refresh (T2) is
     # the poke handler, and it doesn't move.
     NAV_TTL = 45             # refresh-on-switch only if the cache is older than this
-    ANNOUNCE_GRACE = 1       # seconds past REFRESH a scan still counts as "just now" for a reload's first ring (#48)
-    TAG_TRIES = 5            # attempts at a pane tag that didn't land (#48): a one-off tmux failure, not tmux < 3.0's every-time one
 
     def self.run
       new.run
@@ -186,20 +184,8 @@ module Switchboard
                            # resolved once lazily on first help open (a tmux shell-out),
                            # then memoized so the paint loop never re-queries (issue #62)
       @update = UpdateCue.new # the "newer release" line under the wordmark (#47)
-      # Code reload (#48): exec self in place when asked (SIGUSR1) or when the keg moved.
-      @resume = nil        # the payload a reload handed us (CodeReload.take_resume), nil on a cold start
-      @resume_cursor = nil # its cursor row, re-found by identity after the first rebuild
-      @reload_requested = false
-      @reload_signal = false # set by the SIGUSR1 trap; the loop turns it into a request
-      @reexec_at = nil     # monotonic when a requested reload is due (off screen: spread out)
-      @reexec_blocked_root = nil # a root whose preflight failed: the backstop won't retry it
-      @warm_not_before = nil # a reloaded off-screen pane's first warm waits out the spread
-      @last_announce_scan = nil # monotonic of the last announcing on-screen scan: a reload's first scan may ring only after a recent one
-      @wake_r = @wake_w = nil # self-pipe the trap writes, so IO.select wakes for it
-      @prev_reload_trap = nil
-      @tag_pending = nil   # the pid tag owed when one didn't land, retried by tick (retry_tag)
-      @tag_tries = 0
-      @tag_clears = false  # whether that owed tag may clear a failed-reload flag (a new image's first)
+      @reloader = Reloader.new # code reload (#48): the signal, pane tag and exec in place
+      @resume_cursor = nil # a resumed payload's cursor row, re-found by identity after the first rebuild
       @pending = +""       # an incomplete escape sequence split across reads, carried
                            # to the next one and reassembled by tokenize (see handle) —
                            # so a sequence's final byte is never read alone as a key
@@ -208,21 +194,21 @@ module Switchboard
     def run
       return warn("no config — run `switchboard init`") unless Config.exist?
 
-      @resume = CodeReload.take_resume # before anything spawns a child that would inherit it
-      install_reload_trap # BEFORE the tag: a sender that sees the tag may signal at once (R4)
+      @reloader.take_resume # before anything spawns a child that would inherit it
+      @reloader.install_reload_trap # BEFORE the tag: a sender that sees the tag may signal at once (R4)
       setup
       Tmux.enable_focus_events # so focus in/out reaches us for an instant dim
       @home = Tmux.session_of == Tmux::HOME # stable for this pane's lifetime
       pane = ENV["TMUX_PANE"]
       @pane_tty = Tmux.pane_tty(pane) # capture our pty now — the pane identity owns_pane? guards
-      tag_pane # "this sidebar takes the reload signal" (#48)
+      @reloader.tag_pane # "this sidebar takes the reload signal" (#48)
       # Sample visibility — don't assume on. A sidebar spawned with split-window -d
       # (after-new-window sync, reconcile into a non-active window) lands OFF screen;
       # warming + painting it then is exactly the off-screen work we're cutting. When
       # it first comes on screen, the switch-in poke or the tick catch-up reloads it.
       set_visible(Tmux.visible?(pane))
       @focused = @visible && Tmux.focused?(pane)
-      if @resume
+      if @reloader.resume
         resume_start
       elsif @visible
         pin_if_resized # pins + seeds @geom so the first tick won't re-pin
@@ -230,7 +216,7 @@ module Switchboard
         reload # rebuild + agents + locate "you are here"
         cursor_to_current # a freshly summoned sidebar starts on the workspace it's in
       end
-      reconcile_on_launch if @home && @config.prune_on_launch? && !@resume # a reload isn't a launch
+      reconcile_on_launch if @home && @config.prune_on_launch? && !@reloader.resume # a reload isn't a launch
       @last_scan = monotonic
       loop do
         maybe_reexec # returns only when no reload is due (or it failed safe)
@@ -238,8 +224,8 @@ module Switchboard
         # Wake often enough to animate the spinner/blink, but only while a dot is
         # on screen; otherwise sit on the slow REFRESH/IDLE interval. State scans
         # stay gated to REFRESH (scan_due?) so the fast frames don't hammer tmux.
-        if (ready = IO.select([$stdin, @wake_r].compact, nil, nil, frame_timeout))
-          drain_wake if ready.first.include?(@wake_r)
+        if (ready = IO.select([$stdin, @reloader.wake_r].compact, nil, nil, frame_timeout))
+          @reloader.drain_wake if ready.first.include?(@reloader.wake_r)
           next unless ready.first.include?($stdin)
 
           key = read_key
@@ -266,9 +252,10 @@ module Switchboard
                 end
       # Wake for a spread-out reload, but never while an overlay blocks it: a passed
       # deadline would make every select return at once (R8). Closing it is a key.
-      return timeout unless @reload_requested && @reexec_at && reexec_allowed?
+      wait = @reloader.reexec_wait
+      return timeout unless wait && reexec_allowed?
 
-      [timeout, [@reexec_at - monotonic, 0].max].min
+      [timeout, wait].min
     end
 
     # A thinking/waiting dot is actually on screen and worth animating. Gated on
@@ -344,9 +331,7 @@ module Switchboard
       return false unless owns_pane? # disowned -> stop ticking; the loop exits us
       return false if lone_pane_handled # #64: work sibling died -> don't wedge (workspace exits, home self-heals)
 
-      request_reload if code_moved? # a `brew upgrade` nobody signaled us about (#48)
-      retry_tag
-      reap_strays if @resume
+      @reloader.on_tick(visible: @visible)
       visible = Tmux.visible?(ENV["TMUX_PANE"])
       # Off screen we're never focused, so skip the focused? shell-out entirely —
       # that's half the per-tick tmux cost of a dormant pane.
@@ -371,7 +356,7 @@ module Switchboard
         else
           refresh_agents
         end
-      elsif @config.prewarm? && elapsed?(@last_warm, WARM_TTL) && warm_spread_over? &&
+      elsif @config.prewarm? && elapsed?(@last_warm, WARM_TTL) && @reloader.warm_spread_over? &&
             (fp = warm_fingerprint) != @warm_fp
         # Off screen and something we draw changed: keep this hidden pane's buffer
         # warm (warm_reload + render) so a later switch-in shows fresh content with
@@ -510,7 +495,7 @@ module Switchboard
                              first_turn: first_turn_paths, offstage: scan.handoff, idle: scan.idle, sessions_ok: !scan.sessions.nil?,
                              announce_sounds: announce_sounds, refresh_prs: refresh_prs)
       ring_creations if announce_sounds
-      @last_announce_scan = monotonic if announce_sounds && @visible # a reload's first scan may announce only after this (R7)
+      @reloader.note_announcing_scan if announce_sounds && @visible # a reload's first scan may announce only after this (R7)
       refresh_diffs if edges.any? # a finished turn likely just committed — repaint its count
       @attention = Attention.marked(ws_paths)          # load for render, after the marks land
       finished = true
@@ -827,9 +812,7 @@ module Switchboard
       set_visible(Tmux.visible?(ENV["TMUX_PANE"]))
       return locate unless @visible    # hidden background poke: badges are cached, nothing to paint
       unless reload_due? # coalesce a rapid switch storm into one heavy reload
-        # No catch-up scan here, so a swap right after must start silent: its baseline
-        # predates whatever another pane rang while we were away (#48).
-        @last_announce_scan = nil if @reload_requested
+        @reloader.silence_pending_reload
         return locate
       end
 
@@ -872,88 +855,18 @@ module Switchboard
       print "\e[?25l\e[?1004h" # hide cursor, request focus events
       # Clear — unless a code reload exec'd us in place: the old image's frame stays up
       # until ours overwrites it, so the swap shows no blank frame (#48).
-      print "\e[2J" unless @resume
+      print "\e[2J" unless @reloader.resume
     end
 
     def teardown
-      restore_reload_trap
+      @reloader.restore_reload_trap
       $stdin.cooked!
       print "\e[?1004l\e[?25h" # stop focus events, show cursor
     rescue StandardError
       nil
     end
 
-    # --- code reload (#48): exec self in place --------------------------------
-    #
-    # Asked by SIGUSR1 (`upgrade` / `reload-sidebars`, which only signal a pane whose
-    # tag is our pid) or by the backstop in tick (the Homebrew keg moved). Due at once on
-    # screen; off screen after a random spread, so a fleet doesn't boot and rescan at
-    # once — but a switch-in makes it due right away. Never under an overlay or the
-    # filter, and never mid-prompt (prompts block the loop, so the request waits).
-
-    # A self-pipe the trap writes, so IO.select wakes for it. The trap only sets a flag:
-    # anything more in a signal handler is asking for trouble.
-    def install_reload_trap
-      @wake_r, @wake_w = IO.pipe unless @wake_r
-      wake = @wake_w
-      @prev_reload_trap = trap(CodeReload::SIGNAL) do
-        @reload_signal = true
-        wake.write_nonblock(".", exception: false)
-      rescue IOError
-        nil
-      end
-    rescue ArgumentError, SystemCallError
-      nil
-    end
-
-    def restore_reload_trap
-      trap(CodeReload::SIGNAL, @prev_reload_trap || "DEFAULT") if @wake_r
-      [@wake_r, @wake_w].each { |io| io&.close unless io&.closed? }
-      @wake_r = @wake_w = nil
-    rescue ArgumentError, SystemCallError
-      nil
-    end
-
-    def drain_wake
-      loop { @wake_r.read_nonblock(64) }
-    rescue IO::WaitReadable, EOFError, IOError
-      nil
-    end
-
-    # Our pane's tag: our pid, or "0" while we're between images (R4). A pid tag that didn't
-    # land is owed: a "0" left by our own exec would make every later reload skip us.
-    def tag_pane(value = Process.pid, clear_failed: true)
-      landed = CodeReload.tag_sidebar_pane(ENV["TMUX_PANE"], value, clear_failed: clear_failed)
-      return landed if value.to_s == "0" # exec replaces us right after: nothing to retry
-
-      @tag_pending, @tag_tries, @tag_clears = landed ? [nil, 0, false] : [value, 1, clear_failed]
-      landed
-    end
-
-    # Retry an owed tag as it was asked, TAG_TRIES attempts in all, then give up (the pane
-    # keeps whatever tag it had). A new image's first tag may clear a failed-reload flag; the
-    # old code's re-tag after a failed exec never does, so a retry can't hide that failure.
-    def retry_tag
-      return unless @tag_pending
-
-      @tag_tries += 1
-      landed = CodeReload.tag_sidebar_pane(ENV["TMUX_PANE"], @tag_pending, clear_failed: @tag_clears)
-      @tag_pending = nil if landed || @tag_tries >= TAG_TRIES
-    end
-
-    # The keg SWITCHBOARD_BIN resolves to isn't the one we loaded, and it isn't one whose
-    # preflight already failed (a broken release mustn't cost a boot every tick).
-    def code_moved?
-      return false if @reload_requested || !CodeReload.stale?
-
-      CodeReload.current_root != @reexec_blocked_root
-    end
-
-    def request_reload
-      @reload_requested = true
-      due = @visible ? monotonic : monotonic + CodeReload.spread_delay
-      @reexec_at = [@reexec_at, due].compact.min
-    end
+    # --- code reload (#48): Reloader owns the swap; these feed it the sidebar's state --------
 
     # Also never with half an escape sequence pending: the new image would read its tail (an
     # `O` from focus-out) as a key. Here, not only in maybe_reexec, so frame_timeout can't spin
@@ -963,73 +876,21 @@ module Switchboard
     end
 
     def maybe_reexec
-      if @reload_signal
-        @reload_signal = false
-        request_reload
-      end
-      return unless @reload_requested && reexec_allowed?
-      return unless @visible || monotonic >= @reexec_at
-
-      reexec
+      reexec if @reloader.reexec_due?(visible: @visible, allowed: reexec_allowed?)
     end
 
-    # Preflight, then exec. Every failure keeps this process running its current code.
     def reexec
-      @reload_requested = false
-      @reexec_at = nil
-      bin = ENV["SWITCHBOARD_BIN"] or return
-      render if @visible # the loop top runs before its paint: show the caught-up tree during the check
-      # One resolution for the check and the exec: a `brew upgrade` can repoint opt/ during the
-      # check, and exec'ing the link again would run a keg the check never saw. A link that
-      # won't resolve fails this reload rather than guess. Flagged (a checkout or keg that's gone
-      # for good must show; after a brief relink, the next reload that lands clears it), but no
-      # root is blocked: the known-broken one stands; a signal or the backstop retries.
-      real = CodeReload.real_bin(bin) or return reload_failed(bin, block: false)
-      root = CodeReload.root_of(real)
-      payload = resume_payload
-      case CodeReload.preflight(real, "sidebar", "--check", env: { CodeReload::RESUME_ENV => payload })
-      when :ok then exec_in_place(real, root, payload)
-      else reload_failed(root) # a timeout too: flagged, and `reload-sidebars` asks again on demand
-      end
-    end
-
-    # Stay on this code, say so on the pane (doctor, the next reload), and (with `block:`) keep
-    # the backstop off this root until a different one appears; an install that won't resolve
-    # only flags, leaving the blocked root as it was. A signal still asks again: a test run that
-    # only timed out (a cold disk right after `brew upgrade`) gets its retry from the next
-    # `reload-sidebars`, not from a clock of its own.
-    def reload_failed(root, block: true)
-      @reexec_blocked_root = root if block
-      @tag_clears = false # a boot tag still owed must not erase the flag written below
-      CodeReload.flag_failed_reload(ENV["TMUX_PANE"], root)
-    end
-
-    def exec_in_place(real, root, payload)
-      reexec_guard = ENV.delete("SB_REEXEC") # bin/switchboard's one-shot guard (Upgrade.handoff clears it too)
-      ENV[CodeReload::RESUME_ENV] = payload
-      # A second signal before the new image installs its trap would kill it (handlers
-      # reset on exec; SIG_IGN survives it), and senders skip a "0" tag (R4).
-      trap(CodeReload::SIGNAL, "IGNORE")
-      tag_pane(0)
-      $stdout.flush
-      exec(real, "sidebar")
-    rescue SystemCallError
-      ENV.delete(CodeReload::RESUME_ENV)
-      ENV["SB_REEXEC"] = reexec_guard if reexec_guard
-      install_reload_trap
-      tag_pane(clear_failed: false) # still old code: the failure flag below must stand
-      reload_failed(root)
+      @reloader.reexec(paint: -> { render if @visible }, payload: -> { resume_payload })
     end
 
     # What the new image needs that isn't on disk: where the cursor was, the agent-edge
-    # baseline (D1), and whether its first scan may ring — only if we were on screen and
-    # announcing just now; otherwise it owes a silent catch-up like any switch-in (R7).
+    # baseline (D1), and whether its first scan may ring.
     # Never raises: a reload that can't build its payload hands over none rather than closing
     # the pane. A cursor still waiting for its row (reloaded again before the first rebuild)
     # travels as it came.
     def resume_payload
-      announce = @visible && !@last_announce_scan.nil? && monotonic - @last_announce_scan <= REFRESH + ANNOUNCE_GRACE
-      CodeReload.encode(cursor: @resume_cursor || cursor_identity, offset: @offset, announce: announce, **@edges.baseline)
+      CodeReload.encode(cursor: @resume_cursor || cursor_identity, offset: @offset,
+                        announce: @reloader.announce?(visible: @visible), **@edges.baseline)
     rescue StandardError
       CodeReload.encode
     end
@@ -1042,13 +903,13 @@ module Switchboard
     # A reloaded process's start: no blank frame. On screen it reloads now; off screen its
     # first warm waits out the spread (a fleet restarted at once would rescan git at once).
     def resume_start
-      apply_resume(@resume)
+      apply_resume(@reloader.resume)
       if @visible
         pin_if_resized
-        reload(announce_sounds: @resume[:announce])
-        cursor_to_current unless @resume[:cursor] # a respawned old sidebar carries none: start "here", as a fresh one does
+        reload(announce_sounds: @reloader.resume[:announce])
+        cursor_to_current unless @reloader.resume[:cursor] # a respawned old sidebar carries none: start "here", as a fresh one does
       else
-        @warm_not_before = monotonic + CodeReload.spread_delay
+        @reloader.hold_first_warm
       end
     end
 
@@ -1057,20 +918,6 @@ module Switchboard
       @edges.restore_baseline(hook_states: payload[:hook_states], notify: payload[:notify], scanned: payload[:announce])
       @resume_cursor = payload[:cursor]
       @offset = payload[:offset]
-    end
-
-    # exec kept our pid but not the old image's Process.detach threads, so its children (a PR
-    # refresh, a sound) would linger as zombies. The sweep may also reap this image's own
-    # detached children before their detach thread does; no caller reads a detach thread's
-    # value, and shell-outs wait inline on this same thread, so no status anyone uses is lost.
-    def reap_strays
-      loop { break unless Process.wait(-1, Process::WNOHANG) }
-    rescue Errno::ECHILD
-      nil
-    end
-
-    def warm_spread_over?
-      !(@warm_not_before && monotonic < @warm_not_before)
     end
 
     # Once, after the first reload's locate: the cursor goes back on the row it was on
@@ -1092,6 +939,7 @@ end
 # class Sidebar.
 require_relative "sidebar/edges"
 require_relative "sidebar/update_cue"
+require_relative "sidebar/reloader"
 require_relative "sidebar/render"
 require_relative "sidebar/input"
 require_relative "sidebar/actions"
