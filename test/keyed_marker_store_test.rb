@@ -149,11 +149,11 @@ module Switchboard
     # KeyedMarkerStore and exit non-zero. (In-process this can't be caught: the
     # umbrella is already loaded by test_helper.)
     def test_attention_loads_standalone
-      assert_loads_standalone "switchboard/attention", "Switchboard::Attention.scan"
+      assert_loads_standalone "switchboard/state/attention", "Switchboard::Attention.scan"
     end
 
     def test_collapse_loads_standalone
-      assert_loads_standalone "switchboard/collapse", "Switchboard::Collapse.collapsed"
+      assert_loads_standalone "switchboard/state/collapse", "Switchboard::Collapse.collapsed"
     end
 
     private

@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
-require_relative "paths"
-require_relative "view_flag"
+require_relative "../support/paths"
+require_relative "../support/view_flag"
 
 module Switchboard
   # The shared "show the full header on every session" toggle (the `H` key). The

@@ -57,7 +57,7 @@ of them would change what the code under test does. The one survivor is
 
 So a test never reads or writes anything outside its sandbox, and never pokes your
 real tmux. When you add state, resolve its location through `Paths`
-(`lib/switchboard/paths.rb`; see how `AgentState.state_dir` and friends call it). It
+(`lib/switchboard/support/paths.rb`; see how `AgentState.state_dir` and friends call it). It
 reads `ENV` *per call*, so the sandbox can redirect it.
 
 Helpers you'll use:
@@ -133,7 +133,7 @@ without it and asserts an untrusted block writes no state (the case behind `doct
   `test/layers_test.rb` fails when a file has no layer, when a lower layer reaches up
   to a higher one, or when a file other than `lib/switchboard/root.rb` locates paths from
   its own `__dir__` or `__FILE__` (use `Switchboard::ROOT` instead).
-  A new file goes into the test's `LAYERS` list; the
+  A new file goes in its layer's folder; the
   [architecture doc's Layers section](docs/explanation-architecture.md#layers) explains
   which layer fits.
 - **Comments explain *why*, not *what*.** The code is meant to be
@@ -183,20 +183,20 @@ the new binary re-wire tmux and every hooked worktree — the CHANGELOG header s
 | Area | File(s) |
 |------|---------|
 | Command dispatch | `lib/switchboard/cli.rb` |
-| `switchboard doctor`'s checks | `lib/switchboard/doctor.rb` |
-| Quitting and removing a workspace, for both front-ends | `lib/switchboard/workspaces.rb` |
-| What the agent hooks print and record | `lib/switchboard/hook_commands.rb` (the decisions: `rename_nudge.rb`, `dispatch_nudge.rb`, `monitoring_nudge.rb`) |
-| Config / registry | `lib/switchboard/config.rb` |
-| The data model + tree | `lib/switchboard/model.rb`, `tree.rb` |
+| `switchboard doctor`'s checks | `lib/switchboard/ops/doctor.rb` |
+| Quitting and removing a workspace, for both front-ends | `lib/switchboard/ops/workspaces.rb` |
+| What the agent hooks print and record | `lib/switchboard/hook_commands.rb` (the decisions: `state/rename_nudge.rb`, `state/dispatch_nudge.rb`, `state/monitoring_nudge.rb`) |
+| Config / registry | `lib/switchboard/state/config.rb` |
+| The data model + tree | `lib/switchboard/state/model.rb`, `state/tree.rb` |
 | The sidebar TUI | `lib/switchboard/sidebar.rb` (run-loop core) + `lib/switchboard/sidebar/{edges,update_cue,reloader,render,input,actions,prompt,rows}.rb` (its test files: `test/sidebar_*_test.rb`, sharing `test/support/sidebar_case.rb`) |
-| tmux integration | `lib/switchboard/tmux.rb`, `lib/switchboard/tmux/`, `switchboard.tmux` |
-| Install / keybindings | `lib/switchboard/installer.rb`, `lib/switchboard/installer/keybindings.rb`, `stable_path.rb` (Homebrew `opt/` paths) |
-| Upgrade / release check | `lib/switchboard/upgrade.rb`, `latest_release.rb` |
+| tmux integration | `lib/switchboard/adapters/tmux.rb`, `adapters/tmux/`, `switchboard.tmux` |
+| Install / keybindings | `lib/switchboard/ops/installer.rb`, `lib/switchboard/ops/installer/keybindings.rb`, `support/stable_path.rb` (Homebrew `opt/` paths) |
+| Upgrade / release check | `lib/switchboard/ops/upgrade.rb`, `adapters/latest_release.rb` |
 | Packaging / releases | `packaging/homebrew/switchboard.rb` (formula), `packaging/release.rb`, `.github/workflows/{release,formula}.yml` |
-| Marker-block surgery (tmux.conf + `~/.codex/config.toml`) | `lib/switchboard/marker_block.rb` |
-| Agent state / hooks | `lib/switchboard/presence.rb`, `agent_state.rb`, `agents.rb`; adapters `claude_hook.rb` (Claude, per-worktree) + `codex_hook.rb` (Codex, global `~/.codex/config.toml` block) over shared base `hook_file.rb`, behind registry `agent_hooks.rb` |
-| Sounds / bold / collapse | `lib/switchboard/sound.rb`, `attention.rb`, `collapse.rb` (shared base: `keyed_marker_store.rb`) |
-| Git / PRs / reconcile | `lib/switchboard/git.rb`, `pr.rb`, `reconcile.rb` |
-| State-file locations / on-off view flags | `lib/switchboard/paths.rb`, `view_flag.rb` |
+| Marker-block surgery (tmux.conf + `~/.codex/config.toml`) | `lib/switchboard/support/marker_block.rb` |
+| Agent state / hooks | `lib/switchboard/state/presence.rb`, `adapters/agent_state.rb`, `adapters/agents.rb`; adapters `claude_hook.rb` (Claude, per-worktree) + `codex_hook.rb` (Codex, global `~/.codex/config.toml` block) over shared base `hook_file.rb`, behind registry `agent_hooks.rb` |
+| Sounds / bold / collapse | `lib/switchboard/state/sound.rb`, `state/attention.rb`, `state/collapse.rb` (shared base: `support/keyed_marker_store.rb`) |
+| Git / PRs / reconcile | `lib/switchboard/adapters/git.rb`, `adapters/pr.rb`, `ops/reconcile.rb` |
+| State-file locations / on-off view flags | `lib/switchboard/support/paths.rb`, `support/view_flag.rb` |
 
 See [docs/](docs/) for the full Diataxis documentation set.

@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-require_relative "claude_sessions"
+require_relative "../adapters/claude_sessions"
 require_relative "monitoring"
 require_relative "notify"
 require_relative "remote_link"

@@ -17,9 +17,9 @@ module Switchboard
     # their own: `switchboard install`'s helpers and standalone requires don't go through
     # lib/switchboard.rb.
     CONSUMERS = {
-      "switchboard/code_reload" => "Switchboard::CodeReload::LOADED_ROOT",
-      "switchboard/installer" => "Switchboard::Installer.real_root",
-      "switchboard/sandbox" => "Switchboard::Sandbox.checkout_root"
+      "switchboard/ops/code_reload" => "Switchboard::CodeReload::LOADED_ROOT",
+      "switchboard/ops/installer" => "Switchboard::Installer.real_root",
+      "switchboard/ops/sandbox" => "Switchboard::Sandbox.checkout_root"
     }.freeze
 
     def test_root_is_the_repo_this_code_was_loaded_from

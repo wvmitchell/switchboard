@@ -230,10 +230,10 @@ module Switchboard
 
     # Each store resolves through Paths, so it has to load without lib/switchboard.rb.
     def test_stores_load_on_their_own
-      { "agent_state" => "AgentState.state_dir", "width" => "Width.state_file", "sound" => "Sound.asset_dir",
-        "hook_file" => "HookFile.script_path", "full_header" => "FullHeader.marker",
-        "branch_fold" => "BranchFold.marker", "collapse" => "Collapse.state_dir",
-        "codex_hook" => "CodexHook.bin" }.each do |lib, expr|
+      { "adapters/agent_state" => "AgentState.state_dir", "adapters/width" => "Width.state_file", "state/sound" => "Sound.asset_dir",
+        "adapters/hook_file" => "HookFile.script_path", "state/full_header" => "FullHeader.marker",
+        "state/branch_fold" => "BranchFold.marker", "state/collapse" => "Collapse.state_dir",
+        "adapters/codex_hook" => "CodexHook.bin" }.each do |lib, expr|
         out = IO.popen([RbConfig.ruby, "-I#{LIB}", "-e", "require #{"switchboard/#{lib}".inspect}; puts Switchboard::#{expr}"],
                        err: %i[child out], in: File::NULL, &:read)
         assert $?.success?, "#{lib} on its own: #{out}"

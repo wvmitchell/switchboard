@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 require "shellwords"
-require_relative "paths"
+require_relative "../support/paths"
 
 module Switchboard
   # Per-worktree agent state for the sidebar dots. Two presence signals, either

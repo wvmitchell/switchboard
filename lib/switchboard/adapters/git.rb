@@ -2,7 +2,7 @@
 
 require "shellwords"
 require "fileutils"
-require_relative "process_identity"
+require_relative "../support/process_identity"
 
 module Switchboard
   # Git is the source of truth for what worktrees exist and what they contain.

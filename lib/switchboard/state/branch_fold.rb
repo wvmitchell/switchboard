@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
-require_relative "paths"
-require_relative "view_flag"
+require_relative "../support/paths"
+require_relative "../support/view_flag"
 
 module Switchboard
   # The global "fold every workspace's branch-history rows" toggle (the `z` key).

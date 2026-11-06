@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-require_relative "paths"
+require_relative "../support/paths"
 
 module Switchboard
   # Owns the tmux session lifecycle: reconciles the live `sb/` sessions against

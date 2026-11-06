@@ -2,7 +2,7 @@
 
 require "tempfile"
 require "tmpdir"
-require_relative "process_identity"
+require_relative "../support/process_identity"
 
 module Switchboard
   # The newest released version, read from the release tags on GitHub — what `upgrade`

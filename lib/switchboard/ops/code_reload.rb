@@ -3,9 +3,9 @@
 require "json"
 require "shellwords"
 require "tempfile"
-require_relative "latest_release"
-require_relative "root"
-require_relative "stable_path"
+require_relative "../adapters/latest_release"
+require_relative "../root"
+require_relative "../support/stable_path"
 
 module Switchboard
   # A running sidebar swapping in new code without a restart (#48). The sidebar execs

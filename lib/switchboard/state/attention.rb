@@ -1,8 +1,8 @@
 # frozen_string_literal: true
 
 require "set"
-require_relative "keyed_marker_store"
-require_relative "paths"
+require_relative "../support/keyed_marker_store"
+require_relative "../support/paths"
 
 module Switchboard
   # Per-worktree "needs attention" markers behind the sidebar's bold highlight. A

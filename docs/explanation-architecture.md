@@ -103,12 +103,14 @@ The primary trunk checkout (`primary`) is always filtered out as a switch target
 
 ## Layers
 
-`lib/switchboard/` is about sixty files in one folder. Most are small, with one job each,
-but the folder doesn't tell you which files talk to tmux, which hold switchboard's own
-state, and which are the commands people run. Without that, every new piece of code
-lands wherever the nearest example was, and the codebase slowly tangles.
+`lib/switchboard/` is about sixty files. Most are small, with one job each. In one flat
+folder they wouldn't tell you which files talk to tmux, which hold switchboard's own
+state, and which are the commands people run, so every new piece of code would land
+wherever the nearest example was, and the codebase would slowly tangle.
 
-So each file belongs to one of five layers. A file may use anything in its own layer or
+So each file belongs to one of five layers, and its folder says which: `support/`,
+`adapters/`, `state/` and `ops/`. The interfaces (`cli.rb`, `hook_commands.rb`, `sidebar.rb`
+and `sidebar/`) sit at the top of `lib/switchboard/`. A file may use anything in its own layer or
 a lower one, never a higher one:
 
 | Layer | What lives there | Examples |
@@ -131,7 +133,7 @@ depends only on support files.
 
 ### Where state files live
 
-`lib/switchboard/paths.rb` is the one place that knows where a store under the XDG roots
+`lib/switchboard/support/paths.rb` is the one place that knows where a store under the XDG roots
 goes (the config file keeps its own path, in `Config`). `Paths.state`, `Paths.cache` and
 `Paths.data` each take the store's leaf name, plus its override variable where it has one.
 Every result is UTF-8, even under a C locale, where Ruby hands the
@@ -148,10 +150,10 @@ reads it the same way. `test/paths_test.rb` pins all of this, so a change here i
 
 ### The layer test holds it
 
-`test/layers_test.rb` checks every file under `lib/switchboard/` on every run. It lists
-each file's layer and fails when:
+`test/layers_test.rb` checks every file under `lib/switchboard/` on every run. It reads
+each file's layer from its folder and fails when:
 
-- a file has no layer, or is listed twice;
+- a file sits outside the layer folders, and isn't an interface or pinned;
 - a top-level constant is defined in two files, so its layer would be ambiguous;
 - a file references a constant from a higher layer;
 - any file but `root.rb` locates files relative to itself with `__dir__` or `__FILE__`.
@@ -163,7 +165,8 @@ install this process loaded (a keg's real path under Homebrew, the checkout othe
 and `CodeReload`, `Installer` and `Sandbox` all take their root from it. They require
 `root.rb` directly, so each still loads on its own, which `test/root_test.rb` checks
 against the repo as the test sees it. `root.rb` is pinned: it must never move out of
-`lib/switchboard/`, because `ROOT` is computed from where it sits.
+`lib/switchboard/`, because `ROOT` is computed from where it sits. `version.rb` is pinned
+too, because `UpdateCheck`, `packaging/release.rb` and the release workflow read it by path.
 
 `lib/switchboard.rb` itself isn't scanned. It's the entry point that requires everything,
 so it has no layer.

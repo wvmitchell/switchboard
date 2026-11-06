@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 require "json"
-require_relative "paths"
+require_relative "../support/paths"
 
 module Switchboard
   # The live Claude Code sessions in the tracked worktrees, read from the per-session

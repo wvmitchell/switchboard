@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-require_relative "paths"
+require_relative "../support/paths"
 
 module Switchboard
   # Rename a workspace: move its worktree directory (the display name), rename its

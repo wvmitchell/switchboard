@@ -1408,7 +1408,7 @@ module Switchboard
     # lib/switchboard.rb (StablePath once wasn't — caught by QA in the uninstall error path).
     def test_installer_loads_on_its_own
       lib = File.expand_path("../lib", __dir__)
-      out = IO.popen([RbConfig.ruby, "-I#{lib}", "-e", 'require "switchboard/installer"; puts Switchboard::Installer.repo_root'],
+      out = IO.popen([RbConfig.ruby, "-I#{lib}", "-e", 'require "switchboard/ops/installer"; puts Switchboard::Installer.repo_root'],
                      err: %i[child out], &:read)
       assert $?.success?, out
       assert_equal File.expand_path("..", __dir__), File.realpath(out.strip)

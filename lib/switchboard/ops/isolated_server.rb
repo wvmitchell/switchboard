@@ -2,8 +2,8 @@
 
 require "securerandom"
 require "fileutils"
-require_relative "process_identity"
-require_relative "paths"
+require_relative "../support/process_identity"
+require_relative "../support/paths"
 
 module Switchboard
   # Shared scaffolding for a THROWAWAY tmux server on its own socket — the single

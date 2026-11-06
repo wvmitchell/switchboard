@@ -12,12 +12,12 @@ on:
       - bin/switchboard
       - switchboard.tmux
       - lib/switchboard.rb
-      - lib/switchboard/stable_path.rb
+      - lib/switchboard/support/stable_path.rb
       - lib/switchboard/root.rb
-      - lib/switchboard/installer.rb
-      - lib/switchboard/installer/**
+      - lib/switchboard/ops/installer.rb
+      - lib/switchboard/ops/installer/**
       - lib/switchboard/cli.rb
-      - lib/switchboard/config.rb
+      - lib/switchboard/state/config.rb
       - .github/workflows/formula.yml
   # Every commit that can be released gets a brew test, whatever it touched.
   push:

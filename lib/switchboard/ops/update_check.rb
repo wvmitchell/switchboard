@@ -2,7 +2,7 @@
 
 require "json"
 require "fileutils"
-require_relative "paths"
+require_relative "../support/paths"
 
 module Switchboard
   # "Is a newer switchboard out?" for the sidebar's update line (#47), Homebrew stable

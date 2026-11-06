@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
-require_relative "keyed_marker_store"
-require_relative "paths"
+require_relative "../support/keyed_marker_store"
+require_relative "../support/paths"
 
 module Switchboard
   # A held completion chime, one marker per worktree. When an agent's turn ends while a

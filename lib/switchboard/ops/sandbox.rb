@@ -3,7 +3,7 @@
 require "fileutils"
 require "json"
 require "shellwords"
-require_relative "root"
+require_relative "../root"
 
 module Switchboard
   # `switchboard sandbox` (#126) — an isolated, interactive tmux session for
