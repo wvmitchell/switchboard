@@ -565,8 +565,9 @@ Both smoke files run sidebars from a fake Homebrew prefix in the tmpdir
 `StablePath`'s pattern doesn't care what the prefix is).
 
 - **`sidebar_reload_smoke_test`** covers the signal swap (same pane and pid, cursor kept),
-  the backstop flip, a broken new version leaving the old sidebar alive, an untagged pane
-  being respawned, and back-to-back reloads.
+  the backstop flip, a broken new version leaving the old sidebar alive, a failed reload
+  staying listed in `doctor` until a later reload lands, an untagged pane being respawned,
+  and back-to-back reloads.
 - **`upgrade_reload_smoke_test`** runs `upgrade --finish` as the installed binary (through a
   PATH symlink). It patches the running keg's code in place, so only the signal can make it
   show, and covers reloading in place, restarting, and another copy's finish leaving

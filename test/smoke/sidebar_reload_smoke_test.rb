@@ -34,6 +34,7 @@ module Switchboard
     end
 
     def pane_pid = tmux("display-message", "-p", "-t", @pane, fmt("pane_pid")).strip.to_i
+    def failed_flag = tmux("show-options", "-p", "-q", "-v", "-t", @pane, CodeReload::FAILED_TAG).strip
     def tag = tmux("show-options", "-p", "-v", "-t", @pane, CodeReload::TAG).strip
 
     # The row under the reverse-video cursor bar, or nil.
@@ -92,6 +93,23 @@ module Switchboard
         tmux!("send-keys", "-t", @pane, "k")
         !cursor_row.include?("proj2")
       end
+    end
+
+    # Value: protects=a failed reload shows in doctor, on this pane, until new code starts;
+    # fails_when=the flag misses the pane, doctor stops listing it, or a new image doesn't clear it;
+    # why_new=no smoke read the flag; seam=fake brew prefix; no_claim=that only new code clears it
+    # (a premature clear followed by a swap passes; a unit test covers the old code's re-tag)
+    def test_a_failed_reload_shows_in_doctor_until_new_code_clears_it
+      keg("C")
+      break_keg("C")
+      point_opt_at("C")
+      run_bin("reload-sidebars")
+      wait_until("the pane is flagged with the keg it couldn't take") { failed_flag.end_with?("/switchboard/C") }
+      assert_includes IO.popen([BIN, "doctor"], err: %i[child out], &:read), "still on old code after a failed reload (pane #{@pane})"
+      point_opt_at("B")
+      run_bin("reload-sidebars")
+      assert_swapped_in_place # the flag reads empty on a gone pane too, so prove the pane first
+      wait_until("new code starting clears the flag") { failed_flag.empty? }
     end
 
     # Value: protects=an older (untagged) sidebar is restarted by its own start command and

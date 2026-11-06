@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "timeout"
 require_relative "support/sidebar_case"
 
 module Switchboard
@@ -602,7 +603,7 @@ module Switchboard
     end
 
     # Value: protects=a reload of an on-screen sidebar keeps ringing (its first scan announces);
-    # fails_when=refresh_agents stops stamping @last_announce_scan, or stamps it on silent/hidden
+    # fails_when=refresh_agents stops stamping @last_announce_scan, or stamps it on silent
     # scans; why_new=the payload test sets the stamp by hand; seam=none
     def test_an_announcing_on_screen_scan_is_what_lets_the_payload_announce
       a = real_dir("a")
@@ -822,6 +823,32 @@ module Switchboard
       calls = []
       stub_method(CodeReload, :tag_sidebar_pane, ->(_p, v, clear_failed: true) { calls << [v, clear_failed]; true }) { reloader(sb).send(:retry_tag) }
       assert_equal [[Process.pid, false]], calls, "the flag the failed check just wrote stands"
+    end
+
+    # Value: protects=a fleet asked again after a failed reload still spreads out; fails_when=reexec
+    # keeps the old deadline, which request_reload's min would then honor; seam=none
+    def test_a_failed_reloads_old_deadline_cant_shorten_the_next_spread
+      sb = sidebar(nodes: [proj("app"), ws("a")])
+      reloader(sb).request_reload(visible: true) # due now, then it fails
+      exec_sidebar(preflight: :failed, sb: sb) { flunk "no exec" }
+      stub_method(CodeReload, :spread_delay, ->(*) { 25.0 }) { reloader(sb).request_reload(visible: false) }
+      assert_operator reloader(sb).reexec_wait, :>, 20
+      refute reloader(sb).reexec_due?(visible: false, allowed: true)
+    end
+
+    # Value: protects=the failure flag and an owed tag land on this pane, so doctor can report them;
+    # fails_when=a call stops passing TMUX_PANE (both no-op quietly on nil); seam=none;
+    # no_claim=tmux storing them (the failed-reload smoke test reads the flag back)
+    def test_the_failure_flag_and_an_owed_tag_name_this_pane
+      ENV["TMUX_PANE"] = "%9"
+      sb = sidebar(nodes: [proj("app")])
+      panes = []
+      stub_method(CodeReload, :tag_sidebar_pane, ->(pane, *, **) { panes << pane; false }) do
+        reloader(sb).tag_pane
+        reloader(sb).retry_tag
+      end
+      stub_method(CodeReload, :flag_failed_reload, ->(pane, _root) { panes << pane }) { reloader(sb).send(:reload_failed, "/Cellar/x") }
+      assert_equal %w[%9 %9 %9], panes
     end
 
     # Value: protects=an owed tag keeps the clear right it was asked with; fails_when=a tag that
@@ -1080,6 +1107,30 @@ module Switchboard
       reloader(resumed).instance_variable_set(:@resume, { cursor: nil })
       idle_tick(resumed)
       assert_raises(Errno::ECHILD) { Process.wait(pid) }
+    end
+
+    # Kills only a child a wait shows is still running: a reaped child's pid may be someone else's now.
+    def finish_child(pid)
+      Process.kill("KILL", pid) unless Process.wait(pid, Process::WNOHANG)
+      Process.wait(pid)
+    rescue Errno::ECHILD
+      nil
+    end
+
+    # Value: protects=a resumed sidebar never freezes on a child still running (a PR refresh, a
+    # sound), and clears every zombie in one sweep; fails_when=the sweep blocks or stops after
+    # one; why_new=only a lone zombie was swept; seam=none
+    def test_the_sweep_leaves_a_live_child_running_and_clears_every_zombie
+      live = Process.spawn("sleep", "30")
+      zombies = []
+      2.times { zombies << zombie }
+      resumed = sidebar(nodes: [proj("app"), ws("a")])
+      reloader(resumed).instance_variable_set(:@resume, { cursor: nil })
+      Timeout.timeout(5) { idle_tick(resumed) }
+      zombies.each { |pid| assert_raises(Errno::ECHILD) { Process.wait(pid) } }
+      assert_nil Process.wait(live, Process::WNOHANG), "still running, and still its own waiter's"
+    ensure
+      [live, *zombies].compact.each { |pid| finish_child(pid) }
     end
 
     # --- the carried baseline (D1) ------------------------------------------------
