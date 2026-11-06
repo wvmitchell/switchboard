@@ -14,8 +14,8 @@ module Switchboard
   # session's appends keep landing in the moved dir.
   #
   # The encoding is Claude's: every non-alphanumeric char becomes "-" (so "/",
-  # "_" and "." all collapse — "/a/dvc_deal/x" and "/a/dvc.deal/x" both map to
-  # "-a-dvc-deal-x"). It's lossy and NOT reversible, so we forward-encode both ends
+  # "_" and "." all collapse — "/a/my_app/x" and "/a/my.app/x" both map to
+  # "-a-my-app-x"). It's lossy and NOT reversible, so we forward-encode both ends
   # of the rename rather than trying to decode a dir name back to a path.
   #
   # Best-effort throughout: this reaches into another tool's storage, so every
