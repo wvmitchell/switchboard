@@ -27,7 +27,7 @@ module Switchboard
     # The encoding Claude uses: every non-alphanumeric run becomes "-", so "/",
     # "_" and "." all collapse the same way (lossy, hence forward-encode only).
     def test_encode_collapses_every_non_alphanumeric
-      assert_equal "-Users-x-dvc-deal-a-b", ClaudeHistory.encode("/Users/x/dvc_deal/a.b")
+      assert_equal "-Users-x-my-app-a-b", ClaudeHistory.encode("/Users/x/my_app/a.b")
       assert_equal "da-nang", ClaudeHistory.encode("da-nang") # an existing dash survives
     end
 
