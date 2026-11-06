@@ -47,6 +47,40 @@ module Switchboard
       assert_equal :support, layer_of("root")
     end
 
+    # Value: protects=the map the layer check runs on covers files in every folder;
+    # fails_when=unit or without_folder is mis-derived, top_level empties, and every layer
+    # check passes vacuously; why_new=the real tree has no violations, so a hollow check is
+    # green; seam=none; no_claim=none beyond protects
+    def test_constants_resolve_to_the_file_that_defines_them_in_any_folder
+      { "ROOT" => "root", "VERSION" => "version", "Paths" => "support/paths", "Tmux" => "adapters/tmux",
+        "Config" => "state/config", "Installer" => "ops/installer", "Sidebar" => "sidebar", "CLI" => "cli" }.each do |const, file|
+        assert_equal file, top_level[const], "#{const} should resolve to #{file}"
+      end
+    end
+
+    # Value: protects=the top-level map sees a part's constants; fails_when=a part sits under
+    # a folder with no top-level file, so what it defines has no home and an upward reference
+    # to it goes unseen; why_new=definitions_by_file skips parts by design; seam=none;
+    # no_claim=a part defining a new constant beside its top-level file
+    def test_every_part_belongs_to_a_top_level_file
+      parts = lib_files.select { |f| unit(f) != without_folder(f) }
+      orphans = parts.reject { |f| lib_files.include?([LAYERS[layer_of(f)], unit(f)].compact.join("/")) }
+      assert_empty orphans, "these parts have no top-level file to belong to"
+    end
+
+    # Value: protects=the check flags exactly the upward references; fails_when=rank's
+    # comparison is lost or inverted, or a part's references are skipped; why_new=the real
+    # tree has no violations, so nothing proved the check can fire; seam=none (test-local
+    # tree); no_claim=which layer a real file belongs in
+    def test_only_an_upward_reference_is_a_violation
+      mod = ->(name, body = "") { "module Switchboard\n  module #{name}\n    def self.x = #{body.empty? ? "nil" : body}\n  end\nend\n" }
+      tree = { "support/low" => mod["Low", "High"], "adapters/mid" => mod["Mid", "Low"], "adapters/mid/part" => mod["Mid", "High"],
+               "ops/high" => mod["High", "Mid"], "ops/peer" => mod["Peer", "High"], "cli" => mod["CLI", "High"] }
+      define_singleton_method(:lib_files) { tree.keys.sort }
+      define_singleton_method(:source) { |file| tree.fetch(file) }
+      assert_equal [["adapters/mid/part", "ops/high"], ["support/low", "ops/high"]], violations.sort
+    end
+
     def test_no_file_depends_on_a_higher_layer
       upward = violations.reject { |pair| ALLOWED.key?(pair) }
       assert_empty upward.map { |from, to| "#{from} (#{layer_of(from)}) → #{to} (#{layer_of(to)})" },
@@ -145,7 +179,6 @@ module Switchboard
       @violations ||= lib_files.flat_map do |file|
         references(source(file), top_level.keys - nested_names(source(file)))
           .map { |const| top_level[const] }
-          .reject { |target| family(target) == family(file) }
           .select { |target| rank(target) && rank(file) && rank(target) > rank(file) } # unlayered: its own test fails
           .map { |target| [file, target] }
       end.uniq
@@ -183,9 +216,6 @@ module Switchboard
     # A top-level file's name, or the top-level file a part belongs to: installer/keybindings
     # reopens Installer, so its definitions aren't top-level ones.
     def unit(file) = without_folder(file)[%r{\A[^/]+}]
-
-    # sidebar/* are concern files of Sidebar and tmux/* of Tmux, so each is one unit.
-    def family(file) = unit(file).then { |u| %w[sidebar tmux].include?(u) ? u : file }
 
     # Constant tokens naming one of `names`: not a definition (`module X`), and not nested
     # under something else (`Sidebar::Edges`), except under `Switchboard::`.

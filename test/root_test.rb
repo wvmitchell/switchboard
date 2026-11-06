@@ -36,6 +36,23 @@ module Switchboard
       end
     end
 
+    # Value: protects=every lib file loads with only its own requires, so lib/switchboard.rb's
+    # order can't matter; fails_when=a load-time dependency is reachable only through the
+    # umbrella; why_new=the standalone tests name 12 of 76 files, and agent_hooks and both
+    # nudges were unguarded; seam=none; no_claim=a constant first used at call time
+    def test_every_lib_file_loads_on_its_own
+      files = Dir[File.join(LIB, "switchboard", "**", "*.rb")].map { _1.delete_prefix("#{LIB}/").delete_suffix(".rb") }.sort
+      failed = files.each_slice(8).flat_map do |batch|
+        batch.map do |lib|
+          Thread.new do
+            out = IO.popen([RbConfig.ruby, "-I#{LIB}", "-e", "require #{lib.inspect}"], err: %i[child out], in: File::NULL, &:read)
+            "#{lib}: #{out}" unless $?.success?
+          end
+        end.map(&:value)
+      end.compact
+      assert_empty failed
+    end
+
     def test_the_running_binary_is_not_stale_at_boot
       refute CodeReload.stale?(File.join(REPO, "bin", "switchboard")),
              "a freshly loaded sidebar must not see its own binary as moved code"

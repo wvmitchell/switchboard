@@ -94,6 +94,21 @@ module Switchboard
       end
     end
 
+    # Value: protects=lib paths in workflows and docs still name files; fails_when=a file moves
+    # and formula.yml's filter stops triggering the brew test (no failure, just no run), or
+    # release.yml's version path 404s; why_new=link checks skip plain paths; seam=none;
+    # no_claim=the filter list is complete
+    def test_lib_paths_in_workflows_and_docs_exist
+      sources = Dir[File.join(ROOT, ".github/workflows/*.yml")] + Dir[File.join(ROOT, "docs/*.md")] +
+                %w[AGENTS.md CLAUDE.md CONTRIBUTING.md README.md].map { File.join(ROOT, _1) }
+      stale = sources.flat_map do |file|
+        File.read(file).scan(%r{lib/switchboard(?:\.rb|/[\w/]+(?:\.rb|/\*\*))}).uniq
+            .reject { |path| Dir[File.join(ROOT, path)].any? }
+            .map { |path| "#{file.delete_prefix("#{ROOT}/")}: #{path}" }
+      end
+      assert_empty stale, "these paths name no file; update them to where the file lives now"
+    end
+
     def test_agents_and_claude_md_agree_with_ci_on_ruby
       rubies = File.read(File.join(ROOT, ".github/workflows/test.yml"))
                    .scan(/ruby: '([\d.]+)'/).flatten
