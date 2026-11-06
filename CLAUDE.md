@@ -102,9 +102,9 @@ tracks these lines; update them when you re-verify one.
 - **Hooks:** last verified live against **Claude Code 2.1.301–2.1.303** and **codex-cli
   0.163.0** (v0.51.1): payload fields, linked-worktree delivery, the nesting-guard env, and
   a silent PermissionRequest hook leaving the prompt to the user. **codex-cli 0.164.0**
-  (v0.55.2) and **0.165.0** (v0.60.7) re-passed the real-Codex smoke only: linked-worktree
+  (v0.55.2), **0.165.0** (v0.60.7) and **0.167.0** (v0.66.12) re-passed the real-Codex smoke only: linked-worktree
   delivery, hook ordering, untrusted-block silence.
-- **Codex is global:** Codex (verified 0.142 through 0.165) doesn't load a *linked*
+- **Codex is global:** Codex (verified 0.142 through 0.167) doesn't load a *linked*
   worktree's own hooks, so switchboard writes one `[hooks]` block into
   `~/.codex/config.toml`. An empty `CODEX_HOME` means `~/.codex` to Codex (checked live on
   0.165.0) and to us.
