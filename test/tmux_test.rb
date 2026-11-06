@@ -128,6 +128,14 @@ module Switchboard
       assert_nil row[:synchronized], "a missing synchronize-panes flag is unknown, not off"
     end
 
+    # Value: protects=only a real answer reads as hidden; fails_when=an empty or garbled reply counts; why_new=visible? reads those as hidden on purpose; seam=none; no_claim=tmux output format
+    def test_hidden_reply_needs_a_real_answer
+      assert Tmux.hidden_reply?("0,1\n"), "an inactive window"
+      assert Tmux.hidden_reply?("1,0\n"), "no client attached"
+      refute Tmux.hidden_reply?("1,1\n"), "on screen"
+      ["", "\n", "garbage", "1", ",", nil].each { |reply| refute Tmux.hidden_reply?(reply), reply.inspect }
+    end
+
     # Value: protects=keys are never typed into a pane someone may be at; fails_when=a garbled
     # row reads as hidden (Tmux.visible?'s fail-open); why_new=new parser; seam=none
     def test_parse_panes_by_tty_reads_a_garbled_row_as_unknown_not_clear

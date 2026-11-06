@@ -739,7 +739,7 @@ module Switchboard
 
     # The regression: on a pane too short for the whole map, the tmux rows (the only
     # answer to "how do I hide this?") were the tail that got cut. Now they're on a
-    # later page. A 52-row pane fits it all on one page (the icon legend, one glyph
+    # later page. A 57-row pane fits it all on one page (the icon legend, one glyph
     # per row, is what pushed it past 45).
     def test_help_pages_reach_the_tmux_rows_on_a_short_pane
       sb = sidebar(nodes: [proj("app")])

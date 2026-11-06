@@ -754,10 +754,13 @@ module Switchboard
     end
 
     # A search doesn't outlive its pane's time on screen: it would greet you later, still
-    # holding n. Checked wherever visibility is sampled. The repaint is here because the warm
-    # gate can't see in-memory state, and a hidden pane keeps its last frame until switch-in.
+    # holding n. Checked wherever visibility is sampled. A sample reads a failed tmux query as
+    # hidden, which is harmless for painting but would hand n back with you still at the keys,
+    # so this asks for a real answer first. The repaint is here because the warm gate can't see
+    # in-memory state, and a hidden pane keeps its last frame until switch-in.
     def end_search_if_hidden
       return if @visible || !(@search.active? || @search.sticky)
+      return unless Tmux.hidden?(ENV["TMUX_PANE"])
 
       end_search(to_origin: @search.typing?, leave_open: false)
       render

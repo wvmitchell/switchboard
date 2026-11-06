@@ -331,7 +331,9 @@ So `end_search_if_hidden` ends it wherever visibility is sampled: `tick`,
 `recheck_visibility`, and the hidden branch of `reload_and_refresh`. Visibility is sampled,
 not signaled, so there's no fixed time bound, and a quick return can find the search still
 on. That's fine, because the highlights and footer show it, and `Esc` is one key away. An
-open prompt holds the check until it closes, since prompts block the loop.
+open prompt holds the check until it closes, since prompts block the loop. A sample reads a
+failed tmux query as hidden, so before ending anything this asks `Tmux.hidden?`, which needs
+a real answer: a query that fails while you're at the keys leaves your search alone.
 
 That check repaints once, even with `prewarm` off. A hidden pane keeps its last frame until
 switch-in, and the warm gate's fingerprint can't see in-memory state, so without the repaint

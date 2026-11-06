@@ -125,10 +125,16 @@ module Switchboard
       assert_nil sb.instance_variable_get(:@count)
     end
 
+    def test_a_space_is_query_text
+      sb = tree
+      sb.send(:handle, "/a b")
+      assert_equal "a b", search(sb).query
+    end
+
     def test_movement_and_control_bytes_do_nothing_while_typing
       sb = tree(cursor: 3)
       sb.send(:handle, "/")
-      ["\e[A", "\e[B", "\e[C", "\e[D", "\x0E", "\x10", "\x01", "\xE2".b].each do |key|
+      (["\e[A", "\e[B", "\e[C", "\e[D", "\x0E", "\x10", "\x01", "\xE2".b] + Sidebar::Input::POKE_BYTES).each do |key|
         sb.send(:dispatch, key)
         assert_equal "", search(sb).query, "#{key.inspect} isn't query text"
         assert_equal 3, cursor_of(sb), "#{key.inspect} doesn't move"
@@ -479,7 +485,7 @@ module Switchboard
           stub_method(sb, :locate, -> {}) do
             stub_method(sb, :warm_reload, ->(*) { false }) do
               stub_method(sb, :render, -> { renders += 1 }) do
-                stub_method(Tmux, :visible?, ->(*) { false }) { sample.call(sb) }
+                hidden_pane { sample.call(sb) }
               end
             end
           end
@@ -492,21 +498,29 @@ module Switchboard
       end
     end
 
+    # Value: protects=a failed tmux query never ends a search under your hands; fails_when=end_search_if_hidden trusts the sample alone; why_new=a misread would hand n back; seam=none; no_claim=tmux failure rates
+    def test_a_failed_visibility_read_keeps_the_search_on
+      sb = committed(tree(collapsed: ["api"]), "oauth")
+      stub_method(sb, :render, -> { flunk "nothing changed" }) do
+        stub_method(Tmux, :visible?, ->(*) { false }) do
+          stub_method(Tmux, :hidden?, ->(*) { false }) { sb.send(:recheck_visibility) }
+        end
+      end
+      assert search(sb).committed?
+      assert_equal "oauth", current_node(sb).name
+    end
+
     def test_a_hidden_sidebar_with_no_search_does_not_repaint
       sb = tree
       sb.instance_variable_set(:@visible, true)
-      stub_method(Tmux, :visible?, ->(*) { false }) do
-        stub_method(sb, :render, -> { flunk "dormant panes don't paint" }) { sb.send(:recheck_visibility) }
-      end
+      hidden_pane { stub_method(sb, :render, -> { flunk "dormant panes don't paint" }) { sb.send(:recheck_visibility) } }
     end
 
     def test_a_typing_search_ended_off_screen_goes_back_to_its_origin
       sb = tree(cursor: 3)
       sb.send(:handle, "/oauth")
       sb.instance_variable_set(:@visible, true)
-      stub_method(Tmux, :visible?, ->(*) { false }) do
-        stub_method(sb, :render, -> {}) { sb.send(:recheck_visibility) }
-      end
+      hidden_pane { stub_method(sb, :render, -> {}) { sb.send(:recheck_visibility) } }
       assert_equal "beta", current_node(sb).name
     end
 
@@ -522,7 +536,7 @@ module Switchboard
         end
         frame = lambda do |s, &act|
           stub_method(s, :winsize, -> { [24, 40] }) do
-            stub_method(Tmux, :visible?, ->(*) { false }) { capture_stdout { act.call } }
+            hidden_pane { capture_stdout { act.call } }
           end
         end
         left = frame.call(sb) { sb.send(:recheck_visibility) }
@@ -614,7 +628,7 @@ module Switchboard
       sb.instance_variable_set(:@visible, true)
       renders = 0
       stub_method(sb, :render, -> { renders += 1 }) do
-        stub_method(Tmux, :visible?, ->(*) { false }) { sb.send(:recheck_visibility) }
+        hidden_pane { sb.send(:recheck_visibility) }
       end
       assert_nil search(sb).sticky
       assert_equal 5, rows_of(sb).size
@@ -722,6 +736,10 @@ module Switchboard
     private
 
     def search(sb) = sb.instance_variable_get(:@search)
+    def hidden_pane(&block)
+      stub_method(Tmux, :visible?, ->(*) { false }) { stub_method(Tmux, :hidden?, ->(*) { true }, &block) }
+    end
+
     def active?(sb) = search(sb).active?
     def hits(sb) = sb.instance_variable_get(:@search_hits)
 
