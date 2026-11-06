@@ -10,6 +10,13 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
+## [0.66.13] — the sidebar's code reload gets its own class, with no change to how it swaps (2026-11-06)
+
+### Changed
+- The signal handling, pane tag, deadline, test run and exec behind a sidebar's hot reload moved out of
+  `lib/switchboard/sidebar.rb` into `lib/switchboard/sidebar/reloader.rb`. The resume payload, the pane
+  options and the signal keep their meanings, so sidebars on older releases swap to this one and back.
+
 ## [0.66.12] — the sidebar's presence reads get their own module, with no change to what it shows (2026-11-05)
 
 ### Changed

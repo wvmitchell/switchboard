@@ -8,7 +8,7 @@ without restarting, and why a sidebar has to check that it still owns its pane.
 
 This is the deepest part of the codebase. If you're changing visibility, poking,
 or the run loop in `sidebar.rb` (or its `sidebar/` concern files — the #57
-split: `edges`, `update_cue`, `render`, `input`, `actions`, `prompt`, `rows`), read this first.
+split: `edges`, `update_cue`, `reloader`, `render`, `input`, `actions`, `prompt`, `rows`), read this first.
 
 ## Why one process per window
 
@@ -291,7 +291,7 @@ session".
 ### The sidebar execs itself in place
 
 A running sidebar execs its own `SWITCHBOARD_BIN` (`CodeReload`, `code_reload.rb`, plus
-the reload section of `sidebar.rb`). The pane runs the binary directly, with no shell in
+`Sidebar::Reloader`, `sidebar/reloader.rb`). The pane runs the binary directly, with no shell in
 between (`Tmux.spawn_sidebar`), so exec keeps the pid, the pty and the `%pane` id. From
 tmux's side nothing changed, and `owns_pane?` stays true.
 
@@ -375,6 +375,10 @@ that an idle tick costs no more than it did before (R3, in `sidebar_reload_test`
 
 ### When the swap happens
 
+**Most of this lives in `Sidebar::Reloader`** (`sidebar/reloader.rb`), which owns the signal, the
+pane tag, the deadline and the exec. The sidebar still runs the switch-in's catch-up reload. It
+decides what the payload carries and whether its overlays allow a swap, and passes those in.
+
 **The trap only sets a flag.** The `SIGUSR1` handler sets `@reload_signal` and writes a
 self-pipe (`@wake_r` is in the `IO.select` set). It's installed in `run`, restored in
 `teardown`, and installed *before* the tag goes on.
@@ -395,8 +399,9 @@ drops `@last_announce_scan` and the swap's first scan is silent instead.
 **It never swaps at a bad moment.** Never under `?`, the QR code or the `/` filter; never
 mid-prompt (prompts block the loop); and never with half an escape sequence in `@pending`,
 since the new image would read its tail (`O`, from a focus-out) as a key. All of these live
-in `reexec_allowed?`. `frame_timeout` consults it too, and honors `@reexec_at` only while
-the reload is allowed, so a held reload can't spin `IO.select` on a deadline that has passed.
+in `reexec_allowed?`. `frame_timeout` consults it too, and honors the deadline
+(`Reloader#reexec_wait`) only while the reload is allowed, so a held reload can't spin
+`IO.select` on a deadline that has passed.
 
 ### The swap, step by step
 
