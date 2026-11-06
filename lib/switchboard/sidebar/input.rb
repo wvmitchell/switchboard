@@ -140,6 +140,7 @@ module Switchboard
       # Keys read in the same batch AFTER one that opens a prompt (`n` then the start of
       # its task, typed during a busy tick) are the prompt's, not the tree's: it takes
       # them from @typeahead, so they neither vanish from the task nor fire as commands.
+      # They only fill it: a newline among them doesn't submit (Prompt#take_typeahead).
       def handle(buf)
         tokens, @pending = Input.tokenize(@pending + buf.to_s)
         @typeahead = tokens

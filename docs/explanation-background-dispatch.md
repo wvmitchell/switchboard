@@ -74,6 +74,16 @@ can't submit on its first newline or reach `dispatch` as keystrokes. A paste mar
 across two reads is held for the next read; otherwise paste mode would never end and
 would swallow ↵ and Esc. Input still in flight after you submit is drained.
 
+Keys that arrive in one read with the `n` that opened the prompt, as they can when you type
+during a busy moment, fill the prompt but can't submit it. Only a `↵` read once the prompt is
+up does, so you always see what would run. Everything after a newline in that batch is
+dropped, and the same goes for every other text prompt. A confirm takes none of them: keys
+batched around its answer are dropped too, so a pasted `dy` can't delete a workspace.
+
+This doesn't stop pasted letters from acting as keys on the tree, and a paste without
+bracketing that splits across reads can still submit from a later read whose only newline
+is its last byte.
+
 ## The record: many writers, one lock
 
 `Creation` is the one piece of multi-process state here that several processes
