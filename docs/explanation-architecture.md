@@ -585,8 +585,9 @@ unit-tested offline.
 
 - Every file starts with `# frozen_string_literal: true`.
 - Stateless helpers are `module_function` modules (`ClaudeHook`, `Tmux`, `Installer`,
-  `Git`, `Pr`, …). Only `Model`, `Config`, `Sidebar` (plus its `Sidebar::Edges`
-  collaborator — see above), and `AgentState` are classes — they hold state.
+  `Git`, `Pr`, …). Only `Model`, `Config`, `Sidebar` (plus its `Sidebar::Edges` and
+  `Sidebar::UpdateCue` collaborators — see above), and `AgentState` are classes — they hold
+  state.
 - Comments explain *why* a non-obvious thing is done, not *what* the code does.
   Match that density.
 
