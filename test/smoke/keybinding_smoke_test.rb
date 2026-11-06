@@ -75,6 +75,17 @@ module Switchboard
       assert_equal original, line_for("\\;")
     end
 
+    # Value: protects=a binding on a `;` key you spell differently from tmux surviving when we let go;
+    # fails_when=line_on's query loses the escape, so the key reads as unbound and is deleted;
+    # why_new=test_a_semicolon_key_comes_back finds its key in the table; seam=none; no_claim=every spelling
+    def test_a_semicolon_key_in_another_spelling_comes_back
+      tmux!("bind-key", "-T", "prefix", "C-M-\\;", "display-message", "mine")
+      bind_toggle_to("M-C-;")
+      assert_includes tmux("show-options", "-gqv", "@switchboard-toggle-displaced"), "display-message mine"
+      bind_toggle_to("t")
+      assert_includes tmux("list-keys", "-T", "prefix", "--", "C-M-\\;"), "display-message mine"
+    end
+
     # Value: protects=a moved install keeping what it saved; fails_when=the old install's binding reads
     # as foreign and overwrites the record; why_new=review reproduced losing choose-tree; seam=none;
     # no_claim=a real clone-to-Homebrew move

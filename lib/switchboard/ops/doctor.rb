@@ -345,7 +345,7 @@ module Switchboard
         puts row(live, live ? "prefix-#{toggle} bound (toggle-sidebar)" : "prefix-#{toggle} NOT bound — running tmux is stale; run `switchboard upgrade` (or reload tmux)")
       end
       doctor_key_drift(config, skip_toggle: live == false) # the NOT-bound row above already covers it
-      doctor_clobber(config)
+      doctor_clobber
     end
 
     # A tmux_keys edit made in config.yml by hand (not via `e` / `switchboard config`, which
@@ -392,12 +392,12 @@ module Switchboard
     # If tmux-bind clobbered a prior non-switchboard binding on the chosen key (it
     # records the displaced binding in @switchboard-<role>-clobbered), say so — the
     # interactive install prints a "was:" note, but a live reload is otherwise silent.
-    def doctor_clobber(config)
+    def doctor_clobber
       %w[toggle home].each do |role|
         prev = Installer.tmux_option("@switchboard-#{role}-clobbered")
         next unless prev
 
-        puts "  \e[33m–\e[0m prefix-#{config.tmux_key(role)} (#{role}) replaced a prior binding: #{prev}"
+        puts "  \e[33m–\e[0m prefix-#{Installer.tmux_option("@switchboard-#{role}-key")} (#{role}) replaced a prior binding: #{prev}"
       end
     end
 

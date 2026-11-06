@@ -418,7 +418,8 @@ which keys are real.
 (such as `C-;`) as a command separator, even through `system` with no shell. So
 `Installer.run_tmux` escapes it to `\;`. tmux then records the bound key as a bare `;`, so
 `Config#tmux_key` reads the tmux.conf spelling `C-\;` as `C-;`; otherwise the drift check
-would never clear.
+would never clear. Asking tmux about a key needs the same escape, so `run_tmux` and the
+`list-keys` queries share `Installer.escape_semicolon`.
 
 ### Applying changes, and catching drift
 

@@ -10,6 +10,19 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
+## [0.68.1] — a `;` key spelled differently from tmux keeps your binding, and `doctor` names the right key (2026-11-06)
+
+### Fixed
+- A `tmux_keys` value ending in `;` in a spelling tmux lists differently (`M-C-;`, listed as `C-M-;`) now
+  saves what was on the key and gives it back. Before, moving off the key or uninstalling deleted your binding,
+  even one you made after switchboard took the key.
+- `doctor`'s "replaced a prior binding" row names the key tmux holds. It used to name the configured key, which
+  was wrong after a refused key's fallback, a hand edit not yet applied, or a config that won't parse.
+
+### Changed
+- Removed an unused method, and pointed its test at the check that's actually used. The `;` escape now lives in
+  one helper. Uninstall keeping a key you rebound now has a test.
+
 ## [0.68.0] — `/` searches the sidebar like vim (2026-11-06)
 
 ### Changed

@@ -716,9 +716,21 @@ module Switchboard
       assert_includes out, "tmux_keys.home is unbound in config, but tmux has prefix-S bound"
     end
 
+    # Value: protects=doctor's row naming the key tmux holds, not the refused one; fails_when=
+    # doctor_clobber reads the configured key; why_new=the only other test on this row pinned the
+    # wrong label; seam=with_key_stubs; no_claim=real tmux output (options stubbed)
+    def test_clobber_note_names_the_key_tmux_holds_after_a_fallback
+      File.write(Config.path, YAML.dump("tmux_keys" => { "toggle" => "NotAKey" }))
+      options = { "@switchboard-toggle-key" => "s", "@switchboard-toggle-rejected" => "NotAKey", "@switchboard-toggle-clobbered" => "choose-tree" }
+      out = with_key_stubs(live: true, options: options) { capture { Doctor.doctor_binding_live(Config.new) } }
+      assert_includes out, "prefix-s (toggle) replaced a prior binding: choose-tree"
+      refute_includes out, "prefix-NotAKey (toggle) replaced"
+    end
+
     def test_doctor_warns_about_a_clobbered_binding
       File.write(Config.path, YAML.dump("tmux_keys" => { "toggle" => "b" }))
-      out = with_key_stubs(live: true, options: { "@switchboard-toggle-clobbered" => "send-keys hi" }) do
+      options = { "@switchboard-toggle-key" => "b", "@switchboard-toggle-clobbered" => "send-keys hi" }
+      out = with_key_stubs(live: true, options: options) do
         capture { Doctor.doctor_binding_live(Config.new) }
       end
       assert_includes out, "replaced a prior binding: send-keys hi"
@@ -1121,7 +1133,7 @@ module Switchboard
 
       ["PR badges given-project", 'config key "given_stray"', "sound done: /given/done.aiff",
        "sidebar_keys: 1 remapped, no clashes", "tmux_keys.toggle is T in config, but it isn't bound",
-       "tmux_keys.home is g in config, but tmux has prefix-H", "prefix-g (home) replaced a prior binding: was-bound"].each do |row|
+       "tmux_keys.home is g in config, but tmux has prefix-H", "prefix-H (home) replaced a prior binding: was-bound"].each do |row|
         assert_includes out, row
       end
       ["ignored-project", "ignored_stray", "/ignored/", "clashes with"].each { |stray| refute_includes out, stray }
