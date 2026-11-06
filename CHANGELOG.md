@@ -10,6 +10,13 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
+## [0.66.11] — the update line's code gets its own class, with no change to what it shows (2026-11-05)
+
+### Changed
+- The code behind the sidebar's "newer release" line moved out of `lib/switchboard/sidebar.rb` into
+  `lib/switchboard/sidebar/update_cue.rb`. The line shows, hides and checks for releases as it did,
+  and running sidebars pick it up through a hot reload.
+
 ## [0.66.10] — A key switchboard took comes back when it lets go (2026-11-05)
 
 ### Fixed
