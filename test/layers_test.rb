@@ -92,6 +92,20 @@ module Switchboard
       assert_empty homes.select { |_, files| files.size > 1 }, "a top-level constant is defined in two files, so its layer is ambiguous"
     end
 
+    # Value: protects=a folder's promise holds for loading too, so a lower layer can't pull a
+    # higher one in; fails_when=a file requires upward with no constant to show for it; why_new=
+    # violations reads constants only, and adapters/pr.rb required state/tree unseen; seam=none;
+    # no_claim=a require string built at runtime
+    def test_no_file_requires_a_higher_layer
+      upward = lib_files.flat_map do |file|
+        source(file).scan(/^\s*require_relative "([^"]+)"/).flatten.filter_map do |req|
+          target = File.expand_path(req, File.dirname(File.join(LIB, file))).delete_prefix("#{LIB}/")
+          "#{file} → #{target}" if layer_of(target) && rank(target) > rank(file)
+        end
+      end
+      assert_empty upward, "a lower layer requires a higher one; see docs/explanation-architecture.md#layers"
+    end
+
     def test_allowed_violations_are_still_real
       stale = ALLOWED.keys - violations
       assert_empty stale, "fixed, so delete these from LayersTest::ALLOWED"

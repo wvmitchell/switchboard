@@ -3,7 +3,6 @@
 require "json"
 require "shellwords"
 require_relative "git"
-require_relative "../state/tree"
 require_relative "../support/marker_block"
 require_relative "../support/paths"
 

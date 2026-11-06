@@ -155,7 +155,7 @@ each file's layer from its folder and fails when:
 
 - a file sits outside the layer folders, and isn't an interface or pinned;
 - a top-level constant is defined in two files, so its layer would be ambiguous;
-- a file references a constant from a higher layer;
+- a file references a constant from a higher layer, or requires a file from one;
 - any file but `root.rb` locates files relative to itself with `__dir__` or `__FILE__`.
   Such a file changes meaning when it moves. If `CodeReload`'s root shifted, `stale?`
   would read true on every tick, and every sidebar would re-exec forever.
@@ -371,7 +371,7 @@ the run; the smoke harness sweeps those before each run.
 ## Configurable tmux keys
 
 The fragment leaves binding to `switchboard tmux-bind` (`Installer.apply_keybindings` in
-`installer/keybindings.rb`, issue #15). It reads `tmux_keys:` from the config through
+`ops/installer/keybindings.rb`, issue #15). It reads `tmux_keys:` from the config through
 `Config#tmux_key`, which is global and resolves with a default like `sound_for`: `toggle`
 defaults to `s`, and `home` is unbound.
 

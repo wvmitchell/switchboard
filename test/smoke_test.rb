@@ -25,7 +25,7 @@ module Switchboard
     end
 
     def test_emdash_file_is_deleted
-      refute File.exist?(File.expand_path("../lib/switchboard/emdash.rb", __dir__))
+      assert_empty Dir[File.expand_path("../lib/**/emdash.rb", __dir__)]
     end
 
     def test_version_is_semver
