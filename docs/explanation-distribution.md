@@ -186,7 +186,7 @@ running sidebar still has the old code, and comparing against that would leave t
 up after you'd upgraded.
 
 **Hidden panes still pick it up.** Both files are part of `warm_fingerprint`, and
-`reload` records them with the mtimes `rebuild` actually *read* (`@update_seen`), not a
+`reload` records them with the mtimes `rebuild` actually *read* (`UpdateCue#seen`), not a
 fresh stat. Otherwise a write landing between the two would be marked as drawn, and a
 hidden pane would skip the warm reload that shows it.
 

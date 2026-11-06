@@ -90,10 +90,10 @@ Pr  ────┘   (project    (ordered      (hand-rolled ANSI TUI in a
 - **`Sidebar`** draws the nodes as a 3-level tree in a fixed-width tmux pane. No
   fzf, no curses — a hand-rolled ANSI renderer. It is the *only* navigator.
   `sidebar.rb` is the run-loop core. The #57 split carved the rest into concern files
-  under `sidebar/`: `edges`, a collaborator class that owns the agent-edge fan-out state,
-  and the `render`, `input`, `actions`, `prompt` and `rows` mixins. It's one class in
-  several files, each with its own `test/sidebar_*_test.rb` built on the shared
-  `test/support/sidebar_case.rb`.
+  under `sidebar/`: `edges` and `update_cue`, collaborator classes that own the agent-edge
+  fan-out state and the update line's, and the `render`, `input`, `actions`, `prompt` and
+  `rows` mixins. It's one class in several files, each with its own
+  `test/sidebar_*_test.rb` built on the shared `test/support/sidebar_case.rb`.
 - **`view.rb`** is down to the compact PR-badge helpers the sidebar uses
   (`pr_identifier`, `pr_tag`): the state shown by color, and just the `#number`, to fit
   the ~40-column pane.

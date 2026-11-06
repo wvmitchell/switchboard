@@ -27,7 +27,7 @@ module Switchboard
                      sandbox session_name update_check upgrade workspace_branches
                      workspaces],
       interfaces: %w[cli hook_commands sidebar sidebar/actions sidebar/edges sidebar/input sidebar/prompt
-                     sidebar/render sidebar/rows]
+                     sidebar/render sidebar/rows sidebar/update_cue]
     }.freeze
 
     # [file, referenced file] => what removes it. An entry covers the whole file pair, so a new

@@ -190,7 +190,8 @@ module Switchboard
       as = Struct.new(:last_hook_states).new({ a => :done })                                          # finished while away
       as.define_singleton_method(:scan) { |_paths, hooks_only: false| { a => :done } }
       sb.instance_variable_set(:@agent_state, as)
-      %i[rebuild locate refresh_diffs maybe_check_update].each { |m| sb.define_singleton_method(m) { |*| nil } }
+      %i[rebuild locate refresh_diffs].each { |m| sb.define_singleton_method(m) { |*| nil } }
+      sb.instance_variable_get(:@update).define_singleton_method(:maybe_check) { |*| nil }
       sb.instance_variable_get(:@edges).define_singleton_method(:refresh_stale_prs) { |*| nil }
       sb.instance_variable_get(:@edges).define_singleton_method(:maybe_refresh_prs) { |*| nil }
       payload = nil
