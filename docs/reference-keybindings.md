@@ -50,7 +50,7 @@ drifts from a remap.
 | `←` / `→` | _(fixed)_ | Narrow / widen the sidebar pane (2 cols per press; hold to resize smoothly). The width is shared across every window's sidebar and survives a restart. Inert in filter mode. |
 | `/` | `filter` | Filter the tree — type to jump straight to a workspace by name. See [Filter mode](#filter-mode) below. |
 | `↵` (Enter) | _(fixed)_ | On a workspace/branch row: switch to its tmux session (creating it if needed). On a project header: collapse/expand it. |
-| `a` | `add_project` | Add a project — register a local repo or clone a URL (a small prompt). |
+| `a` | `add_project` | Add a project — register a local repo, clone a URL, or create a new repo (a small prompt). |
 | `n` | `new_workspace` | Dispatch a new worktree + branch in the highlighted project, in the background: type a task for the agent (or `↵` for none, `Esc` to cancel). You stay put; the row shows `◌` while it builds and pings you when it's ready (`✘` if it fails). No name prompt — it gets a throwaway placeholder name you rename later with `r` (or let the agent name it). |
 | `o` / `Ctrl-O` | `open_pr` | Open the highlighted PR in the browser (`gh pr view --web`). Only the `o` letter is remappable; `Ctrl-O` is a fixed alias. |
 | `O` | `open_repo` | Open the highlighted row's repo in the browser (`gh browse`). Works on every row kind, including the project header. Opens the repo at the row's branch when it has an open PR, otherwise the repo home (default branch). |
@@ -72,11 +72,11 @@ key) — the loser is left unbound, but any arrow/ctrl aliases it has still work
 can never lock yourself out of movement. See
 [How-to: keybindings](howto-keybindings.md#change-the-in-sidebar-keys).
 
-The footer legend shows only the common keys for the highlighted row; `g`/`G` and
+The footer shows only the row's nav verb and `? help`; the action keys, `g`/`G` and
 the `Ctrl-N`/`Ctrl-P` movement aliases don't fit it — press `?` in the sidebar for
 the complete key map, the in-app home for every shortcut.
 
-Every name prompt (`a` add local/clone, `r` rename) edits in raw mode:
+Every name prompt (`a` add local/clone/new, `r` rename) edits in raw mode:
 `Esc` (or `Ctrl-C`) cancels and returns to the tree with nothing created, `↵`
 submits, `Backspace` edits, `Ctrl-U` clears the line. The prompt shows `(esc cancel)` until you start typing.
 
@@ -144,13 +144,15 @@ across windows or remembered after you switch.
 ### How keys reach the sidebar
 
 The sidebar reads keys in raw mode, one keypress at a time. Arrow keys arrive as
-escape sequences (`Ctrl-N`/`Ctrl-P` are the single-byte equivalents). Two control
+escape sequences (`Ctrl-N`/`Ctrl-P` are the single-byte equivalents). Three control
 bytes are sent *to* the sidebar by tmux, not pressed by you:
 
 - `C-l` — a "poke" to reload and redraw (sent on a session or window switch, and
   by background PR refreshes).
 - `C-r` — the dedicated post-edit poke that re-reads config (sent after you edit
   config from the sidebar).
+- `C-w` — a peer sidebar's broadcast to repaint now (sent after a fold or header toggle,
+  a project-list change, or a workspace being dispatched or canceled).
 
 These are internal; you never type them. See
 [Explanation: sidebar lifecycle](explanation-sidebar-lifecycle.md).

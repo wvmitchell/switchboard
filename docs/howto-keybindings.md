@@ -48,7 +48,7 @@ Home (`sb/home`) is your anchor session. Bind a key to jump there from anywhere:
 ```yaml
 tmux_keys:
   toggle: s
-  home: S     # prefix-S jumps to home (S is freed by switchboard)
+  home: S     # prefix-S jumps to home
 ```
 
 Leave the `home` line out entirely to keep it unbound.
@@ -88,8 +88,8 @@ Or run `switchboard doctor`, which confirms `sidebar_keys: N remapped, no clashe
 Editing `tmux_keys` from a running switchboard rebinds live. But two cases need
 tmux to re-source its config:
 
-1. The very first `install` (the fragment isn't loaded into the running server
-   yet).
+1. The very first `install`, when you run it outside tmux (the fragment isn't loaded
+   into the running server yet).
 2. Editing `config.yml` by hand *outside* switchboard, then expecting it live.
 
 In both, reload tmux:

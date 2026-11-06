@@ -12,7 +12,7 @@ act on what you see here, see [Reference: keybindings](reference-keybindings.md)
 
 ```
  ◖═◗ Switchboard                 ← header: the wordmark, on every session.
- good evening, will                Home (or H everywhere) adds the dim
+ good evening, sam                 Home (or H everywhere) adds the dim
  4 worktrees · 2 active            greeting + console + rule below it.
  ─────────────────────
 
@@ -40,7 +40,7 @@ so the numbers stack instead of staircasing.
 | Form | Shown | Contains |
 |------|-------|----------|
 | **Wordmark** | every non-home session | just `◖═◗ Switchboard` (bold cyan) |
-| **Full header** | the home session always; every session when toggled with `H` | wordmark + a time-of-day greeting (`good evening, will`) + a one-line console (`4 worktrees · 1 idle link · 2 active · 3 PRs open · 2 linked`, zero clauses dropped; on a narrow pane whole clauses drop, `linked` then `PRs` then `active`, instead of cutting the line, so the worktree count and idle links always show) + a rule |
+| **Full header** | the home session always; every session when toggled with `H` | wordmark + a time-of-day greeting (`good evening, sam`) + a one-line console (`4 worktrees · 1 idle link · 2 active · 3 PRs open · 2 linked`, zero clauses dropped; on a narrow pane whole clauses drop, `linked` then `PRs` then `active`, instead of cutting the line, so the worktree count and idle links always show) + a rule |
 
 When a newer release is out (Homebrew installs, [`update_check`](reference-config.md)), a line sits
 right under the wordmark on **every** session: `↑ 0.58.0 available · switchboard upgrade`
@@ -103,8 +103,8 @@ monitor shows `∞` instead.
 
 The sparkle is the visual twin of the completion sound: the instant an agent
 reaches `:done`, its dot twinkles `✦`/`✧` for three seconds, then becomes the
-steady green `●`. Only `:done` sparkles — `:waiting` already blinks for
-attention.
+steady green `●`. A declared `monitoring notify` sparkles too; `:waiting` doesn't,
+since it already blinks for attention.
 
 A workspace dispatched with `n` shows `◌` from the moment you press `↵` — even
 before git lists its worktree — sitting last in its project, with your task dimmed
@@ -232,8 +232,8 @@ the one cached signal.
 
 One line, always ending in the `? help` gateway:
 
-- **Normal:** the highlighted row's nav verb + `? help` — e.g. `open · ? help` on
-  a workspace, `collapse · ? help` on a project. On the home session it shows the
+- **Normal:** the highlighted row's nav hint + `? help` — `↑↓ move · ↵ open · ? help` on
+  a workspace or branch row, `↑↓ move · ↵ open/collapse · ? help` on a project. On the home session it shows the
   title; on an empty tree, the "press `a` to add a project" invite. While you're
   typing a movement count (the `3` of `3j`), the count takes the nav verb's or title's
   place, as `3… · ? help`, until the next key uses it; `count_indicator: false` hides it.

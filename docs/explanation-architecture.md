@@ -94,9 +94,9 @@ Pr  ────┘   (project    (ordered      (hand-rolled ANSI TUI in a
   agent-edge fan-out state, the update line's and the code reload's, and the `render`, `input`, `actions`, `prompt` and
   `rows` mixins. It's one class in several files, each with its own
   `test/sidebar_*_test.rb` built on the shared `test/support/sidebar_case.rb`.
-- **`view.rb`** is down to the compact PR-badge helpers the sidebar uses
-  (`pr_identifier`, `pr_tag`): the state shown by color, and just the `#number`, to fit
-  the ~40-column pane.
+- **`view.rb`** holds the compact badge helpers the sidebar uses: the PR's state shown by
+  color, with just the `#number` (`pr_identifier`, `pr_tag`), and the `+adds −dels` count
+  (`diff_label`, `diff_tag`), to fit the ~40-column pane.
 
 The primary trunk checkout (`primary`) is always filtered out as a switch target
 (you never switch *to* `main`).
@@ -197,7 +197,7 @@ into the binary (`poke-sidebar`, `sidebar-sync`, `tmux-bind`). `cli.rb` dispatch
 the user-facing commands plus the tmux-internal ones like `toggle-sidebar` and
 `poke-sidebar`.
 
-Bare `bin/switchboard` adapts to where you run it (`CLI#start`). Inside tmux it toggles
+Bare `bin/switchboard` adapts to where you run it (`CLI.start`). Inside tmux it toggles
 the sidebar, like the bound key. From a plain shell it sets up and attaches the home
 session (`Tmux.go_home`), so starting switchboard is always one command. Every command
 and flag is in [Reference: the `switchboard` command](reference-cli.md).
@@ -421,7 +421,8 @@ would never clear.
 
 Editing `tmux_keys` with `e` or `switchboard config` re-applies right away
 (`reload_config_poke` and `edit_config` call `apply_keybindings`, and `announce: true`
-flashes the result). A from-scratch `install` still needs a tmux reload.
+flashes the result). `install` reloads tmux itself when run inside tmux; run outside, with a
+server already up, it needs a tmux reload.
 
 A hand edit of `config.yml` shows up as *key drift* (`Installer.key_drift?`: the configured
 key is neither the bound one nor a refused one). `doctor` shows a row per role, and `upgrade`
@@ -544,7 +545,8 @@ seeding a work pane plus sidebar split, which is never touched.
 ### Three things that would escape the isolated server
 
 **Two are gated by switchboard itself.** The command exports `SWITCHBOARD_SANDBOX=1`, and
-switchboard's own code checks it in two places:
+switchboard's own code checks it. (`UpdateCheck.sandbox?` reads it too, only to draw the
+seeded update line and skip the check.) Those two:
 
 - **`prune`'s `Reconcile.reap_sidebars` does nothing.** Its `ps`-based process list is
   machine-wide, so inside an isolated server every *real* sidebar would look orphaned and

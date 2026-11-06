@@ -220,7 +220,7 @@ is often what lets the rename land. After that it doubles the interval up to 30 
 
 When the only thing holding a pass is someone at the keyboard (`:held`: the pane is
 focused, or there was input just now), it keeps 2-second polls, but each one is a single
-pane read (`list-panes` plus `list-clients`) of those ttys (`still_held?`), not a full
+pane read (`list-panes`, `list-clients` and `list-sessions`) of those ttys (`still_held?`), not a full
 pass with `ps` and `lsof` per session. A full pass still runs every `SLOW_CAP`, since a
 session can exit or start in the meantime.
 
@@ -234,7 +234,7 @@ glyphs, used here in its stricter form:
 
 - **A full identity check.** The pid and its start time must match.
 - **The kernel's cwd only.** There's no fallback to the cwd Claude recorded.
-- **Rediscovered every poll.**
+- **Rediscovered on every full pass.**
 - **Nested worktrees are skipped.** A session in a worktree nested inside this one (a
   `.git` between the cwd and the root, as `claude --worktree` creates) belongs to that
   worktree.
@@ -284,7 +284,8 @@ or retired. The verdict comes from evidence alone. There's no ranking, and nothi
 carries over between workers, since sticky and carry-over rules each grow new corner
 cases. At the time limit, a box still holding any `/rename …` is a
 `failed_send` (a `:leftover` pass), so leftover text is reported by whichever worker
-finds it. A rename simply forgets the old path's marker.
+finds it. With someone at the keyboard, only our exact line counts, since anything else
+may be theirs. A rename simply forgets the old path's marker.
 
 `RemoteLink.health`'s `odd_status`, `unnamed` and `unknown_kind` are canaries for
 Claude changing the `status`, `name` or `kind` fields this depends on.
@@ -292,10 +293,10 @@ Claude changing the `status`, `name` or `kind` fields this depends on.
 ## Known gaps and accepted risks
 
 - **A dialog that looks like the prompt.** A Claude dialog with a text field drawn
-  exactly like the main prompt would pass `Box.parse`. (dec-2679bd5a)
+  exactly like the main prompt would pass `Box.parse`.
 - **A short-lived linked session.** A script that creates a session linked to Claude's
   window after the snapshot, types through it and destroys it, all inside the checks,
-  leaves no trace tmux exposes. That's accepted, like a racing `send-keys`. (dec-76a1b9be)
+  leaves no trace tmux exposes. That's accepted, like a racing `send-keys`.
 
 ## Related
 

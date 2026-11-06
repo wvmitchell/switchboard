@@ -23,7 +23,7 @@ session-wide when visible). The single command to launch from anywhere.
 ### `switchboard home`
 Attach the persistent home session explicitly. Home maps to no worktree (it lives
 in `$HOME`), carries its own sidebar, and is the stable launch + settings base.
-Landing here also prunes orphaned `sb/` sessions unless `prune_on_launch: false`.
+When its sidebar starts, it also prunes orphaned `sb/` sessions unless `prune_on_launch: false`.
 
 ### `switchboard install [--no-tmux] [--print-tmux] [--tmux-conf PATH] [--codex-hooks] [--no-codex-hooks]`
 Stand switchboard up from a fresh clone or a Homebrew install. Idempotent. Five steps:
@@ -47,10 +47,10 @@ Stand switchboard up from a fresh clone or a Homebrew install. Idempotent. Five 
 
 | Flag | Effect |
 |------|--------|
-| `--no-tmux` | Skip the tmux.conf edit (symlink + config only). |
+| `--no-tmux` | Skip the tmux.conf edit; the other steps still run. |
 | `--print-tmux` | Print the tmux line instead of writing it. |
 | `--tmux-conf PATH` | Target a specific tmux.conf instead of the auto-detected one. |
-| `--codex-hooks` | Install the global codex hooks block without prompting. |
+| `--codex-hooks` | Install the global codex hooks block without prompting. Does nothing if codex isn't on PATH and `~/.codex` (or `$CODEX_HOME`) doesn't exist. |
 | `--no-codex-hooks` | Skip the codex step entirely (no prompt). An existing block is left untouched, not re-ensured. |
 
 If a codex write is attempted and refused or fails (your own `[hooks]` outside the
@@ -152,13 +152,21 @@ or the name is taken.
 
 ### `switchboard remove <name>` (alias: `rm`)
 Unregister a project from the config. The repo and its worktrees on disk stay;
-re-add it any time. Unlike the sidebar's `d`, it does not tear down sessions
-(`prune` cleans those up).
+re-add it any time. Unlike the sidebar's `d`, it does not tear down sessions, and `prune`
+leaves them alone once the project is unregistered (unless another project's name maps to
+the same `sb/<name>/` prefix). To close them, re-add the project and press `d` on its
+header; `quit` closes them too, along with every other project's sessions.
 
 ### `switchboard clone <git-url> [name]`
 Clone a repo under `projects_root`, then register it. `name` defaults to the
 URL's basename (`git@host:org/repo.git` → `repo`). Errors if the name is taken or
 the destination exists.
+
+### `switchboard create <name>`
+Create a brand-new empty repo under `projects_root`, then register it. It starts with an
+empty initial commit, so `n` works in it right away. Errors if the name is taken, the
+destination exists, or the name has anything but letters, digits, `.`, `_` and `-` (or
+starts with `.`).
 
 ### `switchboard new <project|.> ["task" | -]`
 Dispatch a new workspace the way the sidebar's `n` does: reserve a placeholder name,
@@ -252,16 +260,18 @@ directory.
 **It also renames the git branch** to match — `<branch_prefix>/<name>` (the dir
 stays the bare `<name>`) — but only when that's safe: the branch is still the
 auto-created one (its name still matches the old leaf) **and** it hasn't been
-pushed. A **pushed** branch (one with a remote-tracking ref, i.e. a likely PR) or
+pushed. A **pushed** branch (one with a remote-tracking ref or a configured upstream,
+i.e. a likely PR) or
 a branch you switched yourself is left untouched and only the dir moves. So name a
 fresh workspace late and you get a clean, convention-correct branch; rename one
 that's already on a PR and the branch identity is preserved.
 
 It refuses to rename the primary/trunk checkout, a name that collapses to empty, a
-name containing `/` (the leaf must be flat), a name git won't accept as a
-branch, or a workspace still being created in the background (retry once it's ready). If a branch by the target name **already exists** (a leftover from a
-deleted workspace) it stops with that message and moves nothing — pick another
-name. It exits non-zero on any failure so `switchboard rename x && cd …` is safe to
+name containing `/` (the leaf must be flat), or a workspace still being created in the
+background (retry once it's ready). When the branch would be renamed too, it also refuses
+a name git won't accept as a branch, and if a branch by the target name **already exists**
+(a leftover from a deleted workspace) it stops with that message and moves nothing — pick
+another name. It exits non-zero on any failure so `switchboard rename x && cd …` is safe to
 chain.
 
 Run with **no name** and it prints usage plus the current workspace name and exits
@@ -341,7 +351,8 @@ sound resolution, orphaned sessions, the remote links (`⇅`) it sees (or a warn
 when Claude is running but its session files are missing, none are in the shape
 switchboard reads, or every live one fails the start-time check, i.e. a Claude update
 moved or reshaped them), a `CLAUDE_CONFIG_DIR` that differs between your shell and tmux
-(inside tmux only), and orphaned sidebar processes. Read-only. Its
+(inside tmux only), orphaned sidebar processes, a rename's session-name sync that failed
+(with the retry), and sidebars left on old code by a failed reload. Read-only. Its
 network calls are the release check (Homebrew only) and `gh`'s auth check. Hook staleness is judged
 only from the installed `switchboard`; run from another copy, doctor just reports the
 hooks as present.
@@ -398,9 +409,9 @@ Print the version (`switchboard X.Y.Z`).
 
 ### `switchboard help` (aliases: `-h`, `--help`)
 Print a usage summary — the main user commands plus the common sidebar keys. It's
-a curated subset, not exhaustive: it omits `version`, the `edit`/`rm` aliases, the
-internal tmux subcommands, and the power-user sidebar keys (`g`/`G`, the `Ctrl-`
-movement aliases).
+a curated subset, not exhaustive: it omits `version`, the `edit` alias, the
+internal subcommands, and the less common sidebar keys (`j`/`k`, `g`/`G`, `←`/`→`, `O`,
+`p`, `z`, `H`, `?`).
 
 ---
 
@@ -412,7 +423,7 @@ no-op outside the right tmux context.
 
 | Subcommand | Invoked by | Purpose |
 |------------|-----------|---------|
-| `sidebar` | tmux `split-window` | Run a sidebar pane (one process per window). |
+| `sidebar [--check]` | tmux `split-window` | Run a sidebar pane (one process per window). `--check` is a code reload's test run. |
 | `toggle-sidebar` | the bound toggle key | Summon/dismiss the sidebar session-wide. |
 | `poke-sidebar` | `client-session-changed` hook | Redraw the now-visible sidebar on a session switch. |
 | `poke-window <window>` | `session-window-changed` hook | Redraw the sidebar on a same-session window switch (gated to `sb/` sessions). |
@@ -422,6 +433,10 @@ no-op outside the right tmux context.
 | `check-update` | a visible sidebar, at most every 4 hours (spawned detached) | Homebrew installs: reads the newest release tag and caches it for the update line under the wordmark (#47). Does nothing under `SWITCHBOARD_NO_UPDATE_CHECK`. |
 | `create-workspace <id>` | the sidebar's `n` or `switchboard new` (spawned detached) | Background worker for a dispatched workspace: fetch, `git worktree add`, wire hooks, open the session. |
 | `launch <dest>` | the line the worker types into the new pane | Run the setup script, then start the agent with the task. |
+| `reap-worktree <repo> <path> <branch> …` | the sidebar's `d` (spawned detached) | Remove a workspace's worktree and branches in the background, so the input loop never waits on it. |
+| `sync-session-name <dest> <name>` | a rename (spawned detached) | Type `/rename <name>` into the workspace's live Claude sessions when it's safe. |
+| `rename-nudge [--stop]` | the Claude `SessionStart` and `Stop` hooks, and Codex's | Print the agent's naming and dispatch instructions; on `--stop`, report the turn's state too. |
+| `monitoring-nudge [--end]` | the Claude `SessionStart` and `SessionEnd` hooks, and Codex's | Teach the agent to declare a monitor, and clear stale declarations at a session boundary. |
 
 See [Explanation: sidebar lifecycle](explanation-sidebar-lifecycle.md) for how
 these hooks keep each window's sidebar fresh without it scanning while off screen.

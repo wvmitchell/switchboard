@@ -18,8 +18,8 @@ and follows it. Edit it like any other doc, in a PR.
 | | |
 |---|---|
 | **Workspace name** | `switchboard-security-monitor` |
-| **Schedule** | every 6 hours, cron `23 0,6,12,18 * * *` (local time, ET). The scheduler fires a recurring job late by a fixed per-job offset (up to 30 min), so the 06:xx check lands before 07:00. |
-| **State file** | `monitor/state.json` in Claude Code's project directory for the switchboard checkout (`~/.claude/projects/<checkout path with / as ->/`). Local, never committed, rebuilt if lost. |
+| **Schedule** | every 6 hours, cron `23 0,6,12,18 * * *` (local time). The scheduler fires a recurring job late by a fixed per-job offset (up to 30 min), so the 06:xx check lands before 07:00. |
+| **State file** | `monitor/state.json` in Claude Code's project directory for the switchboard checkout (`~/.claude/projects/<checkout path with every non-alphanumeric character as ->/`). Local, never committed, rebuilt if lost. |
 | **Monitoring TTL** | `switchboard monitoring on 25200` (7 h: one interval plus jitter) |
 
 ## Prerequisites
@@ -276,9 +276,11 @@ Re-verifying one doesn't advance the others.
   - **Session-name sync**: rename a workspace that has an idle Claude session with the
     sidebar's `r`, then keep the pane in view without typing. Within a few seconds the
     Claude session must carry the new name (the `name` in its sessions file, or the `/resume` picker), and
-    `doctor` must show no `session name:` line. Any `session name:` line (`unrecognized`,
-    `unconfirmed`, `failed_send`, `ceiling`) means the screen contract moved, though a lone `failed_send` can
-    also mean someone was typing (any client's key stops the send), so retry once first. `doctor`'s
+    `doctor` must show no `session name:` line for that workspace. One means the screen contract
+    moved, with three exceptions: `couldn't finish typing /rename` can also mean someone was
+    typing (any client's key stops the send), so clear the prompt and retry once first;
+    `never found a safe moment` can mean a busy session, so retry once too; and `the sync worker
+    stopped on an unexpected error` is a switchboard bug, not drift. `doctor`'s
     canaries for `status`, `name` and `kind` read only the sessions file, never the
     screen, so this run is the only check on the screen. A placeholder workspace that's
     due for a name is the natural one to use.
@@ -356,7 +358,7 @@ watching, and any merge that weakens one is a finding:
   (`DispatchNudge::PROVENANCE`). Dropping that, or dropping `brief_from` from the record,
   lets one agent's brief start the next.
 - **Registered projects only.** `switchboard new` takes `.` or a registered project name,
-  never a path, and refuses rather than guesses (`DispatchArgs`, `CLI#new_workspace`).
+  never a path, and refuses rather than guesses (`DispatchArgs`, `CLI.new_workspace`).
 - **No permissions of its own.** The new agent runs the project's own `session_command`.
   A change that adds a permission flag, an auto-approve or a trust bypass to a dispatched
   launch is a finding even if it looks like a convenience.

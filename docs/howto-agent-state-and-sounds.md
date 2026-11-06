@@ -146,7 +146,7 @@ spec) — so silence is never a mystery.
 ## Override sounds per project
 
 Same shape as the global `sounds`, nested under a project. A per-state key that's
-absent inherits the global one; only `enabled: false` mutes.
+absent inherits the global one; only `enabled: false` (or a bare `sounds: false`) mutes.
 
 ```yaml
 sounds:
@@ -196,8 +196,9 @@ one-time global install above. Observation-only agents show a dot but stay silen
 - **A stale dot after `quit`.** `quit` clears agent state, so this shouldn't
   happen; if a dot lingers, it ages out within the presence TTL (15 min) or when
   the agent re-reports on restart.
-- **`doctor` says "no system sound named X".** That's a macOS system-sound name
-  that doesn't exist (or you're not on macOS). Use a built-in or a file path.
+- **`doctor` says "no such system sound" or "macOS-only name".** That's a macOS
+  system-sound name that doesn't exist, or you're not on macOS (`switchboard sound`
+  says "no system sound named X"). Use a built-in or a file path.
 
 ## Related
 
