@@ -109,12 +109,12 @@ tracks these lines; update them when you re-verify one.
   `~/.codex/config.toml`. An empty `CODEX_HOME` means `~/.codex` to Codex (checked live on
   0.165.0) and to us.
 - **⇅ remote link** (`bridgeSessionId`, `procStart` in `~/.claude/sessions/<pid>.json`):
-  verified live on Claude Code 2.1.308 (`doctor`'s canary still clean on 2.1.318).
+  verified live on Claude Code 2.1.308 (`doctor`'s canary still clean on 2.1.319).
 - **◷ sessions-file `status`:** last verified live against **Claude Code 2.1.308–2.1.310**
-  (v0.56.0), re-checked live on 2.1.311–2.1.312, 2.1.314, 2.1.316 and 2.1.318 (a background
+  (v0.56.0), re-checked live on 2.1.311–2.1.312, 2.1.314, 2.1.316, 2.1.318 and 2.1.319 (a background
   agent's hand-off held its chime).
 - **Session-name sync** (Claude's screen and `/rename`): pinned by real 2.1.310 captures in
-  `test/fixtures/session_name` and confirmed live on 2.1.312, 2.1.314, 2.1.316 and 2.1.318
+  `test/fixtures/session_name` and confirmed live on 2.1.312, 2.1.314, 2.1.316, 2.1.318 and 2.1.319
   (the sidebar's `r`, the pane in view).
 
 ## Conventions
