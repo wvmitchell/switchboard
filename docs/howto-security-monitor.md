@@ -22,9 +22,6 @@ and follows it. Edit it like any other doc, in a PR.
 | **State file** | `monitor/state.json` in Claude Code's project directory for the switchboard checkout (`~/.claude/projects/<checkout path with / as ->/`). Local, never committed, rebuilt if lost. |
 | **Monitoring TTL** | `switchboard monitoring on 25200` (7 h: one interval plus jitter) |
 
-The sibling monitor for the dvc_deal repo runs in a workspace named
-`night-watch-monitor`, with its own playbook in that repo. Don't reuse its name here.
-
 ## Prerequisites
 
 - A Claude Code session in a switchboard workspace, left open (the schedule lives in
@@ -83,11 +80,15 @@ monitor's workspace, run a check by hand instead of assuming one ran.
 8. **Write the state file BEFORE reporting.** The report is gone when the session is;
    the state file is the memory.
 
-Escalate by time of day and week:
+Not everything needs looking at every 6 hours. What the maintainer or a merge can change
+runs every check; upstream releases and advisories can wait for the morning:
 
-- **Morning digest**: on the 06:xx check, summarize
-  what surfaced overnight, even items below the notify bar on their own.
-- **Weekly deep**: once a week (Monday morning), the [weekly checks](#weekly-checks).
+- **Every check**: secret scanning, [repo health](#3-repo-health), the
+  [local install](#4-local-install) and [agent dispatch](#5-agent-dispatch).
+- **Morning (the 06:xx check)**: also the rest of [security](#1-security) and
+  [upstream drift](#2-upstream-contract-drift), then a digest of what surfaced since
+  yesterday, even items below the notify bar on their own.
+- **Weekly (Monday morning)**: also the [weekly checks](#weekly-checks).
 
 Use **`gh` for all repo state, never `git fetch`.** An SSH remote can need interactive
 auth (a hardware key, a password-manager agent) that fails unattended, and git then
@@ -162,12 +163,11 @@ Alert on high or critical advisories that reach a version a user could run.
   gh api repos/wvmitchell/switchboard/secret-scanning/alerts --jq '[.[]|select(.state=="open")]|length'
   ```
 
-- **git**, the core dependency (worktrees, reflog, branch renames). New advisories and
-  tags against the baseline:
+- **git**, the core dependency (worktrees, reflog, branch renames). New advisories
+  against the baseline:
 
   ```sh
   gh api 'repos/git/git/security-advisories?per_page=5' --jq '.[]|[.ghsa_id,.severity,.published_at]|@tsv'
-  gh api repos/git/git/tags --jq '.[0].name'
   ```
 
 - **Ruby**: new posts on <https://www.ruby-lang.org/en/security/>. Switchboard is
@@ -236,20 +236,23 @@ Re-verifying one doesn't advance the others.
   A redesign of the prompt box or theme, a new input mode, or a change to `/rename` is a
   drift finding even when its entry doesn't say "prompt box".
 
-  When the **installed** version moves, check the sessions-file readers and the
-  session-name sync live:
+  When the **installed** version moves, `switchboard doctor`'s "remote links (⇅)" line
+  must still show `N linked` with no warning while a `/rc` session is open
+  (`RemoteLink.health` is the canary).
 
-  - **⇅ remote link**: `switchboard doctor`'s "remote links (⇅)" line must still show
-    `N linked` with no warning while a `/rc` session is open (`RemoteLink.health` is
-    the canary).
+  The other two checks take the maintainer's hands, and Claude moves every couple of
+  days, so ask for them only when that version's changelog hits the ◷ or session-name
+  terms above, or otherwise in Monday's digest if the installed version has moved since
+  the last live run. A changelog entry that isn't published yet counts as no hit until it
+  is. Between runs a real break still shows: a failed rename leaves a `session name:` line
+  in `doctor`, and a broken ◷ chimes at the hand-off in everyday use.
+
   - **◷ background work**: in a hooked workspace, start a background agent and end the
     turn. The row must show `◷` once the turn settles, with no chime yet, then a
     resting dot and one chime once the agent's follow-up turn ends. A `●` and a chime
     at the hand-off means the `status` contract moved. (A `run_in_background` shell
     also shows `◷`, but its chime rings at the hand-off by design, so it can't test the
-    hold.) There's no
-    `doctor` canary for this yet; if one is added (a `status` health line like
-    `RemoteLink.health`), check that instead of the manual run.
+    hold.)
   - **Session-name sync**: rename a workspace that has an idle Claude session with the
     sidebar's `r`, then keep the pane in view without typing. Within a few seconds the
     Claude session must carry the new name (the `name` in its sessions file, or the `/resume` picker), and
@@ -270,14 +273,10 @@ Re-verifying one doesn't advance the others.
   SWITCHBOARD_CODEX_SMOKE=1 bin/test-smoke test/smoke/codex_hook_smoke_test.rb
   ```
 
-- **tmux**: `tmux -V` against the latest release. On a new release, read its CHANGES
-  for the hooks switchboard sets (`client-session-changed`, `after-new-window`,
-  `session-window-changed`), the format variables it reads (`#{config_files}`,
-  `#{pane_tty}`; for the session-name sync also `#{pane_in_mode}`,
-  `#{pane_synchronized}`, `#{pane_width}`, `#{session_attached}` and
-  `#{window_active}`), `split-window` / `resize-pane`, `respawn-pane -k` and pane
-  options (`set-option -p`; the sidebar code reload), and `send-keys` /
-  `capture-pane -e`. When the installed tmux moves, run `bin/test-smoke`.
+- **tmux**: `tmux -V` against the latest release. On a new release, read its CHANGES for
+  anything that touches what `lib/` uses (hooks, format variables, pane options, key
+  tables, `send-keys`, `capture-pane`); search `lib/` for a command when in doubt. When
+  the installed tmux moves, run `bin/test-smoke`, which drives the real thing.
 
 A drift finding proposes the follow-up: "re-verify X live, then update the 'last
 verified' line in CLAUDE.md", or "open an issue".
@@ -299,7 +298,7 @@ gh issue list -R wvmitchell/switchboard -L 100 --json number,title
   formula's `url`:
 
   ```sh
-  gh api repos/wvmitchell/homebrew-switchboard/contents/Formula/switchboard.rb -H 'Accept: application/vnd.github.raw' | grep url
+  gh api repos/wvmitchell/homebrew-switchboard/contents/Formula/switchboard.rb -H 'Accept: application/vnd.github.raw' | grep -E '^\s*url '
   ```
 
   A version on main with no tag or formula an hour after a green push means the
@@ -344,8 +343,8 @@ watching, and any merge that weakens one is a finding:
   ([background dispatch § Never an agent on an un-set-up tree](explanation-background-dispatch.md#never-an-agent-on-an-un-set-up-tree)).
 
 On each merge to main, read diffs touching `dispatch_nudge.rb`, `dispatch_args.rb`,
-`creator.rb`, `creation.rb` or the `new` and `projects` commands in `cli.rb` against that
-list.
+`hook_commands.rb` (it decides whether a session gets the provenance line), `creator.rb`,
+`creation.rb` or the `new` and `projects` commands in `cli.rb` against that list.
 
 ## Weekly checks
 
@@ -356,17 +355,9 @@ On top of a normal check, once a week:
   nears, open an issue to raise the floor to the next maintained release (the same bump:
   `bin/switchboard`'s re-exec guard, the CI matrix, the docs). Also flag a new Ruby
   release CI's newest job doesn't cover yet.
-- **Action pins**: are the SHA pins in `.github/workflows/*.yml` still the newest release
-  of their major? Dependabot should be proposing bumps; weeks of silence means check
+- **Action pins**: Dependabot should be proposing bumps to the SHA pins in
+  `.github/workflows/*.yml`. Weeks of silence while a newer release exists means check
   `.github/dependabot.yml` still parses.
-- **Ruby security baseline**: record the newest post on the Ruby security page if the
-  baseline has none.
-- **Dispatch refuses a stranger**: `switchboard new no-such-project "x"` must exit
-  non-zero with `unknown project` and create nothing. It refuses before any worktree,
-  record or tmux session exists, so it's safe to run against the real install.
-- **New surfaces**: read the week's merges to main for anything that adds a new
-  external tool, shell-out, agent contract or background process, and update this page
-  ([below](#keep-this-page-current)).
 
 ## Keep this page current
 
@@ -379,7 +370,10 @@ main (the repo-health check is the trigger), ask whether it adds something to wa
 - a change to the CI, release or tap workflows,
 - a new "last verified against X" line in CLAUDE.md: update the baselines to match.
 
-Make the change as a PR to this page; the monitor proposes it, the maintainer merges it.
+Add a check only if the monitor would act on it and nothing cheaper already catches it
+(the tests, `doctor`, the read of each merge), and look for what the addition lets you
+remove. Make the change as a PR to this page; the monitor proposes it, the maintainer
+merges it.
 Ask the maintainer first when it's a judgment call: a new notify threshold, a change in
 schedule, scope or cost, or two defensible options.
 
