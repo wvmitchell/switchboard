@@ -33,7 +33,7 @@ sidebar spawns `switchboard create-workspace <id>` and goes back to drawing. Not
 the input loop builds anything or touches the network; reserve's local branch and
 session lookups are its only shell-outs.
 
-**The worker builds.** `Creator.work` runs as a daemon (via `CLI#create_workspace`, like
+**The worker builds.** `Creator.work` runs as a daemon (via `CLI.create_workspace`, like
 the reaper). It does a best-effort fetch, then `git worktree add --no-track`. On a
 collision it retries with a fresh placeholder and relabels the record. Then it runs
 `enable_hooks` and creates a *detached* tmux session whose one typed line is
@@ -211,7 +211,8 @@ Any other failure is rolled back by `undo_add`, which removes only what it can p
   git's own `initializing` lock shows the checkout never finished. Past checkout, the
   row is enterable, so changes are kept just like a commit would be. That check is
   `Git.clean?`, which fails closed and counts untracked files whatever your status
-  config says. The removal isn't forced, so git refuses anything that appeared since.
+  config says. The removal is forced only past that lock, so otherwise git refuses
+  anything that appeared since.
 - **A lock,** only when it's that `initializing` lock from a killed add, never anyone
   else's.
 - **The branch,** only atomically at that base commit: `Git.delete_branch_at`, which is
@@ -233,8 +234,8 @@ Cancels come from three places:
   only if its cancel actually landed.
 - **`d` on a real row mid-build** (`delete`) cancels before the kill.
 
-Teardown force-removes a tree only once `Creator.untouched?` proves it clean with no
-commits past its base. Anything else is kept: the sidebar flashes "kept …", coming back
+Teardown force-removes a tree, and force-deletes its branch, only once
+`Creator.untouched?` proves it clean with no commits past its base. Anything else is kept: the sidebar flashes "kept …", coming back
 opens a plain shell, and `d` on the row asks before forcing.
 
 The worker re-checks for a cancel after its fetch. The fetch and `git worktree add` run
@@ -262,7 +263,6 @@ GC cleans up finished and abandoned records, and it's careful in the same way:
   for a `.git` there, not just the `worktree_added` flag, since a killed add or a refused
   rollback leaves a tree the flag never saw. GC then records the tree, so deleting it
   clears the row.
-- **It force-deletes a canceled build's branch** only once the tree is proven untouched.
 - **It reads records as UTF-8 whatever the locale.** Otherwise a C-locale tmux would fail
   to parse a task with a smart quote and lose the build.
 - **It treats an empty start time as unknown.** Past `PID_ONLY_CEILING`, though, an owner
@@ -298,7 +298,7 @@ leaked in exactly that case.
   it through, and it means no agent, never the word `false`.
 - **The setup setting has three states.** `Config#worktree_creation_command_for` reads
   absent as inherit, a value as an override, and `false`, empty or valueless as off. That's
-  why it reads the raw project node, like `auto_rename_for`, instead of going through
+  why it reads the raw project node instead of going through
   the `projects` map or the `project_key` helper. Both of those collapse "no key" into
   "key set to nil," so a project that opted out would silently inherit the global setting.
 - **A broken list fails the build.** `setup_script` rejects a list with mixed types as a
@@ -352,8 +352,8 @@ worktree as already pushed.
 `<branch_prefix>/<name>`), but it renames the branch only when that's safe:
 
 - it's still the auto-created branch (its basename still equals the old name), and
-- it hasn't been pushed. `Git.pushed?` means a remote-tracking ref exists, not that
-  `@{upstream}` is set.
+- it hasn't been pushed. `Git.pushed?` means a remote-tracking ref exists or an upstream
+  is configured.
 
 A pushed or diverged branch is left alone, and only the directory is renamed.
 

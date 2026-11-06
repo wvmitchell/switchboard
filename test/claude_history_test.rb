@@ -24,7 +24,7 @@ module Switchboard
       File.join(root, ClaudeHistory.encode(path))
     end
 
-    # The encoding Claude uses: every non-alphanumeric run becomes "-", so "/",
+    # The encoding Claude uses: every non-alphanumeric character becomes "-", so "/",
     # "_" and "." all collapse the same way (lossy, hence forward-encode only).
     def test_encode_collapses_every_non_alphanumeric
       assert_equal "-Users-x-my-app-a-b", ClaudeHistory.encode("/Users/x/my_app/a.b")

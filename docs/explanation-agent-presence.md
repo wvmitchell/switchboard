@@ -25,7 +25,7 @@ goals pull in opposite directions, which is why there are two signals.
 
 ## Two presence signals, merged
 
-`AgentState.scan` (`agent_state.rb`) merges two independent answers to "is an
+`AgentState#scan` (`agent_state.rb`) merges two independent answers to "is an
 agent here, and what's it doing?" For each worktree, either signal counts as
 presence:
 
@@ -63,12 +63,15 @@ Claude's mapping (`ClaudeHook::EVENTS`) is the interesting part (Codex's, which 
   holds up across Claude releases, and only the type field counts: a workspace
   path or message that merely contains a type name can't trip it. An unrecognized
   notification defaults to the calm state, so it never false-alarms magenta.
-- `Stop`, `SessionStart` → **done**.
+- `SessionStart` → **done**. So does `Stop`, which is off this list and has one command of
+  its own ([below](#the-backstop-on-stop)).
 
 A fresh hook file *is* presence — no process check needed. The hook only fires
 from inside the worktree, so switchboard trusts it rather than second-guessing it
 with a process scan (an agent's process cwd can differ from its project dir when
-a wrapper launches it elsewhere; a scan would miss it).
+a wrapper launches it elsewhere; a scan would miss it). The one exception is a fresh
+`:thinking` on a full scan: when its work pane has gone static, the turn was probably
+interrupted (Esc fires no `Stop`), so the dot rests as `done`, silently.
 
 The flip side of trusting a fresh file: a report counts only while fresh
 (`PRESENCE_TTL`, 900s). After that it ages out, so a closed agent's last state
@@ -298,7 +301,7 @@ fixed event order. That's why `command_entries` is centralized.
 A command that *did* change (another checkout's bin path) keeps its old approval. Codex
 re-asks for it in `/hooks`; it's valid again once the command changes back, and an
 `enabled = false` stays put. So doctor's count credits that an approval *exists*, not that
-its hash matches (dec-455f3bf8).
+its hash matches.
 
 `remove_global` drops *our* approvals along with the block. Approvals for other hook files
 stay (see [uninstall](#uninstall-keeps-what-isnt-ours)).
@@ -388,8 +391,7 @@ drops only ours. A `[hooks.state…]` table outside the block is codex's, not a 
 hooks config (though `[[hooks.state]]` still collides).
 
 Dropping one of our approvals keeps the comments that trail it outside the block, since
-they head the next table. Comments *inside* the managed block are regenerated away
-(dec-3417a712).
+they head the next table. Comments *inside* the managed block are regenerated away.
 
 `MarkerBlock` accepts trailing text on a marker line (older releases wrote
 `# >>> … >>> (managed by …)`), and `remove_global` returns whether it changed anything, so
@@ -427,11 +429,12 @@ the diff refresh rides the edge list `on_scan` returns to `refresh_agents`):
    every scan, since which process noticed doesn't matter (see below).
 2. **PR refresh** re-fetches the badge — an agent finishing a turn is the best
    moment to catch a push.
-3. **Diff-count refresh** repaints the row's `+adds −dels` — a finished turn
-   likely just committed.
-4. **Completion sound + sparkle** (`sound.rb`) play last, fully rescued so a
-   sound fault can never starve the refreshes above, and gated so only the
-   sidebar you're watching rings (a catch-up scan re-baselines silently).
+3. **Completion sound + sparkle** (`sound.rb`, and `Edges` for the sparkle) play
+   next, fully rescued so a sound fault can never starve the refresh below, and
+   gated so only the sidebar you're watching rings (a catch-up scan re-baselines
+   silently).
+4. **Diff-count refresh** repaints the row's `+adds −dels` — a finished turn
+   likely just committed. It runs last, after `on_scan` returns.
 
 The state cursor (`@prev_hook_states`, owned by `Edges`) advances in an `ensure`, so a fault in any
 consumer can't corrupt the next edge diff. The PR fan-out is the one unrescued consumer; a
@@ -445,8 +448,8 @@ badge refresh on completion.
 
 ### Completion sounds
 
-`Sound` (`sound.rb`) plays a short sound on each completion edge. In `on_scan`, the PR
-refresh runs *first*, then `play_sounds_for`, fully rescued.
+`Sound` (`sound.rb`) plays a short sound on each completion edge. In `on_scan`, the mark and the
+PR refresh run *first*, then `play_sounds_for`, fully rescued.
 
 **Which completions ring:**
 
@@ -462,7 +465,7 @@ refresh runs *first*, then `play_sounds_for`, fully rescued.
   that works, and why a sidebar has to check that it still owns its pane, is in
   [the sidebar's lifecycle](explanation-sidebar-lifecycle.md#catch-up-scans-must-not-re-ring).
 
-**The sounds themselves.** The two defaults are *synthesized* (16-bit PCM WAV via
+**The sounds themselves.** The four defaults are *synthesized* (16-bit PCM WAV via
 `Array#pack`) and written into the XDG data dir on first use, atomically, so racing sidebar
 processes never read a half-written file. It's the same self-healing trick as
 `HookFile.ensure_script`, with no binary assets shipped. Bump `Sound::ASSET_VERSION` to
@@ -471,11 +474,11 @@ regenerate the cached WAVs.
 `Config#sound_for` resolves each state (a global default plus per-project overrides, like
 `session_command_for`) to one of:
 
-- a built-in name (`train`, `chime`, or the variants `train_1..3` / `chime_1..3`);
+- a built-in name (`train`, `chime`, `alert`, `failed`, or the variants `train_1..3` / `chime_1..3`);
 - a file path;
 - a bare macOS system-sound name.
 
-The only way to mute is `enabled: false`.
+The only ways to mute are `enabled: false` and a bare `sounds: false`.
 
 ### Bold until viewed
 
@@ -663,8 +666,9 @@ prove an agent is *alive*. Neither proves it's *still* monitoring.
 
 So liveness is the marker's mtime plus re-affirmation every cycle, not a hook heartbeat.
 `monitoring on` rewrites the marker (a fresh mtime), the agent re-runs it each cycle, and
-`Monitoring.monitored` shows a worktree only while `now - mtime <= TTL` (`Monitoring::TTL`,
-about 10 minutes), GC'ing the stale file. Re-affirmation is the precise "still monitoring"
+`Monitoring.monitored` shows a worktree only while its marker's age is within the window the
+agent declared (`monitoring on <seconds>`, or `Monitoring::TTL`, about 10 minutes, by default),
+GC'ing the stale file. Re-affirmation is the precise "still monitoring"
 signal a generic heartbeat can't give: an agent that stopped, crashed, or was resumed into
 other work stops re-affirming, so its dot ages out on its own. A heartbeat would keep it
 falsely lit from unrelated activity. Three thought-experiment tests pin this: resume, the
@@ -673,8 +677,8 @@ user stops, and the agent stops.
 ### Routine ticks are quiet
 
 A background loop must not chime and bold on every tick. So the routine `:done` per tick is
-suppressed from both the completion sound and the bold (`suppress_completion?`, the one
-check both `play_sounds_for` and `mark_attention_for` consult). `:waiting` still surfaces,
+suppressed from both the completion sound and the bold (`suppress_completion?`, one check
+`on_scan` applies before handing the list to `play_sounds_for` and `mark_attention_for`). `:waiting` still surfaces,
 since it wants input, and the PR and diff refreshes still ride every edge.
 
 `@monitoring` is hydrated in `refresh_agents`, before `Edges#on_scan`, so the suppression
@@ -723,7 +727,7 @@ From fastest to slowest:
 1. **Explicit `off`, and `quit`.** Both are instant. `quit` calls `Monitoring.clear_all`
    beside `AgentState.clear_all`, since a teardown kills every agent.
 2. **Session boundaries.** Two hook commands (`MonitoringNudge` and `HookCommands.monitoring_nudge`,
-   wired into the Claude hook by `HookFile.command_entries` as matcher-less `SessionStart` and
+   wired into both Claude's hooks and the Codex block by `HookFile.command_entries` as matcher-less `SessionStart` and
    `SessionEnd` commands, marked `MONITOR_MARK` so `ours?` can dedupe and strip them):
    - **clear on `SessionStart`** makes monitoring a per-session declaration. A resumed agent,
      whose old loop is dead, has to declare again.
@@ -742,10 +746,10 @@ out of context, and `SessionStart` fires again on them precisely so a hook can r
 So an agent that starts a monitor *after* either still knows to run `monitoring on`
 (`MonitoringNudge.clears_on?` vs. `nudges_on?`).
 
-**Renames carry the marker.** `Rename.perform` carries it via the shared
-`KeyedMarkerStore.carry`, capturing the old realpath *before* `move_worktree`, since the
-bridge symlink resolves it to the new folder afterwards. `Attention`'s bold is carried the
-same way, so a rename doesn't drop it.
+**Renames carry the marker.** `Rename.perform` carries it with `Monitoring.carry`, which keeps
+an agent-declared window, capturing the old realpath *before* `move_worktree`, since the
+bridge symlink resolves it to the new folder afterwards. `Attention`'s bold is carried too,
+through the shared `KeyedMarkerStore.carry`, so a rename doesn't drop it.
 
 The session-boundary behavior (nudge and clears) is gated on the `background_presence`
 setting (global plus per-project, on by default, like `auto_rename`). The setting only
@@ -931,7 +935,7 @@ forks a `ps`; those files can sit there forever.
 `tmux` fields are startup stamps. After `rename A→B`, the bridge keeps `realpath(A)` correct,
 until another workspace is renamed *onto* `A` (`Rename.perform` clears a dead bridge), when
 `realpath(A)` names the wrong tree. One batched `lsof -a -d cwd` (`Agents.cwds_of`, shared
-with `Agents.process_cwds`; about 27 ms for 4 pids, and only when at least one link is live)
+with `Agents.process_cwds`; about 27 ms for 4 pids, and only when a tracked worktree has a live session)
 follows the moved folder. The recorded `cwd` is only the fallback. (The agent dots may share
 this flaw; that hasn't been verified.)
 

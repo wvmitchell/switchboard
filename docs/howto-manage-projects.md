@@ -143,14 +143,18 @@ From the shell, to unregister a project without touching sessions:
 switchboard remove <name>     # alias: rm
 ```
 
-The repo and worktrees on disk stay; re-add it any time. Leftover sessions are
-cleaned by `switchboard prune` — see [How-to: housekeeping](howto-housekeeping.md).
+The repo and worktrees on disk stay; re-add it any time. Its sessions stay open too, and
+`switchboard prune` leaves them alone while it's unregistered (unless another project's name
+maps to the same `sb/<name>/` prefix). To close them, re-add the project and press `d` on its
+header. `switchboard quit` closes them too, but it tears down every project's sessions and
+agents — see [How-to: housekeeping](howto-housekeeping.md).
 
 ## Troubleshooting
 
-- **Project doesn't appear in the tree.** Its `path` must exist and be a git repo.
-  A project whose path is missing is dropped from the tree on purpose (so a moved
-  repo can't break the sidebar). Fix the `path` in `config.yml` (`e` or
+- **Project doesn't appear in the tree.** Its `path` must exist. A project whose path
+  is missing is dropped from the tree on purpose (so a moved repo can't break the
+  sidebar); a path that exists but isn't a git repo shows as a header with no
+  workspaces. Fix the `path` in `config.yml` (`e` or
   `switchboard config`) or re-`add` it.
 - **"name taken".** Project names must be unique. Pick another, or `remove` the
   old one first.
@@ -180,4 +184,4 @@ cleaned by `switchboard prune` — see [How-to: housekeeping](howto-housekeeping
 
 - [Reference: CLI](reference-cli.md) — `add`, `clone`, `remove`, `refresh`.
 - [Reference: config](reference-config.md) — `worktree_root`, `projects_root`, `base`, `branch_prefix`.
-- [How-to: housekeeping](howto-housekeeping.md) — prune orphaned sessions after removal.
+- [How-to: housekeeping](howto-housekeeping.md) — prune orphaned sessions.

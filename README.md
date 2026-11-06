@@ -8,18 +8,20 @@ done, or waiting on you; one keystroke switches to it. Worktrees are discovered 
 from `git`, so anything you create just shows up. Pure Ruby, zero gem dependencies.
 
 ```
-switchboard · home
+◖═◗ Switchboard
+good evening, sam
+7 worktrees · 1 active · 5 PRs open
 ──────────────────────────────────────────
 ▾ api
-» ⠹ rate-limiter            +56  −3    #485
-  ● new-auth-flow          +124 −18    #482
-    ◆ retry-backoff         +12  −0    #487
+  ⠹ rate-limiter             +56  −3  #485
+  ● new-auth-flow           +124 −18  #482
+  ◆ retry-backoff            +12      #487
 ▾ web
-  ● dark-mode               +89 −44    #211
-    checkout-redesign      +203  −9    #214
-▸ infra
-──────────────────────────────────────────
-↑↓ move · ↵ open · ? help
+  ● dark-mode                +89 −44  #211
+    checkout-redesign       +203  −9  #214
+▸ infra (2)
+
+switchboard · home · ? help
 ```
 
 `⠹` thinking · `◆` waiting on you · `●` done · `◷` finishing handed-off work ·

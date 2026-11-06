@@ -28,7 +28,7 @@ or `e` in the sidebar — both reload on save.
 | `projects_root` | path | `~` | Where `a`/`clone` drop fetched repos: `<root>/<name>`. |
 | `base` | git ref | `origin/main` | Default ref new worktrees branch from. Per-project `base` overrides it. |
 | `branch_prefix` | string | _(none)_ | New branches become `<prefix>/<name>`. Empty/unset ⇒ bare `<name>`. |
-| `prune_on_launch` | bool | `true` | Prune orphaned `sb/` sessions when landing on the home session. |
+| `prune_on_launch` | bool | `true` | Prune orphaned `sb/` sessions once, when the home session's sidebar starts (not on a code reload). |
 | `auto_rename` | bool | `true` | Nudge the agent to `switchboard rename` a placeholder-named workspace once it knows the work (a `SessionStart` hook). `false` opts out. Per-project override wins. See [`auto_rename`](#auto_rename). |
 | `agent_dispatch` | bool | `true` | Tell agents (a `SessionStart` hook) that `switchboard new` can start another workspace, here or in another registered project, when you ask. `false` drops the instruction; the command still works. Per-project override wins. See [`agent_dispatch`](#agent_dispatch). |
 | `background_presence` | bool | `true` | Tell agents (a `SessionStart` hook) to declare background monitors and loops with `switchboard monitoring on`, so the sidebar shows a `∞`, and clear that declaration at session boundaries. `false` drops the instruction and the clears; `switchboard monitoring` still works by hand. Per-project override wins. See [background monitors](explanation-agent-presence.md#background-monitors-the-). |
@@ -61,8 +61,8 @@ Paths accept `~` and are expanded. Unknown keys are ignored.
 worktree_root: ~/switchboard/worktrees   # where `n` puts new worktrees
 projects_root: ~/Programming             # where `a`/`clone` drop cloned repos
 base: origin/main                        # default ref new worktrees branch from
-branch_prefix: wvmitchell                # new branches become wvmitchell/<name>
-prune_on_launch: true                    # tidy orphaned sessions on landing home
+branch_prefix: sam                       # new branches become sam/<name>
+prune_on_launch: true                    # tidy orphaned sessions when the home sidebar starts
 auto_rename: true                        # let the agent name a placeholder workspace (on by default)
 agent_dispatch: true                     # tell agents `switchboard new` exists (on by default)
 diff_counts: true                        # show +adds −dels on each row (false skips the git diff)
@@ -171,9 +171,9 @@ It stays cheap by design: the background refresh only runs when a stats-only che
 sees that something it draws actually changed, and it's rate-limited, so a fully
 idle pane costs about what it did before. It never rings completion sounds and
 never kicks off background PR fetches off screen — those still happen when you
-switch in. A worktree added or removed in *another* session, and view-preference
-toggles (collapse, full header, branch fold, width), refresh on switch-in rather
-than via pre-warming.
+switch in. View-preference toggles (collapse, full header, branch fold) reach the other
+sidebars right away, through a repaint broadcast. A worktree added or removed in
+*another* session, and the pane width, settle on switch-in instead.
 
 Set `prewarm: false` to restore full off-screen dormancy (the flash returns). It's
 a global knob — there's no per-project override. For the full mechanism see
@@ -467,6 +467,7 @@ projects:
 | `path` | path | yes | The repo's working directory (the primary checkout). |
 | `base` | git ref | no | Per-project base ref. Falls back to the global `base`. |
 | `session_command` | string | no | Per-project session command. Empty/absent ⇒ inherit the global. |
+| `auto_rename`, `agent_dispatch`, `background_presence`, `sync_session_name` | bool | no | Per-project overrides of the global settings. Absent ⇒ inherit the global; a value wins in either direction. |
 | `worktree_creation_command` | string, list, or `false` | no | Per-project setup script. **Absent** ⇒ inherit the global; a value ⇒ override; **`false`** ⇒ off for this project (does *not* inherit). |
 | `sounds` | map or `false` | no | Per-project sound overrides (same shape as the global). Per-state keys inherit the global when absent. |
 
@@ -491,6 +492,10 @@ Everything switchboard writes, and how to redirect it. State dirs follow XDG.
 | Held `◷` chimes (waiting on a background agent) | `$XDG_STATE_HOME/switchboard/offstage_hold` → `~/.local/state/switchboard/offstage_hold` | `$SWITCHBOARD_OFFSTAGE_HOLD_DIR` |
 | In-flight delete markers | `$XDG_STATE_HOME/switchboard/pending-delete` → `~/.local/state/switchboard/pending-delete` | `$SWITCHBOARD_PENDING_DELETE_DIR` |
 | Project-collapse folds | `$XDG_STATE_HOME/switchboard/collapse` → `~/.local/state/switchboard/collapse` | `$SWITCHBOARD_COLLAPSE_DIR` |
+| Full-header toggle (`H`) | `$XDG_STATE_HOME/switchboard/full_header` → `~/.local/state/switchboard/full_header` | `$SWITCHBOARD_FULL_HEADER_FILE` (a file path) |
+| Branch-fold toggle (`z`) | `$XDG_STATE_HOME/switchboard/branch_fold` → `~/.local/state/switchboard/branch_fold` | `$SWITCHBOARD_BRANCH_FOLD_FILE` (a file path) |
+| Sidebar width (`←`/`→`) | `$XDG_STATE_HOME/switchboard/width` → `~/.local/state/switchboard/width` | `$SWITCHBOARD_WIDTH_FILE` (a file path) |
+| Session-name sync outcomes (what `doctor` lists) | `$XDG_STATE_HOME/switchboard/session-name` → `~/.local/state/switchboard/session-name` | `$SWITCHBOARD_SESSION_NAME_DIR` |
 | Background-create records (`n` and `switchboard new` dispatches) | `$XDG_STATE_HOME/switchboard/creation` → `~/.local/state/switchboard/creation` | `$SWITCHBOARD_CREATION_DIR` |
 | PR-badge cache | `$XDG_CACHE_HOME/switchboard/prs` → `~/.cache/switchboard/prs` | `$SWITCHBOARD_CACHE_DIR` |
 | Agent-state reporter script | `$XDG_DATA_HOME/switchboard/sb-agent-hook` → `~/.local/share/switchboard/sb-agent-hook` | `$XDG_DATA_HOME` |
@@ -509,7 +514,7 @@ A few more files and behaviors can be redirected the same way:
 
 | What | Default | Override |
 |------|---------|----------|
-| Update-line cache | `$XDG_CACHE_HOME/switchboard/latest.json` → `~/.cache/switchboard/latest.json` | `$SWITCHBOARD_UPDATE_CACHE` (a file path) |
+| Update-line cache (its `latest.attempt` stamp sits beside it) | `$XDG_CACHE_HOME/switchboard/latest.json` → `~/.cache/switchboard/latest.json` | `$SWITCHBOARD_UPDATE_CACHE` (a file path) |
 | Global codex config (the codex hooks block) | `~/.codex/config.toml` | `$CODEX_HOME` |
 | Where release tags are read from | the switchboard GitHub repo | `$SWITCHBOARD_RELEASES_URL` (the test suite points it at a dead path, so nothing reaches GitHub) |
 | Background update check | on, for a Homebrew install | `$SWITCHBOARD_NO_UPDATE_CHECK` set to anything but empty or `0` turns it off (the test suite, smoke runs and the sandbox set it) |

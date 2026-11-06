@@ -81,8 +81,9 @@ So each sidebar caches whether it's currently on screen in `@visible` (mutated
 only via `set_visible`). `render`'s callers, the spinner/blink animation
 (`pulsing?`), and the agent scan are all gated on it. `frame_timeout` drops an
 off-screen sidebar from the `REFRESH` cadence (3s) to a long `IDLE` backstop (8s).
-An off-screen sidebar does essentially nothing — no paint, no agent scan, one cheap
-visibility check per `IDLE` tick — until something wakes it.
+An off-screen sidebar does essentially nothing — no paint, no agent scan, just a few
+cheap tmux reads per `IDLE` tick (does it still own its pane, is it alone in its window,
+is it visible) — until something wakes it.
 
 What wakes it is a **poke**: tmux sends the sidebar a `C-l` byte on the events
 that mean "you might be visible now":
@@ -122,33 +123,38 @@ amount of work again, but only when it's worth it. It runs `warm_reload` plus
    reload on every wake.
 3. **A changed `warm_fingerprint`,** compared with the `@warm_fp` baseline.
 
-The fingerprint is stats only, with no git or process shell-outs. It's a
-`dir_fingerprint` (each file's name and mtime) over the agent-state, attention,
-PR-cache and collapse directories, plus:
+The fingerprint is cheap: stats and a re-parse of any changed Claude session file, with no
+git or process shell-outs. It's a `dir_fingerprint` (each file's name and mtime) over the
+agent-state, attention, monitoring, pending-delete, creation, PR-cache and collapse
+directories, plus:
 
 - the full-header, branch-fold and width marker files;
 - the config file's mtime (`Config.path`);
+- the set of remote links and of tracked sessions with background work
+  (`RemoteLink.fingerprint`, `ClaudeSessions.fingerprint`);
+- the update line's cache and the installed `version.rb` (`UpdateCue#fingerprint`);
 - each tracked worktree's `logs/HEAD` mtime.
 
-So it sees agent dots, bold names, badges, commits, the project registry and the
-shared view state move. Nothing changed: the pane stays dormant, costing
-about one `Tmux.visible?` call per `IDLE`. Something moved: it does one quiet reload
-and repaints into the hidden buffer. The fingerprint deliberately doesn't cover a
+So it sees agent dots, bold names, in-flight builds and deletes, badges, commits, the
+project registry, the update line and the shared view state move. Nothing changed: the
+pane stays dormant, costing only those tmux reads per `IDLE`. Something moved: it does one
+quiet reload and repaints into the hidden buffer. The fingerprint deliberately doesn't cover a
 *worktree* added or removed in another session; that still refreshes on the switch-in
 reload.
 
 ### Why the warm reload isn't `reload` with flags
 
-"Quiet" is doing real work here. The normal `reload` can't run off screen, for two
-reasons:
+"Quiet" is doing real work here. Two things a normal `reload` does on screen must not
+happen off screen:
 
-- **It would erase notifications before you saw them.** `reload` calls `locate` to find
-  "you are here", and locating a workspace *clears its bold attention marker* for
-  `@current_path` (you're looking at it, so it's been seen). Off screen you are *not*
-  looking at it, so a warm reload would erase the bold the on-screen sidebar had just
-  set for that workspace's completion. `warm_reload` skips `locate` entirely, since an
-  off-screen pane's `@current_path` can't change while you're away.
-- **It would suppress the switch-in's PR refresh.** `reload` stamps `@last_reload`, which
+- **Erasing notifications before you saw them.** `reload` calls `locate` to find
+  "you are here", and on screen, locating a workspace *clears its bold attention marker*
+  for `@current_path` (you're looking at it, so it's been seen). Off screen you are *not*
+  looking at it, so clearing it would erase the bold the on-screen sidebar had just set
+  for that workspace's completion. `warm_reload` still calls `locate`, because the warm
+  frame has to carry the `»` marker to match the switch-in frame, and `locate` clears the
+  bold only while `@visible` is true.
+- **Suppressing the switch-in's PR refresh.** `reload` stamps `@last_reload`, which
   the switch-in path uses to *skip* a redundant reload within `POKE_TTL`. A warm just
   before you switched in would make `reload_and_refresh` skip its PR refresh. So
   `warm_reload` stamps only `@last_warm`, and the switch-in still does its full reload
@@ -159,8 +165,8 @@ It also keeps the off-screen work small:
 - **No PR-refresh fan-out.** It passes `refresh_prs: false`, since a background PR
   refresh per hidden sidebar would be a lot of processes. The edge fan-out
   (`Edges#on_scan`) still marks and advances the baseline; only the spawn is skipped.
-- **Hooks-only agent scans.** It passes `hooks_only: true` to `AgentState.scan`,
-  skipping the tmux/pgrep/lsof `Agents.active` fallback. That fallback otherwise runs
+- **Hooks-only agent scans.** It passes `hooks_only: true` through `Presence.scan` to
+  `AgentState#scan`, skipping the tmux/pgrep/lsof `Agents.active` fallback. That fallback otherwise runs
   whenever *any* worktree lacks a live hook, which is almost always, so skipping it is
   what keeps an off-screen scan cheap. Dots from the activity fallback just refresh on
   switch-in.
@@ -376,14 +382,20 @@ that an idle tick costs no more than it did before (R3, in `sidebar_reload_test`
 ### When the swap happens
 
 **Most of this lives in `Sidebar::Reloader`** (`sidebar/reloader.rb`), which owns the signal, the
-pane tag, the deadline and the exec. The sidebar still runs the switch-in's catch-up reload. It
-decides what the payload carries and whether its overlays allow a swap, and passes those in.
+pane tag, the deadline and the exec. So the ivars named from here on (`@reload_signal`, `@wake_r`,
+`@last_announce_scan`, `@reexec_blocked_root`, `@tag_clears`, `@tag_pending`, `@warm_not_before`)
+are the reloader's, as are `retry_tag`, `reload_failed` and `reap_strays`, not the sidebar's.
+
+The sidebar still runs the switch-in's catch-up reload, and calls into the reloader from `run`,
+`tick`, `teardown` and `maybe_reexec`. It decides what the payload carries (`resume_payload`) and
+whether its overlays allow a swap (`reexec_allowed?`), and passes those in. It also applies a
+payload it receives (`resume_start`, `apply_resume`), and `@pending` stays its own.
 
 **The trap only sets a flag.** The `SIGUSR1` handler sets `@reload_signal` and writes a
 self-pipe (`@wake_r` is in the `IO.select` set). It's installed in `run`, restored in
 `teardown`, and installed *before* the tag goes on.
 
-**`maybe_reexec`, at the top of the run loop, turns the flag into a request:**
+**`maybe_reexec`, at the top of the run loop, turns the flag into a request** (`Reloader#reexec_due?`):
 
 - **On screen,** the request is due now.
 - **Off screen,** it's due after `CodeReload.spread_delay` (0 to 30 seconds), so a fleet of
@@ -393,8 +405,9 @@ self-pipe (`@wake_r` is in the `IO.select` set). It's installed in `run`, restor
 `reload_due?`, like any switch-in), because keys typed with the switch act on the tree
 before the loop top swaps, the swap may fail, and the new image has to baseline against that
 reload or it would replay chimes another sidebar already rang. That reload keeps the cursor
-on the same row (`keep_cursor`). Inside `POKE_TTL` there's no catch-up scan, so the switch-in
-drops `@last_announce_scan` and the swap's first scan is silent instead.
+on the same row (`keep_cursor`). Inside `POKE_TTL` there's no catch-up scan, so with a reload
+pending the switch-in drops `@last_announce_scan` (`silence_pending_reload`) and the swap's first
+scan is silent instead.
 
 **It never swaps at a bad moment.** Never under `?`, the QR code or the `/` filter; never
 mid-prompt (prompts block the loop); and never with half an escape sequence in `@pending`,

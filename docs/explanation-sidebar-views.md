@@ -16,9 +16,10 @@ bold names are.
 Four pieces of view state work this way: project folds, the full header, the branch
 fold and the width. They share one pattern:
 
-- **Hydrated on every rebuild.** `rebuild` reads the value from disk on every reload,
-  so a change made in one window shows up in the others on their next switch-in poke or
-  while-visible scan.
+- **Hydrated on every rebuild.** `rebuild` reads the value from disk on every reload.
+  A fold or header toggle reaches the other windows at once, through the `C-w` broadcast (a
+  hidden pane only with `prewarm` on). A width change is read on their next rebuild (a
+  switch-in, the ~15-second tree tick or a warm reload), and a hidden pane resizes on switch-in.
 - **Written through, and applied at once.** The toggle writes the file *and* updates the
   in-memory copy, so the pane you pressed the key in redraws in the same frame. (Width
   batches the write: see [below](#the-width-a-file-holding-a-number).)
@@ -94,10 +95,10 @@ That clone renders through the existing code with no special cases:
 - `expanded: false` un-suppresses its own diff and PR badge, since the #90 suppression
   only applies while the branches are visible;
 - the restored `pr` shows the badge;
-- the diff cache hits the same `[path, branch, "ws"]` entry `refresh_diffs` already
-  computes.
+- `diff_for` reads the `[path, branch, "br"]` entry `refresh_diffs` already computes for
+  its active branch row, so the folded row recomputes on a merge just as that row does.
 
-`@nodes` is left intact. `rebuild` reuses it, and `console` and `refresh_diffs` still
+`@nodes` is left intact. `recompute_rows` reuses it, and `console` and `refresh_diffs` still
 walk the original tree, so the PR count and the diff cache don't change; the clone lives
 only in `@rows`.
 
@@ -167,14 +168,18 @@ working tree.
 A `git diff` per worktree is too slow to run while drawing, for the same reason the model
 skips a per-worktree `git status` (`with_dirty: false`). So diff counts get the same
 treatment as the agent dots and PR badges: a per-process `@diffs` cache, keyed
-`[path, branch] => [logs/HEAD mtime, adds, dels]`, refreshed by `Sidebar#refresh_diffs`
-outside the paint loop.
+`[path, branch, kind] => [logs/HEAD mtime, resting?, adds, dels]`, refreshed by
+`Sidebar#refresh_diffs` outside the paint loop. The key includes the row's kind because an
+expanded workspace's `ws` row and active `br` row share a branch but not a PR, and one
+entry between them would recompute forever.
 
 The cache isn't shared on disk, since a count isn't a view preference. And it isn't on
-the every-3-second scan. It refreshes on exactly two triggers:
+the every-3-second scan. It refreshes on these triggers:
 
 - **`reload`:** a switch-in, idle, or a tree tick;
-- **the agent edge:** a finished turn has likely just committed.
+- **the off-screen warm reload,** so the warm frame's counts match a switch-in's;
+- **the agent edge:** a finished turn has likely just committed;
+- **`R`,** below.
 
 `Git.diff_counts` uses `--numstat` rather than `--shortstat`, whose summary is localized
 and would slip past a word regex on a non-English git. It uses `Git.range(base, ref)`, so
@@ -195,11 +200,12 @@ worktree can take a deleted one's path under a different admin directory, so
 loses its cache slot, its base or its ability to diff clears instead of painting a ghost
 count.
 
-Two cases bypass the cache:
+Two cases get past the cache:
 
-- **A merged or closed PR's row skips the mtime check.** When origin fast-forwards past a
+- **A row whose PR just merged or closed recomputes once.** When origin fast-forwards past a
   merged branch, `base...HEAD` drops to zero without `logs/HEAD` moving, which is a blind
-  spot the PR badge has too.
+  spot the PR badge has too. The `resting?` flag in the entry catches that transition without
+  re-running `git diff` on every reload.
 - **`R` (`refresh_prs_now`) clears `@diffs`** as the manual catch-all.
 
 ### Drawing the counts
@@ -259,9 +265,9 @@ cache logic alone.
 it's the same navigator, made searchable.
 
 `@filter` is `nil` when off, or the query string. `recompute_rows` switches on it to
-`filtered_rows`, which keeps each project's matching workspace and branch rows *under
-their header*, so the grouping you navigate by stays visible. A header with no matches is
-dropped. Matching is the pure `Sidebar.fuzzy_match?` (a case-insensitive subsequence
+`filtered_rows`, which keeps each project's matching workspace rows *under their header*,
+so the grouping you navigate by stays visible. Branch rows are left out, and a header stays
+only if its own name matches or it has matches. Matching is the pure `Sidebar.fuzzy_match?` (a case-insensitive subsequence
 match) over `filter_text` (the project plus the name or branch). The filter covers the
 whole tree and ignores folds, since the point is to reach any workspace fast, folded or
 not.
@@ -308,9 +314,9 @@ keys that operate the sidebar.
 
 Help you have to already know about isn't help, so `footer` always ends with `? help`.
 And since the overlay holds the full reference, the footer doesn't list action keys. It's
-one line that changes with context (`nav · ? help`, where the nav verb
-swaps between open, collapse and switch; on the home sidebar, the title; in an empty tree,
-the invitation to add a first project; while you type a movement count, `3…`), which leaves
+one line that changes with context (`↑↓ move · ↵ open · ? help`, with `↵ open/collapse` on
+a project header; on the home sidebar, the title; in an empty tree, the invitation to add a
+first project; while you type a movement count, `3…`), which leaves
 more rows for the tree. The `/ filter` and `+/− vs base` hints live in the overlay.
 `filter_footer` keeps its three lines, since it shows the live query, not key hints.
 
@@ -320,13 +326,13 @@ While `@help` is set, `dispatch` sends every key to `help_key`. A real keystroke
 `q`, only closes the overlay; it never passes through to an action.
 
 The input loop also receives bytes that aren't keystrokes (`POKE_BYTES`): the `C-l` poke
-for a switch or background refresh, the `C-r` config poke, and focus in and out. Those
+for a switch or background refresh, the `C-r` config poke, a peer's `C-w` broadcast, and focus in and out. Those
 must *not* close the overlay, or a background PR refresh would close it while you're
 reading. (`filter_key` is robust against non-printables the same way.) Ignoring them is
 safe:
 
-- **`C-l`:** its reload and visibility update fix themselves through the `tick` backstop
-  within `REFRESH`, and tick keeps running while help is open.
+- **`C-l` and `C-w`:** the visibility update fixes itself through the `tick` backstop within
+  `REFRESH`, and the reload on the next tree tick, since tick keeps running while help is open.
 - **`C-r`:** can't coincide with help. You can't open the config editor with help up
   (`e` closes help first), and `C-r` isn't broadcast.
 - **Focus:** cosmetic under a full-pane overlay.
@@ -347,7 +353,7 @@ wake while help is up. `render_help` uses the same cursor-addressed, no-flash pa
 The map can be taller than a normal pane, and cutting it off would lose the tmux section,
 the one that answers "how do I hide this?". So the body comes from the pure
 `help_pages(rows, cols)`, which packs `help_sections` greedily into pages of `rows - 1`
-lines. `help_sections` is the head block, then one group per `["", heading]` row of
+lines. `help_sections` is the head block, the icon legend, then one group per `["", heading]` row of
 `Keymap.help_rows` plus `tmux_help_rows`. It groups from those rows, never by re-splitting
 drawn text; `help_lines` is just its flattened form.
 

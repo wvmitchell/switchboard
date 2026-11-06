@@ -41,8 +41,8 @@ read: its sessions are left alone even when another project's name maps to the s
 short grace window is also spared, so a just-created session is never killed mid
 launch.
 
-**Auto-prune on launch (on by default).** Landing on the home session prunes
-orphans for you. Turn it off in `config.yml`:
+**Auto-prune on launch (on by default).** The home session's sidebar prunes orphans
+for you when it starts. Turn it off in `config.yml`:
 
 ```yaml
 prune_on_launch: false
@@ -115,6 +115,9 @@ off. It checks, with the fix inline for anything red:
   Harmless to the UI, but because tmux recycles pane ids a straggler can
   double-ring completion sounds, so it's worth seeing. See
   [Explanation: sidebar lifecycle](explanation-sidebar-lifecycle.md).
+- A rename's Claude session-name sync that failed, with the retry, shown as a
+  `session name:` line. See [session-name sync](explanation-session-name-sync.md#outcomes-and-doctor).
+- Sidebars still on old code after a failed reload, with the panes they're in.
 
 ## Troubleshooting
 
@@ -125,7 +128,8 @@ off. It checks, with the fix inline for anything red:
   <your conf>`). `doctor` confirms with "NOT bound — running tmux is stale".
 - **A session won't go away with `prune`.** Its project is unverifiable (moved or
   unregistered repo), so `prune` deliberately spares it. Use `quit` for a full
-  teardown, or re-register/fix the repo path and prune again.
+  teardown, or re-register/fix the repo path and prune again (it then removes only sessions
+  whose worktree is gone; to close the rest, press `d` on the project header).
 - **Badges are frozen.** `gh` auth likely lapsed; `doctor` reports it. Run
   `gh auth login`. A PR you closed *on GitHub* needs a manual `R` in the sidebar.
 - **Completion sounds fire twice.** Check `doctor` for orphaned sidebar

@@ -44,8 +44,8 @@ switchboard doctor
 ```
 
 You want green checks for `tmux`, `git`, `gh`, the config, and the PATH entries.
-A couple of items will be yellow notes (no projects yet, hooks not enabled here) —
-that's expected on a fresh install.
+A couple of items may be yellow notes (the agent-state reporter not created yet, hooks
+not enabled here) — that's expected on a fresh install.
 
 > Installing from a git clone instead (to hack on switchboard itself)? You'll need
 > tmux ≥ 3.0, git, gh, and Ruby ≥ 3.3; then `git clone` the repo and run
@@ -61,9 +61,9 @@ switchboard
 ```
 
 You land in the **home session** with the sidebar focused — a narrow pane on the
-left titled `switchboard · home`. It's empty except for a hint to add a project.
+left headed `◖═◗ Switchboard`. It's empty except for a hint to add a project.
 This is your anchor: a stable base you can always get back to. The footer at the
-bottom of the pane shows the keys that apply right now.
+bottom of the pane shows what to press next.
 
 You've now seen the sidebar. Everything from here is keys inside it. The footer
 only has room for the most common ones, so whenever you forget a key, press
@@ -123,8 +123,8 @@ hooks for you (that's the green "thinking/waiting/done" precision). For a worktr
 you made *outside* switchboard, you'd run `switchboard enable-hooks` inside it
 once. See [How-to: agent state & sounds](howto-agent-state-and-sounds.md).
 
-Now switch away to the home session (`prefix-s`, or highlight `home`-adjacent rows
-and navigate) and keep working elsewhere — when the agent finishes a turn you'll
+Now switch away (open a new tmux window with `prefix-c` and run `switchboard home`) and
+keep working elsewhere — when the agent finishes a turn you'll
 **hear a short train horn** and its name in the sidebar goes **bold** until you
 look. That's switchboard's whole reason to exist: run several agents at once and
 let the dots, sounds, and bold names tell you who needs you.
