@@ -40,9 +40,6 @@ safe today; each is narrow).
   the same version is never applied (up-to-date is decided by the tag). *Start in:* the
   keg's own `brew`, the qualified `wvmitchell/switchboard/switchboard`, `brew outdated`.
   **Priority:** P2.
-- **A clone on a merged/deleted branch reads up to date forever.** *Why:* clones compare
-  only with their upstream, never release tags. *Start in:* add `LatestRelease` to the clone
-  path as a note. **Priority:** P2.
 - **Smaller upgrade/doctor nits.** Refuse a non-Homebrew install that isn't its repo's
   top level; doctor's tmux rows advise `upgrade` where it can't help (tmux < 3.0, unwired);
   clone failure advice on a diverged or detached clone says "re-run", which can't succeed;
@@ -251,36 +248,14 @@ safe today; each is narrow).
   reproducing the sequence above with a real hooked agent, then reuse that helper.
   *Depends on:* remote-link PR 1 (the lsof helper).
 
-- **Claude history bridge: clobber-on-name-reuse race.** `ClaudeHistory.migrate`
-  (added in v0.31.1) carries the transcript dir and leaves a bridge `encode(old) ->
-  encode(new)` in `~/.claude/projects`. If you rename `A->B`, keep that agent running,
-  then reuse the freed name `A` for a NEW workspace, `clear_link(dst)` drops the A->B
-  bridge and the still-running B agent (if it reopens the transcript by path) then
-  appends into the new A's dir. *Why not now:* needs exact name reuse + a live
-  renamed-away agent reopening by path; very unlikely. *Start in:*
-  `ClaudeHistory.migrate` — only `clear_link(dst)` when the bridge is dangling, not
-  when it resolves to a live dir. Surfaced by Codex during the v0.31.1 review.
-
 - **Verify whether Claude reopens the transcript by path or holds an fd.** The
   `ClaudeHistory` bridge only matters if a running agent re-derives
   `projects/<encoded-cwd>/<id>.jsonl` by path on each append; if it holds an open fd,
   the dir move is transparent and the bridge is harmless dead weight. Couldn't verify
   Claude's internals from here, so the bridge is kept as cheap insurance. *Why low:*
   worst case the bridge is a no-op. Resolving it would let us simplify (drop the bridge)
-  or confirm it's load-bearing (and then the clobber race above matters more).
+  or confirm it's load-bearing (and then the clobber race in `claude_history.rb`'s header matters more).
 
-
-- **`clear_bridge` only deletes a *verified* bridge, not any symlink.**
-  `Git.move_worktree` calls `clear_bridge(new_path)` to reclaim a stale rename
-  bridge squatting the target; `clear_bridge` deletes *any* symlink at that path
-  (`git.rb:98`), trusting the comment's invariant ("only ever a symlink, never a
-  real worktree"). A user-created symlink at exactly
-  `<worktree_root>/<project>/<name>` would be silently removed. *Why not now:*
-  it needs its own tests and the path is implausible in practice (`move_worktree`
-  is now its only caller — dispatch's `Creator.reserve` skips a symlink instead).
-  *Start in:* `Git.clear_bridge` — only delete when the symlink target is dangling
-  or resolves under the worktree root (a known bridge shape), else leave it and let
-  the `git worktree move` fail loudly. Low priority, low likelihood.
 
 - **Narrow the rename move→session-rename prune window (or make prune
   bridge-aware).** `Rename.perform` does `Git.move_worktree` then
@@ -309,18 +284,6 @@ safe today; each is narrow).
   would make the contract auditable. Low priority — the fallback bounds the blast
   radius to pre-sticky behavior.
 
-- **Residual sticky-cache freeze: a PR opened AND closed inside one unseen gap.**
-  The stale-OPEN backfill re-query fixes the frozen-wrong-OPEN case (absence from
-  the open query proves staleness), and a PR that's still open always lands via
-  the open-500 query. The one remaining freeze: a branch negative-cached as null
-  whose PR is opened *and* merged/closed while no refresh runs and >200 other PRs
-  get updated (a weeks-long absence on a very active repo) — the null suppresses
-  backfill and the state flip aged out of the sweep. Self-heals on ANY later
-  activity on that PR (comment/label/merge touches `updatedAt`). If ever felt in
-  practice: make `R` (`refresh_prs_now`) drop null entries, or expire nulls when
-  the cache mtime shows a long refresh gap. Start in `Pr.backfill` /
-  `Sidebar#refresh_prs_now`.
-
 - **Unify the two "is this the primary checkout?" predicates.** `Model#build_worktrees`
   marks primary by string equality (`w[:path] == project["path"]`) while
   `Pr.rendered_branches` uses `File.identical?` (symlink-proof) — under a symlinked
@@ -340,27 +303,6 @@ safe today; each is narrow).
   github.com (or the `gh`-configured host), so non-GitHub projects cleanly show no
   badges. Start in `Pr.repo_slug`; surfaced by the sticky-cache adversarial review.
 
-- **Trailing/coalescing debounce.** The per-project background refresh uses a
-  *leading* debounce (`Edges::PR_DEBOUNCE`, `sidebar/edges.rb`): a second distinct event for
-  the same project inside the window is dropped. Today the idle backstop and the
-  next navigation heal it, so it self-corrects within `BACKSTOP_TTL`. If that
-  staleness window is ever felt in practice (e.g. two worktrees of one project
-  open PRs seconds apart), switch `spawn_due?` / `maybe_refresh_prs` to a
-  trailing debounce so the *latest* event always results in a fetch. Low
-  priority — only worth it if observed.
-
-- **Watch-while-working freshness for hook-less agents.** The agent-completion
-  refresh trigger (T1) fires only on the *hook* signal (`AgentState#last_hook_states`),
-  because the coarse activity fallback flips `:thinking ⇄ :done` every 3s and
-  would fire on noise. So hook-less worktrees (Aider, or Claude/Codex before
-  `enable-hooks`) get badge freshness from navigation + the backstop, not the
-  live edge. (Codex now has exact hooks too — #110 — so an *enabled* Codex
-  worktree already rides the live edge; this is about agents with no hook
-  surface.) If you run a hook-less agent and want its badges as live as a hooked
-  one's, add a presence-precise signal for it rather than leaning on the
-  capture-hash. Start in `agent_state.rb` (`activity`) and the T1 wiring in
-  `sidebar/edges.rb` (`refresh_agents` → `Edges#on_scan`).
-
 ## Sidebar input handling follow-ups
 
 - **Keep the selection on its row across the tree tick.** *Why:* the sidebar tracks its
@@ -371,18 +313,6 @@ safe today; each is narrow).
   reloads in `sidebar.rb` (the catch-up and the tree tick), `warm_poke`'s on-screen reload
   and `focus_in`'s catch-up reload, and check the warm frame still matches the switch-in
   frame, or the flash comes back.
-- **Flush the rest of the read buffer after an in-dispatch confirm.** `Sidebar#confirm`
-  (used by `q` quit, `d` delete) reads its y/N from `$stdin` directly, while `#handle`
-  may still hold later bytes from the same `read_key` chunk in its local buffer. So a
-  fast `qy`/`dy` or pasted/`tmux send-keys` input can leave stale keys that dispatch
-  *after* the confirm resolves. The `q`→quit footgun is already closed (`#handle` now
-  breaks on a stop-token), so the residue is benign today — extra navigation, at worst
-  another confirm. *Why not fix now:* a clean fix means draining the buffer across all
-  three confirm callers (`q`/`d`, and the `rename`/`create` cooked-mode prompts), which
-  is broader than the quit change. *Start in:* `Input#handle` (`sidebar/input.rb`) / `Prompt#confirm` (`sidebar/prompt.rb`) — either
-  pass the remaining buffer into the prompt helpers, or clear `$stdin` after a prompt
-  returns. Low priority — needs buffered/pasted input to trigger and nothing destructive
-  results.
 
 - **Esc-timeout to close the `\e`|`[O` escape split (accepted).** `Input.tokenize`
   carries an incomplete CSI across reads, but a sequence split BEFORE its `[` (a read
@@ -448,19 +378,6 @@ safe today; each is narrow).
   `Actions.browse_args` (`sidebar/actions.rb`) + a `Git` remote-branch helper. Low
   priority — repo home is a fine fallback; only worth it if the gap is felt.
 
-- **Residual `O` deep-link 404 windows (accepted).** The OPEN-PR gate avoids the
-  common 404 but isn't airtight (both adversarial reviewers flagged this): (1) a
-  **stale PR cache** — a PR open at the last `gh` fetch, then merged + head-branch
-  deleted before the next background refresh (worse when the fetch is failing, since
-  `Pr.refresh` preserves the last-good cache) — keeps an `OPEN` badge, so `O` opens
-  `/tree/<dead-branch>` → 404; (2) **fork PRs** (`headRefName` is the fork's branch,
-  absent in the base repo); (3) ~~the **cross-project branch-name collision**~~ ✓
-  **Fixed (#66)** — `Model#pr_for` now keys PRs by `(project, branch)`, so a `br` row
-  can't pick up another project's badge. (1) and (2) still open a recoverable GitHub
-  404 (never data loss/security), so they're accepted, not blocking. The would-be fix
-  (a keypress-time remote check) is rejected for the same reasons as the bullet above.
-  Captured so the reasoning isn't lost.
-
 ## Sidebar diff count (issue #79) follow-ups
 
 - **Working-tree (uncommitted) diff count as a config knob.** The row diff count
@@ -479,39 +396,6 @@ safe today; each is narrow).
   priority — the committed default is the right one for the PR-workflow case; only
   worth it if the dirty-tree view is asked for.
 
-## Sandbox / dogfooding (issue #126) follow-ups
-
-- **`lone_pane_handled` learns to skip a non-switchboard split.** Teach
-  `lone_pane_handled` (`sidebar.rb`, the run-loop core) to ignore a sidebar that isn't a
-  switchboard-managed split, so a hand-run lone `switchboard sidebar` doesn't
-  self-`go_home` and exit. *Why:* `switchboard sandbox` (#126) avoids the #64 trap
-  by always seeding a work pane beside the sidebar, so the normal flow never trips.
-  But if someone manually runs a *lone* `switchboard sidebar` inside the sandbox, it
-  still self-exits. Inside the isolated server that's harmless (`go_home` lands on the
-  sandbox home, not real sessions), which is why it's deferred — but #126 explicitly
-  flagged it as "worth deciding on separately," and #64 is now CLOSED so this is a
-  fresh small enhancement, not a reopen. *Start in:* `Sidebar#lone_pane_handled` — gate the
-  fall-home on a marker that identifies OUR split (pane title / an `@sb_*` option)
-  before acting. Independent of the sandbox PR. Low priority — the seeded work pane
-  already covers the real flow, and the manual-lone case is harmless in the sandbox.
-
-## Sidebar split (issue #57) follow-ups
-
-- **Option (not obligation): a pure `Frame`/view-model render object.** The #57
-  split chose concern mixins over extracting render into a `Frame.build(state) →
-  lines` object because mid-refactor it was the wrong trade: ~17 state fields
-  through a constructor and a rewrite of 100+ white-box render tests, for zero
-  behavior gain (per the 2026-07 plan-eng-review, decisions D5/D15 in
-  `thoughts/57-sidebar-split.md`). That calculus flips once `render.rb` is a
-  single file with `sidebar_render_test.rb` beside it — the Frame becomes a
-  contained experiment, not a big bang. *Triggers that would justify it:* wanting
-  render tests that don't construct a `Sidebar` at all; a second front-end; the
-  mixin's implicit ivar coupling actually causing bugs (a render change breaking
-  a non-render concern). *Start in:* `lib/switchboard/sidebar/render.rb` — the
-  paint paths are already the leaf of the call graph. If none of the triggers
-  ever fire, this entry is correctly ignored forever.
-
-
 ## Silent failures (v0.57.1) follow-ups
 
 - **State-dir globs break on a path with glob characters.** *What:* ten `Dir.glob` calls
@@ -524,14 +408,6 @@ safe today; each is narrow).
   *Pros:* mechanical, one test per store. *Cons:* touches every store. *Context:* found in
   the TODO triage that produced v0.57.1. **Priority:** P2.
 
-- **A C-locale tmux client mangles `-F` output.** *What:* with `LC_ALL=C`, tmux replaces
-  the tab and any non-ASCII byte in `-F` formats with `_`, so `Tmux.sessions` misparses and
-  `quit`/`kill_all` can't match names (prune is saved only because `created` reads as 0,
-  inside the grace window). Use a printable ASCII separator (or one field per call) in the
-  formats switchboard parses. *Why:* teardown silently does nothing under a C-locale client.
-  *Pros:* small. *Cons:* every `-F` parser changes at once. *Context:* v0.57.1 triage.
-  **Priority:** P2.
-
 - **The rest of `Git`'s readers on a non-UTF-8 path.** *What:* v0.57.1 made
   `Git.worktrees` skip an undecodable entry; `current_branch`, `commits_since` and the diff
   readers (with `core.quotePath=false`) can still raise on one. Audit each caller and either
@@ -542,22 +418,6 @@ safe today; each is narrow).
   Validate only the `worktree` line and drop or scrub just the bad field. *Why:* a
   Linux-only crash path in the sidebar's helpers, and an invisible row.
   *Context:* v0.57.1 item 3 caller audit; ship 4 red team. **Priority:** P3.
-
-- **`keep_branch`'s listing and its delete aren't one step.** *What:* between
-  `Git.worktrees(strict: true)` and `update-ref --no-deref -d`, another process could check
-  the branch out. *Why:* at worst a worktree is left on a deleted branch at base (no commits
-  lost, the old-value guard holds). *Pros:* closes the last race on the rollback. *Cons:*
-  git offers no atomic "delete unless checked out"; it needs a lock switchboard doesn't
-  have. *Context:* v0.57.1 review, accepted as theoretical. **Priority:** P4.
-
-- **`uninstall` says Done over a codex config it can't read from the start.**
-  *What:* `step_codex_unhooks` returns early when `CodexHook.installed?` is false, and that
-  reads false for an unreadable `config.toml`, so uninstall exits 0 with our block still in
-  the file. Only a file that turns unreadable mid-uninstall is reported. *Why:* a silent
-  success, though an inert one (codex can't read the file either). *Cons of the obvious
-  fix:* treating "unreadable" as a failure would fail uninstall on every run for someone
-  whose unreadable `config.toml` never held our block; a fix needs a way to say "couldn't
-  check" without failing. *Context:* ship 4 red team, deferred by the user. **Priority:** P4.
 
 - **Two narrow paths that can still act on someone's work.** *What:* (a) `prune` takes
   its valid session names from Model's `Git.worktrees` and verifies the project with a
@@ -619,8 +479,7 @@ safe today; each is narrow).
   (e) `upgrade` re-runs "finishing setup" forever when the fragment is wired here but its
   bind fails, since `finish` never re-checks `key_drift?` after `reload_fragment`; (f) a
   `locked` entry that isn't a regular file (a dir or FIFO) reads as unlocked, so the ✘ says
-  "(couldn't remove it)" instead of "(it's locked)"; (g) git older than about 2.17 words
-  "A branch named 'x' already exists." differently, so the clash checks miss it there.
+  "(couldn't remove it)" instead of "(it's locked)".
   *Why:* each fails safe, mislabels, or predates the branch. *Context:* ship 7 Claude
   adversarial and red-team reviews, deferred by the user. **Priority:** P3 for (a) and (c),
   P4 for the rest.
@@ -771,23 +630,10 @@ safe today; each is narrow).
   re-enable. *Start in:* `CLI#codex_bypasses_trust?` (match per launch) and count disabled
   handlers separately in `CodexHook.trust_status`. **Priority:** P3.
 
-- **Codex: refuse (or decode) an escaped spelling of `hooks`.** *Why:* `["\u0068ooks"]` is a
-  valid spelling of `[hooks]` that `chunk_kind`/`HOOKS_KEY` read as foreign, so a block whose
-  own header were spelled that way would be moved out and a second `[hooks]` written (contrived:
-  switchboard never writes it). *Start in:* decode basic-string escapes in `TOML_KEY` matches,
-  or refuse any quoted key holding a backslash. **Priority:** P3.
-
 - **Monitoring: don't let a fork clear a still-running session's ∞.** *Why:* the marker is
   per worktree, so `SessionStart(fork)` (now in `CLEARS_ON`) clears a marker the original,
   still-live session declared; the ∞ drops until its next `monitoring on`. *Start in:* store the
   declaring session id in the marker and clear only on a matching id. **Priority:** P3.
-
-- **MarkerBlock: create the temp file with the target's mode.** *Why:* `atomic_write` writes
-  `<dest>.<pid>.sb-tmp` with umask permissions and copies the mode after, so a 0600
-  `config.toml` (MCP tokens) is briefly readable through the temp file and a failed write leaves
-  it behind. *Start in:* open the temp with `File::EXCL` and the destination mode (default
-  0600 for a new file), and remove it in an `ensure` when the rename didn't happen.
-  **Priority:** P3.
 
 - **Smoke: tell "the model didn't run the tool" from a trust failure.** *Why:* the untrusted
   codex smoke flunks if the model answers in text instead of running `cp`, and a future codex
@@ -996,13 +842,6 @@ safe today; each is narrow).
 - **Session-name focus gate (v0.60.1): items deferred at ship time.** None lets our keys land
   anywhere but our own empty prompt; each was found by the /ship reviews and deferred under the
   owner's rule that only a reachable typing-safety bug blocks. **Priority:** P2.
-  - Accepted residual (decision 76a1b9be): inside the ~1.5 s of checks after our send, a script
-    that creates a session linked to Claude's window, attaches, types and destroys that session
-    leaves no trace tmux exposes (its `session_activity` dies with it), so Enter or the backspaces
-    could follow that key. Same capability as the accepted `send-keys` race. Close it if tmux ever
-    exposes a monotonic server-wide input stamp or its next session id.
-  - Input from a `/remote-control` phone session never goes through tmux, so the input gates can't
-    see it; it can't touch the local box or approve a modal without a model round trip.
   - No notice when a session waits as `:unrecognized` or behind a modal; doctor only reports it at
     the ceiling.
   - Held-phase cost: each held poll is one `list-panes` + `list-clients` + `list-sessions` read for
