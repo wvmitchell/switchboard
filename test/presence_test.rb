@@ -42,11 +42,16 @@ module Switchboard
       end
     end
 
+    # Value: protects=idle and fresh reach the snapshot unswapped; fails_when=scan crosses the two
+    # fields; why_new=the sidebar seam test stubs scan, so a swap survived the suite; seam=none;
+    # no_claim=real session files (records stubbed)
     def test_a_snapshot_carries_each_source
       a = File.realpath(path)
       Monitoring.mark(a)
       Notify.mark(a)
-      recs = { a => [{ status: "busy", pid: 7 }] }
+      now_ms = Time.now.to_f * 1000
+      settled = { status: "idle", status_at: now_ms - ((ClaudeSessions::SETTLE + 5) * 1000) }
+      recs = { a => [{ status: "busy", pid: 7 }], "/settled" => [settled], "/fresh" => [{ status: "idle", status_at: now_ms }] }
       snap = stub_method(ClaudeSessions, :scan, ->(*, **) { recs }) do
         Presence.scan([a], agent_state: agent_state({ a => :done }))
       end
@@ -54,10 +59,15 @@ module Switchboard
       assert_equal recs, snap.sessions
       assert_equal({ a => 7 }, snap.offstage)
       assert_equal({ a => 7 }, snap.handoff)
+      assert_equal Set["/settled"], snap.idle
+      assert_equal Set["/fresh"], snap.fresh
       assert_includes snap.monitoring, a
       assert_includes snap.notify, a
     end
 
+    # Value: protects=handoff names the busy session beside a shell one; fails_when=handoff reuses
+    # the first offstage pid; why_new=every other row has one record, so that survived; seam=none;
+    # no_claim=real session files (literal records)
     def test_session_evidence_sorts_each_session_state
       now = Time.at(1_000)
       at = ->(secs_ago) { (now.to_f - secs_ago) * 1000 }
@@ -65,14 +75,15 @@ module Switchboard
         {
           "/agent" => [{ status: "busy", pid: 1 }],
           "/shell" => [{ status: "shell", pid: 2 }],
+          "/mixed" => [{ status: "shell", pid: 3 }, { status: "busy", pid: 4 }],
           "/settled" => [{ status: "idle", status_at: at.call(ClaudeSessions::SETTLE) }],
           "/fresh" => [{ status: "idle", status_at: at.call(0) }],
           "/waiting" => [{ status: "waiting" }]
         },
         now: now
       )
-      assert_equal({ "/agent" => 1, "/shell" => 2 }, offstage)
-      assert_equal({ "/agent" => 1 }, handoff, "only a background agent holds the chime")
+      assert_equal({ "/agent" => 1, "/shell" => 2, "/mixed" => 3 }, offstage)
+      assert_equal({ "/agent" => 1, "/mixed" => 4 }, handoff, "only a background agent holds the chime")
       assert_equal Set["/settled"], idle
       assert_equal Set["/fresh"], fresh
     end
