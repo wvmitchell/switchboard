@@ -37,6 +37,8 @@ no build step.
 
 ## Map
 
+Files sit in a folder per layer under `lib/switchboard/` (`support`, `adapters`, `state`, `ops`), so the names below are found by name there.
+
 - **Dispatch:** `lib/switchboard/cli.rb`; agent hook entries in `hook_commands.rb`, `doctor` in `doctor.rb`
 - **Data model → tree → TUI:** `model.rb` → `tree.rb` → `sidebar.rb` (+ its
   `sidebar/` concern files: `edges`, `update_cue`, `reloader`, `render`, `input`, `actions`,
@@ -54,7 +56,7 @@ no build step.
   `AgentState` are classes (they hold state).
 - Every `lib/switchboard/` file belongs to one layer (support → adapters → state →
   operations → interfaces) and references only its own layer or lower.
-  `test/layers_test.rb` enforces it, so a new file needs an entry in its `LAYERS` list
+  `test/layers_test.rb` enforces it, so a new file goes in its layer's folder
   (see [docs/explanation-architecture.md](docs/explanation-architecture.md#layers)).
 - New worktree state belongs on disk (one file per item, atomic temp+rename, GC'd)
   because every window's sidebar is a separate process — see

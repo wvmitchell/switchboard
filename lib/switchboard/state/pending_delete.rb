@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 require "set"
-require_relative "keyed_marker_store"
+require_relative "../support/keyed_marker_store"
 
 module Switchboard
   # Per-worktree "this workspace is being deleted right now" markers. `Sidebar#delete`

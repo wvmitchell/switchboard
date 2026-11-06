@@ -10,6 +10,13 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
+## [0.66.14] — the code gets a folder per layer, with no change to what switchboard does (2026-11-06)
+
+### Changed
+- The files in `lib/switchboard/` moved into `support/`, `adapters/`, `state/` and `ops/`, so a folder now says
+  what a file is allowed to depend on. Running sidebars pick the change up through a hot reload, and can
+  swap back to an older release.
+
 ## [0.66.13] — the sidebar's code reload gets its own class, with no change to how it swaps (2026-11-06)
 
 ### Changed

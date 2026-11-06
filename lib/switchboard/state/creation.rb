@@ -3,11 +3,11 @@
 require "json"
 require "securerandom"
 require "fileutils"
-require_relative "keyed_marker_store"
-require_relative "marker_block"
-require_relative "process_identity"
+require_relative "../support/keyed_marker_store"
+require_relative "../support/marker_block"
+require_relative "../support/process_identity"
 require_relative "attention"
-require_relative "paths"
+require_relative "../support/paths"
 
 module Switchboard
   # The lifecycle of a background ("dispatched") workspace create: `n` writes a record,

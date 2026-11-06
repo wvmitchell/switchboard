@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
-require_relative "keyed_marker_store"
-require_relative "paths"
+require_relative "../support/keyed_marker_store"
+require_relative "../support/paths"
 
 module Switchboard
   # Per-worktree "come look — this monitor cycle surfaced something" markers behind

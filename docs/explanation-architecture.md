@@ -103,12 +103,14 @@ The primary trunk checkout (`primary`) is always filtered out as a switch target
 
 ## Layers
 
-`lib/switchboard/` is about sixty files in one folder. Most are small, with one job each,
-but the folder doesn't tell you which files talk to tmux, which hold switchboard's own
-state, and which are the commands people run. Without that, every new piece of code
-lands wherever the nearest example was, and the codebase slowly tangles.
+`lib/switchboard/` is about seventy-five files. Most are small, with one job each. In one flat
+folder they wouldn't tell you which files talk to tmux, which hold switchboard's own
+state, and which are the commands people run, so every new piece of code would land
+wherever the nearest example was, and the codebase would slowly tangle.
 
-So each file belongs to one of five layers. A file may use anything in its own layer or
+So each file belongs to one of five layers, and its folder says which: `support/`,
+`adapters/`, `state/` and `ops/`. The interfaces (`cli.rb`, `hook_commands.rb`, `sidebar.rb`
+and `sidebar/`) sit at the top of `lib/switchboard/`. A file may use anything in its own layer or
 a lower one, never a higher one:
 
 | Layer | What lives there | Examples |
@@ -131,7 +133,7 @@ depends only on support files.
 
 ### Where state files live
 
-`lib/switchboard/paths.rb` is the one place that knows where a store under the XDG roots
+`lib/switchboard/support/paths.rb` is the one place that knows where a store under the XDG roots
 goes (the config file keeps its own path, in `Config`). `Paths.state`, `Paths.cache` and
 `Paths.data` each take the store's leaf name, plus its override variable where it has one.
 Every result is UTF-8, even under a C locale, where Ruby hands the
@@ -148,12 +150,12 @@ reads it the same way. `test/paths_test.rb` pins all of this, so a change here i
 
 ### The layer test holds it
 
-`test/layers_test.rb` checks every file under `lib/switchboard/` on every run. It lists
-each file's layer and fails when:
+`test/layers_test.rb` checks every file under `lib/switchboard/` on every run. It reads
+each file's layer from its folder and fails when:
 
-- a file has no layer, or is listed twice;
+- a file sits outside the layer folders, and isn't an interface or pinned;
 - a top-level constant is defined in two files, so its layer would be ambiguous;
-- a file references a constant from a higher layer;
+- a file references a constant from a higher layer, or requires a file from one;
 - any file but `root.rb` locates files relative to itself with `__dir__` or `__FILE__`.
   Such a file changes meaning when it moves. If `CodeReload`'s root shifted, `stale?`
   would read true on every tick, and every sidebar would re-exec forever.
@@ -163,7 +165,8 @@ install this process loaded (a keg's real path under Homebrew, the checkout othe
 and `CodeReload`, `Installer` and `Sandbox` all take their root from it. They require
 `root.rb` directly, so each still loads on its own, which `test/root_test.rb` checks
 against the repo as the test sees it. `root.rb` is pinned: it must never move out of
-`lib/switchboard/`, because `ROOT` is computed from where it sits.
+`lib/switchboard/`, because `ROOT` is computed from where it sits. `version.rb` is pinned
+too, because `UpdateCheck`, `packaging/release.rb` and the release workflow read it by path.
 
 `lib/switchboard.rb` itself isn't scanned. It's the entry point that requires everything,
 so it has no layer.
@@ -173,8 +176,9 @@ only appears in a comment, a string, a symbol (`:Config`) or a heredoc, such as 
 script in `HookFile::SCRIPT`, is never counted as a dependency. A file Ripper can't parse
 fails the test instead of being half-read. Nested names don't count either:
 `Sidebar::Edges` is a use of `Sidebar`, and a constant a file defines for itself
-(`CodeReload::VERSION`) doesn't count as the top-level one. Only constants count: a
-`require_relative` or a method called on `Switchboard` itself isn't an edge.
+(`CodeReload::VERSION`) doesn't count as the top-level one. Only constants count here: a
+method called on `Switchboard` itself isn't an edge, and a `require_relative` gets its own
+check against the same layer order.
 
 A known violation goes in the test's `ALLOWED` table, with a note on what removes it. The
 table is empty today, and it only shrinks: once an entry
@@ -204,7 +208,7 @@ Each worktree maps to exactly one tmux session named `sb/<project>/<leaf>`
 (`Tmux.session_name`).
 
 `tmux.rb` holds the shared constants and two small doors, `Tmux.run` and `Tmux.query`. The rest of
-the module is split by concern under `tmux/` (`sessions`, `sidebar_panes`, `presence`, `notify`,
+the module is split by concern under `adapters/tmux/` (`sessions`, `sidebar_panes`, `presence`, `notify`,
 `keys`), still one `Tmux`. The reload code in `CodeReload` and the `e` pane in `Editor` reach tmux
 through those doors, so a test that stubs `Tmux.system` or `IO.popen` still catches their calls.
 
@@ -368,7 +372,7 @@ the run; the smoke harness sweeps those before each run.
 ## Configurable tmux keys
 
 The fragment leaves binding to `switchboard tmux-bind` (`Installer.apply_keybindings` in
-`installer/keybindings.rb`, issue #15). It reads `tmux_keys:` from the config through
+`ops/installer/keybindings.rb`, issue #15). It reads `tmux_keys:` from the config through
 `Config#tmux_key`, which is global and resolves with a default like `sound_for`: `toggle`
 defaults to `s`, and `home` is unbound.
 

@@ -2,8 +2,8 @@
 
 require "yaml"
 require "fileutils"
-require_relative "marker_block"
-require_relative "paths"
+require_relative "../support/marker_block"
+require_relative "../support/paths"
 
 module Switchboard
   # Switchboard's own project registry — what lets it stand alone, with no

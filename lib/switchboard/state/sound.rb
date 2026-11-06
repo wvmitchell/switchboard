@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
-require_relative "marker_block"
-require_relative "paths"
+require_relative "../support/marker_block"
+require_relative "../support/paths"
 
 module Switchboard
   # Plays a short sound when a hooked agent finishes a turn (:done) or asks for

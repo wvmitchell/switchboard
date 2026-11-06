@@ -3,7 +3,7 @@
 require "yaml"
 require "fileutils"
 require "shellwords"
-require_relative "paths"
+require_relative "support/paths"
 
 module Switchboard
   # Command dispatch. The sidebar is the one navigator: the bare command (and

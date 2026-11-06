@@ -1,8 +1,8 @@
 # frozen_string_literal: true
 
 require "fileutils"
-require_relative "keyed_marker_store"
-require_relative "paths"
+require_relative "../support/keyed_marker_store"
+require_relative "../support/paths"
 
 module Switchboard
   # After a workspace rename, give its live agent session the same name — the one the

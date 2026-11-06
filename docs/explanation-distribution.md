@@ -38,7 +38,7 @@ re-approving on every release.
 ### The approach
 
 Homebrew keeps one stable link per formula that always points at the current
-keg: `/opt/homebrew/opt/switchboard` (issue #9). `StablePath.resolve` (`lib/switchboard/stable_path.rb`)
+keg: `/opt/homebrew/opt/switchboard` (issue #9). `StablePath.resolve` (`lib/switchboard/support/stable_path.rb`)
 rewrites any path inside a switchboard keg to the same path under `opt/`:
 
 ```

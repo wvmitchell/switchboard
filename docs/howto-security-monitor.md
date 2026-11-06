@@ -348,7 +348,7 @@ ask" is wording, and a prompt-injected agent (a hostile README, issue or web pag
 exactly the one that won't follow wording. So the guardrails that do exist are worth
 watching, and any merge that weakens one is a finding:
 
-- **The instruction's two load-bearing clauses** in `lib/switchboard/dispatch_nudge.rb`:
+- **The instruction's two load-bearing clauses** in `lib/switchboard/state/dispatch_nudge.rb`:
   use `switchboard new` "only when the user explicitly asks", and keep using your own
   subagents for your own work.
 - **No chained dispatch.** A session started by `switchboard new` carries `brief_from:

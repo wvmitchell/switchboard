@@ -1,8 +1,8 @@
 # frozen_string_literal: true
 
 require_relative "hook_file"
-require_relative "marker_block"
-require_relative "paths"
+require_relative "../support/marker_block"
+require_relative "../support/paths"
 require "strscan"
 
 module Switchboard
