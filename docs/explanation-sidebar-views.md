@@ -85,14 +85,14 @@ the row it was on, by path. Folding from a branch row lands you on its workspace
 
 **The fold is a row transform, not a rebuild.** It happens in `recompute_rows`
 (`visible_tree`), so `z` is instant, and the delicate logic in `Tree`, the console and
-the #90 diff suppression stays untouched. When folded, `visible_tree` drops every `br`
+the expanded-row diff suppression stays untouched. When folded, `visible_tree` drops every `br`
 row and replaces each expanded `ws` row with a shallow clone marked `expanded: false`.
 The clone carries its active branch's PR (precomputed in `fold_lookup` from the branch
 rows it's hiding) and a `folded:` count.
 
 That clone renders through the existing code with no special cases:
 
-- `expanded: false` un-suppresses its own diff and PR badge, since the #90 suppression
+- `expanded: false` un-suppresses its own diff and PR badge, since that suppression
   only applies while the branches are visible;
 - the restored `pr` shows the badge;
 - `diff_for` reads the `[path, branch, "br"]` entry `refresh_diffs` already computes for
@@ -121,8 +121,8 @@ characters.
 ### The width: a file holding a number
 
 `pin_if_resized` re-asserts the sidebar's width, so a plain `resize-pane` is undone by the
-next pin. To change it, `←`/`→` in the tree step the width by `WIDTH_STEP` columns per press
-(issue #78), and the pin *respects* the width you chose.
+next pin. To change it, `←`/`→` in the tree step the width by `WIDTH_STEP` columns per press,
+and the pin *respects* the width you chose.
 
 `Width` (`width.rb`) is a single global file like `FullHeader` (`SWITCHBOARD_WIDTH_FILE`),
 but it holds an integer. That value is *read*, so a torn write could misread, which is why
@@ -159,7 +159,7 @@ so `search_key` ignores them. Once the search is committed they resize as usual.
 ## Workspace diff counts
 
 Each workspace and branch row shows `+adds −dels` for its branch against its base, just
-left of the PR badge (issue #79). It's the committed difference, `base...HEAD`, not your
+left of the PR badge. It's the committed difference, `base...HEAD`, not your
 working tree.
 
 ### Why they're computed off the paint loop
@@ -213,7 +213,7 @@ Two cases get past the cache:
 the `pr_*` pair. They abbreviate counts of 1000 or more (`1.5k`), so a huge diff can't
 swallow the name in a narrow pane.
 
-**The counts and badges line up in fixed columns** (issue #118). Alignment is a property
+**The counts and badges line up in fixed columns**. Alignment is a property
 of all the visible rows, not one row, so `line` can't size it alone. Flush-righting one
 `[diff, id]` block per row would make the `+/−` and `#n` numbers staircase, so
 `Sidebar#column_widths(@rows)` measures three widths once per `render`:
@@ -229,14 +229,14 @@ them. The widths are passed into every `line`. Each cell right-justifies (`rjust
 wrapping the ANSI, the same split `line` uses. The `+adds`, `−dels` and `#n` columns stay
 flush to the right edge.
 
-A missing cell becomes aligned blanks, not a gap that shifts its neighbor, so the #90
+A missing cell becomes aligned blanks, not a gap that shifts its neighbor, so the
 expanded-workspace suppression reads as clean empty columns. Single-row callers (tests)
 don't pass the widths and fall back to the row's own, so a one-row column equals the row
 and the output is unchanged.
 
 On a narrow pane, the whole diff column is dropped first, keeping `MIN_NAME_COLS` for the
 name. The decision is the same for every row, since `cols` and the widths are shared, so
-columns can never split. `←`/`→` (#78) change `cols` live, so the columns are recomputed
+columns can never split. `←`/`→` change `cols` live, so the columns are recomputed
 on every render. Nothing here is shared on disk: each pane measures its own `@rows`,
 which is all that matters, since you look at one pane at a time.
 
@@ -245,17 +245,17 @@ which is all that matters, since you look at one pane at a time.
 One predicate decides, `Sidebar#diff_visible?`, which combines two gates `line` reads:
 
 - **The `diff_counts` setting** (`Config#diff_counts?`, on by default, off only when
-  set to `false`; issue #88). When it's off, `refresh_diffs` returns early with
+  set to `false`). When it's off, `refresh_diffs` returns early with
   `@diffs.clear`, so there are no `git diff` shell-outs at all, not just a hidden label.
   Turning it off live drops the cached counts on the next reload.
-- **Expanded workspaces** (issue #90). When a workspace expands into per-branch rows, the
+- **Expanded workspaces.** When a workspace expands into per-branch rows, the
   `ws` row's count would just repeat its active branch row right below it, since the
   `ws` row diffs HEAD, which is the active branch. So `diff_visible?` drops it on the
   `ws` row, using the same `expanded` condition (carried on the `Tree::Node`) that
   already drops the PR badge there.
 
 The redundant `git diff` for an expanded workspace is still *computed*, just never shown.
-That was the deliberate trade in #90: gate it at render, and leave the mtime-checked
+That was the deliberate trade: gate it at render, and leave the mtime-checked
 cache logic alone.
 
 ## Vim-style search
@@ -363,7 +363,7 @@ narrow pane shortens the query, not the count.
 
 ## The `?` help overlay
 
-`?` draws a full-pane key map over the tree (`render_help`, issue #62). Any real
+`?` draws a full-pane key map over the tree (`render_help`). Any real
 keystroke closes it, except `→`, Space and `←`, which turn pages when the map doesn't fit
 (below). The `@help` flag is per-process and short-lived, like a search, because opening
 help is an action, not a preference.
@@ -474,8 +474,8 @@ non-UTF-8 locale could otherwise raise mid-regex and crash the render.
 ## Remapping the in-sidebar keys
 
 The keys the sidebar's own input loop handles (`j`/`k`, `n`, `d`, `/`, `?` and so on) can
-be remapped with a `sidebar_keys:` config map (issue #108). It's the in-pane sibling of
-`tmux_keys:` from #15.
+be remapped with a `sidebar_keys:` config map. It's the in-pane sibling of
+`tmux_keys:`.
 
 ### One table drives everything
 

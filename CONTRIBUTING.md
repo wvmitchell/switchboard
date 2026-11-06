@@ -18,7 +18,7 @@ These are not negotiable — they're the project's identity:
 1. **Zero gem dependencies.** Stdlib only. No Gemfile, no `bundle install`, no
    build step. Everything is Ruby stdlib plus shelling out to `tmux`, `git`, and
    `gh`. If you reach for a gem, find another way.
-2. **Ruby ≥ 3.3**, the oldest Ruby still getting security fixes upstream (#35).
+2. **Ruby ≥ 3.3**, the oldest Ruby still getting security fixes upstream.
    CI runs `3.3` and `4.0`. Don't use syntax newer than 3.3 supports.
 3. **The UI degrades, it never crashes.** Every shell-out escapes its args with
    `Shellwords` and swallows stderr; every failure path returns `[]`/`{}`/`nil`
@@ -81,7 +81,7 @@ a subprocess (e.g. `Reconcile.orphans`, `Installer.rebind_ops`,
 `Doctor.orphan_sidebar_count`). Follow that pattern: keep the decision pure, test it
 directly, and stub the one I/O seam.
 
-### The real-tmux smoke layer (issue #104)
+### The real-tmux smoke layer
 
 The offline suite is the inner loop, but a stubbed tmux can't exercise the bugs
 that actually bite — the lifecycle ones (pane recycling, hook firing, split/kill
@@ -115,7 +115,7 @@ worktree, runs `codex exec` headlessly there, and asserts the resting state land
 still fire in a linked worktree (the bug per-worktree `.codex/hooks.json` couldn't
 clear). That run passes `--dangerously-bypass-hook-trust`, so a second case runs
 without it and asserts an untrusted block writes no state (the case behind `doctor`'s
-`N/M trusted` warning). The #130 nested-agent guard is covered offline by
+`N/M trusted` warning). The nested-agent guard is covered offline by
 `codex_hook_test`'s runtime guard test. Needs `codex` on PATH + auth + network, and spends tokens.
 
 ## Code conventions
@@ -124,7 +124,7 @@ without it and asserts an untrusted block writes no state (the case behind `doct
 - **Stateless helpers are `module_function` modules** (`ClaudeHook`, `Tmux`,
   `Installer`, `Git`, `Pr`, `Reconcile`, `Creator`, `Registrar`, `Sound`,
   `Attention`, `Collapse`, …). Only `Model`, `Config`, `Sidebar` (plus its
-  `Sidebar::Edges` collaborator, the #57 carve-out of the agent-edge fanout
+  `Sidebar::Edges` collaborator, the carve-out of the agent-edge fanout
   state, `Sidebar::UpdateCue`, the update line's, `Sidebar::Reloader`, the code
   reload's, and `Sidebar::Search`, the `/` search's), and `AgentState` are classes — they
   hold state. Don't make a class for something that doesn't need instance state.

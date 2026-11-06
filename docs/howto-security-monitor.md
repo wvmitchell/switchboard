@@ -373,7 +373,7 @@ On each merge to main, read diffs touching `dispatch_nudge.rb`, `dispatch_args.r
 
 On top of a normal check, once a week:
 
-- **Ruby support floor** (#35): the floor is 3.3, the oldest Ruby still getting security
+- **Ruby support floor**: the floor is 3.3, the oldest Ruby still getting security
   fixes upstream. Check its end-of-life date on the Ruby maintenance-branches page; as it
   nears, open an issue to raise the floor to the next maintained release (the same bump:
   `bin/switchboard`'s re-exec guard, the CI matrix, the docs). Also flag a new Ruby

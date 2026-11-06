@@ -187,6 +187,18 @@ module Switchboard
       assert_empty bare, "write a section pointer as [doc § Heading](doc.md#heading)"
     end
 
+    # An issue or PR number tells a reader nothing the sentence shouldn't say itself, and
+    # those from before v0.50.0 point into a private archive. Code spans and fences are out:
+    # sample PR badges (`#128`) are drawn output. Link targets are out: they're anchors.
+    def test_docs_dont_cite_issue_numbers
+      cited = markdown_files.reject { File.basename(_1).match?(/\A(CHANGELOG|TODOS)\.md\z/) }.flat_map do |file|
+        without_fences(File.read(file)).lines.select do |line|
+          line.gsub(/`[^`\n]*`/, "").gsub(/\]\([^)]*\)/, "]").match?(/(?<![&\w])#\d/)
+        end.map { "#{rel(file)}: #{_1.strip[0, 70]}" }
+      end
+      assert_empty cited, "say what the behaviour is instead of citing its issue or PR number"
+    end
+
     # thoughts/ is gitignored, so a pointer into it leads nowhere for a reader.
     def test_docs_dont_point_into_thoughts
       mentions = (docs + [File.join(ROOT, "docs/README.md")]).flat_map do |file|

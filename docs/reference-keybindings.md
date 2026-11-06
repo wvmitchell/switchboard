@@ -4,7 +4,7 @@ Two key surfaces: the **tmux prefix keys** switchboard binds (to summon the
 sidebar or jump home), and the **keys inside the sidebar** (to navigate and act
 on the tree). Both are configurable: the tmux keys via
 [`tmux_keys`](reference-config.md#tmux_keys), the sidebar keys via
-[`sidebar_keys`](reference-config.md#sidebar_keys) (issue #108). A handful of
+[`sidebar_keys`](reference-config.md#sidebar_keys). A handful of
 structural keys inside the sidebar stay fixed — see [Sidebar keys](#sidebar-keys).
 
 ---

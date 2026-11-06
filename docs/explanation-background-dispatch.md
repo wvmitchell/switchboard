@@ -274,7 +274,7 @@ GC cleans up finished and abandoned records, and it's careful in the same way:
 ## The setup script
 
 A fresh checkout doesn't have your untracked files (`.env`) or installed dependencies
-(`bundle install`). `worktree_creation_command` (#83) is a script that sets those up.
+(`bundle install`). `worktree_creation_command` is a script that sets those up.
 
 It runs once per *worktree*, in the dispatch launcher (`Creator.run_setup`), and never
 again when you come back: `switch` starts the bare `session_command`.
@@ -337,7 +337,7 @@ carries a *quoted* trailing `#` comment, since YAML would eat an unquoted one.
 
 ## Deferred naming
 
-Workspace naming is deferred (issues #94, #114). `n` in the sidebar doesn't ask for a
+Workspace naming is deferred. `n` in the sidebar doesn't ask for a
 name. You get a **placeholder**, a throwaway
 adjective-noun name from `Placeholder.generate` (`placeholder.rb`, a small in-repo word
 list, no gem), and a matching branch. You start the work first and name it afterwards,

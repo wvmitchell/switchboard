@@ -363,11 +363,11 @@ Dogfood **this checkout's** sidebar in a throwaway, fully-isolated tmux — a he
 repo seeded with worktrees in varied visual states (an open-PR badge, a big `+/−` diff,
 a no-PR row, a multi-branch workspace, a monitored `∞` row, a phone-linked `⇅` row, a
 `◷` row waiting on background work), on its own tmux server and
-socket, torn down automatically on detach. The interactive twin of `bin/test-smoke`
-(#126); nothing it does touches your real sessions or state. It also disables Claude
+socket, torn down automatically on detach. The interactive twin of `bin/test-smoke`;
+nothing it does touches your real sessions or state. It also disables Claude
 Code's self-updater inside the sandbox (`DISABLE_UPDATES` + `DISABLE_AUTOUPDATER`), so an
 update firing in the throwaway can't repoint your global `~/.local/bin/claude` symlink
-into the tree teardown deletes (#145). If an older sandbox already dangled your launcher
+into the tree teardown deletes. If an older sandbox already dangled your launcher
 (`command not found: claude`), repoint it:
 `ln -sf ~/.local/share/claude/versions/<latest> ~/.local/bin/claude`.
 
@@ -430,7 +430,7 @@ no-op outside the right tmux context.
 | `sidebar-sync <window>` | `after-new-window` hook | Give a new window its own sidebar iff the session opts in. |
 | `reload-config [origin]` | the post-edit Ctrl-R poke | Re-read config and redraw after editing it from the sidebar. |
 | `tmux-bind` | the `switchboard.tmux` fragment | (Re)bind the configured `tmux_keys`, letting go of the previously-bound key and giving back what it displaced. A `config.yml` that won't parse re-binds the keys already bound (the defaults only if none were). An install path containing a quote or control character binds nothing, as `install` refuses it. |
-| `check-update` | a visible sidebar, at most every 4 hours (spawned detached) | Homebrew installs: reads the newest release tag and caches it for the update line under the wordmark (#47). Does nothing under `SWITCHBOARD_NO_UPDATE_CHECK`. |
+| `check-update` | a visible sidebar, at most every 4 hours (spawned detached) | Homebrew installs: reads the newest release tag and caches it for the update line under the wordmark. Does nothing under `SWITCHBOARD_NO_UPDATE_CHECK`. |
 | `create-workspace <id>` | the sidebar's `n` or `switchboard new` (spawned detached) | Background worker for a dispatched workspace: fetch, `git worktree add`, wire hooks, open the session. |
 | `launch <dest>` | the line the worker types into the new pane | Run the setup script, then start the agent with the task. |
 | `reap-worktree <repo> <path> <branch> …` | the sidebar's `d` (spawned detached) | Remove a workspace's worktree and branches in the background, so the input loop never waits on it. |
