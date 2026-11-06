@@ -363,6 +363,14 @@ safe today; each is narrow).
 
 ## Sidebar input handling follow-ups
 
+- **Keep the selection on its row across the tree tick.** *Why:* the sidebar tracks its
+  cursor by row number (`recompute_rows` only clamps it), so a workspace or branch row
+  appearing above can move the selection while you're looking at it, and your next key lands
+  on a neighboring row. The reload after `e`, the switch-in reload, the dispatch reload and
+  `warm_reload` already hold their row through `keep_cursor`. *Start in:* `tick`'s two
+  reloads in `sidebar.rb` (the catch-up and the tree tick), `warm_poke`'s on-screen reload
+  and `focus_in`'s catch-up reload, and check the warm frame still matches the switch-in
+  frame, or the flash comes back.
 - **Flush the rest of the read buffer after an in-dispatch confirm.** `Sidebar#confirm`
   (used by `q` quit, `d` delete) reads its y/N from `$stdin` directly, while `#handle`
   may still hold later bytes from the same `read_key` chunk in its local buffer. So a

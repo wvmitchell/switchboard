@@ -10,6 +10,19 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
+## [0.67.0] — how many branch rows a workspace shows is now a setting, and the default is 10 (2026-11-06)
+
+### Added
+- `max_branch_history` sets how many branch rows a workspace shows. A workspace running a long series of PRs
+  can keep them all in view instead of losing the oldest row. A change reaches running sidebars without a
+  restart, and `switchboard doctor` names a value it can't use.
+
+### Changed
+- The default goes from 8 rows to 10, so workspaces with more than 8 branches show up to 2 more rows, and PR
+  badges are fetched for those rows too.
+- Rows added above no longer push the selection onto a neighboring row when you edit the config with `e`, or
+  when an off-screen sidebar refreshes.
+
 ## [0.66.14] — the code gets a folder per layer, with no change to what switchboard does (2026-11-06)
 
 ### Changed
