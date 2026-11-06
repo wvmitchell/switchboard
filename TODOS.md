@@ -99,7 +99,7 @@ safe today; each is narrow).
   branch of `launch` ignores whether `mark_failed` landed (wrong text after a racing
   cancel); a worker starting on an unparseable config fails as `worktree_add` "unknown
   project"; a failed ✘ never shows the typed task again. *Start in:* `Creation::REASONS`
-  (a `setup_config` reason or text keyed on `load_error`), `CLI#doctor`,
+  (a `setup_config` reason or text keyed on `load_error`), `ops/doctor.rb`,
   `Creator.launch`/`work`. **Priority:** P2.
 - **Make the record store fail closed.** *Why:* one record file that parses as JSON but
   isn't an object makes `all` return `[]` for every pane, and any read error reads as "no
@@ -122,13 +122,6 @@ safe today; each is narrow).
   where you'd have seen it. *Start in:* `Creation.ringing?` / the sidebar scan — ping (or
   a distinct glyph) when a hooked `ready` record gets no hook state file within N
   seconds of launch. **Priority:** P1.
-- **Re-certify a hand-fixed failed dispatch.** *Why:* a build whose setup failed (or was
-  canceled) keeps its ✘ at rest and re-enters as a plain shell for as long as its tree
-  exists; finishing setup by hand can't clear that guard — today only deleting the tree
-  (and the work in it) does. The notices say so honestly now. *Start in:* a re-run path
-  (e.g. retyping the launch line on an unfinished record: failed → launching under the
-  lock, take ownership, rerun setup, then `authorize_launch`), or a confirmed "mark set
-  up" on `d`. Overlaps #22 (retry on ✘). **Priority:** P2.
 - **Smaller dispatch edges noted in review, all below the fix bar.** A ring for the
   workspace you're viewing if its `wait: false` ack was skipped that scan; GC racing a
   rename's `worktree move` can drop a hooked record's first-turn ping; `quit` from
@@ -150,9 +143,7 @@ safe today; each is narrow).
   misses ArgumentError/TypeError (a bad `worktree_root`); `send-keys -t name` lacks the
   exact-match `=`; a pre-upgrade sandbox/smoke `server.pid` (local-TZ start time) never
   matches the UTC read, so that throwaway server leaks. **Priority:** P3.
-- **Test and cleanup gaps from the 0.51.0 review.** *Tests:* `git_test`'s stalled-fetch
-  timeout test can't fail (`GIT_SSH_COMMAND="sleep 3"` exits on git's appended args — use
-  `"sleep 3;:"`); `spawn_worker`'s `SystemCallError` rescue; `undo_add` on a locked tree;
+- **Test and cleanup gaps from the 0.51.0 review.** *Tests:* `spawn_worker`'s `SystemCallError` rescue; `undo_add` on a locked tree;
   `unfinished_at?` with a newer set-up record / a `setup_ok` failure / a canceled record;
   `setup_invalid?` for a valueless per-project key over a junk global; the typeahead test
   can't see a missing `@typeahead.clear`, and rename/add typeahead is untested; 10
@@ -160,24 +151,12 @@ safe today; each is narrow).
   queued/launching/turn_done/canceled×remove_project); three wall-clock-bounded tests lack
   `gstack-timing-ok`. *Cleanup:* `doctor_sounds` skips `failed` (loop over
   `DEFAULT_SOUNDS.keys`); comments cite D*/DR* ids that live only in gitignored
-  `thoughts/`; stale `start` docstrings (`tmux/sessions.rb` `go`, `Config#session_command_for`)
+  `thoughts/`; stale `start` docstrings (`adapters/tmux/sessions.rb` `go`, `Config#session_command_for`)
   and `columns`; declare `@typeahead` in `Sidebar#initialize`; `NOTE_WIDE` as `\u{…}`
   ranges; drop `terminal?` (always true at its caller), the dead `PRE_READY` clause on
   the project rule, `drop?`'s unused defaults, `owner_fields`' `pid` param,
   `notify_pane`'s trailing `true`; share the column-walk in `tail_view`/`fit_columns`;
   `@warming` → a `rebuild` kwarg. **Priority:** P3.
-
-## `?` help paging (v0.55.0) follow-ups
-
-- **Input bursts leak past a mode change.** *Why:* two paths let a burst of keys reach the
-  tree after a mode ends. (a) A read that fills `READ_BYTES` can end mid escape sequence;
-  `Input.tokenize` flushes the trailing `\e` as Esc (repro: 344 `→` in one buffer — the
-  first read closes help, the second's arrows resize the pane, a persisted width). (b) A key
-  that closes help hands the rest of its read to `dispatch`: a held `→` on a one-page help
-  (never paged, so not sticky) closes it, then widens the pane. Both predate paging.
-  *Start in:* `help_key` (clear the rest of `@typeahead` on a dismiss) and `tokenize`
-  (carry a trailing `\e` when a read filled `READ_BYTES`, or an Esc timeout in the run
-  loop). **Priority:** P3.
 
 ## Session lifecycle (issue #7) follow-ups
 
@@ -209,7 +188,7 @@ safe today; each is narrow).
   deliberately leaves unverifiable projects' sessions alone (so a moved repo never
   nukes live sessions), but that means a stale config pointer is invisible — doctor
   is the read-only place to surface it before orphans accumulate. *Start in:*
-  `CLI#doctor` (a `Dir.exist?` loop over `config.projects`). Independent of the
+  `ops/doctor.rb` (a `Dir.exist?` loop over `config.projects`). Independent of the
   above.
 
 ## Add-project error handling (create/clone) follow-ups
@@ -235,9 +214,8 @@ safe today; each is narrow).
 
 - **Agent dots may land on the wrong row after a rename onto a dead bridge
   (suspected, verify first).** *What:* rename `A->B` while its agent runs, then rename
-  another workspace `C->A` (`Rename.perform` clears the stale `A` bridge,
-  `rename.rb:49-51`). The hook reporter keys state on `cwd=$(pwd -P)`
-  (`hook_file.rb:82`). If Claude spawns hooks with cwd = its remembered project path
+  another workspace `C->A` (`Git.move_worktree`, via `Rename.perform`, clears the stale `A` bridge). The hook
+  reporter (`HookFile::SCRIPT`) keys state on `cwd=$(pwd -P)`. If Claude spawns hooks with cwd = its remembered project path
   `A`, the B agent's dots and chimes now show on C's row; if hooks inherit Claude's
   kernel cwd, it's already right (`lsof -a -d cwd` and tmux `pane_current_path` both
   report the moved dir, probe-verified 2026-10-22). *Why:* wrong-row dots/chimes/bold.
@@ -246,7 +224,6 @@ safe today; each is narrow).
   `hook-reporter-atomic-rewrite` care applies). *Context:* the remote-link glyph
   (eng review D10) already attributes by live pid cwd via one batched `lsof`; start by
   reproducing the sequence above with a real hooked agent, then reuse that helper.
-  *Depends on:* remote-link PR 1 (the lsof helper).
 
 - **Verify whether Claude reopens the transcript by path or holds an fd.** The
   `ClaudeHistory` bridge only matters if a running agent re-derives
@@ -294,7 +271,7 @@ safe today; each is narrow).
   red-team pass. Related: the sanitized `Pr.cache_file` name can collide for two
   registered projects (`app one` / `app_one`) — pre-existing shadowing that the
   new REPO_KEY identity guard turns into a wipe-and-refill alternation; the add-time
-  name validation TODO (top of this file) is the right chokepoint for both.
+  name validation TODO (under Session lifecycle) is the right chokepoint for both.
 
 - **`Pr.repo_slug` doesn't pin the host.** It parses `owner/repo` out of any
   origin URL, so a GitLab/self-hosted origin queries the same-named *GitHub* repo
@@ -314,26 +291,22 @@ safe today; each is narrow).
   and `focus_in`'s catch-up reload, and check the warm frame still matches the switch-in
   frame, or the flash comes back.
 
-- **Esc-timeout to close the `\e`|`[O` escape split (accepted).** `Input.tokenize`
-  carries an incomplete CSI across reads, but a sequence split BEFORE its `[` (a read
-  ending on a lone `\e`, the next starting `[O`) flushes the `\e` as Esc and re-orphans
-  the `O` → open_repo — the very symptom the tokenizer exists to prevent. *Why accepted,
-  not fixed:* it needs tmux to fragment a 3-byte focus event across reads, which it
-  doesn't (it writes the sequence in one `write`, and `READ_BYTES` reads it whole), so
-  it's unreachable in practice — the original deterministic bug was the fixed 8-byte read
-  cap, now gone. Closing it for good means carrying a lone `\e` too, which stalls the Esc
-  key (filter/prompt cancel) unless the run loop grows a short Esc-timeout to disambiguate
-  bare-Esc from a sequence head. That timing complexity in an already-intricate loop isn't
-  worth defending an input tmux can't produce. *Start in:* `Sidebar#run` (a deadline flush
-  when `@pending == "\e"`) + `Input.tokenize` (return a lone trailing `\e` as remainder). Only
-  worth it if we ever stop trusting the producer to write sequences atomically.
+- **A read that ends on a lone `\e` fires as Esc.** *Why:* `Input.tokenize` carries an
+  incomplete CSI across reads, but a read ending just before a sequence's `[` flushes the `\e`
+  as Esc. A read that fills `READ_BYTES` can do this: with 344 `→` in one buffer, the first read
+  closes help, then the second read's arrows resize the pane, a persisted width. The same split
+  could orphan a focus event's `O` into open_repo, though tmux writes those whole, so that path
+  hasn't been reached. *Start in:* `Input.tokenize`: carry a trailing `\e` when the read filled
+  `READ_BYTES`, which a lone Esc keypress never does. Carrying every lone `\e` would stall the Esc
+  key unless `Sidebar#run` grows a short Esc timeout, which is more timing than this is worth.
+  **Priority:** P3.
 
-- **Unify the name-prompt reader onto `tokenize`.** `Prompt#edit_buffer` (the inline
+- **Unify the name-prompt reader onto `tokenize`.** `Prompt#edit_keys` (the inline
   `r`/`n` name prompt, `sidebar/prompt.rb`) still slices escapes at a fixed 3 bytes, the same
   shape the main loop's `handle` had before the tokenizer. *Why low:* the prompt already
   reads 1024 bytes and no destructive key is bound during a name edit, so a split sequence
   there just drops a stray char into the name you can see and backspace — not a footgun
-  like the open-repo orphan was. *Start in:* `Prompt#edit_buffer` — route it through
+  like the open-repo orphan was. *Start in:* `Prompt#edit_keys` — route it through
   `Input.tokenize` so both readers share one grammar. Pure cleanup; do it next time
   the prompt path is touched.
 
@@ -353,15 +326,6 @@ safe today; each is narrow).
   `client-attached[99]` poke in `switchboard.tmux` + clear it in
   `Installer.teardown_live`. Low priority — measure whether either is felt in practice
   first.
-- **The warm fingerprint can record a file rebuild never drew.** `reload` runs `rebuild`
-  (which reads config, collapse, full header, branch fold, width) BEFORE it samples
-  `warm_fingerprint`, so a peer's write landing between the two is baselined as drawn,
-  and a hidden pane then skips the warm that would show it until that file moves again
-  or you switch in. *Why deferred:* nobody has seen it (the window is milliseconds and a
-  switch-in reload heals it); #47 fixed it only for its own two entries (the update cache
-  and the installed `version.rb`). *Start in:* `Sidebar#reload` / `#warm_fingerprint` —
-  #47's rule (fingerprint each rebuild-read file by the mtime `rebuild` captured when it
-  read it, one look per file) is the template. Depends on #47 landing. **Priority:** P3.
 
 ## Sidebar `O` open-repo (issue #63) follow-ups
 
@@ -375,26 +339,7 @@ safe today; each is narrow).
   — rejected; `O` detaches precisely to stay off that path) or a local
   `refs/remotes/origin/<branch>` check that's itself imperfect (a push without
   `-u` and no fetch leaves no tracking ref, so it still falls back). *Start in:*
-  `Actions.browse_args` (`sidebar/actions.rb`) + a `Git` remote-branch helper. Low
-  priority — repo home is a fine fallback; only worth it if the gap is felt.
-
-## Sidebar diff count (issue #79) follow-ups
-
-- **Working-tree (uncommitted) diff count as a config knob.** The row diff count
-  (`+22 −333`) shows **committed** branch-vs-base work (`git diff --numstat
-  base...HEAD`). Add a per-project/global option — resolved like `sound_for` /
-  `session_command_for` — to switch a project to the **uncommitted** working-tree
-  view (`git diff --numstat HEAD`) instead. *Why:* `+22 −333` reads like "current
-  git diff" to many users, but we deliberately show committed-only (it's the
-  PR-shaped number and it's cache-friendly); some users will want the dirty-tree
-  view. *The catch (the real design work):* working-tree mode **can't** ride the
-  `logs/HEAD` mtime gate the committed count uses — editing files never touches the
-  reflog, so an edit wouldn't invalidate the cache. It needs a different
-  invalidation (index + working-tree mtimes, or accept a per-scan shell-out cost —
-  the exact thing `with_dirty: false` avoids). *Start in:* `Config` (a `diff_source_for`
-  resolver) + `Sidebar#refresh_diffs` (a mode branch + its own invalidation). Low
-  priority — the committed default is the right one for the PR-workflow case; only
-  worth it if the dirty-tree view is asked for.
+  `Actions.browse_args` (`sidebar/actions.rb`) + a `Git` remote-branch helper. **Priority:** P3.
 
 ## Silent failures (v0.57.1) follow-ups
 
@@ -445,7 +390,7 @@ safe today; each is narrow).
   **Priority:** P4.
 
 - **Small cleanups from the v0.57.1 review.** *What:* the `rebind_ops` header doesn't
-  mention `taken:`; `Upgrade.tmux_stale?` and `CLI#doctor_key_drift` hard-code
+  mention `taken:`; `Upgrade.tmux_stale?` and `Doctor.doctor_key_drift` hard-code
   `%w[toggle home]` instead of `Installer::ROLE_SUBCOMMANDS.keys`; the
   `@switchboard-<role>-rejected` name is hand-built at 7 sites (route it through
   `tmux_argv` ops like `-key`/`-clobbered`); `install` re-parses config.yml to pick its
@@ -527,7 +472,7 @@ safe today; each is narrow).
   *Why:* none hits a normal setup (the one verified user-visible item, the glob, shipped in v0.57.1). *Pros:*
   small, testable changes. *Cons:* each touches a reviewed path, so give it its own short
   review. *Context:* ship review of v0.53.0 (D2/D3 — deferred to keep the release from
-  reopening its review loop). *Depends on:* v0.53.0.
+  reopening its review loop).
 
 - **Remote-link glyph: one batched `ps` for the start-time checks.** *What:* the full
   scan (`RemoteLink.scan`, visible panes, every `REFRESH`) calls
@@ -537,24 +482,7 @@ safe today; each is narrow).
   *Why:* N linked sessions = N forks every 3s on the visible pane's input loop (6 on
   Will's machine at ship time, ~30-60 ms). *Pros:* one subprocess per scan whatever
   the count. *Cons:* a new helper + tests. *Context:* deferred at ship review (pass 2,
-  D2=B); measure first. *Depends on:* remote-link PR 1.
-
-- **Agents' own session files as a presence source (research Claude AND Codex).**
-  *What:* Claude Code (2.1.308) writes `~/.claude/sessions/<pid>.json` per live session
-  with `status` (busy/idle/waiting), `statusUpdatedAt`, `cwd`, `procStart`, `kind`; let
-  `AgentState` read it for Claude sessions WITHOUT a fresh hook file. Research whether
-  Codex keeps an equivalent live state: candidates seen locally are
-  `~/.codex/sessions/YYYY/MM/DD/` (transcripts), `~/.codex/app-server-control/`,
-  `~/.codex/ipc/`, and the `*.sqlite` stores; no per-pid status file like Claude's was
-  visible. *Why:* exact thinking/waiting/done for hook-less sessions, and possibly
-  retiring much of the coarse fallback (`Agents.active`: tmux panes + `pgrep`/`lsof` +
-  `capture-pane` hashing) and some hook plumbing; Will expects it would "simplify a lot
-  of code". *Pros:* one source each agent writes itself; reuses the remote-link
-  `RemoteLink` reader (PR 1). *Cons:* ties core dot logic to undocumented files (the
-  reason the remote-link design ruled it out of scope); must never override a fresh hook
-  state; a format change needs a doctor canary like the remote-link one. *Context:*
-  `agent_state.rb` merge path; start with the Codex research (decides whether this is
-  one mechanism or Claude-only). *Depends on:* remote-link PR 1.
+  D2=B); measure first.
 
 - **Check whether Claude fires `Stop` when a turn ends on an API error.** *Why:*
   Claude documents a separate `StopFailure` event for a turn that dies on an API
@@ -627,7 +555,7 @@ safe today; each is narrow).
   `codex_bypasses_trust?` matches the bypass flag anywhere in a command, so
   `codex --dangerously-bypass-hook-trust; codex` (or the flag in a comment) reads as bypassed,
   and the bypass row shows green even for a hook set `enabled = false`, which bypass doesn't
-  re-enable. *Start in:* `CLI#codex_bypasses_trust?` (match per launch) and count disabled
+  re-enable. *Start in:* `Doctor.codex_bypasses_trust?` (match per launch) and count disabled
   handlers separately in `CodexHook.trust_status`. **Priority:** P3.
 
 - **Monitoring: don't let a fork clear a still-running session's ∞.** *Why:* the marker is
@@ -643,9 +571,8 @@ safe today; each is narrow).
 
 - **Small hook-path hardening.** *Why:* each is low-impact today. (1) The notify reporter's
   `sed` takes the last `"notification_type"` on a line (a nested copy would win; Claude's
-  payload is flat): anchor the first match. (2) `HookFile.ensure_script` reads the script in the
-  process locale, so under `LC_ALL=C` it rewrites it on every call: read it as UTF-8.
-  (3) `enable-hooks` outside a worktree exits 0 with only a warning. (4) The `conserved?`
+  payload is flat): anchor the first match.
+  (2) `enable-hooks` outside a worktree exits 0 with only a warning. (3) The `conserved?`
   comment claims more than the uninstall-side check does. **Priority:** P4.
 
 - **Tests: pin the rescue-only and untested-but-correct paths.** *Why:* the
@@ -663,7 +590,7 @@ safe today; each is narrow).
   hand-off signal — no session-file read, no settle window, and it would cover Codex if
   Codex grows the same. *Context:* rerun the T0 probe harness (a throwaway tmux + real
   claude, `DISABLE_UPDATES`) dumping the field's values for a background agent, a
-  background Bash and a Monitor. *Depends on:* nothing.
+  background Bash and a Monitor.
 - **Reporter v6 attribution gaps (both reproduced at ship QA).** (a) `field agent_id`
   matches an `agent_id` key nested in a main-agent tool's `tool_input` (the sed match is
   greedy, last wins), so that `thinking` refresh is dropped; fix by matching only
@@ -737,8 +664,8 @@ safe today; each is narrow).
   colors, the `⇅` live/idle color, the diff `+/−` and the PR state. Only shapes survive, and
   the selected row is exactly the one you're reading. Re-coloring a cell inside the reverse
   run doesn't work: fg and bg swap, so the color paints that cell's *background* (the idle
-  `⇅` showed an off-shade block, which is why v0.53.1 dropped it). *Start in:* `Sidebar#line`,
-  `note_line` and `line_without_note` (`sidebar/render.rb`), the three `\e[7m` bar returns.
+  `⇅` showed an off-shade block, which is why v0.53.1 dropped it). *Start in:* `cursor_bar`
+  (`sidebar/render.rb`), which all three row paths share.
   Likely shape: draw the bar as an explicit background (`\e[48;…m`) with the normal `colored`
   row on top instead of reverse video, which keeps fg colors intact. The hard part is
   theme-relativity: a fixed bg has to read on light and dark themes (the #23 constraint behind
@@ -786,12 +713,12 @@ safe today; each is narrow).
   - A verdict can point at the wrong cause: a too-narrow pane or an unreadable `#{pane_synchronized}`
     ends as `ceiling`; a user's own `/rename …` draft reads as our leftover.
   - Design call: a session name the user chose by hand is overwritten by every workspace rename.
-  - Run-3 review, none typing-safety: the session-file vocabulary (`INTERACTIVE`, `KINDS`,
-    `STATUSES`, the bare `"bg"` in `RemoteLink.bg_kind?`) belongs in `ClaudeSessions` beside
+  - Run-3 review, none typing-safety: the session-file vocabulary (`STATUSES`,
+    the bare `"bg"` in `RemoteLink.bg_kind?`) belongs in `ClaudeSessions` beside
     `OFFSTAGE_STATUSES`; `Sandbox.park_session` should default `kind` to `"bg"` (both callers
     override it, and the interactive default is the one a worker would type into); `Owner.claim` /
     `Owner.file` re-resolve an already-real path (key by it as given, like `Outcome.record_real`,
-    and fix the comment and CLAUDE.md's superseded-outcome reason) — Codex round C showed the cost:
+    and fix the comment and `docs/explanation-session-name-sync.md`'s superseded-outcome reason) — Codex round C showed the cost:
     a rename landing between `work`'s check and the claim lets the old worker overwrite the new
     one's claim through the bridge, both retire, and the newest name is never synced; the state matrix's untested
     verdict cells (`none`/`unrecognized`/`leftover`/`failed_send` × superseded or next pass).
@@ -867,8 +794,7 @@ safe today; each is narrow).
   and its color has to stay distinct from the bold project name. *Start in:*
   `Render#colored` (the `@attention.include?` / `unseen_failure?` branch) and the
   collapsed-header clone in `Sidebar::Rows#visible_tree`, which can tally the hidden
-  rows' attention the same way it tallies the `(N)` count. *Depends on:* the folded
-  project `(N)` count landing first. **Priority:** P3.
+  rows' attention the same way it tallies the `(N)` count. **Priority:** P3.
 
 ## Sidebar search follow-ups
 
