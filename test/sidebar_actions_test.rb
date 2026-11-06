@@ -866,6 +866,33 @@ module Switchboard
       assert_equal "wt-below", current_node(sb).name, "the cursor followed its row"
     end
 
+    # Value: protects=the selection holds when a warm reload lands between saving the config and
+    # quitting the editor; fails_when=warm_reload rebuilds without keep_cursor, so the post-edit
+    # reload then keeps the wrong row; why_new=the test above has no warm reload; seam=none;
+    # no_claim=that the warm frame matches the switch-in frame (manual)
+    def test_a_warm_reload_during_a_config_edit_keeps_the_cursor_on_its_row
+      app = temp_git_repo("app")
+      many = path("wt-many")
+      git(app, "worktree", "add", "-q", "-b", "b0", many)
+      (1..6).each { |i| git(many, "checkout", "-q", "-b", "b#{i}") }
+      other = temp_git_repo("other")
+      git(other, "worktree", "add", "-q", "-b", "solo", path("wt-below"))
+      projects = [{ "name" => "app", "path" => app }, { "name" => "other", "path" => other }]
+
+      File.write(Config.path, YAML.dump("max_branch_history" => 2, "projects" => projects))
+      sb = sidebar(nodes: [])
+      sb.send(:rebuild)
+      sb.instance_variable_set(:@cursor, rows_of(sb).index { |n| n.kind == "ws" && n.name == "wt-below" })
+
+      File.write(Config.path, YAML.dump("max_branch_history" => 6, "projects" => projects))
+      later = File.mtime(Config.path) + 2 # refresh_config is gated on mtime, which a coarse clock can repeat
+      File.utime(later, later, Config.path)
+      sb.send(:warm_reload, nil)
+      assert_equal "wt-below", current_node(sb).name, "the warm reload held the row"
+      sb.send(:reload_config_and_rebuild)
+      assert_equal "wt-below", current_node(sb).name, "and the post-edit reload still has it"
+    end
+
     # Value: protects=lowering the cap under a selected branch row leaves a valid selection;
     # fails_when=keep_cursor assigns nil or the clamp is lost, so the next key acts on nothing;
     # why_new=no sidebar test reaches keep_cursor's row-gone path; seam=none; no_claim=which row
