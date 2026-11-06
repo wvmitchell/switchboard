@@ -1168,6 +1168,29 @@ module Switchboard
       end
     end
 
+    # Value: protects=doctor stays quiet about a usable cap, however large; fails_when=the check
+    # flags a valid or unset value; why_new=the check is new; seam=none; no_claim=none beyond protects
+    def test_doctor_is_silent_about_a_usable_max_branch_history
+      [{}, { "max_branch_history" => nil }, { "max_branch_history" => 16 }, { "max_branch_history" => 5000 }].each do |data|
+        File.write(Config.path, YAML.dump(data))
+        assert_equal "", capture { Doctor.doctor_max_branch_history(Config.new) }, "#{data} is fine"
+      end
+    end
+
+    # Value: protects=a bad value the sidebar quietly replaces is still reported, through the
+    # real doctor run; fails_when=Doctor.run stops calling the check, or it names the wrong
+    # value; why_new=doctor tests mostly call each check directly, which stays green if run never
+    # does; seam=gh auth stub in run_doctor; no_claim=none beyond protects
+    def test_doctor_names_a_bad_max_branch_history_and_the_value_it_uses
+      [-3, 0, 10.5, "10", true, false, 2**63].each do |bad|
+        File.write(Config.path, YAML.dump("max_branch_history" => bad))
+        assert_includes capture { Doctor.doctor_max_branch_history(Config.new) },
+                        "max_branch_history #{bad.inspect} isn't a whole number above 0 — using 10"
+      end
+      File.write(Config.path, YAML.dump("max_branch_history" => -3))
+      assert_includes capture { run_doctor }, "max_branch_history -3"
+    end
+
     private
 
     def capture

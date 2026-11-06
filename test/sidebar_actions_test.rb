@@ -839,6 +839,84 @@ module Switchboard
       assert_match(/config not reloaded/, captured.to_s, "surfaced the error via tmux notify")
     end
 
+    # Value: protects=after `e`, the next key acts on the same row even when the edit added rows
+    # above it; fails_when=the keep_cursor wrap is removed; why_new=this reload path had no
+    # cursor test; seam=none; no_claim=the tree tick and other windows, which keep the row number
+    def test_reload_config_and_rebuild_keeps_the_cursor_on_its_row_when_the_cap_adds_rows_above
+      app = temp_git_repo("app")
+      many = path("wt-many")
+      git(app, "worktree", "add", "-q", "-b", "b0", many)
+      (1..6).each { |i| git(many, "checkout", "-q", "-b", "b#{i}") }
+      other = temp_git_repo("other")
+      below = path("wt-below")
+      git(other, "worktree", "add", "-q", "-b", "solo", below)
+      projects = [{ "name" => "app", "path" => app }, { "name" => "other", "path" => other }]
+
+      File.write(Config.path, YAML.dump("max_branch_history" => 2, "projects" => projects))
+      sb = sidebar(nodes: [])
+      sb.instance_variable_set(:@config, Config.new)
+      sb.send(:rebuild)
+      target = rows_of(sb).index { |n| n.kind == "ws" && n.name == "wt-below" }
+      sb.instance_variable_set(:@cursor, target)
+
+      File.write(Config.path, YAML.dump("max_branch_history" => 6, "projects" => projects))
+      sb.send(:reload_config_and_rebuild)
+
+      assert_operator rows_of(sb).index { |n| n.kind == "ws" && n.name == "wt-below" }, :>, target, "rows landed above"
+      assert_equal "wt-below", current_node(sb).name, "the cursor followed its row"
+    end
+
+    # Value: protects=the selection holds when a warm reload lands between saving the config and
+    # quitting the editor; fails_when=warm_reload rebuilds without keep_cursor, so the post-edit
+    # reload then keeps the wrong row; why_new=the test above has no warm reload; seam=none;
+    # no_claim=that the warm frame matches the switch-in frame (manual)
+    def test_a_warm_reload_during_a_config_edit_keeps_the_cursor_on_its_row
+      app = temp_git_repo("app")
+      many = path("wt-many")
+      git(app, "worktree", "add", "-q", "-b", "b0", many)
+      (1..6).each { |i| git(many, "checkout", "-q", "-b", "b#{i}") }
+      other = temp_git_repo("other")
+      git(other, "worktree", "add", "-q", "-b", "solo", path("wt-below"))
+      projects = [{ "name" => "app", "path" => app }, { "name" => "other", "path" => other }]
+
+      File.write(Config.path, YAML.dump("max_branch_history" => 2, "projects" => projects))
+      sb = sidebar(nodes: [])
+      sb.send(:rebuild)
+      sb.instance_variable_set(:@cursor, rows_of(sb).index { |n| n.kind == "ws" && n.name == "wt-below" })
+
+      File.write(Config.path, YAML.dump("max_branch_history" => 6, "projects" => projects))
+      later = File.mtime(Config.path) + 2 # refresh_config is gated on mtime, which a coarse clock can repeat
+      File.utime(later, later, Config.path)
+      sb.send(:warm_reload, nil)
+      assert_equal "wt-below", current_node(sb).name, "the warm reload held the row"
+      sb.send(:reload_config_and_rebuild)
+      assert_equal "wt-below", current_node(sb).name, "and the post-edit reload still has it"
+    end
+
+    # Value: protects=lowering the cap under a selected branch row leaves a valid selection;
+    # fails_when=keep_cursor assigns nil or the clamp is lost, so the next key acts on nothing;
+    # why_new=no sidebar test reaches keep_cursor's row-gone path; seam=none; no_claim=which row
+    # it lands on beyond being in range
+    def test_reload_config_and_rebuild_leaves_a_valid_cursor_when_a_lower_cap_drops_its_row
+      app = temp_git_repo("app")
+      many = path("wt-many")
+      git(app, "worktree", "add", "-q", "-b", "b0", many)
+      (1..6).each { |i| git(many, "checkout", "-q", "-b", "b#{i}") }
+      projects = [{ "name" => "app", "path" => app }]
+
+      File.write(Config.path, YAML.dump("max_branch_history" => 6, "projects" => projects))
+      sb = sidebar(nodes: [])
+      sb.send(:rebuild)
+      sb.instance_variable_set(:@cursor, rows_of(sb).index { |n| n.kind == "br" && n.branch == "b1" })
+
+      File.write(Config.path, YAML.dump("max_branch_history" => 2, "projects" => projects))
+      sb.send(:reload_config_and_rebuild)
+
+      refute_includes rows_of(sb).map(&:branch), "b1", "the row is gone"
+      assert_kind_of Integer, cursor_of(sb)
+      assert current_node(sb), "the cursor still names a row"
+    end
+
     # --- edit_config: the `e` command handed to edit_in_home ------------------
     # The editor is left UNescaped so the spawned shell resolves $EDITOR at run
     # time (the nvim fix); the path is escaped; the trailer returns to origin and

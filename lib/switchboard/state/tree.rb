@@ -19,11 +19,11 @@ module Switchboard
 
     # Flat, ordered list of Nodes: project header, its workspaces, and a
     # workspace's branches (when it has more than one).
-    def nodes(model, branch_cache: nil)
+    def nodes(model, branch_cache: nil, branch_limit: Config::BRANCH_HISTORY_DEFAULT)
       model.projects.flat_map do |project|
         list = [Node.new(kind: "proj", project: project.name, path: project.path)]
         project.worktrees.reject(&:primary).each do |wt|
-          branches = lineage(wt, branch_cache)
+          branches = lineage(wt, branch_cache, branch_limit: branch_limit)
           expanded = branches.size > 1
           # When a workspace expands into per-branch rows, the PR badge belongs on the
           # branch row that owns it. The current branch's PR is wt.pr, so showing it on
@@ -46,8 +46,8 @@ module Switchboard
       end
     end
 
-    def lineage(worktree, branch_cache = nil)
-      (Git.branch_history(worktree.path, limit: Git::MAX_BRANCH_HISTORY, cache: branch_cache) | [worktree.branch].compact)
+    def lineage(worktree, branch_cache = nil, branch_limit: Config::BRANCH_HISTORY_DEFAULT)
+      Git.branch_history(worktree.path, limit: branch_limit, cache: branch_cache) | [worktree.branch].compact
     end
   end
 end

@@ -294,6 +294,23 @@ module Switchboard
       refute_includes hist, "STALE"
     end
 
+    # Value: protects=a live cap change reaches the memo with the reflog untouched;
+    # fails_when=the limit leaves the memo key, so a sidebar keeps the old rows until the next
+    # checkout; why_new=the cache tests above never change the limit; seam=none; no_claim=none
+    # beyond protects
+    def test_branch_history_reparses_when_only_the_limit_changes
+      repo = temp_git_repo
+      (1..12).each { |i| git(repo, "checkout", "-q", "-b", "b#{i}") }
+      cache = {}
+      assert_equal 8, Git.branch_history(repo, limit: 8, cache: cache).size
+      assert_equal (3..12).map { |i| "b#{i}" }.reverse, Git.branch_history(repo, limit: 10, cache: cache),
+                   "newest first, and the oldest beyond the limit drop"
+      gitdir, mtime, limit, = cache[repo]
+      cache[repo] = [gitdir, mtime, limit, ["SENTINEL"]]
+      assert_equal ["SENTINEL"], Git.branch_history(repo, limit: 10, cache: cache), "the same limit still hits the memo"
+      assert_equal 8, Git.branch_history(repo, limit: 8, cache: cache).size, "lowering it reparses too"
+    end
+
     # Value: protects=a long-lived sidebar's branch rows when a deleted workspace's path is reused under another admin dir; fails_when=a cached gitdir with no logs/HEAD is trusted instead of resolved again; why_new=the tests above keep one worktree at its path; seam=none (real git worktrees); no_claim=a cached gitdir that is still alive but now belongs to another worktree
     def test_branch_history_resolves_again_when_a_new_worktree_takes_the_path
       repo = temp_git_repo

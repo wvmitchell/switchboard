@@ -691,7 +691,7 @@ module Switchboard
       # dispatch change would multiply them; the on-screen pane's scans cover them.
       @warming = true
       begin
-        rebuild
+        keep_cursor { rebuild } # nobody's at this pane: rows landing above mustn't move its selection
       ensure
         @warming = false
       end

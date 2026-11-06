@@ -33,7 +33,7 @@ module Switchboard
       worktree_root projects_root base branch_prefix session_command worktree_creation_command
       prune_on_launch auto_rename diff_counts prewarm background_presence
       remote_link_stale_after update_check sync_session_name count_indicator agent_dispatch
-      sounds tmux_keys sidebar_keys projects
+      max_branch_history sounds tmux_keys sidebar_keys projects
     ].freeze
 
     # Top-level keys switchboard once read and no longer does, with what replaced them. Still
@@ -88,6 +88,7 @@ module Switchboard
       # agent_dispatch: true                       # tell agents `switchboard new` can start another workspace, here or in another project, when you ask
       # diff_counts: true                          # show +adds −dels of each branch vs base on the workspace row
       # count_indicator: true                      # show a half-typed count (the 3 of 3j) in the sidebar footer; false hides it, counts still work
+      # max_branch_history: 10                     # how many branch rows a workspace that has held several branches shows; older ones drop off the list, the branches stay
       # prewarm: true                              # keep off-screen sidebars warm so switching sessions doesn't flash a stale tree
       # remote_link_stale_after: 120               # minutes a /remote-control-linked session can sit idle before its ⇅ turns grey; false turns it off
       # update_check: true                        # Homebrew installs: a line under the wordmark when a newer release is out (one git ls-remote every few hours); false never checks
@@ -368,6 +369,24 @@ module Switchboard
       secs = raw * 60 if raw.is_a?(Numeric) && raw.positive?
       secs = REMOTE_LINK_STALE_DEFAULT * 60 unless secs&.finite?
       [secs.to_i, 1].max # a sub-second value would grey every idle link the instant it idles
+    end
+
+    # How many branch rows a workspace's history expands to, so a long-lived worktree can't
+    # grow a runaway list. Anything but a usable count falls back to the default, and doctor
+    # says so: a bad limit would raise on the rebuild path, and `false` would mean no cap.
+    # Global only.
+    BRANCH_HISTORY_DEFAULT = 10
+
+    def max_branch_history
+      raw = raw_max_branch_history
+      valid_max_branch_history?(raw) ? raw : BRANCH_HISTORY_DEFAULT
+    end
+
+    def raw_max_branch_history = @data["max_branch_history"]
+
+    # Below 2**63: Array#first raises on a count that doesn't fit a C long.
+    def valid_max_branch_history?(value)
+      value.is_a?(Integer) && value.positive? && value < 2**63
     end
 
     # Optional prefix for new branches, e.g. "wvmitchell" -> wvmitchell/<name>.

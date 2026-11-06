@@ -72,7 +72,8 @@ existence is ever read, never the contents, it doesn't need the temp+rename writ
 
 A workspace that has held several branches expands into inline branch rows
 (`Tree.nodes` / `Git.branch_history`), which covers the case of several PRs from one
-workspace. Those rows are useful now and then and noise most of the time. `z` (issue #107)
+workspace. [`max_branch_history`](reference-config.md#max_branch_history) caps how many it
+shows. Those rows are useful now and then and noise most of the time. `z`
 folds *every* workspace's branch rows at once, wherever the cursor is: one "toggle
 branches" key, not a per-row fold.
 

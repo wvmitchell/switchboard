@@ -16,7 +16,7 @@ module Switchboard
       def rebuild
         refresh_config # pick up a project added/removed in another session (mtime-gated; see actions.rb)
         @model = Model.new(@config, with_dirty: false)
-        @nodes = Tree.nodes(@model, branch_cache: @branch_cache)
+        @nodes = Tree.nodes(@model, branch_cache: @branch_cache, branch_limit: @config.max_branch_history)
         resolve_keymap # re-read sidebar_keys so an `e` config edit re-binds the tree keys (#108)
         # Hydrate folds from the shared on-disk store so every window's sidebar
         # agrees and a respawned pane keeps them. GC against the configured project

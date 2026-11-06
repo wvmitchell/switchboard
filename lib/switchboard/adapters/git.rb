@@ -9,9 +9,6 @@ module Switchboard
   module Git
     module_function
 
-    # Cap how many branches a workspace's history expands to; dedicated worktrees are
-    # short-lived, but we never want a runaway list.
-    MAX_BRANCH_HISTORY = 8
     FETCH_DEADLINE = 60 # a stalled best-effort fetch (workspace build, clone upgrade check) gives up
 
     # All worktrees registered against a repo, parsed from porcelain output. `strict:` is for

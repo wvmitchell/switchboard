@@ -92,7 +92,7 @@ module Switchboard
       backdate(file, 300)
       mtime = File.mtime(file).to_i
 
-      stub_fetch(nil) { Pr.refresh("proj", "/whatever") }
+      stub_fetch(nil) { Pr.refresh("proj", "/whatever", branch_limit: 10) }
 
       assert_equal({ "main" => { "identifier" => "#1" } }, Pr.for_project("proj"))
       assert_equal mtime, File.mtime(file).to_i # mtime not bumped -> backstop retries
@@ -100,7 +100,7 @@ module Switchboard
 
     def test_refresh_writes_atomically_on_success
       data = { "main" => { "identifier" => "#9", "status" => "OPEN", "is_draft" => 0 } }
-      stub_fetch(data) { Pr.refresh("proj", "/whatever") }
+      stub_fetch(data) { Pr.refresh("proj", "/whatever", branch_limit: 10) }
 
       assert_equal data, Pr.for_project("proj")
       assert_equal [File.basename(Pr.cache_file("proj"))], Dir.children(@cache),
@@ -118,7 +118,7 @@ module Switchboard
       seed("proj", { "old-merged" => { "identifier" => "#15434", "status" => "MERGED", "is_draft" => 0 } })
 
       fresh = { "new-branch" => { "identifier" => "#15900", "status" => "OPEN", "is_draft" => 0 } }
-      stub_fetch(fresh) { Pr.refresh("proj", "/whatever") }
+      stub_fetch(fresh) { Pr.refresh("proj", "/whatever", branch_limit: 10) }
 
       map = Pr.for_project("proj")
       assert_equal "#15434", map.dig("old-merged", "identifier"),
@@ -132,7 +132,7 @@ module Switchboard
       seed("proj", { "feature" => { "identifier" => "#7", "status" => "OPEN", "is_draft" => 0 } })
 
       fresh = { "feature" => { "identifier" => "#7", "status" => "MERGED", "is_draft" => 0 } }
-      stub_fetch(fresh) { Pr.refresh("proj", "/whatever") }
+      stub_fetch(fresh) { Pr.refresh("proj", "/whatever", branch_limit: 10) }
 
       assert_equal "MERGED", Pr.for_project("proj").dig("feature", "status")
     end
@@ -145,7 +145,7 @@ module Switchboard
     def test_refresh_wipes_the_sticky_base_when_the_repo_identity_changed
       seed("proj", { Pr::REPO_KEY => "old/repo", "feature" => { "identifier" => "#7" } })
 
-      stub_fetch({}) { stub_backfill([], {}) { Pr.refresh("proj", "/whatever") } }
+      stub_fetch({}) { stub_backfill([], {}) { Pr.refresh("proj", "/whatever", branch_limit: 10) } }
 
       map = Pr.for_project("proj")
       refute map.key?("feature"), "a different repo under the same name must not inherit badges"
@@ -155,7 +155,7 @@ module Switchboard
     def test_refresh_keeps_the_sticky_base_when_identity_matches
       seed("proj", { Pr::REPO_KEY => "owner/repo", "feature" => { "identifier" => "#7" } })
 
-      stub_fetch({}) { stub_backfill([], {}) { Pr.refresh("proj", "/whatever") } }
+      stub_fetch({}) { stub_backfill([], {}) { Pr.refresh("proj", "/whatever", branch_limit: 10) } }
 
       assert_equal "#7", Pr.for_project("proj").dig("feature", "identifier")
     end
@@ -165,7 +165,7 @@ module Switchboard
     def test_refresh_keeps_a_legacy_cache_without_marker_and_stamps_it
       seed("proj", { "feature" => { "identifier" => "#7" } })
 
-      stub_fetch({}) { stub_backfill([], {}) { Pr.refresh("proj", "/whatever") } }
+      stub_fetch({}) { stub_backfill([], {}) { Pr.refresh("proj", "/whatever", branch_limit: 10) } }
 
       map = Pr.for_project("proj")
       assert_equal "#7", map.dig("feature", "identifier")
@@ -354,13 +354,13 @@ module Switchboard
     # round trip, so the next refresh issues no query for that branch.
     def test_refresh_persists_the_null_negative_cache
       stub_fetch({}) do
-        stub_backfill(["no-pr"], { "no-pr" => [] }) { Pr.refresh("proj", "/whatever") }
+        stub_backfill(["no-pr"], { "no-pr" => [] }) { Pr.refresh("proj", "/whatever", branch_limit: 10) }
       end
       assert Pr.for_project("proj").key?("no-pr")
 
       calls = []
       stub_fetch({}) do
-        stub_backfill(["no-pr"], {}, calls) { Pr.refresh("proj", "/whatever") }
+        stub_backfill(["no-pr"], {}, calls) { Pr.refresh("proj", "/whatever", branch_limit: 10) }
       end
       assert_empty calls
     end
@@ -416,6 +416,30 @@ module Switchboard
 
       assert_equal %w[feat-a feat-b], Pr.rendered_branches(repo).sort,
                    "lineage + current branch as short names; the primary's trunk stays out"
+    end
+
+    # Value: protects=PR lookups cover the rows the sidebar draws, not the whole history;
+    # fails_when=rendered_branches stops honoring the cap, or refresh stops handing it to
+    # backfill; why_new=the test above and every backfill stub pass no limit; seam=stub of
+    # backfill for the hand-off; no_claim=gh behavior
+    def test_refresh_hands_its_limit_through_to_the_rendered_branches
+      repo = temp_git_repo
+      wt = path("wt-feature")
+      git(repo, "worktree", "add", "-q", "-b", "b0", wt)
+      (1..4).each { |i| git(wt, "checkout", "-q", "-b", "b#{i}") }
+      assert_equal %w[b4 b3], Pr.rendered_branches(repo, limit: 2)
+
+      heads = []
+      gh = ->(_repo, _state, _limit, sort: nil, head: nil) { heads << head; [] }
+      stub_method(Pr, :repo_slug, ->(*) { "owner/repo" }) do
+        stub_method(Pr, :gh_pr_list, gh) { Pr.backfill({}, repo, {}, branch_limit: 2) }
+      end
+      assert_equal %w[b3 b4], heads.sort, "backfill asks only about the rows within the cap"
+
+      seen = nil
+      backfill = ->(_data, _repo, _fresh, branch_limit:) { seen = branch_limit }
+      stub_fetch({}) { stub_method(Pr, :backfill, backfill) { Pr.refresh("proj", "/whatever", branch_limit: 7) } }
+      assert_equal 7, seen
     end
 
     # --- parse_pr_json: the gh-stdout -> nil/[] discrimination the cache guard rides ---
