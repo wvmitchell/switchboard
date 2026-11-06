@@ -63,18 +63,6 @@ safe today; each is narrow).
 
 ## Background dispatch (v0.51.0) follow-ups
 
-- **Scope typeahead to the task prompt, and never let it submit.** *Why:* `Sidebar#handle`
-  hands the rest of a read batch to whichever `prompt_line` opens mid-batch. That fixed `n`
-  + fast typing losing the task, but it's too broad: a line pasted into the TREE pane
-  (bracketed paste is only on inside the task prompt) that contains `n` dispatches an agent
-  with the rest of the line, prompt never shown; `r name↵` in one read renames unseen; a
-  key after `↵` in the batch folds the `↵` (prompt stays open); keys after a cancel are
-  dropped; a paste-end marker split into `@pending` isn't handed over (paste-mode wedge);
-  `read_char` (the `a` menu, `confirm`) ignores typeahead so keys apply out of order.
-  *Start in:* `prompt.rb` `prompt_line` (`typed = task ? … : ""`, feed tokens up to the
-  first `\r`/`\n` and keep the prompt open), `input.rb` `handle`; consider bracketed paste
-  in tree mode with the pasted span dropped. Tests: a pasted line with `n` must not
-  dispatch; assert `@typeahead` is cleared. **Priority:** P1.
 - **Renaming an un-set-up build can drop its guard.** *Why:* in the few ms between
   `git worktree move` and `leave_bridge`, another sidebar's GC sees the old path missing
   (rule 3) and deletes the unfinished record; `certified?(nil)` then lets a later

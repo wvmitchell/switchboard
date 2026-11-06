@@ -112,6 +112,17 @@ module Switchboard
       assert_equal [:closed, "\e[O"], events, "and the focus-out still ran, after it closed"
     end
 
+    # Value: protects=keys batched around a confirm's answer never fire on the tree once it closes;
+    # fails_when=read_char hands non-poke keys back to handle; why_new=actions_test covers only who
+    # answers; seam=none; no_claim=none beyond protects
+    def test_keys_batched_around_a_confirm_do_not_fire_after_it
+      [["qj", "n"], ["q", "nj"]].each do |keys, read|
+        sb = sidebar(nodes: [proj("app"), ws("a", path: "/wt/a"), ws("b", path: "/wt/b")], cursor: 1)
+        with_reads(sb, read) { assert sb.send(:handle, keys) }
+        assert_equal 1, sb.instance_variable_get(:@cursor), "#{keys} + #{read}: the j never moved the cursor"
+      end
+    end
+
     # Value: protects=a poke batched behind the answer still runs after the prompt closes;
     # fails_when=read_char drops what it read past the key; why_new=every other script reads
     # the key alone; seam=none; no_claim=real tmux batching two bytes into one read
