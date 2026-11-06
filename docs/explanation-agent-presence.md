@@ -878,10 +878,10 @@ apply, and failing closed would silence every dispatch if the undocumented file 
 
 ### One read, no machine-wide forks
 
-`refresh_agents` runs `ClaudeSessions.scan` right after the hook read (running it before
-would let its `ps` and `lsof` widen the done-before-idle race) and before `on_scan`. It
-returns nil on failure, never `{}`, which would read as "finished". The same result goes to
-`RemoteLink.scan(sessions:)` in the `ensure`.
+`Presence.scan` (`presence.rb`) runs `ClaudeSessions.scan` right after the hook read (running
+it before would let its `ps` and `lsof` widen the done-before-idle race), and `refresh_agents`
+gets the result before `on_scan`. A failed read comes back as nil, never `{}`, which would read
+as "finished". The same result goes to `Presence.links(sessions:)` in the `ensure`.
 
 The scan pre-filters by recorded cwd (raw or realpath) against the *tracked* workspace paths
 before any `kill(0)`, `ps` or `lsof`. `same?` is one `ps` per session (batching measured no

@@ -134,6 +134,129 @@ module Switchboard
       assert_equal 1, recounts, "diff counts recompute exactly on the edge"
     end
 
+    # Records each Edges#on_scan call's keywords and returns no edges.
+    def spy_on_scan(sb)
+      calls = []
+      sb.instance_variable_get(:@edges).define_singleton_method(:on_scan) do |_states, **kw|
+        calls << kw
+        []
+      end
+      calls
+    end
+
+    def stub_agent_state(sb, &scan)
+      as = Struct.new(:last_hook_states).new({})
+      as.define_singleton_method(:scan, &scan)
+      sb.instance_variable_set(:@agent_state, as)
+    end
+
+    # --- the Presence seam -----------------------------------------------------
+    # Every snapshot field is distinct, so a field handed to the wrong reader fails here.
+    def test_refresh_agents_hands_each_snapshot_field_to_its_reader
+      a = real_dir("a")
+      sb = sidebar(nodes: [ws("a", path: a)])
+      stub_agent_state(sb) { |*, **| {} }
+      calls = spy_on_scan(sb)
+      snap = Presence::Snapshot.new(agents: { a => :thinking }, sessions: { a => [] }, offstage: { a => 1 }, handoff: { a => 2 },
+                                    idle: Set[a], fresh: Set["/fresh"], monitoring: Set["/monitored"], notify: { a => 3 })
+      links = nil
+      stub_method(Presence, :scan, ->(*, **) { snap }) do
+        stub_method(Presence, :links, ->(_paths, **kw) { links = kw; {} }) do
+          sb.send(:refresh_agents, refresh_prs: false)
+        end
+      end
+      assert_equal snap.agents, sb.instance_variable_get(:@agents)
+      assert_equal snap.fresh, sb.instance_variable_get(:@session_fresh)
+      assert_equal snap.handoff, sb.instance_variable_get(:@offstage_raw)
+      assert_equal snap.monitoring, sb.instance_variable_get(:@monitoring)
+      edge_args = calls.first
+      assert_equal snap.handoff, edge_args[:offstage], "only a background agent holds the chime, not a shell"
+      assert_equal snap.idle, edge_args[:idle]
+      assert_equal snap.notify, edge_args[:notify_pending]
+      assert_equal snap.monitoring, edge_args[:monitoring]
+      assert edge_args[:sessions_ok]
+      assert_equal snap.sessions, links[:sessions], "one read serves the ◷ evidence and the ⇅ links"
+      refute_nil links[:stale_after]
+      assert_equal sb.instance_variable_get(:@config).remote_link_stale_after, links[:stale_after]
+    end
+
+    # An on-screen reload after a delete passes hooks_only alone; a hidden pane's scan is cheap.
+    def test_hooks_only_and_cheap_stay_independent_through_refresh_agents
+      sb = sidebar(nodes: [ws("a", path: real_dir("a"))])
+      stub_agent_state(sb) { |*, **| {} }
+      seen = []
+      stub_method(Presence, :scan, lambda { |_paths, agent_state:, hooks_only:, cheap:|
+        seen << [hooks_only, cheap]
+        Presence::Snapshot.new(agents: {}, offstage: {}, handoff: {}, idle: Set.new, fresh: Set.new, monitoring: Set.new, notify: {})
+      }) do
+        stub_method(Presence, :links, ->(*, **) { {} }) do
+          sb.instance_variable_set(:@visible, true)
+          sb.send(:refresh_agents, refresh_prs: false, hooks_only: true)
+          sb.instance_variable_set(:@visible, false)
+          sb.send(:refresh_agents, refresh_prs: false)
+        end
+      end
+      assert_equal [[true, false], [false, true]], seen
+    end
+
+    # --- one presence source failing ------------------------------------------
+    # Each source keeps its own blast radius. The links row lives in
+    # sidebar_remote_link_test (test_a_raising_link_scan_leaves_the_dots_alone).
+
+    # No evidence must not read as "finished", so Edges has to hear the read failed while
+    # the dots and ∞ stay up. The clean scan first proves sessions_ok can be true.
+    def test_a_sessions_fault_keeps_the_dots_and_reports_no_evidence
+      a = real_dir("a")
+      sb = sidebar(nodes: [ws("a", path: a)])
+      stub_agent_state(sb) { |_paths, hooks_only: false| { a => :thinking } }
+      Monitoring.mark(a)
+      calls = spy_on_scan(sb)
+      link_reads = []
+      stub_method(RemoteLink, :scan, ->(_paths, sessions:, **) { link_reads << sessions; {} }) do
+        stub_method(ClaudeSessions, :scan, ->(*, **) { {} }) { sb.send(:refresh_agents, refresh_prs: false) }
+        stub_method(ClaudeSessions, :scan, ->(*, **) { raise "sessions file unreadable" }) do
+          assert sb.send(:refresh_agents, refresh_prs: false), "only ◷ loses its evidence; the scan is still clean"
+        end
+      end
+      assert_equal([true, false], calls.map { |kw| kw[:sessions_ok] })
+      assert_equal({ a => :thinking }, sb.instance_variable_get(:@agents))
+      assert_includes sb.instance_variable_get(:@monitoring), a
+      assert_equal [{}, nil], link_reads, "links reuse a good read, and read for themselves after a bad one"
+    end
+
+    # The contract is the return value: a failed scan stops the edges and tells warm_reload
+    # not to advance, so the next off-screen tick retries instead of sticking a stale dot.
+    def test_an_agent_state_fault_fails_the_scan_and_warm_reload_retries
+      sb = sidebar(nodes: [ws("a", path: real_dir("a"))])
+      stub_agent_state(sb) { |*, **| raise "hook dir vanished" }
+      calls = spy_on_scan(sb)
+      %i[rebuild locate refresh_diffs].each { |m| sb.define_singleton_method(m) { nil } }
+      sb.instance_variable_set(:@agents, { "/stale" => :done })
+      sb.instance_variable_set(:@warm_fp, "OLD")
+      sb.instance_variable_set(:@last_warm, 123)
+
+      refute sb.send(:refresh_agents, refresh_prs: false), "the scan reports its failure"
+      assert_equal({}, sb.instance_variable_get(:@agents))
+      refute sb.send(:warm_reload, "NEW")
+      assert_equal "OLD", sb.instance_variable_get(:@warm_fp)
+      assert_equal 123, sb.instance_variable_get(:@last_warm)
+      assert_empty calls, "edges never run on a failed scan"
+    end
+
+    # ∞ gates the :done suppression, so without it the edges can't run: this read has no
+    # rescue of its own, and a "successful" empty set would ring a monitored completion.
+    def test_a_monitoring_fault_fails_the_scan
+      a = real_dir("a")
+      sb = sidebar(nodes: [ws("a", path: a)])
+      stub_agent_state(sb) { |_paths, hooks_only: false| { a => :done } }
+      calls = spy_on_scan(sb)
+      stub_method(Monitoring, :monitored, ->(*) { raise "marker dir vanished" }) do
+        refute sb.send(:refresh_agents, refresh_prs: false)
+      end
+      assert_equal({}, sb.instance_variable_get(:@agents))
+      assert_empty calls
+    end
+
     # Option C: reload threads its hooks_only kwarg into the agent scan, so the
     # post-delete reload skips the tmux/pgrep/lsof process fallback. The delete test
     # pins that delete PASSES hooks_only: true; this pins that reload HONORS it.

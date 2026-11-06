@@ -28,7 +28,7 @@ module Switchboard
   #   loop top: maybe_reexec ─ due + no overlay ─▶ preflight ─▶ exec self in place (#48)
   #                                             │
   #        rebuild ─▶ Rows (rows.rb: fold/filter rows + @diffs cache)
-  #        refresh_agents ─▶ AgentState.scan ─▶ @edges.on_scan (edges.rb:
+  #        refresh_agents ─▶ Presence.scan ─▶ @edges.on_scan (edges.rb:
   #             │               completion edges ─▶ bold/sound/sparkle/PR-spawn)
   #             └─▶ returned edges ─▶ refresh_diffs
   #        render ─▶ Render (render.rb: frame/columns/glyphs/header/footer) ─▶ pane
@@ -495,22 +495,19 @@ module Switchboard
     def refresh_agents(announce_sounds: true, refresh_prs: true, hooks_only: false)
       finished = false # set on both normal exits; a signal or exit propagating leaves it false
       ws_paths = @nodes.select { |n| n.kind == "ws" }.map(&:path)
-      @agents = @agent_state.scan(ws_paths, hooks_only: hooks_only)
-      # AFTER the hooks: Claude writes `done` 13-29ms before `idle`, so a session read
-      # that precedes the hook read (its ps/lsof take ~30-125ms) would widen that race.
-      sessions = claude_sessions(ws_paths)             # one read for the ◷ evidence AND the ⇅ links (ensure)
-      offstage, handoff, idle, @session_fresh = session_evidence(sessions)
-      @offstage_raw = handoff
-      @offstage = settled_offstage(offstage)           # what ◷ draws: the hook's done has settled
-      @monitoring = Monitoring.monitored(ws_paths)     # BEFORE on_scan: gates the :done suppression
-      notify_pending = Notify.pending(ws_paths)        # declared "come look" alerts (mtime per path)
+      scan = Presence.scan(ws_paths, agent_state: @agent_state, hooks_only: hooks_only, cheap: !@visible)
+      @agents = scan.agents
+      @session_fresh = scan.fresh
+      @offstage_raw = scan.handoff
+      @offstage = settled_offstage(scan.offstage)      # what ◷ draws: the hook's done has settled
+      @monitoring = scan.monitoring                    # BEFORE on_scan: gates the :done suppression
       index_creations(Creation.all)                    # BEFORE on_scan: a dispatch owns its first turn (D16)
       # T1: the edge fanout (marks, sounds, sparkles, PR spawns) lives in Edges;
       # it returns the edge list so the diff-count refresh can ride the same edge.
       edges = @edges.on_scan(@agent_state.last_hook_states,
                              monitoring: @monitoring, nodes: @nodes, config: @config,
-                             current_path: @current_path, notify_pending: notify_pending,
-                             first_turn: first_turn_paths, offstage: handoff, idle: idle, sessions_ok: !sessions.nil?,
+                             current_path: @current_path, notify_pending: scan.notify,
+                             first_turn: first_turn_paths, offstage: scan.handoff, idle: scan.idle, sessions_ok: !scan.sessions.nil?,
                              announce_sounds: announce_sounds, refresh_prs: refresh_prs)
       ring_creations if announce_sounds
       @last_announce_scan = monotonic if announce_sounds && @visible # a reload's first scan may announce only after this (R7)
@@ -523,58 +520,16 @@ module Switchboard
       false
     ensure
       # LAST, and in the ensure: links refresh even when the dot scan above raised, so
-      # an open QR overlay never keeps showing a link that ended. remote_links is
-      # self-rescued, so it can add a ⇅ but never blank a dot. Not while a signal or exit
-      # propagates (finished false): a sidebar being reaped shouldn't fork ps/lsof on its way
-      # out. A local flag, not $!, which an enclosing caller's rescue would also set.
+      # an open QR overlay never keeps showing a link that ended. Presence.links is
+      # self-rescued, so it can add a ⇅ but never blank a dot. Not hooks_only: a visible pane
+      # must place links by kernel cwd. Not while a signal or exit propagates (finished
+      # false): a sidebar being reaped shouldn't fork ps/lsof on its way out. A local flag,
+      # not $!, which an enclosing caller's rescue would also set.
       if ws_paths && finished
-        @links = remote_links(ws_paths, cheap: !@visible, sessions: sessions)
+        @links = Presence.links(ws_paths, cheap: !@visible, sessions: scan&.sessions,
+                                          stale_after: @config.remote_link_stale_after)
         revalidate_link_view
       end
-    end
-
-    # Live /remote-control links per worktree. Its own rescue (RemoteLink.scan is
-    # total already) because a raise reaching refresh_agents' would blank every dot.
-    # `cheap` while off screen, so a hidden pane spawns no ps/lsof for links. Not
-    # hooks_only: an ON-screen reload passes that too (after a delete), and a visible
-    # pane must place links by kernel cwd. `sessions` is this scan's ClaudeSessions read;
-    # nil (it failed, or the scan raised before it) makes RemoteLink read for itself.
-    def remote_links(ws_paths, cheap: false, sessions: nil)
-      RemoteLink.scan(ws_paths, stale_after: @config.remote_link_stale_after, cheap: cheap, sessions: sessions)
-    rescue StandardError
-      {}
-    end
-
-    # This scan's live Claude sessions per worktree, or nil when the read failed (no
-    # evidence, which must not read as "finished"). Cheap off screen, like the links.
-    def claude_sessions(ws_paths)
-      ClaudeSessions.scan(ws_paths, cheap: !@visible)
-    rescue StandardError
-      nil
-    end
-
-    # The ◷ evidence: [{ path => pid } of sessions still running work after their turn
-    # (busy/shell: draws ◷), the same for `busy` alone (a background agent: holds the
-    # chime), Set of paths whose sessions read a settled idle, Set of paths with an idle
-    # too fresh to trust]. Empty on no evidence.
-    def session_evidence(sessions, now: Time.now)
-      offstage = {}
-      handoff = {}
-      idle = Set.new
-      fresh = Set.new
-      (sessions || {}).each do |path, recs|
-        case ClaudeSessions.activity(recs, now: now)
-        when :offstage
-          offstage[path] = recs.find { |r| ClaudeSessions::OFFSTAGE_STATUSES.include?(r[:status]) }[:pid]
-          agent = recs.find { |r| r[:status] == ClaudeSessions::HANDOFF_STATUS }
-          handoff[path] = agent[:pid] if agent
-        when :idle then idle << path
-        else fresh << path if recs.any? { |r| r[:status] == "idle" && !ClaudeSessions.settled_idle?(r, now) }
-        end
-      end
-      [offstage, handoff, idle, fresh]
-    rescue StandardError
-      [{}, {}, Set.new, Set.new]
     end
 
     # The paths ◷ may draw: busy/shell beside a hook report at least SETTLE old — Claude

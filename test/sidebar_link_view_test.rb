@@ -351,7 +351,7 @@ module Switchboard
     end
 
     # Value: protects=a sidebar being torn down by a signal doesn't fork the link scan on its way
-    # out; fails_when=the ensure runs remote_links while an Interrupt/SignalException propagates;
+    # out; fails_when=the ensure runs Presence.links while an Interrupt/SignalException propagates;
     # why_new=red team, ship of v0.54.0; seam=none; no_claim=real SIGTERM delivery
     def test_a_propagating_signal_skips_the_link_refresh
       sb = open(linked)
