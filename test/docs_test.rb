@@ -189,12 +189,11 @@ module Switchboard
 
     # An issue or PR number tells a reader nothing the sentence shouldn't say itself, and
     # those from before v0.50.0 point into a private archive. Code spans and fences are out:
-    # sample PR badges (`#128`) are drawn output. Link targets are out: they're anchors.
+    # sample PR badges (`#128`) are drawn output. A link target is out only as an anchor.
     def test_docs_dont_cite_issue_numbers
       cited = markdown_files.reject { File.basename(_1).match?(/\A(CHANGELOG|TODOS)\.md\z/) }.flat_map do |file|
-        without_fences(File.read(file)).lines.select do |line|
-          line.gsub(/`[^`\n]*`/, "").gsub(/\]\([^)]*\)/, "]").match?(/(?<![&\w])#\d/)
-        end.map { "#{rel(file)}: #{_1.strip[0, 70]}" }
+        without_fences(File.read(file, encoding: "UTF-8")).lines.select { cites_issue_number?(_1) }
+                                                           .map { "#{rel(file)}: #{_1.strip[0, 70]}" }
       end
       assert_empty cited, "say what the behaviour is instead of citing its issue or PR number"
     end
@@ -217,6 +216,13 @@ module Switchboard
     def kind_of(file) = File.basename(file)[/\A(#{KINDS.keys.join("|")})-/o, 1]
 
     def without_fences(text) = text.gsub(/^(```|~~~).*?^\1[^\n]*$/m, "")
+
+    # `(?<!&)` spares an HTML entity; a `repo#57` citation still counts.
+    def cites_issue_number?(line)
+      prose = line.gsub(/(`+).*?\1/, "")
+      prose.match?(%r{/(?:issues|pull)/\d|\b(?:issue|PR)s? \d}i) ||
+        prose.gsub(/\]\([^)]*\)/, "]").match?(/(?<!&)#\d/)
+    end
 
     def headings(file)
       without_fences(File.read(file)).scan(/^#+\s+(.+?)\s*#*$/).flatten

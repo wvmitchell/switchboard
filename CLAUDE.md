@@ -119,8 +119,9 @@ tracks these lines; update them when you re-verify one.
 
 ## Conventions
 
-- Docs carry no issue or PR numbers. In code comments, numbers from before v0.50.0 refer
-  to the private `switchboard-archive` repo; the public tracker restarted after them.
+- Docs carry no issue or PR numbers. In code comments and `TODOS.md`, numbers from before
+  v0.50.0 refer to the private `switchboard-archive` repo. The public tracker restarted from
+  one, so such a number can also name an unrelated public issue.
 - Every file starts with `# frozen_string_literal: true`.
 - Stateless helpers are `module_function` modules (`ClaudeHook`, `CodexHook`,
   `MarkerBlock`, `Tmux`, `Installer`, …); only `Model`, `Config`, `Sidebar` (with its
