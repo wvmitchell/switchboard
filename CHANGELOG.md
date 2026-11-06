@@ -10,6 +10,13 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
+## [0.68.2] — tests: a failed reload stays visible in `doctor`, and a resumed sidebar can't freeze on its children (2026-11-06)
+
+### Changed
+- No behavior changes. New tests cover a failed sidebar reload staying listed in `doctor` until a later reload
+  lands, a failed reload's old deadline not shortening the next spread, the failure flag and an owed tag landing
+  on the sidebar's own pane, and a resumed sidebar clearing every zombie without blocking on a child still running.
+
 ## [0.68.1] — a `;` key spelled differently from tmux keeps your binding, and `doctor` names the right key (2026-11-06)
 
 ### Fixed
