@@ -91,7 +91,7 @@ Pr  ────┘   (project    (ordered      (hand-rolled ANSI TUI in a
   This is the multiple-PRs-per-workspace case made visible.
 - **`Sidebar`** draws the nodes as a 3-level tree in a fixed-width tmux pane. No
   fzf, no curses — a hand-rolled ANSI renderer. It is the *only* navigator.
-  `sidebar.rb` is the run-loop core. The #57 split carved the rest into concern files
+  `sidebar.rb` is the run-loop core. The rest is split into concern files
   under `sidebar/`: `edges`, `update_cue`, `reloader` and `search`, collaborator classes that
   own the agent-edge fan-out state, the update line's, the code reload's and the `/` search's,
   and the `render`, `input`, `actions`, `prompt` and
@@ -375,7 +375,7 @@ the run; the smoke harness sweeps those before each run.
 ## Configurable tmux keys
 
 The fragment leaves binding to `switchboard tmux-bind` (`Installer.apply_keybindings` in
-`ops/installer/keybindings.rb`, issue #15). It reads `tmux_keys:` from the config through
+`ops/installer/keybindings.rb`). It reads `tmux_keys:` from the config through
 `Config#tmux_key`, which is global and resolves with a default like `sound_for`: `toggle`
 defaults to `s`, and `home` is unbound.
 
@@ -471,7 +471,7 @@ Checking a UI change means *looking* at it, and running an in-progress branch in
 real tmux lets its own actions (`go_home`, a reconcile, a `quit`) land on your real `sb/`
 sessions.
 
-`switchboard sandbox` (`sandbox.rb`, issue #126) is the smoke harness with you as the
+`switchboard sandbox` (`sandbox.rb`) is the smoke harness with you as the
 client. It:
 
 1. boots a throwaway tmux server on an isolated socket;
@@ -543,7 +543,7 @@ and asserts the server is still reaped by its recorded pid. The pure pieces
 The seeded config carries `base: main`, `projects:` and `auto_rename: false`, all in
 the emitted YAML. Without `base`, the repo (which has no
 origin) would default to `origin/main` and break `n` and the diff counts. Without
-`projects:`, the tree would be empty. The lone-pane trap from #64 is avoided by always
+`projects:`, the tree would be empty. The lone-pane trap (a window left with only its sidebar) is avoided by always
 seeding a work pane plus sidebar split, which is never touched.
 
 ### Three things that would escape the isolated server
@@ -561,7 +561,7 @@ seeded update line and skip the check.) Those two:
 **The third is Claude Code's self-updater, which switchboard can't gate with its own
 flag.** It would install under the redirected `XDG_DATA_HOME` but repoint the *global*
 `~/.local/bin/claude` symlink there, which teardown then deletes, leaving
-`command not found: claude` system-wide (#145). So `sandbox_env` also passes Claude its own
+`command not found: claude` system-wide. So `sandbox_env` also passes Claude its own
 opt-outs, `DISABLE_UPDATES` and `DISABLE_AUTOUPDATER`, both set to 1. The first is the
 documented superset of the second; both are set to be safe.
 

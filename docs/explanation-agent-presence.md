@@ -187,7 +187,7 @@ Two more things follow from codex being global:
 
 Both are covered in full in [inside the global codex block](#inside-the-global-codex-block).
 
-### Nesting (#130)
+### Nesting
 
 A global hook fires for *every* codex, including a nested `codex exec` launched by a
 `/codex` running under Claude Code. So a `GUARD` prefixes every command:
@@ -201,7 +201,7 @@ either marker is set. It suppresses the reporter when a Claude Code parent is de
 so a subagent's codex doesn't report presence up to switchboard. A top-level codex that
 switchboard launches into a plain tmux shell carries neither marker, so it fires.
 
-Since Codex 0.149 (#39314), a hook sees the environment as it was when the session
+Since Codex 0.149, a hook sees the environment as it was when the session
 started, not the live one. Codex strips a few credential variables from that snapshot,
 but not the two Claude markers, so the guard still works (verified live: both are set in
 Claude 2.1.301's hook env). `codex_hook_test`'s runtime guard test pins the sh precedence
@@ -422,7 +422,7 @@ uninstall still runs, it ends with "Done, except the codex hooks", and exits 1.
 When a worktree's hook state newly enters a resting state (`:done`/`:waiting`),
 that's a *completion edge*. Four features ride the exact same edge
 (`Sidebar::Edges.completion_edges`), in one place (`Sidebar::Edges#on_scan`,
-`sidebar/edges.rb` — #57 extracted the whole fanout into that collaborator;
+`sidebar/edges.rb`, the collaborator that holds the whole fanout;
 the diff refresh rides the edge list `on_scan` returns to `refresh_agents`):
 
 1. **Bold-until-viewed** (`attention.rb`) marks the workspace name bold — on
@@ -508,7 +508,7 @@ is enough; no input is needed. To keep that clearing correct, `reload` runs `loc
 
 **The storage is shared.** The atomic write, the crc32 filename key, the XDG `state_dir`
 and the scan-with-GC aren't Attention's own: they're the shared `KeyedMarkerStore`
-(`keyed_marker_store.rb`, issue #95), which `Attention`, `Collapse` and the other marker
+(`keyed_marker_store.rb`), which `Attention`, `Collapse` and the other marker
 stores delegate to. Each caller supplies only its own piece as a
 `scan(dir) { |content| keep? }` block, where a falsy return GCs that marker:
 
@@ -519,7 +519,7 @@ stores delegate to. Each caller supplies only its own piece as a
 `FullHeader` and `Width` deliberately stay off this base: a single flag and a single
 integer would only share "an XDG dir."
 
-## The self-naming nudge (issue #92)
+## The self-naming nudge
 
 A new workspace starts with a placeholder name (see
 [deferred naming](explanation-background-dispatch.md#deferred-naming)), so the agent is
@@ -533,10 +533,10 @@ instead of erroring with "command not found."
 
 A `SessionStart` command (`rename-nudge`) rides *beside* the sh state reporter
 (`… && … rename-nudge || true`). When `auto_rename` is on (`Config#auto_rename?` /
-`auto_rename_for`, global plus per-project; on by default since #114 made placeholders the
+`auto_rename_for`, global plus per-project; on by default, since placeholders are the
 only way to create), `HookCommands.rename_nudge` injects a `SessionStart` `additionalContext`
 instruction telling the agent to `switchboard rename` the workspace once it understands the
-work. Since #94, that renames both the folder and its branch.
+work. That renames both the folder and its branch.
 
 `RenameNudge.decide` is the pure gate. It fires when the setting is on, the name is still a
 placeholder, and `source` is one of `startup`, `resume`, `fork`, `clear` or `compact`.
@@ -1014,7 +1014,7 @@ without a link does nothing; the missing `⇅` already says so.
 1 to 6. A link URL is at most 95 bytes, so there are no version-information blocks. It's
 pinned module for module against `qrencode -8` fixtures with each mask forced. Which mask it
 *picks* is pinned by hand-worked penalty cases, not by another encoder's choice, because
-encoders legitimately differ on rule 3 (libqrencode#220), and segno pads differently (an
+encoders legitimately differ on rule 3, and segno pads differently (an
 extra `0x00` before the `0xEC/0x11` run), so neither is a bit-exact reference for that.
 
 **The overlay.** It leads with the tree's own `header` (the full one at home or with `H`, but

@@ -7,8 +7,8 @@ built that way, how a sidebar stays cheap while off screen, how it swaps in new 
 without restarting, and why a sidebar has to check that it still owns its pane.
 
 This is the deepest part of the codebase. If you're changing visibility, poking,
-or the run loop in `sidebar.rb` (or its `sidebar/` concern files — the #57
-split: `edges`, `update_cue`, `reloader`, `search`, `render`, `input`, `actions`, `prompt`, `rows`), read this first.
+or the run loop in `sidebar.rb` (or its `sidebar/` concern files:
+`edges`, `update_cue`, `reloader`, `search`, `render`, `input`, `actions`, `prompt`, `rows`), read this first.
 
 ## Why one process per window
 
@@ -42,7 +42,7 @@ persist across restarts).
 The same on-disk reasoning covers the **global toggles** that aren't per-item, so
 they skip the keyed store for a single flag file: the full header (`H` →
 `FullHeader`), the global branch fold (`z` → `BranchFold`, which folds *every*
-workspace's branch-history rows tree-wide — issue #107), and the pane width
+workspace's branch-history rows tree-wide), and the pane width
 (`←`/`→` → `Width`). Each is one shared file every window's sidebar reads, so a
 flip in one pane shows in all of them and survives a respawn — and like the collapse
 folds, all three are durable view preferences, **not** cleared on `quit`. How each
@@ -56,7 +56,7 @@ can never catch a torn state file and mark it as clean.
 ## Sidebar visibility is per-session, applied to every window
 
 The intent "show the sidebar" lives on the *session* as a tmux option
-(`@sb_sidebar` on/off; unset reads as on, preserving auto-show; issue #24). One
+(`@sb_sidebar` on/off; unset reads as on, preserving auto-show). One
 primitive, `Tmux.reconcile_sidebars`, spawns-or-kills each window's sidebar to match
 that flag:
 
@@ -286,7 +286,7 @@ tick, before it can ring.
 running-process count (`pgrep`) against the sidebar-pane count, so a straggler is
 visible before it can misbehave.
 
-## Swapping in new code without a restart (#48)
+## Swapping in new code without a restart
 
 Every sidebar is a long-lived process, so after an upgrade each one would keep running
 the code it started with. Everything else switchboard runs (hooks, PR-refresh children,

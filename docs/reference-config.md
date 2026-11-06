@@ -353,7 +353,7 @@ carry two actions; the toggle wins) and `doctor` reports the collision.
 
 ## `sidebar_keys`
 
-Remap the keys you press *inside* the sidebar (issue #108), by **action name**
+Remap the keys you press *inside* the sidebar, by **action name**
 rather than raw key — the config records intent, not bytes. Omit an action to keep
 its default. See [Reference: keybindings](reference-keybindings.md#sidebar-keys)
 for the full action list and [How-to: keybindings](howto-keybindings.md#change-the-in-sidebar-keys).

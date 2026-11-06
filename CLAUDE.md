@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Switchboard is a keyboard-only switcher/creator for git-worktree workspaces — a
 terminal-native alternative to Conductor/emdash. It's pure Ruby with **zero gem
 dependencies**: everything is stdlib plus shelling out to `tmux`, `git`, and `gh`. There
-is no Gemfile and no build step. Ruby **>= 3.3** is required (#35; CI runs 3.3 and 4.0);
+is no Gemfile and no build step. Ruby **>= 3.3** is required (CI runs 3.3 and 4.0);
 `bin/switchboard` re-execs itself under a modern Ruby when launched on macOS system Ruby,
 because tmux panes run a non-interactive shell that skips rbenv.
 
@@ -18,7 +18,7 @@ goes in the docs, and this file gets at most a pointer or a one-line invariant.
 `test/docs_test.rb` holds the shape: links and anchors resolve, quoted section names (of
 CLAUDE.md or any doc) exist, every doc is a Diataxis kind indexed under that kind,
 contract versions live only in the list below, section pointers are anchor links, and no
-doc references TODOs or the gitignored `thoughts/`. The docs are for humans as much as
+doc references TODOs, issue numbers or the gitignored `thoughts/`. The docs are for humans as much as
 agents: write them as readable explanation, not this file's compressed style.
 
 ## Commands
@@ -36,7 +36,7 @@ Every command and flag: [docs/reference-cli.md](docs/reference-cli.md).
 **Tests.** Every `bin/test` test runs **offline**: `SandboxTest` (`test/test_helper.rb`)
 walls off config, XDG dirs, git global, `HOME` and `TMUX` into a tmpdir, and
 `temp_git_repo` makes throwaway repos (tmux/gh shell-outs are stubbed). The smoke layer
-(`test/smoke/`, `SmokeCase`, its own blocking CI job, #104) drives the real binary on an
+(`test/smoke/`, `SmokeCase`, its own blocking CI job) drives the real binary on an
 isolated tmux socket through a PTY client — the bug class the stubs can't reach. It stays
 out of `bin/test` so the offline suite is the inner loop. Env overrides for running
 locally without touching real state:
@@ -49,13 +49,13 @@ locally without touching real state:
 | Git as runtime truth, the model/tree, the worktree ⇆ `sb/` session mapping, `session_command` | [explanation-architecture](docs/explanation-architecture.md) |
 | Which layer a file belongs to, and the layer test (`test/layers_test.rb`) | [explanation-architecture § Layers](docs/explanation-architecture.md#layers) |
 | `install` / `uninstall` / `doctor` / `prune`, the tmux fragment and its three hooks | [explanation-architecture § Install, doctor and prune](docs/explanation-architecture.md#install-doctor-and-prune) |
-| Configurable tmux keys (`tmux_keys`, #15) | [explanation-architecture § Configurable tmux keys](docs/explanation-architecture.md#configurable-tmux-keys), [howto-keybindings](docs/howto-keybindings.md) |
+| Configurable tmux keys (`tmux_keys`) | [explanation-architecture § Configurable tmux keys](docs/explanation-architecture.md#configurable-tmux-keys), [howto-keybindings](docs/howto-keybindings.md) |
 | `switchboard sandbox`, `IsolatedServer` | [explanation-architecture § The sandbox](docs/explanation-architecture.md#the-sandbox) |
 | `n` → task → ↵ background dispatch, `switchboard new` (same/cross-project), `Creation` records, the setup script, deferred naming | [explanation-background-dispatch](docs/explanation-background-dispatch.md) |
 | Per-session visibility, off-screen dormancy, pre-warming, warm broadcasts, recycled pane ids | [explanation-sidebar-lifecycle](docs/explanation-sidebar-lifecycle.md) |
-| Hot reload of running sidebars (#48), the resume payload | [explanation-sidebar-lifecycle § Swapping in new code](docs/explanation-sidebar-lifecycle.md#swapping-in-new-code-without-a-restart-48) |
+| Hot reload of running sidebars, the resume payload | [explanation-sidebar-lifecycle § Swapping in new code](docs/explanation-sidebar-lifecycle.md#swapping-in-new-code-without-a-restart) |
 | Agent-state dots, Claude/Codex hook delivery, the global codex block | [explanation-agent-presence](docs/explanation-agent-presence.md), [§ Inside the global codex block](docs/explanation-agent-presence.md#inside-the-global-codex-block) |
-| The rename nudge, the agent-dispatch instruction, completion sounds, bold until viewed, `KeyedMarkerStore` | [explanation-agent-presence § One edge, four consumers](docs/explanation-agent-presence.md#one-edge-four-consumers), [§ The self-naming nudge](docs/explanation-agent-presence.md#the-self-naming-nudge-issue-92), [§ The agent-dispatch instruction](docs/explanation-agent-presence.md#the-agent-dispatch-instruction) |
+| The rename nudge, the agent-dispatch instruction, completion sounds, bold until viewed, `KeyedMarkerStore` | [explanation-agent-presence § One edge, four consumers](docs/explanation-agent-presence.md#one-edge-four-consumers), [§ The self-naming nudge](docs/explanation-agent-presence.md#the-self-naming-nudge), [§ The agent-dispatch instruction](docs/explanation-agent-presence.md#the-agent-dispatch-instruction) |
 | ∞ monitoring + `monitoring notify`, ⇅ remote links + QR, ◷ background work | [explanation-agent-presence § Background monitors](docs/explanation-agent-presence.md#background-monitors-the-), [§ ◷](docs/explanation-agent-presence.md#waiting-on-background-work-the-), [§ ⇅](docs/explanation-agent-presence.md#remote-links-the-) |
 | Session-name sync (typing `/rename` into Claude's pane) | [explanation-session-name-sync](docs/explanation-session-name-sync.md) |
 | Folds, full header, width, diff counts, `/` search, `?` overlay, `sidebar_keys` | [explanation-sidebar-views](docs/explanation-sidebar-views.md) |
@@ -119,16 +119,16 @@ tracks these lines; update them when you re-verify one.
 
 ## Conventions
 
-- Issue/PR numbers in comments and docs from before v0.50.0 (e.g. `#57`, `#94`)
-  refer to the private `switchboard-archive` repo; the public tracker restarted at #1
-  (#8 = assign versions after merge, #9 = open-source readiness tracking).
+- Docs carry no issue or PR numbers. In code comments and `TODOS.md`, numbers from before
+  v0.50.0 refer to the private `switchboard-archive` repo. The public tracker restarted from
+  one, so such a number can also name an unrelated public issue.
 - Every file starts with `# frozen_string_literal: true`.
 - Stateless helpers are `module_function` modules (`ClaudeHook`, `CodexHook`,
   `MarkerBlock`, `Tmux`, `Installer`, …); only `Model`, `Config`, `Sidebar` (with its
   `Edges`, `UpdateCue` and `Reloader` collaborators) and `AgentState` are classes (they
   hold state).
 - One stateful class may split across **concern files** when it outgrows a
-  single one (#57: `Sidebar` + `lib/switchboard/sidebar/*`): nested modules
+  single one (`Sidebar` + `lib/switchboard/sidebar/*`): nested modules
   `include`d into the class, state ownership staying in the class; a cohesive
   state-owning cluster becomes a collaborator class instead (`Sidebar::Edges`).
   The load-order rule that keeps it safe: a file's constant initializers only

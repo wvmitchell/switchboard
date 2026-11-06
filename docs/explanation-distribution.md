@@ -38,7 +38,7 @@ re-approving on every release.
 ### The approach
 
 Homebrew keeps one stable link per formula that always points at the current
-keg: `/opt/homebrew/opt/switchboard` (issue #9). `StablePath.resolve` (`lib/switchboard/support/stable_path.rb`)
+keg: `/opt/homebrew/opt/switchboard`. `StablePath.resolve` (`lib/switchboard/support/stable_path.rb`)
 rewrites any path inside a switchboard keg to the same path under `opt/`:
 
 ```
@@ -93,8 +93,8 @@ modes are quiet:
 ### The approach
 
 The PR still picks the version: it bumps `version.rb`, adds a CHANGELOG entry, and is
-titled `vX.Y.Z`. Everything after merge is automated by `.github/workflows/release.yml`
-(issue #9), a `workflow_run` job that tags the commit, creates the GitHub Release from the
+titled `vX.Y.Z`. Everything after merge is automated by `.github/workflows/release.yml`,
+a `workflow_run` job that tags the commit, creates the GitHub Release from the
 CHANGELOG entry, and pushes the formula to the tap.
 
 ```
@@ -150,7 +150,7 @@ CHANGELOG entry, and pushes the formula to the tap.
 
 - **Versions are still chosen in the PR.** The workflow releases whatever
   `version.rb` says; it doesn't pick numbers. Parallel branches can still race for
-  the same next version (issue #8 tracks assigning versions after merge).
+  the same next version. Assigning the version after merge would remove that race; it isn't done yet.
 - **A superseded version isn't tagged.** If two bumps land before the first one's
   gates finish, only the newer version gets a tag.
 - **macOS CI minutes.** The formula job runs on every push to main and on PRs
@@ -164,7 +164,7 @@ CHANGELOG entry, and pushes the formula to the tap.
 ### The update line
 
 A Homebrew install's sidebars show `↑ 0.58.0 available · switchboard upgrade` just under
-the wordmark, on every session, while a newer release is out (issue #47; `UpdateCheck`,
+the wordmark, on every session, while a newer release is out (`UpdateCheck`,
 `update_check.rb`). There's no dismiss: the line shows until you upgrade.
 
 **Checking is rare and cheap.** A visible sidebar's `reload` spawns
@@ -202,7 +202,7 @@ hidden pane would skip the warm reload that shows it.
 
 ### Upgrading (`switchboard upgrade`)
 
-`Upgrade` (`upgrade.rb`, issue #10) fetches the newest version the same way switchboard
+`Upgrade` (`upgrade.rb`) fetches the newest version the same way switchboard
 was installed. The install method *is* the channel:
 
 - **Homebrew:** `brew update`, then `brew upgrade`.
