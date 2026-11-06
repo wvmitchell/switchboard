@@ -838,7 +838,7 @@ module Switchboard
           name = mark_search(name, @search.spans(name), name_fg.to_s)
           name = "#{name_fg}#{name}\e[0m" if name_fg
           "#{ptr} #{dot} #{name}#{styled_link(node.path, link)}#{cue.empty? ? '' : "\e[2m#{cue}\e[0m"}" # cues last (link, then dim ▸N), widths already reserved
-        else "#{BRANCH_FG}#{mark_search(text, name_spans(node, text), BRANCH_FG)}\e[0m"
+        else "#{BRANCH_FG}#{text}\e[0m"
         end
       end
 
@@ -850,13 +850,13 @@ module Switchboard
 
       # The search's matches within a row's name in `text`, as character ranges over `text`.
       # The name is what's left between the row's prefix and the cues fit_plain kept, so a query
-      # can't mark a glyph, a ▸3 or a note.
+      # can't mark a glyph, a ▸3 or a note. A search doesn't read branch rows (search_text).
       def name_spans(node, text)
-        prefix, cues = case node.kind
-                       when "ws"   then parts = ws_parts(node); [parts.first, parts.last]
-                       when "proj" then parts = proj_parts(node); [parts.first, parts.last]
-                       else ["     #{node.last ? '└' : '├'}#{node.active ? '●' : ' '}", ""]
-                       end
+        return [] if node.kind == "br"
+
+        parts = node.kind == "ws" ? ws_parts(node) : proj_parts(node)
+        prefix = parts.first
+        cues = parts.last
         name = text[prefix.length...(text.length - kept_cues(text, cues).length)].to_s
         @search.spans(name).map { |at, length| [at + prefix.length, length] }
       end

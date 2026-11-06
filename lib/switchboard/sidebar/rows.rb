@@ -127,7 +127,6 @@ module Switchboard
 
         @nodes.each do |n|
           next if n.kind == "proj" || !@collapsed.include?(n.project) || @pending_delete.include?(n.path)
-          next if n.kind == "br" && @fold_branches
 
           revealed << n.project if @search.match?(search_text(n))
         end
@@ -135,12 +134,13 @@ module Switchboard
       end
 
       # The one piece of a row a search reads: its drawn name, so a match always has something
-      # to highlight. Render's name_spans reads the same part of the row.
+      # to highlight. Render's name_spans reads the same part of the row. A branch row is history
+      # and ↵ can't take you to that branch, so a search reads nothing there and never stops on it.
       def search_text(node)
         shown(case node.kind
               when "proj" then node.project
               when "ws" then node.name
-              else node.branch
+              else ""
               end)
       end
 
