@@ -7,6 +7,7 @@ module Switchboard
     # keg moved). Due at once on screen; off screen after a random spread, so a fleet doesn't
     # boot and rescan at once — but a switch-in makes it due right away. Never under an overlay
     # or the filter, and never mid-prompt (prompts block the loop, so the request waits).
+    # The why behind each step: docs/explanation-sidebar-lifecycle.md.
     #
     # The sidebar owns what the payload carries and whether its overlays allow a swap, and
     # passes those in; this owns the signal, the pane tag, the deadline and the exec.
@@ -147,8 +148,8 @@ module Switchboard
         @last_announce_scan = monotonic
       end
 
-      # A switch-in that ran no catch-up scan: a swap right after must start silent, because its
-      # baseline predates whatever another pane rang while we were away (#48).
+      # No catch-up scan here, so a swap right after must start silent: its baseline
+      # predates whatever another pane rang while we were away (#48).
       def silence_pending_reload
         @last_announce_scan = nil if @reload_requested
       end
