@@ -147,6 +147,9 @@ The workspace name, with two color states layered on top:
 
 A normal, looked-at workspace with no running agent is plain text.
 
+**Black on yellow inside a name** marks a match for the `/` search, on project and branch
+rows too. See [Search](reference-keybindings.md#search).
+
 **Green `⇅` after the name** — the workspace is reachable **from your phone**: a Claude
 session there has `/remote-control` (`/rc`) on. `⇅2` means several linked sessions.
 It sits right after the name and before any `▸N` fold cue, on workspace rows only

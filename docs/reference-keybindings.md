@@ -120,7 +120,7 @@ The arrows, `Ctrl-N` and `Ctrl-P` do nothing while you type.
 |-----|-----------------------|
 | `n` / `N` | Next / previous match, wrapping at the ends. Takes a count, as in `3n`. These two aren't remappable, and they mean new workspace again once the search ends. A `filter` key bound to `n` or `N` won't start a new search until this one ends. |
 | `Esc` | End the search and leave the cursor where it is. |
-| `↵` (Enter) | On a workspace or branch: end the search and open it. On a project header: end the search and stop; a further `↵` folds as usual. |
+| `↵` (Enter) | On a workspace or branch: end the search and open it. A row that can't be opened yet shows why, and the search stays on. On a project header: end the search and stop; a further `↵` folds or unfolds as usual. |
 | `/` | Start a new search from the current row. |
 | _(everything else)_ | Works as usual, with the matches still highlighted. |
 

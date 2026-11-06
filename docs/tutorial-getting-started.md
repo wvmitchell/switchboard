@@ -105,8 +105,9 @@ understands the task. See
 [How-to: manage projects](howto-manage-projects.md#rename-a-workspace).
 
 That's the core loop: `n` makes work, `↵` switches between it. (Once you've got a
-pile of workspaces, press `/` and type a few letters of a name to jump straight to
-one — `↵` switches, `Esc` cancels.)
+pile of workspaces, press `/` and type a few letters of a name to find it: `↵` keeps
+the matches highlighted, `n` and `N` step through them, `↵` again switches, and `Esc`
+ends the search.)
 
 ## Step 5: See the status dot
 

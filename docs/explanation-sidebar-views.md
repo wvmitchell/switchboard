@@ -318,7 +318,7 @@ folds it back (locally, with no disk write, since `toggle_collapse` would unfold
 window), and when `rebuild` finds another window has unfolded the project.
 
 `↵` on a project header during a search ends the search and stops. `/name` `↵` `↵` lands
-there easily, and toggling would write a shared fold. A further `↵` folds as usual.
+there easily, and toggling would write a shared fold. A further `↵` folds or unfolds as usual.
 
 While a search is on, the cursor follows its row by identity (`row_key`), since matches and
 reveals move rows. If the row is gone, it goes to that row's workspace, then a neighbor in
