@@ -217,7 +217,7 @@ module Switchboard
     end
 
     # Value: protects=a binding you made since never being overwritten by an older one, and only a
-    # bind ever being sourced; fails_when=restorable skips the ours? check or the bind-key check;
+    # bind ever being sourced; fails_when=restorable skips the still-ours check or the bind-key check;
     # why_new=new behavior; seam=stubs tmux_option; no_claim=real list-keys output
     def test_only_our_own_key_gets_restored_and_only_with_a_bind
       ours = "bind-key -T prefix g run-shell \"'#{Installer.bin_path}' toggle-sidebar\"\n"
@@ -404,6 +404,33 @@ module Switchboard
       assert(cmds.any? { |c| c[0] == "source-file" })
       refute_includes cmds, ["unbind-key", "s"]
       assert_includes cmds, ["set-option", "-gu", "@switchboard-toggle-displaced"]
+    end
+
+    # Value: protects=a `;` key tmux lists under another spelling being found, so what's on it is saved
+    # and kept; fails_when=line_on passes a trailing `;` raw; why_new=only smoke caught it; seam=backtick;
+    # no_claim=tmux's own parsing (query stubbed; the smoke test covers it)
+    def test_line_on_asks_tmux_for_a_semicolon_key_escaped
+      cmds = []
+      fake = ->(cmd) { cmds << cmd; "bind-key -T prefix \"C-M-;\" display-message mine\n" }
+      line = stub_method(Installer, :`, fake) { Installer.line_on("", "M-C-;") }
+      assert_equal 'bind-key -T prefix "C-M-;" display-message mine', line
+      assert cmds.first.end_with?("-- #{Shellwords.escape('M-C-\\;')} 2>/dev/null"), cmds.first
+    end
+
+    # Value: protects=uninstall not deleting a binding you made since, or restoring a stale one over it;
+    # fails_when=teardown_live drops its kept_key? check; why_new=that mutant passed installer tests and
+    # keybinding smoke; seam=run_tmux; no_claim=real tmux (table and commands stubbed)
+    def test_uninstall_leaves_a_key_you_rebound_since
+      cmds = []
+      options = { "@switchboard-home-key" => "g", "@switchboard-home-displaced" => "bind-key -T prefix g old" }
+      stub_method(Installer, :list_prefix_keys, -> { "bind-key -T prefix g display-message newer\n" }) do
+        stub_method(Installer, :tmux_option, ->(name) { options[name] }) do
+          stub_method(Installer, :run_tmux, ->(*argv) { cmds << argv; true }) { without_key_query { Installer.teardown_live } }
+        end
+      end
+      refute_includes cmds, ["unbind-key", "g"]
+      refute(cmds.any? { |c| c[0] == "source-file" })
+      assert_includes cmds, ["set-option", "-gu", "@switchboard-home-key"]
     end
 
     # --- run_rebind: bind-first + bind-failure fallback (via the run_tmux seam) -
@@ -690,19 +717,17 @@ module Switchboard
       refute_includes cmds, ["unbind-key", "s"], "home's cleanup must not unbind the toggle's fallback"
     end
 
-    # Value: protects=only our bin path followed by a role's exact subcommand counts as ours
+    # Value: protects=only a switchboard path followed by a role's exact subcommand counts as ours
     # (a Linux bin under /home/ must not make every binding of ours look like a role's);
-    # fails_when=ours? matches subcommand substrings anywhere; why_new=ship 3 pass 2 red team;
-    # seam=bin_path
-    def test_ours_needs_a_roles_exact_subcommand
+    # fails_when=switchboard_binding? matches subcommand substrings anywhere; why_new=ship 3 pass 2
+    # red team; seam=none
+    def test_switchboard_binding_needs_a_roles_exact_subcommand
       bin = "/home/me/switchboard/bin/switchboard"
-      stub_method(Installer, :bin_path, -> { bin }) do
-        assert Installer.ours?(%(run-shell "'#{bin}' home"))
-        assert Installer.ours?(%(run-shell "'#{bin}' toggle-sidebar"))
-        refute Installer.ours?(%(run-shell "'#{bin}' quit")), "a path containing /home/ isn't the home role"
-        refute Installer.ours?(%(run-shell "'#{bin}' rename home-page"))
-        refute Installer.ours?(%(run-shell "'#{bin}' homework"))
-      end
+      assert Installer.switchboard_binding?(%(run-shell "'#{bin}' home"))
+      assert Installer.switchboard_binding?(%(run-shell "'#{bin}' toggle-sidebar"))
+      refute Installer.switchboard_binding?(%(run-shell "'#{bin}' quit")), "a path containing /home/ isn't the home role"
+      refute Installer.switchboard_binding?(%(run-shell "'#{bin}' rename home-page"))
+      refute Installer.switchboard_binding?(%(run-shell "'#{bin}' homework"))
     end
 
     # Value: protects=a toggle/home swap records no clobber of switchboard's own binding (doctor

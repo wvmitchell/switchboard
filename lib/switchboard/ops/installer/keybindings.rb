@@ -18,9 +18,10 @@ module Switchboard
     # clobbers a user's own switchboard binding and survives a repo move. Server ops,
     # no TMUX gate; every call degrades on failure.
     #
-    #   per role: bind desired FIRST → unbind the key we recorded last → record the
-    #   new key → capture/clear a clobbered foreign binding (for doctor). A rejected
-    #   bind falls back (toggle → s) WITHOUT cleaning, so the recovery key is safe.
+    #   per role: bind desired FIRST → let go of the key we recorded last (give back what it
+    #   displaced, or leave it if you've rebound it) → record the new key → record or clear what
+    #   this key displaced (for doctor and the give-back). A rejected bind recovers through a
+    #   rebind, toggle to s and home to unbound, so the old key is still cleaned up.
     def apply_keybindings(announce: false, config: Config.new)
       # The same refusal install makes: a quote in the path can't survive the shell a bound key runs in,
       # so a binding here would be a dead key, and it could replace a working one.
@@ -211,10 +212,15 @@ module Switchboard
     # seam every binding side-effect goes through, so tests assert the exact command
     # sequence without a tmux server.
     def run_tmux(*argv)
-      # tmux reads an argument ending in `;` as the end of a command: `bind-key C-;` binds
-      # "C-" (and fails), `set-option … C-;` stores "C-". Escaped, tmux takes the `;` literally.
-      argv = argv.map { |a| a.is_a?(String) && a.end_with?(";") && !a.end_with?("\\;") ? "#{a.chop}\\;" : a }
+      argv = argv.map { |a| a.is_a?(String) ? escape_semicolon(a) : a }
       system("tmux", "-u", *argv, out: File::NULL, err: File::NULL)
+    end
+
+    # tmux reads an argument ending in `;` as the end of a command: `bind-key C-;` binds
+    # "C-" (and fails), `set-option … C-;` stores "C-". Escaped, tmux takes the `;` literally.
+    def escape_semicolon(arg)
+      arg = arg.to_s
+      arg.end_with?(";") && !arg.end_with?("\\;") ? "#{arg.chop}\\;" : arg
     end
 
     # Raw `tmux list-keys -T prefix` output (a stubbable seam; offline tests fake it).
@@ -244,23 +250,16 @@ module Switchboard
     def unlisted(key) = key.to_s.delete_prefix('"').delete_suffix('"').delete_prefix("\\")
 
     # `key`'s line, asking tmux for a spelling only it can resolve (`f5` is listed as `F5`). More than
-    # one line back isn't this key: tmux read something as a separator and listed the whole table.
+    # one line back isn't this key's answer, so it says nothing about the key.
     def line_on(raw, key)
       prefix_line_from(raw, key) || begin
-        lines = `tmux -u list-keys -T prefix -- #{Shellwords.escape(key)} 2>/dev/null`.lines
+        lines = `tmux -u list-keys -T prefix -- #{Shellwords.escape(escape_semicolon(key))} 2>/dev/null`.lines
         lines.first.strip if lines.size == 1
       end
     end
 
     def binding_on(raw, key)
       line_on(raw, key).to_s[/-T\s+prefix\s+\S+\s+(.*)$/, 1]&.strip
-    end
-
-    # Our own binding of EITHER role (a toggle/home swap finds each key still bound to the
-    # other role, which is no clobber): our bin path followed by a role's exact subcommand.
-    def ours?(binding)
-      subs = ROLE_SUBCOMMANDS.values.map { |sub| Regexp.escape(sub) }.join("|")
-      binding.match?(/'#{Regexp.escape(bin_path)}' (?:#{subs})(?=["\s]|\z)/)
     end
 
     # DX2: after an interactive rebind, show what's bound so the user sees it took
@@ -305,9 +304,7 @@ module Switchboard
 
       # Naming the key lets tmux parse it with bind-key's own parser, so any spelling it
       # accepts (`^B`, `M-#`, `f5`) resolves; an unbound key exits non-zero.
-      # A trailing `;` ends a tmux command (leaving `list-keys -T prefix`, the whole table), so
-      # it's escaped the way bind-key needs it.
-      one = `tmux -u list-keys -T prefix -- #{Shellwords.escape(key.to_s.sub(/;\z/) { "\\;" })} 2>/dev/null`
+      one = `tmux -u list-keys -T prefix -- #{Shellwords.escape(escape_semicolon(key))} 2>/dev/null`
       return one.scrub.include?("toggle-sidebar") if $?.success?
 
       # Unbound, or a tmux too old to take a key here: read the whole table.
