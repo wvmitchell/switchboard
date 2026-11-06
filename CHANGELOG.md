@@ -14,8 +14,8 @@ refer to the project's earlier, private repository; the public tracker starts at
 
 ### Changed
 - The reads behind the sidebar's dots, ◷, ⇅, ∞ and alerts moved out of `lib/switchboard/sidebar.rb` into
-  `lib/switchboard/presence.rb`. They run in the same order and fail the same way, and running sidebars
-  pick the change up through a hot reload.
+  `lib/switchboard/presence.rb`. They run in the same order, and running sidebars pick the change up
+  through a hot reload.
 
 ## [0.66.11] — the update line's code gets its own class, with no change to what it shows (2026-11-05)
 
