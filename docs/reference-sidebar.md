@@ -244,7 +244,9 @@ One line, ending in the `? help` gateway except during a search:
   place, as `3… · ? help`, until the next key uses it; `count_indicator: false` hides it.
 - **During a `/` search:** one line — the query, your place among the matches and the keys:
   `/auth [2/5] · n/N · esc`, or `[-/5]` when the cursor isn't on a match. While you type it
-  ends `· ↵ · esc`, and with nothing to find, `no matches`.
+  ends `· ↵ · esc`, and with nothing to find, `no matches`. When `↵` will open the only match,
+  it reads `[1/1] · ↵ open · tab stay` while you type (a pane under 35 columns drops
+  `tab stay`) and `[1/1] · ↵ open · esc` once the search is on.
 
 The footer only has room for the common keys. Everything else — `g`/`G`, `←`/`→`
 resize, the `Ctrl-N`/`Ctrl-P` movement aliases, the search and prompt keys,

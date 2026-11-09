@@ -153,7 +153,9 @@ module Switchboard
         # on Bksp and only a prompt clears on ^u — so those two stay separate rows
         ["", "in a search"],
         ["n  N", "next · previous match"],
-        ["↵", "search · then open the row"],
+        ["↵", "opens a lone workspace"],
+        ["↵ ↵", "stop, then open the row"],
+        ["Tab", "stop on the match"],
         ["Esc", "end the search"],
         ["Bksp", "erase · exits empty search"],
         ["", "in a prompt"],

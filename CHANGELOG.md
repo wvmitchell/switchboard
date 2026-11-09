@@ -10,6 +10,22 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
+## [0.69.0] — `↵` opens a lone workspace match, and `Tab` stops on it (2026-11-09)
+
+### Added
+- `Tab` while typing a `/` search stops on the matches, as `↵` used to. It's the way to use `o`, `r` or `d` on a
+  unique name: `/name` `Tab` `o` opens that workspace's PR. It replaces `/name` `↵` `o` from 0.68.3, which now
+  switches you away instead.
+
+### Changed
+- With the cursor on the only match, `↵` opens that workspace on the first press, and the footer says `↵ open`
+  when it will. Anything you type after it goes to the agent, not the sidebar.
+- A lone project header, a row still being built, and a workspace waiting on a prompt (`◆`) still stop on the
+  first `↵`. A blind second `↵` on a permission prompt approves it, so a prompt left open keeps that stop for up
+  to a day, even after its `◆` has aged out.
+- Keys queued behind any `↵` that opens a row are dropped, so `n` `↵` aimed at the sidebar you just left can't
+  build a workspace. The help page lists `↵`, `↵ ↵` and `Tab` for a search.
+
 ## [0.68.3] — `/` searches names only, and branch rows stay out of the matches (2026-11-06)
 
 ### Changed

@@ -460,10 +460,11 @@ module Switchboard
       # --- / search --------------------------------------------------------------
       #
       # Vim's search over the tree: / types a query, each edit previews the next match from
-      # where you started, ↵ commits, and then the normal keys work with the matches highlighted
-      # and n/N stepping through them. Nothing is hidden. Only a key you press ends a search on
-      # screen, because the prompt n opens accepts an empty task: a search ending by itself
-      # between your n and your ↵ would build a real workspace.
+      # where you started, ↵ or Tab commits, and then the normal keys work with the matches
+      # highlighted and n/N stepping through them. With one workspace to go to, ↵ opens it instead.
+      # Nothing is hidden. Only a key you press ends a search on screen, because the prompt n opens
+      # accepts an empty task: a search ending by itself between your n and your ↵ would build a
+      # real workspace.
 
       # /: from a committed search this is a new search, starting from the row you're on.
       def start_search
@@ -475,7 +476,8 @@ module Switchboard
       def search_key(key)
         case key
         when "\e"       then end_search(to_origin: true)
-        when "\r", "\n" then commit_search
+        when "\r", "\n" then enter_search
+        when "\t"       then commit_search
         when "\x7F", "\b" then erase_search
         else edit_search { @search.append(key) } if printable?(key)
         end
@@ -509,6 +511,25 @@ module Switchboard
         return end_search(to_origin: true) if @search_hits.empty?
 
         @search.commit
+      end
+
+      # ↵ with only one place to go opens it. Commit first: a row that can't open yet keeps the
+      # search on. Otherwise ↵ stops on the matches, as Tab always does.
+      def enter_search
+        return commit_search unless one_press_open?
+
+        @search.commit
+        open_from_search
+      end
+
+      # The cursor is on the only match, and it's a workspace. A rebuild can add a match while you
+      # type without moving the cursor ([-/1]), and ↵ must never open a row the footer doesn't point at.
+      def sole_workspace_match? = @search_hits == [@cursor] && current.kind == "ws"
+
+      # Not a row waiting on you: a habitual second ↵ would land on the prompt, and a blind ↵ there
+      # approves it. The scan's waiting set outlives both the ◆'s TTL and a failed scan.
+      def one_press_open?
+        sole_workspace_match? && @agents[current.path] != :waiting && !@agent_state.last_waiting.include?(current.path)
       end
 
       def search_command(key, count)

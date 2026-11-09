@@ -60,6 +60,7 @@ module Switchboard
 
       BRANCH_FG = "\e[90m"         # branch rows: bright-black, a theme-relative dim (#23)
       SEARCH_MATCH = "\e[30;43m"   # a / search match: black on yellow, vim's usual look, and apart from the bold-yellow text of an unviewed row
+      TAB_HINT_MIN_COLS = 35       # below this, the search footer's tab hint would crowd out the query
 
       MIN_NAME_COLS = 3            # below this many cols left for the name, drop the diff
                                    # badge so a row never overruns the pane (issue #79)
@@ -165,10 +166,18 @@ module Switchboard
 
         at = @search_hits.index(@cursor)
         count = " [#{at ? at + 1 : '-'}/#{@search_hits.size}]"
-        return "#{count} · ↵ · esc" if @search.typing?
+        return "#{count} · #{typing_enter_hint}" if @search.typing?
         return "#{count} · #{@count}…" if @count && @config.count_indicator?
+        return "#{count} · ↵ open · esc" if sole_workspace_match? && !dispatch_pending?(current)
 
         "#{count} · n/N · esc"
+      end
+
+      # ↵ open only when ↵ really will. A narrow pane drops the Tab hint so the query stays readable.
+      def typing_enter_hint
+        return "↵ · esc" unless one_press_open? && !dispatch_pending?(current)
+
+        winsize.last < TAB_HINT_MIN_COLS ? "↵ open" : "↵ open · tab stay"
       end
 
       # The brand header above the tree. EVERY session leads with the wordmark, so the
