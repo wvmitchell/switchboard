@@ -280,13 +280,14 @@ match still stop. A project header does, so `↵` `↵` can't write a fold every
 workspace waiting on a prompt (`◆`) does too, because the old `↵` `↵` habit would land the
 second press on that prompt, and a blind `↵` on a Claude permission prompt approves the tool
 call. That check reads the hook reports the last scan saw, and it keeps stopping after a
-prompt left open has lost its `◆` to the report's 15-minute expiry, or a scan has failed. A
+prompt left open has lost its `◆` to the report's 15-minute expiry, or a scan has failed, until
+the report is cleaned up a day later. A
 prompt that appeared a moment ago isn't covered, and neither is an agent without hooks, which
 never reports one. The footer says `↵ open` only when `↵` will open the row.
 
 The cost is that the same keys act differently by count. Focus moves to the work pane on an
 open, so anything typed after it goes to the agent, where the sidebar can't see it. Typing
-blind after a `↵` that stopped fails the other way: the text runs as sidebar keys.
+blind after a `↵` that stopped fails the other way, since the text runs as sidebar keys.
 
 **Matching is a literal, case-insensitive substring of a name:** a workspace's or a project's.
 Fuzzy matching suited a list that narrowed, but with every row still on screen a short query
