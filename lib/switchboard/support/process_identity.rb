@@ -30,6 +30,16 @@ module Switchboard
       start_of(pid) == started.to_s.strip
     end
 
+    # Like same?, but tells a verified stranger from a check that couldn't run: a live pid
+    # whose start time `ps` won't give is :unknown, never "different". Deleting on the
+    # strength of a failed `ps` would delete under a live process.
+    def identity(pid, started)
+      now = start_of(pid)
+      return now == started.to_s.strip ? :same : :different unless now.empty?
+
+      alive?(pid) ? :unknown : :different
+    end
+
     # A child's Process::Status if it exited within `secs`, else nil (still running).
     def wait_within(pid, secs)
       stop = Time.now + secs

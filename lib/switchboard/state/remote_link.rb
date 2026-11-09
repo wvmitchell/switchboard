@@ -133,7 +133,7 @@ module Switchboard
       out = IO.popen({ "LC_ALL" => "C" }, ["ps", "-o", "pid=,command=", "-p", pids.join(",")], err: File::NULL, &:read)
       out.to_s.lines.each_with_object(Set.new) do |line, set|
         pid, *argv = line.split
-        set << pid.to_i if argv.first(2).any? { |word| File.basename(word) == "claude" }
+        set << pid.to_i if ClaudeSessions.claude_command?(argv)
       end
     rescue StandardError
       Set.new

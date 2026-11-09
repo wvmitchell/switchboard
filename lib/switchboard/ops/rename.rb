@@ -25,11 +25,12 @@ module Switchboard
   #              dir is the source of truth, so this is recoverable (prune reaps
   #              the orphan), but the caller should say so rather than claim :ok
   #
-  # `spawned` is true when a session-name worker was started (see SessionName).
+  # `spawned` is true when a session-name worker was started (see SessionName); `history`
+  # is ClaudeHistory.link's outcome, for the caller to report.
   module Rename
     module_function
 
-    Result = Struct.new(:status, :dest, :spawned)
+    Result = Struct.new(:status, :dest, :spawned, :history)
 
     def perform(config, project_name, old_path, newname)
       sync_session_name(config, project_name, move(config, project_name, old_path, newname))
@@ -66,7 +67,7 @@ module Switchboard
       return Result.new(:exists, dest) if File.exist?(dest) && !File.symlink?(dest)
 
       sync = sync_branch?(project["path"], old_path)
-      # All branch checks BEFORE any dir move / history migrate, so a collision or
+      # All branch checks BEFORE any dir move / history carry, so a collision or
       # invalid name fails clean (nothing moved) and the agent can retry with another
       # name. Branch is renamed FIRST so a branch failure aborts before we touch the
       # dir or transcripts (#94).
@@ -94,10 +95,6 @@ module Switchboard
         return Result.new(:failed, dest)
       end
 
-      # Carry the agent's conversation history to the new path so `/resume` still
-      # finds it after a restart — the cwd just changed out from under it (#42).
-      ClaudeHistory.migrate(old_path, dest)
-
       # Carry the shared per-worktree markers (bold, monitoring, a held ◷ chime) to the new realpath, so a
       # rename doesn't drop them — all are keyed by realpath, which just changed. Notify is
       # CLEARED, not carried: its marker can't distinguish a pending alert from a consumed one
@@ -113,7 +110,13 @@ module Switchboard
       SessionName::Outcome.forget(old_real) # about the old name; this rename's worker judges afresh
       Creation.repath(old_path, old_real, dest) # a dispatch the agent renamed on turn one still pings
 
-      Result.new(rename_session(project_name, old_path, dest), dest)
+      status = rename_session(project_name, old_path, dest)
+      # Carry the agent's conversation history so `/resume` and `claude --continue` find it at
+      # the new path. After the session rename: link may wait on the history lock, and while
+      # the worktree has moved but the session hasn't, a prune would read that live session
+      # as an orphan.
+      history = ClaudeHistory.link(old_path, dest)
+      Result.new(status, dest, nil, history)
     end
 
     # Start the detached worker that types `/rename <leaf>` into the workspace's live

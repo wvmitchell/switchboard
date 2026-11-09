@@ -22,6 +22,18 @@ module Switchboard
              "the same pid with a different start time is a different process"
     end
 
+    # Value: protects=a failed `ps` never reads as "a different process" (history cleanup
+    # deletes on that); fails_when=identity maps an empty start time to :different for a
+    # live pid; why_new=identity is new; seam=none; no_claim=real ps failure modes
+    def test_identity_tells_a_stranger_from_a_check_that_could_not_run
+      assert_equal :same, ProcessIdentity.identity(Process.pid, ProcessIdentity.start_of(Process.pid))
+      assert_equal :different, ProcessIdentity.identity(Process.pid, "Mon Jan  1 00:00:00 1990")
+      assert_equal :different, ProcessIdentity.identity(DEAD, "Mon Jan  1 00:00:00 2024")
+      stub_method(ProcessIdentity, :start_of, ->(*) { "" }) do
+        assert_equal :unknown, ProcessIdentity.identity(Process.pid, "Mon Jan  1 00:00:00 2024")
+      end
+    end
+
     def test_a_missing_token_fails_closed
       refute ProcessIdentity.same?(Process.pid, "")
       refute ProcessIdentity.same?(nil, "anything")

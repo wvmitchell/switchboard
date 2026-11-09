@@ -35,8 +35,7 @@ module Switchboard
     end
 
     # The whole point of the rename surviving a restart: Claude's transcript dir,
-    # keyed by the (now-changed) cwd, is carried to the new path so `/resume` finds
-    # it (issue #42 follow-up).
+    # keyed by the (now-changed) cwd, is linked into the new path so `/resume` finds it.
     def test_perform_carries_the_claude_history_to_the_new_path
       repo = temp_git_repo("proj")
       old = add_worktree(repo, "old")
@@ -51,7 +50,10 @@ module Switchboard
 
       dest_hist = File.join(ENV["SWITCHBOARD_CLAUDE_PROJECTS_DIR"],
                             ClaudeHistory.encode(File.realpath(path("wts", "proj", "new"))))
-      assert File.exist?(File.join(dest_hist, "s1.jsonl")), "the transcript moved to the new key"
+      assert File.exist?(File.join(dest_hist, "s1.jsonl")), "the transcript is at the new key"
+      assert_equal File.stat(File.join(hist, "s1.jsonl")).ino, File.stat(File.join(dest_hist, "s1.jsonl")).ino,
+                   "as a hard link: the running session's appends show at both keys"
+      refute File.symlink?(hist), "the old key stays a real folder for the live session"
     end
 
     # A rename carries the background-monitor ∞ marker to the new realpath (the key is
@@ -209,6 +211,23 @@ module Switchboard
         end
       end
       assert_equal [["sb/proj/old", "sb/proj/new"]], seen
+    end
+
+    # Value: protects=the move→session-rename gap stays short (a prune inside it kills the
+    # live session); fails_when=history carry (which can wait on a lock) runs before the
+    # session rename; why_new=fix-check; seam=stubbed tmux; no_claim=real timing
+    def test_history_is_carried_after_the_session_is_renamed
+      repo = temp_git_repo("proj")
+      old = add_worktree(repo, "old")
+      order = []
+      stub_method(Tmux, :has_session?, ->(_) { true }) do
+        stub_method(Tmux, :rename_session, ->(*) { order << :session; true }) do
+          stub_method(ClaudeHistory, :link, ->(*) { order << :history; :linked }) do
+            Rename.perform(config_for(repo), "proj", old, "new")
+          end
+        end
+      end
+      assert_equal %i[session history], order
     end
 
     # Dir moved but a *reachable* session's rename failed -> :partial (recoverable;

@@ -602,8 +602,27 @@ module Switchboard
 
     # --- prune_summary: honest reporting (F5) + dry-run next step (DX-2) ------
 
+    def test_prune_summary_adds_the_history_line_with_or_without_tmux
+      sum = ClaudeHistory::Summary.zero
+      sum.linked = 3
+      sum.deleted = 2
+      sum.kept["recent"] = 1
+      lines = CLI.prune_summary(Reconcile::Report.new(reachable: false, sb_count: 0, orphans: [], history: sum), [], false)
+      assert_includes lines, "no tmux server — sessions not reconciled"
+      assert_includes lines, "history: linked 3 file(s); converted 0 and deleted 2 projects bridge(s); kept 1 recent"
+      assert_includes CLI.prune_summary(report.tap { |r| r.history = sum }, [], true), "history: would link 3 file(s)"
+    end
+
+    def test_a_partial_history_carry_warns_but_the_rename_still_succeeds
+      result = Rename::Result.new(:ok, path("wts", "x"), nil, :partial)
+      _, err = capture_io { CLI.warn_history(result) }
+      assert_includes err, "Claude history was not fully carried"
+      _, quiet = capture_io { CLI.warn_history(Rename::Result.new(:ok, path("wts", "x"), nil, :linked)) }
+      assert_empty quiet
+    end
+
     def test_prune_summary_distinguishes_unreachable_from_empty
-      assert_equal "no tmux server — nothing to reconcile", CLI.prune_summary(report(reachable: false), [], false)
+      assert_equal "no tmux server — sessions not reconciled", CLI.prune_summary(report(reachable: false), [], false)
       assert_equal "no sb/ sessions found", CLI.prune_summary(report(sb_count: 0), [], false)
       assert_equal "3 sb/ session(s), none orphaned", CLI.prune_summary(report(sb_count: 3), [], false)
     end

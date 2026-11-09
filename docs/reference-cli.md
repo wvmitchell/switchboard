@@ -249,7 +249,10 @@ Rename the workspace you're standing in: moves the worktree directory to `<name>
 and its conversation survive. This is the verb for an **agent to (re)name its own
 live workspace** once it knows what the work actually is — the sidebar's `r` key
 does the same from the tree. It also carries Claude's conversation history to the new
-path, so `/resume` still finds it after a restart.
+path, so `/resume` and `claude --continue` find it there. The history is hard-linked, not
+moved: the old and new history folders both stay real folders holding the same files, so
+a session still running under the old name keeps working. If something couldn't be carried,
+`rename` says so on stderr ("run `switchboard doctor`") and still succeeds.
 
 **Renaming mid-task is safe** — the dir move doesn't strand your running shell. The
 move leaves a symlink bridge at the old path (below), so a frozen cwd keeps
@@ -324,7 +327,17 @@ reports. Works outside tmux (it talks to the tmux server). Only touches projects
 it can *verify* (configured + git-readable), so a moved repo's sessions are left
 alone, as are those of a project whose folder is missing, even under a session prefix
 another project shares. It also reaps orphaned sidebar processes: a
-`switchboard sidebar` whose pane is gone. See [How-to: housekeeping](howto-housekeeping.md).
+`switchboard sidebar` whose pane is gone.
+
+It also tidies Claude's history folders (`~/.claude/projects`) for your workspaces, and
+prints a `history:` line saying what it did. It links files a renamed workspace's old
+folder gained after the rename (a session started there after `/clear`, say) into the new
+one. It also cleans up the *projects bridges* (symlinks between history folders) that older
+switchboard versions left: one a running session may still write through (or when it can't
+tell) becomes a real folder, and a quiet one nothing writes through is deleted, since its
+target keeps the history. `--dry-run` counts the files it would link and the bridges it
+would check, without changing anything. This part runs even with no tmux server. See
+[How-to: housekeeping](howto-housekeeping.md).
 
 ### `switchboard quit`
 Close *all* `sb/` sessions — full teardown, the one you're in killed last. Also
@@ -347,7 +360,9 @@ unreadable, out of date because an older release wrote them, or unparseable, nam
 of its hooks codex has approved, `N/M trusted`, or a fix when the block is stale, can't
 be rewritten safely, or collides with your own `[hooks]`), `gh`
 auth + per-project badge staleness, audio player +
-sound resolution, orphaned sessions, the remote links (`⇅`) it sees (or a warning
+sound resolution, orphaned sessions, Claude history after renames (projects bridges left
+to clean up, files not yet carried, split transcripts, a reused name's earlier history and
+logged history errors, each with what to do), the remote links (`⇅`) it sees (or a warning
 when Claude is running but its session files are missing, none are in the shape
 switchboard reads, or every live one fails the start-time check, i.e. a Claude update
 moved or reshaped them), a `CLAUDE_CONFIG_DIR` that differs between your shell and tmux

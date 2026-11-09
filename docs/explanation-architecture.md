@@ -372,6 +372,29 @@ is a second guard on top of that: inside a throwaway server, the reap is skipped
 Orphans mostly pile up from interrupted `bin/test-smoke` runs, whose daemon servers outlive
 the run; the smoke harness sweeps those before each run.
 
+**Claude's history folders.** Claude keeps each workspace's transcripts in
+`~/.claude/projects/<encoded path>`, keyed by the path a session started in. A rename changes
+the path, but a session still running keeps writing under the old key, and readers such as
+gstack's transcript guard refuse a folder that isn't a real directory. So both keys must stay
+real. `ClaudeHistory.link` builds a real folder at the new key and hard-links every file
+into it (transcripts and any plain folder beside them; a symlink, socket or fifo is skipped
+and logged). Claude appends in place, so each later append shows under both names, and no
+symlink is ever left in `projects/`. Prune's history pass (`Reconcile.prune_history`) does the
+rest from the worktree bridges, which already record old path to new:
+- It links files the old key gained after the rename.
+- It converts or deletes the projects bridges older versions left.
+
+It deletes only on proof:
+- **Ownership.** The key must sit under one of switchboard's own worktree folders.
+- **No writer.** A known-empty writer list from `ClaudeSessions.writers_by_key`, where any
+  doubt reads as "unknown".
+- **Quiet.** A target unchanged for 10 minutes, holding only files and folders.
+
+A bridge with a writer, or an unknown one, is converted into a real folder instead; one
+that isn't quiet yet waits for a later prune. Conversion uses an atomic `renamex_np` swap on macOS, so a live session never sees its
+folder missing. Workspace creation (`Creator.clear_history_routes`) drops the bridges a
+reused name would otherwise inherit.
+
 ## Configurable tmux keys
 
 The fragment leaves binding to `switchboard tmux-bind` (`Installer.apply_keybindings` in

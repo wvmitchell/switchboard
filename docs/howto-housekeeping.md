@@ -23,6 +23,7 @@ would kill 2 orphaned session(s):
   sb/app/old-feature
   sb/api/spike
 run `switchboard prune` to remove these
+history: would link 0 file(s); would check 0 projects bridge(s) for cleanup
 ```
 
 Then remove them:
@@ -40,6 +41,19 @@ read: its sessions are left alone even when another project's name maps to the s
 `sb/<name>/` prefix (`app.dev` and `app-dev` both do). A session younger than a
 short grace window is also spared, so a just-created session is never killed mid
 launch.
+
+`prune` also tidies Claude's history folders after renames and ends with a line like:
+
+```
+history: linked 2 file(s); converted 1 and deleted 14 projects bridge(s); kept 3 recent
+```
+
+A bridge is "kept" when switchboard won't decide on it yet: its folder changed in the last
+10 minutes (`recent`), holds something other than files and folders (`unrecognized`),
+another bridge still points at it (`pointed to`), or converting it didn't finish (`failed`).
+A later prune picks those up once they settle. A dry run can't tell converting from
+deleting in advance, so it counts the bridges it would check. The sidebar's launch-time
+prune skips this part.
 
 **Auto-prune on launch (on by default).** The home session's sidebar prunes orphans
 for you when it starts. Turn it off in `config.yml`:
@@ -107,6 +121,10 @@ off. It checks, with the fix inline for anything red:
   "why are my badges old?" has an answer).
 - An audio player on PATH, and whether each sound spec resolves.
 - Orphaned `sb/` sessions (points you at `prune`).
+- Claude history after renames: projects bridges left to clean up, files not yet linked
+  into a renamed workspace's history folder, split transcripts, a reused name whose
+  history folder still holds an earlier workspace's sessions, and errors logged to
+  `claude-history.log` in switchboard's state folder. Each line says what to do.
 - Remote links (`⇅`): how many Claude sessions are linked, or a warning when a
   Claude update moved or reshaped the session files the glyph reads, and (inside
   tmux) when your shell and tmux disagree on `CLAUDE_CONFIG_DIR`. See
@@ -135,6 +153,15 @@ off. It checks, with the fix inline for anything red:
 - **Completion sounds fire twice.** Check `doctor` for orphaned sidebar
   processes; they self-reap within a few seconds, but a persistent one means a
   pane closed uncleanly.
+- **History missing after a rename.** For example, `claude --continue` at the new path
+  picks an older conversation, or a tool refuses a renamed session's history folder. Run
+  `switchboard doctor`. Its history lines name what's off and the fix, usually
+  `switchboard prune`. A rename carries everything at once, but a session you started in
+  the old workspace after the rename (after a `/clear`) only reaches the new path at the
+  next prune. `claude --continue` picks its conversation before any hook runs, so
+  switchboard can't link it in time on its own. To see that two folders share a file, compare
+  inode numbers: `ls -li ~/.claude/projects/<old key>/*.jsonl ~/.claude/projects/<new key>/*.jsonl`.
+  The same number means one file under two names.
 - **Deleting the workspace you're in.** Safe — switchboard switches you to home
   first, then kills it, so you land on the full tree, not a bare shell.
 

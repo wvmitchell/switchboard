@@ -133,5 +133,33 @@ module Switchboard
       refute Git.tracking_upstream?(repo, branch), "--no-track ⇒ origin/main not inherited as upstream"
       refute Git.pushed?(repo, branch), "a freshly-created branch reads as not-pushed"
     end
+
+    # Value: protects=a new workspace at a reused name inherits no stranger's history route;
+    # fails_when=creation keeps a worktree bridge pointing at it or a projects bridge at its
+    # key; why_new=new; seam=none; no_claim=Claude's resume picker (live check e)
+    def test_creation_clears_history_routes_into_the_new_path
+      parent = path("worktrees", "proj")
+      dest = File.join(parent, "lucky-fox")
+      FileUtils.mkdir_p(dest)
+      dest = File.realpath(dest)
+      parent = File.dirname(dest)
+      File.symlink(dest, File.join(parent, "older-name"))     # a rename onto a name now reused
+      File.symlink(File.join(parent, "x"), File.join(parent, "other"))
+      root = File.realpath(FileUtils.mkdir_p(ENV["SWITCHBOARD_CLAUDE_PROJECTS_DIR"]).first)
+      ENV["SWITCHBOARD_CLAUDE_PROJECTS_DIR"] = root
+      stranger = File.join(root, "-stranger")
+      FileUtils.mkdir_p(stranger)
+      File.write(File.join(stranger, "0b7c5d2e-1f3a-4b5c-8d9e-0a1b2c3d4e5f.jsonl"), "theirs\n")
+      File.utime(Time.now - 3600, Time.now - 3600, *Dir.glob("#{stranger}/**/*"), stranger)
+      squat = File.join(root, ClaudeHistory.encode(dest))
+      File.symlink(stranger, squat)
+
+      stub_method(ClaudeSessions, :writers_by_key, ->(*) { {} }) { Creator.clear_history_routes(dest) }
+
+      refute File.symlink?(File.join(parent, "older-name"))
+      assert File.symlink?(File.join(parent, "other")), "a bridge to somewhere else stays"
+      refute File.symlink?(squat), "no projects bridge at the new key"
+      assert File.exist?(File.join(stranger, "0b7c5d2e-1f3a-4b5c-8d9e-0a1b2c3d4e5f.jsonl")), "its data stays put"
+    end
   end
 end
