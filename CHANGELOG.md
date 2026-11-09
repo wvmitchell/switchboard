@@ -10,6 +10,25 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
+## [0.70.0] — Renamed workspaces keep their Claude history in real folders (2026-11-09)
+
+### Changed
+- Renaming a workspace now carries its Claude Code history by hard-linking every file into a real
+  folder at the new path, instead of leaving a symlink in `~/.claude/projects`. Both the old and the
+  new folder stay real directories, so tools that refuse a symlinked transcript folder (gstack's
+  transcript guard) keep working in a renamed workspace, and `claude --continue` there finds the
+  conversation.
+- `switchboard prune` links files a renamed workspace's old session wrote after the rename, and cleans
+  up the history symlinks older versions left: one with no running session is deleted (its target
+  keeps the data), one a session still writes through becomes a real folder. `--dry-run` previews
+  this, and it runs even with no tmux server.
+- A new workspace no longer inherits an earlier workspace's history symlink at its name.
+
+### Added
+- `switchboard doctor` reports history symlinks left to clean up, files not yet linked, split
+  transcripts, reused names and logged history errors.
+- A rename whose history wasn't fully carried says so, and points at `switchboard doctor`.
+
 ## [0.69.1] — Keys that land with `n` or `r` can't submit the prompt by themselves (2026-11-09)
 
 ### Fixed
