@@ -69,6 +69,20 @@ module Switchboard
       no_processes { assert_empty AgentState.new.scan([wt]) }
     end
 
+    # Value: protects=a permission prompt left open past the TTL still stops the one-press search open; fails_when=last_waiting applies PRESENCE_TTL or reads anything but the latest report; why_new=the TTL drops the ◆ itself; seam=none; no_claim=a prompt no hook reported
+    def test_a_waiting_report_counts_as_waiting_past_the_ttl_until_a_later_report
+      wt = worktree
+      write_hook("waiting", wt, epoch: Time.now.to_i - (AgentState::PRESENCE_TTL + 60))
+      a = AgentState.new
+      no_processes do
+        refute_equal :waiting, a.scan([wt])[wt], "the ◆ has aged out"
+        assert_equal Set[wt], a.last_waiting
+        write_hook("done", wt)
+        a.scan([wt])
+      end
+      assert_empty a.last_waiting, "a later report is the answer"
+    end
+
     def test_deepest_cwd_at_or_under_the_worktree_wins
       wt = worktree
       sub = File.join(wt, "sub")

@@ -291,6 +291,29 @@ module Switchboard
       assert_equal dispatched, Creation.all.size, "nothing was created along the way"
     end
 
+    # Tab is a real byte through tmux, and one Enter on a lone match really moves the client.
+    def test_tab_stops_on_a_lone_match_and_enter_opens_it
+      create_workspace
+      target = create_workspace
+      pane = sidebar_pane_ids(HOME).first
+      name = target.split("/").last
+
+      tmux!("send-keys", "-t", pane, "/")
+      tmux!("send-keys", "-t", pane, "-l", name)
+      wait_until("the footer offers the open") { capture(pane).include?("[1/1] · ↵ open · tab stay") }
+      tmux!("send-keys", "-t", pane, "Tab")
+      wait_until("Tab stopped on the match") { capture(pane).include?("[1/1] · ↵ open · esc") }
+      assert_equal HOME, client_session, "Tab never opens"
+      tmux!("send-keys", "-t", pane, "Escape")
+      wait_until("Esc ended the search") { !capture(pane).include?("[1/1]") }
+
+      tmux!("send-keys", "-t", pane, "/")
+      tmux!("send-keys", "-t", pane, "-l", name)
+      wait_until("the footer offers the open again") { capture(pane).include?("[1/1] · ↵ open · tab stay") }
+      tmux!("send-keys", "-t", pane, "Enter")
+      wait_until("one Enter landed the client in the workspace") { client_session == target }
+    end
+
     private
 
     def open_delete_prompt(pane, leaf)

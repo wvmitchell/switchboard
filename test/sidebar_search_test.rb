@@ -253,7 +253,7 @@ module Switchboard
       sb = sidebar_with_keys(filter: "n")
       sb.send(:handle, "n")
       assert search(sb).typing?, "idle, n starts a search when bound that way"
-      sb.send(:handle, "x\r") # one match: `x`
+      sb.send(:handle, "x\t") # one match: `x`
       sb.send(:dispatch, "n")
       assert search(sb).committed?, "committed, n steps instead"
     end
@@ -416,7 +416,7 @@ module Switchboard
         nodes = [proj("api"), ws("first", project: "api"), ws("gamma", project: "api"), ws("oauth", project: "api")]
         nodes.delete_at(1) if at == 2
         sb = sidebar(nodes: nodes, cursor: at)
-        sb.send(:handle, "/oauth\r")
+        sb.send(:handle, "/oauth\t")
         sb.instance_variable_set(:@nodes, nodes.reject { _1.name == "oauth" })
         sb.send(:recompute_rows)
         assert_equal want, current_node(sb).name
@@ -434,7 +434,7 @@ module Switchboard
 
     def test_a_vanished_row_goes_to_its_header_when_its_project_has_no_other_rows
       sb = sidebar(nodes: [proj("app"), ws("alpha"), proj("api"), ws("oauth", project: "api")], cursor: 3)
-      sb.send(:handle, "/oauth\r")
+      sb.send(:handle, "/oauth\t")
       sb.instance_variable_set(:@nodes, sb.instance_variable_get(:@nodes).reject { _1.name == "oauth" })
       sb.send(:recompute_rows)
       assert_equal %w[proj api], [current_node(sb).kind, current_node(sb).project]
@@ -453,14 +453,14 @@ module Switchboard
     # Value: protects=a project gone from under a search never leaves a stale index; fails_when=the top fallback goes; why_new=cursor_to_current no-ops at home; seam=none; no_claim=how the project was removed
     def test_a_vanished_project_goes_to_the_current_workspace_else_the_top
       sb = tree(cursor: 6, current_path: "/wt/alpha")
-      sb.send(:handle, "/oauth\r")
+      sb.send(:handle, "/oauth\t")
       sb.instance_variable_set(:@nodes, sb.instance_variable_get(:@nodes).reject { _1.project == "api" })
       sb.send(:recompute_rows)
       assert_equal "alpha", current_node(sb).name
 
       nodes = [proj("old"), ws("target", project: "old"), proj("other"), ws("unrelated", project: "other")]
       sb = sidebar(nodes: nodes, cursor: 1)
-      sb.send(:handle, "/target\r")
+      sb.send(:handle, "/target\t")
       sb.instance_variable_set(:@nodes, nodes.reject { _1.project == "old" })
       sb.send(:recompute_rows)
       assert_equal "proj", current_node(sb).kind, "at home there's no current workspace: the top, never a stale index"
@@ -506,10 +506,10 @@ module Switchboard
 
     def test_only_the_cursors_folded_project_stays_open
       sb = tree(collapsed: %w[api])
-      sb.send(:handle, "/oauth\r\e")
+      sb.send(:handle, "/oauth\t\e")
       assert_equal "api", search(sb).sticky
       sb.send(:handle, "g") # to the top, in the unfolded project
-      sb.send(:handle, "/alpha\r\e")
+      sb.send(:handle, "/alpha\t\e")
       assert_nil search(sb).sticky, "the next clear elsewhere folds it again"
       assert_equal 5, rows_of(sb).size
     end
@@ -570,7 +570,7 @@ module Switchboard
       before = Collapse.collapsed
       stub_method(Collapse, :collapse, ->(*) { flunk "no shared write" }) do
         stub_method(Collapse, :expand, ->(*) { flunk "no shared write" }) do
-          sb.send(:handle, "/oauth\rnN\e")
+          sb.send(:handle, "/oauth\tnN\e")
           sb.send(:handle, "/oauth")
           sb.send(:dispatch, "\e")
         end
@@ -756,7 +756,7 @@ module Switchboard
       sb = sidebar(nodes: [proj("app"), ws("auth-row")])
       node = rows_of(sb).last
       stub_method(sb, :row_note, ->(_) { "a task" }) do
-        sb.send(:handle, "/auth\r")
+        sb.send(:handle, "/auth\t")
         assert_includes sb.send(:line, node, true, 14), Sidebar::Render::SEARCH_MATCH
       end
     end
@@ -785,7 +785,7 @@ module Switchboard
       sb.instance_variable_set(:@creation_for, { "/wt/auth-row" => rec })
       node = rows_of(sb).last
       stub_method(sb, :row_note, ->(_) { "auth task" }) do
-        sb.send(:handle, "/auth\r")
+        sb.send(:handle, "/auth\t")
         bar = sb.send(:line, node, true, 40)
         assert_equal 1, bar.scan(Sidebar::Render::SEARCH_MATCH).size, "the name, not the note"
         assert_equal strip_ansi(bar).length, 40
@@ -796,7 +796,7 @@ module Switchboard
 
     def test_a_match_inside_the_cursor_bar_shows_and_the_bar_resumes
       sb = sidebar(nodes: [proj("app"), ws("xauthy")])
-      sb.send(:handle, "/auth\r")
+      sb.send(:handle, "/auth\t")
       assert_includes sb.send(:line, rows_of(sb).last, true, 40), "\e[0m#{Sidebar::Render::SEARCH_MATCH}auth\e[0m\e[7my"
     end
 
@@ -818,7 +818,7 @@ module Switchboard
       node = ws("plain3")
       node[:folded] = 3
       sb = sidebar(nodes: [proj("app"), node])
-      sb.send(:handle, "/3\r")
+      sb.send(:handle, "/3\t")
       row = rows_of(sb).last
       assert_includes sb.send(:plain, row), "▸3"
       [true, false].each do |active|
@@ -826,7 +826,7 @@ module Switchboard
       end
 
       sb = sidebar(nodes: [proj("app2"), ws("x", project: "app2"), ws("y", project: "app2")], collapsed: ["app2"])
-      sb.send(:handle, "/2\r")
+      sb.send(:handle, "/2\t")
       header = rows_of(sb).first
       assert_includes sb.send(:plain, header), "(2)"
       [true, false].each do |active|
@@ -844,7 +844,7 @@ module Switchboard
 
     def test_a_truncated_match_is_a_stop_with_no_highlight
       sb = sidebar(nodes: [proj("app"), ws("#{'x' * 40}auth")])
-      sb.send(:handle, "/auth\r")
+      sb.send(:handle, "/auth\t")
       assert_equal [1], hits(sb)
       refute_includes sb.send(:line, rows_of(sb).last, true, 20), Sidebar::Render::SEARCH_MATCH
     end
@@ -852,13 +852,259 @@ module Switchboard
     def test_a_wide_name_marks_the_right_characters_and_keeps_its_width
       sb = sidebar(nodes: [proj("app"), ws("名前auth")])
       plain = strip_ansi(sb.send(:line, rows_of(sb).last, true, 30))
-      sb.send(:handle, "/auth\r")
+      sb.send(:handle, "/auth\t")
       bar = sb.send(:line, rows_of(sb).last, true, 30)
       assert_equal plain, strip_ansi(bar)
       assert_includes bar, "名前\e[0m#{Sidebar::Render::SEARCH_MATCH}auth"
     end
 
+    # --- ↵ and Tab at one match ------------------------------------------------
+
+    # Value: protects=a lone workspace opens on one press and leaves n as new workspace; fails_when=search_key sends ↵ to commit_search; why_new=new behavior; seam=none; no_claim=switch mechanics
+    def test_enter_on_a_lone_workspace_opens_it_and_ends_the_search
+      ["\r", "\n"].each do |enter|
+        sb = tree
+        opened = nil
+        stub_method(sb, :switch, ->(node) { opened = node.name }) { sb.send(:handle, "/oauth#{enter}") }
+        assert_equal "oauth", opened
+        refute active?(sb)
+        assert_creates(sb)
+      end
+    end
+
+    # Value: protects=the row opened is the match even when ending the search re-folds its project; fails_when=enter_search stops grabbing the node first; why_new=the committed path had this test, typing didn't; seam=none; no_claim=none beyond protects
+    def test_enter_on_a_lone_workspace_in_a_folded_project_opens_that_row
+      sb = tree(collapsed: ["api"])
+      opened = nil
+      stub_method(sb, :switch, ->(node) { opened = node.name }) { sb.send(:handle, "/oauth\r") }
+      assert_equal "oauth", opened
+    end
+
+    # Value: protects=two enters on a lone header can't write a shared fold; fails_when=the workspace check goes from sole_workspace_match?; why_new=no header case reached enter while typing; seam=none; no_claim=peers reading the fold store
+    def test_enter_on_a_lone_header_stops_then_ends_and_only_a_third_folds
+      sb = tree
+      stub_method(Collapse, :collapse, ->(*) { flunk "no fold write" }) do
+        sb.send(:handle, "/app\r")
+        assert search(sb).committed?, "the first ↵ stops"
+        sb.send(:dispatch, "\r")
+        refute active?(sb), "the second ends the search"
+      end
+      stub_method(Tmux, :broadcast_warm, ->(**) {}) { sb.send(:dispatch, "\r") }
+      assert_includes Collapse.collapsed, "app"
+    end
+
+    # Value: protects=a lone row that can't open yet says why and keeps its search; fails_when=enter_search skips the commit; why_new=new path; seam=none; no_claim=dispatch state rendering
+    def test_enter_on_a_lone_row_that_cannot_open_yet_shows_why_and_keeps_the_search
+      sb = tree
+      shown = nil
+      stub_method(sb, :dispatch_pending?, ->(_) { true }) do
+        stub_method(sb, :enter_dispatch, ->(node) { shown = node.name }) { sb.send(:handle, "/oauth\r") }
+      end
+      assert_equal "oauth", shown
+      assert search(sb).committed?
+    end
+
+    # Value: protects=enter never opens a row the footer doesn't point at; fails_when=the guard becomes hits.one?; why_new=new path; seam=none; no_claim=how the rebuild was triggered
+    def test_enter_with_the_cursor_off_a_lone_match_stops_and_opens_nothing
+      sb = tree(cursor: 3)
+      sb.send(:handle, "/zeta")
+      sb.instance_variable_set(:@nodes, sb.instance_variable_get(:@nodes) + [ws("zeta", project: "api")])
+      sb.send(:recompute_rows)
+      assert_equal ["/zeta [-/1] · ↵ · esc"], sb.send(:footer), "no open promised off the match"
+      stub_method(sb, :switch, ->(_) { flunk "the footer points at no row" }) { sb.send(:handle, "\r") }
+      assert search(sb).committed?
+      assert_equal "beta", current_node(sb).name
+      assert_equal ["/zeta [-/1] · n/N · esc"], sb.send(:footer)
+    end
+
+    # Value: protects=a habitual second enter can't approve a tool call; fails_when=the waiting check goes; why_new=new rule; seam=none; no_claim=a prompt that appeared since the last scan
+    def test_a_lone_row_waiting_on_a_prompt_takes_two_enters
+      waiting = {
+        "◆ on screen" => ->(sb) { sb.instance_variable_set(:@agents, { "/wt/oauth" => :waiting }) },
+        "◆ aged out, or the scan failed" => ->(sb) { sb.instance_variable_get(:@agent_state).instance_variable_set(:@last_waiting, Set["/wt/oauth"]) }
+      }
+      waiting.each do |name, set_up|
+        sb = tree
+        set_up.call(sb)
+        opened = nil
+        stub_method(sb, :switch, ->(node) { opened = node.name }) do
+          sb.send(:handle, "/oauth")
+          assert_equal ["/oauth [1/1] · ↵ · esc"], sb.send(:footer), name
+          sb.send(:handle, "\r")
+          assert_nil opened, "#{name}: the first ↵ only stops"
+          assert search(sb).committed?, name
+          sb.send(:handle, "\r")
+        end
+        assert_equal "oauth", opened, name
+      end
+    end
+
+    # Value: protects=keys behind an open can't build a workspace, whenever they arrive, and pokes still run; fails_when=switch stops dropping queued keys or stops keeping pokes; why_new=no test covered keys after a switch; seam=Tmux.go stubbed, real switch; no_claim=how fast a person can really type
+    def test_an_open_drops_the_keys_queued_behind_it_and_keeps_the_pokes
+      { "same read" => ["/oauth\rn\r\f", ""],
+        "during the switch" => ["/oauth\r", "n\r\f"],
+        "no search, same read" => ["\rn\r\f", ""],
+        "no search, during the switch" => ["\r", "n\r\f"] }.each do |name, (keys, arriving)|
+        sb = tree(cursor: 6)
+        opens = 0
+        pokes = 0
+        with_stdin_pipe do |writer|
+          stub_method(Tmux, :go, ->(*, **) { opens += 1; writer.write(arriving) }) do
+            stub_method(sb, :create, -> { flunk "#{name}: n must not build a workspace" }) do
+              stub_method(sb, :reload_and_refresh, -> { pokes += 1 }) { assert sb.send(:handle, keys) }
+            end
+          end
+        end
+        assert_equal 1, opens, name
+        assert_equal 1, pokes, "#{name}: the poke still ran"
+        assert_nil sb.instance_variable_get(:@typeahead), name
+      end
+    end
+
+    # Value: protects=a sequence split at the read's end can't lose its tail and fire as a key later; fails_when=drop_queued_keys drops @pending handling; why_new=new reader; seam=Tmux.go stubbed; no_claim=real tmux fragmentation
+    def test_an_open_carries_a_split_sequence_for_the_next_read
+      sb = tree
+      with_stdin_pipe do |writer|
+        stub_method(Tmux, :go, ->(*, **) { writer.write("\e[") }) { sb.send(:handle, "/oauth\r") }
+      end
+      assert_equal "\e[", sb.instance_variable_get(:@pending)
+
+      sb = tree
+      focus_ins = 0
+      with_stdin_pipe do |writer|
+        stub_method(Tmux, :go, ->(*, **) { writer.write("I") }) do
+          stub_method(sb, :focus_in, -> { focus_ins += 1; false }) { sb.send(:handle, "/oauth\r\e[") }
+        end
+      end
+      assert_equal 1, focus_ins, "a tail held from the open's own read joins what follows: a poke, not a lost byte"
+      assert_empty sb.instance_variable_get(:@pending)
+    end
+
+    # Value: protects=a pane closing during an open doesn't crash the sidebar or lose the pokes read before the end; fails_when=drop_queued_keys rescues only WaitReadable; why_new=the pipe tests never reach EOF; seam=Tmux.go stubbed; no_claim=a real pty's hangup errno
+    def test_an_open_survives_stdin_ending_and_keeps_the_pokes_read_before_it
+      sb = tree
+      pokes = 0
+      with_stdin_pipe do |writer|
+        stub_method(Tmux, :go, ->(*, **) { writer.write("n\r\f"); writer.close }) do
+          stub_method(sb, :create, -> { flunk "n must not build a workspace" }) do
+            stub_method(sb, :reload_and_refresh, -> { pokes += 1 }) { assert sb.send(:handle, "/oauth\r") }
+          end
+        end
+      end
+      assert_equal 1, pokes
+    end
+
+    # Value: protects=Tab stops and never opens, in every state; fails_when=Tab routes to enter_search; why_new=new key; seam=none; no_claim=terminal delivery of Tab (smoke covers it)
+    def test_tab_stops_on_the_matches_and_never_opens
+      stub = ->(_) { flunk "Tab never opens" }
+      sb = tree
+      stub_method(sb, :switch, stub) do
+        sb.send(:handle, "/oauth\t")
+        assert search(sb).committed?, "one match"
+        at = cursor_of(sb)
+        sb.send(:handle, "\t")
+        assert search(sb).committed?, "once the search is on, Tab does nothing"
+        assert_equal at, cursor_of(sb)
+      end
+
+      sb = tree
+      sb.send(:handle, "/auth\t")
+      assert search(sb).committed?, "two matches"
+
+      sb = tree(cursor: 3)
+      sb.send(:handle, "/zzz\t")
+      refute active?(sb), "no matches ends the search"
+      assert_equal "beta", current_node(sb).name
+      assert_creates(sb)
+
+      sb = tree(cursor: 3)
+      sb.send(:handle, "/\t")
+      refute active?(sb), "an empty query ends the search"
+      assert_equal "beta", current_node(sb).name
+    end
+
+    # Value: protects=the route to a unique name's PR; fails_when=Tab opens the row; why_new=↵ o stopped working for a unique name; seam=none; no_claim=gh opening a browser (spawn_gh stubbed)
+    def test_tab_then_o_opens_the_pr_of_a_lone_match_with_no_switch
+      sb = sidebar(nodes: [proj("app"), expanded_ws("feature"), ws("other")])
+      gh = nil
+      stub_method(sb, :switch, ->(_) { flunk "o never switches" }) do
+        stub_method(sb, :spawn_gh, ->(*args, **) { gh = args }) { sb.send(:handle, "/feature\to") }
+      end
+      assert_equal %w[pr view feature --web], gh
+      assert search(sb).committed?
+    end
+
+    # Value: protects=↵ open appears exactly when ↵ will open, at every width; fails_when=a footer state changes or the pending check goes; why_new=new footer states; seam=none; no_claim=real terminal width handling
+    def test_the_footer_says_what_enter_will_do_at_one_match
+      assert_lone_footers(" [1/1] · ↵ open · tab stay", " [1/1] · ↵ open · esc", 35) { tree }
+      assert_lone_footers(" [1/1] · ↵ open", " [1/1] · ↵ open · esc", 34) { tree }
+      assert_lone_footers(" [1/1] · ↵ · esc", " [1/1] · ↵ open · esc", 40) do
+        tree.tap { _1.instance_variable_set(:@agents, { "/wt/oauth" => :waiting }) }
+      end
+
+      sb = tree
+      stub_method(sb, :dispatch_pending?, ->(_) { true }) do
+        sb.send(:handle, "/oauth")
+        assert_equal ["/oauth [1/1] · ↵ · esc"], sb.send(:footer), "a row that can't open yet"
+        sb.send(:handle, "\t")
+        assert_equal ["/oauth [1/1] · n/N · esc"], sb.send(:footer)
+      end
+
+      sb = tree
+      sb.send(:handle, "/app")
+      assert_equal ["/app [1/1] · ↵ · esc"], sb.send(:footer), "a lone header"
+      sb.send(:handle, "\t")
+      assert_equal ["/app [1/1] · n/N · esc"], sb.send(:footer)
+
+      sb = committed(tree, "oauth")
+      sb.send(:dispatch, "3")
+      assert_equal ["/oauth [1/1] · 3…"], sb.send(:footer), "a pending count still shows"
+    end
+
+    # Value: protects=the drawn line keeps the query's start and the behavior hint in a narrow pane; fails_when=the tail outgrows the pane; why_new=render truncates the whole line; seam=none; no_claim=none beyond protects
+    def test_a_lone_match_footer_draws_within_the_pane
+      { 40 => ["vim-style-workspace", "/vim-style-wo… [1/1] · ↵ open · tab stay"],
+        20 => ["name-of-it", "/nam… [1/1] · ↵ open"] }.each do |cols, (name, drawn)|
+        sb = sidebar(nodes: [proj("app"), ws(name)])
+        sb.instance_variable_set(:@visible, true)
+        frame = stub_method(sb, :winsize, -> { [24, cols] }) do
+          sb.send(:handle, "/#{name}")
+          capture_stdout { sb.send(:render) }
+        end
+        assert_includes strip_ansi(frame), drawn
+      end
+    end
+
+    # Value: protects=the help rows read whole in a default pane; fails_when=a row outgrows its column; why_new=three new rows; seam=none; no_claim=page layout
+    def test_the_help_explains_enter_and_tab_with_nothing_clipped
+      sb = tree
+      lines = sb.send(:help_lines, 40).map { strip_ansi(_1) }
+      ["opens a lone workspace", "stop, then open the row", "stop on the match"].each do |text|
+        assert(lines.any? { _1.include?(text) }, text)
+      end
+    end
+
     private
+
+    def assert_lone_footers(typing, stopped, cols)
+      sb = yield
+      stub_method(sb, :winsize, -> { [24, cols] }) do
+        sb.send(:handle, "/oauth")
+        assert_equal ["/oauth#{typing}"], sb.send(:footer), "typing at #{cols}"
+        sb.send(:handle, "\t")
+        assert_equal ["/oauth#{stopped}"], sb.send(:footer), "stopped at #{cols}"
+      end
+    end
+
+    def with_stdin_pipe
+      reader, writer = IO.pipe
+      was = $stdin
+      $stdin = reader
+      yield writer
+    ensure
+      $stdin = was
+      [reader, writer].each(&:close)
+    end
 
     def search(sb) = sb.instance_variable_get(:@search)
     def hidden_pane(&block)
@@ -875,7 +1121,7 @@ module Switchboard
     end
 
     def committed(sb, query)
-      sb.send(:handle, "/#{query}\r")
+      sb.send(:handle, "/#{query}\t")
       sb
     end
 

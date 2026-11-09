@@ -268,11 +268,25 @@ and `k` typed letters, and hiding rows took away the tree you navigate by.
 A search has two states, and `Sidebar::Search` (`sidebar/search.rb`) holds them. While you
 type, every printable key extends the query, and the cursor previews the first match at or
 after where you started. Each query previews from that fixed origin, so typing more can't
-drift through matches. `↵` commits. From then on the normal keys work with the matches
-highlighted, so a second `↵` opens the row and `j`, `k`, `r` and `d` do what they always do.
+drift through matches. `↵` or `Tab` commits. From then on the normal keys work with the
+matches highlighted, so `↵` opens the row and `j`, `k`, `r` and `d` do what they always do.
 `Esc` while typing goes back to the origin; `Esc` once committed leaves the cursor where it
 is. The class owns the state, the query and the origin. The rows and the cursor stay with
 `Sidebar`, in the `Input` and `Rows` concerns.
+
+**With one workspace to go to, `↵` opens it.** There's nothing to step through, so a second
+press would only delay you, and `Tab` remains the way to the normal keys. Two kinds of lone
+match still stop. A project header does, so `↵` `↵` can't write a fold every window shares. A
+workspace waiting on a prompt (`◆`) does too, because the old `↵` `↵` habit would land the
+second press on that prompt, and a blind `↵` on a Claude permission prompt approves the tool
+call. That check reads the hook reports the last scan saw, and it keeps stopping after a
+prompt left open has lost its `◆` to the report's 15-minute expiry, or a scan has failed. A
+prompt that appeared a moment ago isn't covered, and neither is an agent without hooks, which
+never reports one. The footer says `↵ open` only when `↵` will open the row.
+
+The cost is that the same keys act differently by count. Focus moves to the work pane on an
+open, so anything typed after it goes to the agent, where the sidebar can't see it. Typing
+blind after a `↵` that stopped fails the other way: the text runs as sidebar keys.
 
 **Matching is a literal, case-insensitive substring of a name:** a workspace's or a project's.
 Fuzzy matching suited a list that narrowed, but with every row still on screen a short query
@@ -297,6 +311,11 @@ do that. So a search whose last match disappears stays on: `n`/`N` do nothing, t
 says `no matches`, and matches returning pick up where it was.
 A query that matches nothing when you press `↵` is different, since you pressed a key: it
 ends the search and goes back to the origin.
+
+Opening a row carries the same risk from the other side. Keys queued behind a `↵` that opens
+a row, whether they came in the same read or arrived during the switch, were aimed at a
+sidebar you've just left, and `n` then `↵` among them would build a workspace you never saw.
+So `switch` drops them. The tmux pokes among them still run, since they aren't keys.
 
 A hot reload is the one exception. The new image starts with no search and the resume
 payload doesn't carry one, so `n` then `↵` during an upgrade can still create a workspace.

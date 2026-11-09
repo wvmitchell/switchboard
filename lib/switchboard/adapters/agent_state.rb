@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "set"
 require "shellwords"
 require_relative "../support/paths"
 
@@ -38,10 +39,16 @@ module Switchboard
     attr_reader :last_hook_states
     attr_reader :last_hook_ages # worktree path => seconds since its hook state was written (hooked paths only)
 
+    # Paths whose latest hook report is :waiting, however old. A prompt left open past
+    # PRESENCE_TTL loses its ◆, but the one-press search open must still stop there: a
+    # blind second ↵ on a permission prompt approves it. A stale report costs one keypress.
+    attr_reader :last_waiting
+
     def initialize
       @seen = {} # pane_id => [last capture hash, monotonic when that content first appeared]
       @last_hook_states = {}
       @last_hook_ages = {}
+      @last_waiting = Set.new
     end
 
     # Where the reporter drops <state>\t<cwd>\t<epoch> files. Resolved from ENV on
@@ -97,6 +104,7 @@ module Switchboard
       end
       @last_hook_states = hook_states
       @last_hook_ages = hook_ages
+      @last_waiting = worktree_paths.select { |wt| latest_hook(wt, hooks)&.first == :waiting }.to_set
       states
     end
 
@@ -152,12 +160,14 @@ module Switchboard
     # (read_hooks), so we only canonicalize the worktree — a symlinked worktree
     # root still matches the hook's physical `pwd -P`.
     def fresh_hook(worktree, hooks)
+      state, age = latest_hook(worktree, hooks)
+      [state, age] if state && age.abs <= PRESENCE_TTL # abs so a backward clock step (future epoch) still ages out
+    end
+
+    def latest_hook(worktree, hooks)
       wt = real(worktree)
       cwd = hooks.keys.select { |c| under?(c, wt) }.max_by(&:length)
-      return nil unless cwd
-
-      state, age = hooks[cwd]
-      [state, age] if age.abs <= PRESENCE_TTL # abs so a backward clock step (future epoch) still ages out
+      cwd && hooks[cwd]
     end
 
     # Did `worktree`'s agent WORK pane change since the last scan? The three-way

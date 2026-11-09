@@ -739,7 +739,7 @@ module Switchboard
 
     # The regression: on a pane too short for the whole map, the tmux rows (the only
     # answer to "how do I hide this?") were the tail that got cut. Now they're on a
-    # later page. A 57-row pane fits it all on one page (the icon legend, one glyph
+    # later page. A 59-row pane fits it all on one page (the icon legend, one glyph
     # per row, is what pushed it past 45).
     def test_help_pages_reach_the_tmux_rows_on_a_short_pane
       sb = sidebar(nodes: [proj("app")])
@@ -747,7 +747,7 @@ module Switchboard
         pages = sb.send(:help_pages, 30, 40).map { |page| page.map { |l| strip_ansi(l) } }
         assert_operator pages.size, :>=, 2, "a 30-row pane pages"
         assert(pages.drop(1).flatten.any? { |l| l.include?("show / hide the sidebar") }, "the tmux rows are on a later page")
-        assert_equal 1, sb.send(:help_pages, 57, 40).size, "a 57-row pane holds the whole map"
+        assert_equal 1, sb.send(:help_pages, 59, 40).size, "a 59-row pane holds the whole map"
         assert_equal sb.send(:help_lines, 40), sb.send(:help_pages, 100, 40).first, "one page is the whole, unchanged map"
       end
     end

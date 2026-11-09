@@ -113,6 +113,19 @@ module Switchboard
         Tmux.go(Worktree.new(project: node.project, path: node.path, branch: node.branch,
                              dirty: false, pr: node.pr, base: nil, primary: false),
                 start: entry_command(node))
+        drop_queued_keys
+      end
+
+      # The pane is leaving, so what's queued was aimed at a sidebar you can no longer see, and n ↵
+      # there would build a real workspace. tmux pokes aren't keys, so they still run.
+      def drop_queued_keys
+        @typeahead = @typeahead.to_a.select { |key| Input::POKE_BYTES.include?(key) }
+        loop do
+          tokens, @pending = Input.tokenize(@pending + $stdin.read_nonblock(Input::READ_BYTES))
+          @typeahead.concat(tokens.select { |key| Input::POKE_BYTES.include?(key) })
+        end
+      rescue IO::WaitReadable, IOError, SystemCallError
+        nil
       end
 
       # What a FRESH session for this workspace runs. Normally the agent; but a dispatched

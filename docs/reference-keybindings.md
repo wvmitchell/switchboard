@@ -111,7 +111,8 @@ and no row is hidden.
 |-----|------------------------|
 | _(any printable key)_ | Add to the query. The cursor previews the first match from where you started. |
 | `Backspace` | Delete the last character. Pressed on an empty query, it cancels. |
-| `↵` (Enter) | Keep the search on and go back to the normal keys. With no matches, cancel. |
+| `↵` (Enter) | With the cursor on the only match, a workspace: open it. A row that can't be opened yet shows why, and the search stays on. A workspace waiting on a prompt (`◆`) stops first, so a second `↵` can't land on that prompt. Otherwise, keep the search on and go back to the normal keys. With no matches, cancel. |
+| `Tab` | Keep the search on and go back to the normal keys, even with one match. This is the way to use `o`, `r` or `d` on a unique name. With no matches, cancel. |
 | `Esc` | Cancel and go back to where you started. |
 
 The arrows, `Ctrl-N` and `Ctrl-P` do nothing while you type.
