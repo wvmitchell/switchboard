@@ -97,6 +97,19 @@ module Switchboard
       assert_equal HOME, client_session, "no stray q/y quit or switched anything"
     end
 
+    # A line pasted into the tree with no bracketing, which tmux's own `paste-buffer` sends
+    # without -p: its `n` opens the task prompt, and the rest waits there for a real ↵.
+    def test_a_line_pasted_into_the_tree_waits_at_the_task_prompt
+      pane = sidebar_pane_ids(HOME).first
+      tmux!("set-buffer", "-b", "sbpaste", "n fix it\n")
+      tmux!("paste-buffer", "-d", "-b", "sbpaste", "-t", pane)
+      wait_until("the rest of the line waits on the prompt") { capture(pane).match?(/task ›.*fix it/) }
+      assert_empty Creation.all, "the pasted newline never submitted"
+      tmux!("send-keys", "-t", pane, "Enter")
+      rec = wait_until("one dispatch, from the real ↵") { Creation.all.first }
+      assert_equal "fix it", rec["task"]
+    end
+
     # Fail-closed for a COMPOUND session_command — the `;` leak the old typed chain had.
     def test_a_failing_setup_never_starts_a_compound_agent
       config = YAML.safe_load_file(ENV["SWITCHBOARD_CONFIG"])

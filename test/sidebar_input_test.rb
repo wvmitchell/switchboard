@@ -191,12 +191,63 @@ module Switchboard
       sb = sidebar(nodes: [proj("app")])
       tasks = []
       stub_method(Creator, :dispatch, ->(_c, _p, task) { tasks << task; :ok }) do
-        stub_method(sb, :read_prompt_key, -> { flunk "the batch held the whole task" }) do
-          capture_stdout { sb.send(:handle, "n42 fix\r") }
-        end
+        with_reads(sb, "\r") { sb.send(:handle, "n42 fix") }
       end
       assert_equal ["42 fix"], tasks
       assert_nil sb.instance_variable_get(:@count)
+    end
+
+    # Value: protects=a read holding a prompt key and a newline can't act before you see the prompt; fails_when=prompt_line feeds a typeahead newline to the editor; why_new=earlier tests pinned the unseen submit; seam=none; no_claim=real tmux batching (smoke)
+    def test_a_batched_newline_leaves_the_task_prompt_open
+      { "nfix it\r" => "fix it", "nfix it\n" => "fix it", "nfix it\rj" => "fix it", "nfirst\rsecond\r" => "first" }.each do |keys, shown|
+        tasks, draws = batch_into_task_prompt(keys, reads: [nil])
+        assert_empty tasks, "#{keys.inspect} waited for a real ↵"
+        assert_equal shown, draws.last, keys.inspect
+
+        tasks, = batch_into_task_prompt(keys, reads: ["\r"])
+        assert_equal [shown], tasks, "#{keys.inspect} submits on the real ↵"
+      end
+    end
+
+    # Value: protects=a multi-line paste batched behind n stays whole; fails_when=the cut ignores paste markers and stops at a newline inside a paste; why_new=paste tests feed edit_buffer, never typeahead; seam=none; no_claim=none beyond protects
+    def test_a_paste_batched_behind_n_folds_instead_of_stopping_at_its_newline
+      tasks, = batch_into_task_prompt("n\e[200~one\ntwo\e[201~", reads: ["\r"])
+      assert_equal ["one two"], tasks
+    end
+
+    # Value: protects=a sequence split across reads reaches the prompt whole, and nothing stale stays behind; fails_when=prompt_line leaves @pending for a later reader; why_new=only handle's own split was tested; seam=none; no_claim=none beyond protects
+    def test_the_prompt_takes_over_a_split_sequence
+      sb = sidebar(nodes: [proj("app")])
+      tasks = []
+      stub_method(Creator, :dispatch, ->(_c, _p, task) { tasks << task; :ok }) do
+        with_reads(sb, "~", "\r") { sb.send(:handle, "n\e[200~pasted\e[201") }
+      end
+      assert_equal ["pasted"], tasks
+      assert_empty sb.instance_variable_get(:@pending)
+    end
+
+    # Value: protects=an Esc in the batch still cancels and the keys behind it stay dropped; fails_when=the rest of a canceled batch reaches the tree; why_new=no test covered a cancel inside typeahead; seam=none; no_claim=none beyond protects
+    def test_keys_behind_a_batched_esc_are_dropped
+      sb = sidebar(nodes: [proj("app"), ws("a", path: "/wt/a"), ws("b", path: "/wt/b")], cursor: 1)
+      tasks = []
+      stub_method(Creator, :dispatch, ->(_c, _p, task) { tasks << task; :ok }) do
+        with_reads(sb) { sb.send(:handle, "n\ejj") }
+      end
+      assert_empty tasks
+      assert_equal 1, cursor_of(sb)
+    end
+
+    # Task prompt fed by one batched read, then `reads`. Returns the dispatched tasks and each drawn line.
+    def batch_into_task_prompt(keys, reads:)
+      sb = sidebar(nodes: [proj("app")])
+      tasks = []
+      draws = []
+      stub_method(sb, :draw_prompt, ->(_label, text, **) { draws << text.dup }) do
+        stub_method(Creator, :dispatch, ->(_c, _p, task) { tasks << task; :ok }) do
+          with_reads(sb, *reads) { sb.send(:handle, keys) }
+        end
+      end
+      [tasks, draws]
     end
 
     def test_digits_typed_with_r_become_the_new_name
@@ -205,13 +256,27 @@ module Switchboard
       stub_method(sb.instance_variable_get(:@config), :project, ->(*) { { "name" => "app" } }) do
         stub_method(Rename, :perform, ->(_c, _p, _path, name) { names << name; Rename::Result.new(:ok, nil, false) }) do
           stub_method(sb, :reload, ->(*) {}) do
-            stub_method(sb, :read_prompt_key, -> { flunk "the batch held the whole name" }) do
-              capture_stdout { sb.send(:handle, "rv2\r") }
-            end
+            with_reads(sb, "\r") { sb.send(:handle, "rv2") }
           end
         end
       end
       assert_equal ["v2"], names
+    end
+
+    # Value: protects=a batched newline can't rename unseen, and the typed name survives to a real ↵; fails_when=name prompts feed a typeahead newline; why_new=the earlier test pinned the unseen rename; seam=none; no_claim=none beyond protects
+    def test_a_batched_newline_leaves_the_rename_prompt_open
+      [[nil, []], ["\r", ["v2"]]].each do |read, renamed|
+        sb = sidebar(nodes: [proj("app"), ws("alpha")], cursor: 1)
+        names = []
+        stub_method(sb.instance_variable_get(:@config), :project, ->(*) { { "name" => "app" } }) do
+          stub_method(Rename, :perform, ->(_c, _p, _path, name) { names << name; Rename::Result.new(:ok, nil, false) }) do
+            stub_method(sb, :reload, ->(*) {}) do
+              with_reads(sb, read) { sb.send(:handle, "rv2\r") }
+            end
+          end
+        end
+        assert_equal renamed, names
+      end
     end
 
     # --- configurable in-sidebar keys (issue #108) ---------------------------
