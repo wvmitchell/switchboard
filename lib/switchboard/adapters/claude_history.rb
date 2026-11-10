@@ -62,6 +62,8 @@ module Switchboard
       # Bounded: the sidebar's `r` runs this, and a prune may hold the lock for a while.
       # Busy means prune's catch-up carries it later (the worktree bridge pairs the keys).
       with_lock(timeout: 2) { carry(src, dst, now) } || begin
+        return :no_source unless File.exist?(src) || File.symlink?(src) # nothing to carry (a Codex workspace)
+
         record_error("link", dst, RuntimeError.new("busy: the next prune carries it"))
         :partial
       end
@@ -439,6 +441,8 @@ module Switchboard
 
     def clean_temps(now)
       root = projects_root
+      return unless File.directory?(root) # no Claude here (a Codex-only machine)
+
       Dir.children(root).each do |n|
         p = File.join(root, n)
         next unless n.match?(TEMP) && File.lstat(p).mtime < now - TEMP_AGE

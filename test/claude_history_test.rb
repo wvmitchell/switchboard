@@ -56,6 +56,13 @@ module Switchboard
 
     def with_writers(index, &block) = stub_method(ClaudeSessions, :writers_by_key, ->(*) { index }, &block)
 
+    # Ruby 3.3 on Linux has no File::Stat#birthtime (NotImplementedError, which `rescue nil` misses).
+    def skip_without_birthtime(path)
+      File.stat(path).birthtime
+    rescue NotImplementedError
+      skip "no birthtime on this platform"
+    end
+
     def owned = ["#{ClaudeHistory.encode(File.realpath(FileUtils.mkdir_p(path('wts')).first))}-"]
 
     def legacy_bridge(from_path, to_dir)
@@ -441,6 +448,7 @@ module Switchboard
     # why_new=adversarial review (all three voices); seam=none; no_claim=filesystems without birthtime
     def test_a_skipped_link_is_caught_up_when_the_new_key_only_holds_newer_files
       old = wt("proj", "old")
+      skip_without_birthtime(File.dirname(old))
       new = wt("proj", "new")
       stale = wt("proj", "stale")
       seed(old)
@@ -473,6 +481,35 @@ module Switchboard
 
       assert_equal 0, ClaudeHistory.catch_up([[foo, wt("proj", "foo-bar")]]).linked
       assert File.exist?(File.join(dir, "#{SID}.jsonl"))
+    end
+
+    # Value: protects=a workspace with no Claude history (a Codex one) gets no false "not fully
+    # carried" warning when a prune holds the lock; fails_when=link reports :partial with no
+    # source; why_new=Codex compatibility review; seam=none; no_claim=real prune durations
+    def test_link_with_no_history_reports_nothing_to_carry_on_a_held_lock
+      old = wt("proj", "old")
+      new = wt("proj", "new")
+      ClaudeHistory.with_lock do
+        reader, writer = IO.pipe
+        pid = fork do
+          reader.close
+          writer.write(ClaudeHistory.link(old, new).inspect)
+          exit!(0)
+        end
+        writer.close
+        Process.wait(pid)
+        assert_equal ":no_source", reader.read
+      end
+      refute File.exist?(ClaudeHistory.log_path), "nothing to log"
+    end
+
+    # Value: protects=prune still finishes its history pass for a user with no
+    # ~/.claude/projects (Codex only); fails_when=sweep raises ENOENT; why_new=Codex
+    # compatibility review; seam=none; no_claim=none
+    def test_sweep_without_a_projects_folder_is_a_no_op
+      FileUtils.rm_rf(root)
+      sum = with_writers({}) { ClaudeHistory.sweep(owned: ["-x-"]) }
+      assert_equal 0, sum.converted + sum.deleted
     end
 
     # Value: protects=the sidebar never freezes behind a prune holding the history lock;
@@ -539,7 +576,7 @@ module Switchboard
     def test_reused_tells_an_earlier_workspaces_sessions_from_its_own
       w = wt("proj", "reused")
       FileUtils.mkdir_p(w)
-      skip "no birthtime on this filesystem" unless (File.stat(w).birthtime rescue nil)
+      skip_without_birthtime(w)
 
       refute ClaudeHistory.reused?(w), "no history folder yet"
       seed(w, age: Time.now)
