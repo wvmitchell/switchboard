@@ -108,7 +108,9 @@ and **renames the branch to match** (`<branch_prefix>/<name>`) — unless the br
 has been pushed or you switched it yourself, in which case the branch is left
 intact and only the directory moves. It leaves a temporary bridge symlink behind
 so a *running* agent in that worktree keeps reporting state through the move; the
-bridge is reaped automatically once it's no longer needed.
+bridge is reaped automatically once it's no longer needed. Claude's conversation
+history comes along too, hard-linked into the new path's history folder, so `/resume`
+and `claude --continue` find it there.
 
 New workspaces start with a throwaway placeholder name (that's all `n` makes), so
 renaming is the normal last step — and with `auto_rename` on (the default) the

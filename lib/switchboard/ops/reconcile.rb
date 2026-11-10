@@ -17,8 +17,9 @@ module Switchboard
 
     # The reconcile outcome, so the CLI can report honestly: reachable=false ⇒ no
     # tmux server; sb_count ⇒ how many sb/ sessions exist; orphans ⇒ the names
-    # killed (or, in a dry run, that would be).
-    Report = Struct.new(:reachable, :sb_count, :orphans, keyword_init: true)
+    # killed (or, in a dry run, that would be); history ⇒ what happened to Claude's
+    # transcript folders (a ClaudeHistory::Summary, nil when not run).
+    Report = Struct.new(:reachable, :sb_count, :orphans, :history, keyword_init: true)
 
     module_function
 
@@ -57,15 +58,29 @@ module Switchboard
     # moved/unreadable repo never makes its live sessions look orphaned. The diff
     # is against the UNION of all verified valid names, so two projects whose
     # names sanitize to the same prefix protect each other's sessions.
-    def prune(config, dry_run: false, now: Time.now.to_i)
+    #
+    # `catch_up_history:` also tidies Claude's transcript folders (ClaudeHistory), last and
+    # with or without a tmux server (prune from a plain shell is the usual recovery). Last,
+    # because a rename waits on the history lock between moving its worktree and renaming
+    # its session: work between the sessions read and the worktree listing would widen
+    # that window into a kill. The sidebar's launch prune passes false: no history work in
+    # a UI process.
+    def prune(config, dry_run: false, now: Time.now.to_i, catch_up_history: true)
+      report = prune_sessions(config, dry_run, now)
+      report.history = prune_history(config, Model.new(config, with_dirty: false).projects, dry_run, Time.at(now)) if catch_up_history
+      report
+    end
+
+    def prune_sessions(config, dry_run, now)
       live = Tmux.sessions
       return Report.new(reachable: false, sb_count: 0, orphans: []) if live.nil?
 
+      projects = Model.new(config, with_dirty: false).projects
       prefixes = []
       valid = []
       parents = []
       verified = []
-      Model.new(config, with_dirty: false).projects.each do |project|
+      projects.each do |project|
         names = project.worktrees.map { |w| Tmux.session_name(w) }
         # A listing git failed, or a worktree in it we couldn't read (non-UTF-8 path), would
         # make a live session look orphaned: leave the whole project alone.
@@ -91,14 +106,80 @@ module Switchboard
       skipped = config.projects.reject { |p| verified.include?([p["name"], p["path"]]) }
                       .filter_map { |p| Tmux.session_prefix(p["name"]) if p["name"] }
 
-      unless dry_run
-        reap_bridges(parents)
-        ClaudeHistory.reap_bridges # GC the rename bridges migrate leaves in ~/.claude/projects
-      end
+      reap_bridges(parents) unless dry_run
 
       orphaned = orphans(live, valid, prefixes - skipped, current: Tmux.session_of, now: now)
       orphaned.each { |name| Tmux.kill_session(name) } unless dry_run
       Report.new(reachable: true, sb_count: live.size, orphans: orphaned)
+    end
+
+    # Sweep the projects bridges older versions left, link what renamed workspaces' old
+    # keys gained since, and reap dangling projects bridges. A dry run changes nothing and
+    # counts what it would do.
+    def prune_history(config, projects, dry_run, now)
+      pairs = history_pairs(config, projects: projects)
+      owned = owned_prefixes(config, projects: projects)
+      return preview_history(pairs, owned) if dry_run
+
+      sum = ClaudeHistory.sweep(owned: owned, now: now)
+      caught = ClaudeHistory.catch_up(pairs, now: now)
+      sum.linked += caught.linked
+      sum.clashes.concat(caught.clashes)
+      ClaudeHistory.reap_bridges(owned: owned)
+      ClaudeHistory.trim_log
+      sum
+    rescue StandardError
+      nil
+    end
+
+    def preview_history(pairs, owned)
+      sum = ClaudeHistory::Summary.zero
+      sum.converted = ClaudeHistory.sweep_candidates(owned: owned).size # converted or deleted: decided at run time
+      ClaudeHistory.inspect_pairs(pairs).each do |p|
+        sum.linked += p[:missing]
+        sum.clashes.concat(p[:clashes])
+      end
+      sum
+    end
+
+    # [old_path, new_path] for each worktree bridge (the symlink a rename leaves at the old
+    # path) that still resolves to a live worktree: a renamed workspace's history pairs.
+    def history_pairs(config, projects: nil)
+      projects ||= Model.new(config, with_dirty: false).projects
+      live = projects.flat_map { |p| p.worktrees.map { |w| real(w.path) } }.to_set
+      worktree_parents(config, projects).flat_map do |dir|
+        Dir.children(dir).filter_map do |name|
+          bridge = File.join(dir, name)
+          target = File.symlink?(bridge) && Paths.real_or_nil(bridge)
+          [bridge, target] if target && live.include?(target)
+        end
+      rescue StandardError
+        []
+      end
+    end
+
+    # The encoded key prefixes of switchboard's own workspaces: history cleanup touches
+    # nothing in Claude's projects folder outside them.
+    def owned_prefixes(config, projects: nil)
+      projects ||= Model.new(config, with_dirty: false).projects
+      # Only folders under worktree_root: a worktree git found elsewhere (~/code/x-wt) would
+      # otherwise claim every key under ~/code.
+      root = "#{Paths.real_or_self(config.worktree_root)}/"
+      worktree_parents(config, projects).select { |dir| "#{dir}/".start_with?(root) }
+                                        .map { |dir| "#{ClaudeHistory.encode(dir)}-" }
+    end
+
+    # Where each project's dedicated worktrees live: the configured worktree root and any
+    # parent a dedicated worktree actually sits in (never the primary checkout's parent).
+    def worktree_parents(config, projects)
+      configured = config.projects.filter_map do |p|
+        Paths.real_or_nil(File.join(config.worktree_root, Placeholder.sanitize(p["name"]))) if p["name"]
+      end
+      found = projects.flat_map do |project|
+        repo = real(project.path)
+        project.worktrees.filter_map { |w| File.dirname(real(w.path)) unless real(w.path) == repo }
+      end
+      (configured + found).uniq.select { |d| File.directory?(d) }
     end
 
     # Pure: which running sidebar PIDs are orphans — their tty is not among the live

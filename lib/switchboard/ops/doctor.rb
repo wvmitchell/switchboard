@@ -33,6 +33,7 @@ module Switchboard
       doctor_prs(config)
       doctor_sounds(config)
       doctor_sessions(config)
+      doctor_history(config)
       doctor_remote_links
       doctor_session_names
       doctor_orphan_sidebars
@@ -261,13 +262,48 @@ module Switchboard
     # show there — doctor is the discovery surface). Silent outside tmux / with
     # no server: nothing to assert.
     def doctor_sessions(config)
-      report = Reconcile.prune(config, dry_run: true)
+      report = Reconcile.prune(config, dry_run: true, catch_up_history: false) # doctor_history covers it
       return unless report.reachable
 
       if report.orphans.empty?
         puts row(true, "no orphaned sb/ sessions")
       else
         puts row(false, "#{report.orphans.size} orphaned sb/ session(s) — run `switchboard prune` (--dry-run to preview)")
+      end
+    end
+
+    # Claude transcript history after renames (ClaudeHistory). Info lines only, each with
+    # what to do; silent when everything is carried and tidy.
+    def doctor_history(config)
+      projects = Model.new(config, with_dirty: false).projects
+      pairs = Reconcile.history_pairs(config, projects: projects)
+      owned = Reconcile.owned_prefixes(config, projects: projects)
+      info = ->(msg) { puts "  \e[33m–\e[0m #{msg}" }
+
+      bridges = ClaudeHistory.sweep_candidates(owned: owned).size
+      info["#{bridges} projects bridge(s) left in Claude's projects folder by older versions — run `switchboard prune` to clean them up"] if bridges.positive?
+      ClaudeHistory.inspect_pairs(pairs).each { |p| doctor_history_pair(p, info) }
+      projects.flat_map(&:worktrees).reject(&:primary).each do |w|
+        next unless ClaudeHistory.reused?(w.path)
+
+        info["#{File.basename(w.path)}: its Claude history folder already holds an earlier workspace's sessions (a reused name), so `/resume` there lists them"]
+      end
+      count, since = ClaudeHistory.errors
+      info["#{count} Claude history error(s) since #{since}; see #{ClaudeHistory.log_path}"] if count
+    rescue StandardError
+      nil
+    end
+
+    def doctor_history_pair(pair, info)
+      if pair[:missing].positive?
+        info["#{pair[:missing]} transcript file(s) from before a rename not yet linked into #{File.basename(pair[:new])} — run `switchboard prune`"]
+      end
+      pair[:clashes].each do |old, new|
+        if old.end_with?(".jsonl")
+          info["split transcript #{File.basename(old, '.jsonl')}: both copies kept; `/resume` at the new path shows #{new}; nothing to do unless you need #{old}"]
+        else
+          info["#{File.basename(old)} differs between #{old} and #{new}; both copies kept"]
+        end
       end
     end
 

@@ -562,7 +562,7 @@ module Switchboard
         # the TUI), so flash on the bottom row — a silent reload would leave a failed
         # rename looking like nothing happened.
         result = Rename.perform(@config, node.project, node.path, newname)
-        msg = rename_error(result)
+        msg = rename_error(result) || (result.history == :partial && "renamed, but Claude history wasn't fully carried — run `switchboard doctor`")
         flash(msg) if msg
         # The agent there is about to see /rename appear; tell YOU it's switchboard's.
         # The status line, not flash: flash waits for a key on every rename.

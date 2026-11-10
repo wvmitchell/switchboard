@@ -84,6 +84,9 @@ The ones that broke something before. Each doc above explains why.
   and never advise deleting the block by hand.
 - **Undocumented upstream files fail closed** (Claude's sessions file): an unrecognized
   shape is no signal, never a wrong one.
+- **A live session's transcript folder is a real directory.** Switchboard never creates a
+  symlink in `~/.claude/projects`; rename hard-links history (`ClaudeHistory`), and cleanup
+  there deletes only on proof (owned key, `writers_by_key` known-empty, quiet target).
 - **Dispatch never starts an agent on an un-set-up tree, and never destroys work**: the
   agent starts only through `Creation.authorize_launch`, and rollback removes only what it
   can prove is its own.
@@ -113,6 +116,12 @@ tracks these lines; update them when you re-verify one.
 - **◷ sessions-file `status`:** last verified live against **Claude Code 2.1.308–2.1.310**
   (v0.56.0), re-checked live on 2.1.311–2.1.312, 2.1.314, 2.1.316, 2.1.318 and 2.1.319 (a background
   agent's hand-off held its chime).
+- **Claude history folders** (`~/.claude/projects/<encode(cwd)>`): verified live on Claude
+  Code 2.1.321. Transcripts are appended in place (same inode), the key is
+  `encode(physical cwd)` (a session started through a symlinked path writes under the real
+  one), a worktree's folder holds only `*.jsonl` and `<uuid>/` (`memory/` appears only for
+  non-git folders), `claude --continue` picks its session before SessionStart hooks run, and
+  `writers_by_key` reads the sessions file's `pid`, `cwd` and `procStart`.
 - **Session-name sync** (Claude's screen and `/rename`): pinned by real 2.1.310 captures in
   `test/fixtures/session_name` and confirmed live on 2.1.312, 2.1.314, 2.1.316, 2.1.318 and 2.1.319
   (the sidebar's `r`, the pane in view).

@@ -213,15 +213,6 @@ safe today; each is narrow).
   (eng review D10) already attributes by live pid cwd via one batched `lsof`; start by
   reproducing the sequence above with a real hooked agent, then reuse that helper.
 
-- **Verify whether Claude reopens the transcript by path or holds an fd.** The
-  `ClaudeHistory` bridge only matters if a running agent re-derives
-  `projects/<encoded-cwd>/<id>.jsonl` by path on each append; if it holds an open fd,
-  the dir move is transparent and the bridge is harmless dead weight. Couldn't verify
-  Claude's internals from here, so the bridge is kept as cheap insurance. *Why low:*
-  worst case the bridge is a no-op. Resolving it would let us simplify (drop the bridge)
-  or confirm it's load-bearing (and then the clobber race in `claude_history.rb`'s header matters more).
-
-
 - **Narrow the rename move→session-rename prune window (or make prune
   bridge-aware).** `Rename.perform` does `Git.move_worktree` then
   `Tmux.rename_session` as two steps. In the (microsecond) gap the dir is at the

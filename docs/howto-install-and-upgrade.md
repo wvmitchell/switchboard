@@ -66,6 +66,14 @@ it off. Clone installs don't check: `git` already tells you when your branch mov
   It refuses if tracked files have uncommitted changes. Untracked and ignored files
   are fine, unless the update would overwrite one: then git refuses and names the file.
 
+After upgrading from a version older than hard-linked history, run `switchboard prune`
+once. It turns the history symlinks older renames left in `~/.claude/projects` into real
+folders, or removes them when nothing uses them, and `switchboard doctor` reminds you while
+any remain. A sidebar still running the old code until it reloads can leave one more
+symlink behind; the next prune handles it. Going back to an older version loses nothing:
+its renames move history and leave symlinks again, never overwriting a file, and a prune
+on a newer version tidies them up.
+
 Then the new version finishes the setup:
 
 - reloads switchboard's tmux bindings and hooks in the running server, even from a

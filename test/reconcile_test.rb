@@ -249,16 +249,102 @@ module Switchboard
       refute File.symlink?(bridge), "prune reaps the dangling bridge"
     end
 
-    # Prune also GCs the Claude rename bridges migrate leaves in ~/.claude/projects
-    # (ClaudeHistory.reap_bridges), the twin of the worktree-bridge sweep above.
-    def test_prune_reaps_a_dangling_claude_history_bridge
+    # Prune also GCs the dangling projects bridges older versions left in
+    # ~/.claude/projects (ClaudeHistory.reap_bridges), but only under switchboard's own
+    # workspace keys: a symlink someone else keeps there is not ours to delete.
+    def test_prune_reaps_only_owned_dangling_claude_history_bridges
       setup_app_project
       root = ENV["SWITCHBOARD_CLAUDE_PROJECTS_DIR"]
       FileUtils.mkdir_p(root)
-      bridge = File.join(root, "old-key")
-      File.symlink(File.join(root, "gone"), bridge) # dangling bridge in the projects dir
+      mine = File.join(root, "#{ClaudeHistory.encode(File.realpath(path('worktrees', 'app')))}-old-name")
+      theirs = File.join(root, "-not-a-switchboard-key")
+      [mine, theirs].each { |b| File.symlink(File.join(root, "gone"), b) }
       run_prune([sess("sb/app/app"), sess("sb/app/feat")])
-      refute File.symlink?(bridge), "prune reaps the dangling Claude history bridge"
+      refute File.symlink?(mine), "prune reaps an owned dangling projects bridge"
+      assert File.symlink?(theirs), "a symlink under someone else's key is left alone"
+    end
+
+    # A workspace renamed old-name -> feat: the worktree bridge old-name pairs the keys.
+    def renamed_pair
+      setup_app_project
+      root = ENV["SWITCHBOARD_CLAUDE_PROJECTS_DIR"]
+      parent = File.realpath(path("worktrees", "app"))
+      File.symlink(File.join(parent, "feat"), File.join(parent, "old-name"))
+      old_dir = File.join(root, ClaudeHistory.encode(File.join(parent, "old-name")))
+      FileUtils.mkdir_p(old_dir)
+      File.write(File.join(old_dir, "0b7c5d2e-1f3a-4b5c-8d9e-0a1b2c3d4e5f.jsonl"), "turn\n")
+      File.join(root, ClaudeHistory.encode(File.join(parent, "feat")))
+    end
+
+    # Value: protects=prune from a plain shell still carries late history; fails_when=the
+    # history work sits after the tmux early return; why_new=new ordering; seam=none;
+    # no_claim=none beyond protects
+    def test_prune_catches_history_up_even_without_tmux
+      new_dir = renamed_pair
+      report = stub_method(Tmux, :sessions, -> { nil }) { Reconcile.prune(Config.new) }
+      refute report.reachable
+      assert_equal 1, report.history.linked
+      assert File.exist?(File.join(new_dir, "0b7c5d2e-1f3a-4b5c-8d9e-0a1b2c3d4e5f.jsonl"))
+    end
+
+    # Value: protects=prune's history sweep never deletes a projects bridge beside the
+    # primary checkout (a sibling repo's key); fails_when=worktree_parents takes in the
+    # primary's parent; why_new=only a non-matching foreign key was tested; seam=none;
+    # no_claim=keys of worktrees placed by hand outside the worktree root
+    def test_history_cleanup_never_owns_the_primary_checkouts_parent
+      setup_app_project
+      root = ENV["SWITCHBOARD_CLAUDE_PROJECTS_DIR"]
+      FileUtils.mkdir_p(root)
+      target = File.join(root, "-elsewhere")
+      FileUtils.mkdir_p(target)
+      File.write(File.join(target, "0b7c5d2e-1f3a-4b5c-8d9e-0a1b2c3d4e5f.jsonl"), "turn\n")
+      File.utime(Time.now - 3600, Time.now - 3600, *Dir.glob("#{target}/**/*"), target)
+      sibling = File.join(root, ClaudeHistory.encode(File.join(File.realpath(path), "other-repo")))
+      File.symlink(target, sibling)
+
+      assert_equal ["#{ClaudeHistory.encode(File.realpath(path('worktrees', 'app')))}-"],
+                   Reconcile.owned_prefixes(Config.new)
+      stub_method(ClaudeSessions, :writers_by_key, ->(*) { {} }) { run_prune([sess("sb/app/app")]) }
+      assert File.symlink?(sibling), "a bridge beside the primary checkout is not ours"
+    end
+
+    # Value: protects=a worktree git found outside worktree_root never makes its whole parent
+    # (e.g. ~/code) switchboard-owned; fails_when=owned_prefixes takes every found parent;
+    # why_new=targeted review; seam=none; no_claim=none beyond protects
+    # Value: protects=a rename that moves its worktree while prune runs, then waits on the
+    # history lock before renaming its session, never gets that live session killed;
+    # fails_when=history work sits between prune's sessions read and its worktree listing;
+    # why_new=adversarial review + fix-check; seam=the sweep stub stands in for the lock
+    # wait; no_claim=real tmux timing
+    def test_a_rename_during_the_history_pass_keeps_its_session
+      setup_app_project
+      repo = path("app")
+      from = path("worktrees", "app", "feat")
+      to = path("worktrees", "app", "feat2")
+      t = self
+      renaming = lambda do |**|
+        t.send(:git, repo, "worktree", "move", from, to)
+        ClaudeHistory::Summary.zero
+      end
+      killed = stub_method(ClaudeHistory, :sweep, renaming) do
+        run_prune([sess("sb/app/app"), sess("sb/app/feat")]) # the session isn't renamed yet
+      end
+      assert_empty killed, "the just-moved worktree's session is live, not an orphan"
+    end
+
+    def test_a_worktree_outside_the_worktree_root_owns_nothing
+      setup_app_project
+      File.write(Config.path, YAML.dump("worktree_root" => path("elsewhere"), "projects" => [{ "name" => "app", "path" => path("app") }]))
+      assert_empty Reconcile.owned_prefixes(Config.new)
+    end
+
+    def test_a_dry_run_counts_history_without_changing_it_and_the_sidebar_skips_it
+      new_dir = renamed_pair
+      stub_method(Tmux, :sessions, -> { nil }) do
+        assert_equal 1, Reconcile.prune(Config.new, dry_run: true).history.linked
+        assert_nil Reconcile.prune(Config.new, catch_up_history: false).history
+      end
+      refute File.exist?(new_dir), "neither run touched Claude's folders"
     end
 
     # The primary checkout's parent is the dir holding the main repo — switchboard
@@ -281,7 +367,7 @@ module Switchboard
       wt = path("worktrees", "app", "feat")
       FileUtils.mkdir_p(File.dirname(wt))
       git(repo, "worktree", "add", "-q", "-b", "feat", wt)
-      File.write(Config.path, YAML.dump("projects" => [{ "name" => "app", "path" => repo }]))
+      File.write(Config.path, YAML.dump("worktree_root" => path("worktrees"), "projects" => [{ "name" => "app", "path" => repo }]))
     end
 
     def run_prune(live)

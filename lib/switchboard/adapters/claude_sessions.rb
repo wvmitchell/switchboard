@@ -123,6 +123,74 @@ module Switchboard
       nil
     end
 
+    # The live sessions writing to each transcript folder key, as { key => [record, …] },
+    # or nil when that can't be known. History cleanup deletes only on a known empty list,
+    # so every doubt is nil: an unreadable dir, a live pid's file we can't read, a start
+    # time `ps` won't confirm, or a running `claude` with no file at all (Claude moved or
+    # stopped writing them). Keyed by the RECORDED cwd: a renamed session keeps writing
+    # under the key it started with, which kernel-cwd placement (sessions_in) would miss.
+    def writers_by_key
+      dir = sessions_dir
+      files = Dir.children(dir).select { |f| f.end_with?(".json") }
+      seen = []
+      pids = claude_pids or return nil
+      out = Hash.new { |h, k| h[k] = [] }
+      files.each do |f|
+        pid = Integer(File.basename(f, ".json"), exception: false)
+        seen << pid
+        rec = record(read_json(File.join(dir, f)))
+        unless rec
+          return nil if pid&.between?(1, PID_MAX) && ProcessIdentity.alive?(pid)
+
+          next
+        end
+        # A running claude's file naming another pid can't say whose key it writes.
+        return nil if pid != rec[:pid] && pids.include?(pid)
+
+        seen << rec[:pid]
+        next unless ProcessIdentity.alive?(rec[:pid])
+        return nil if rec[:proc_start].strip.empty? || rec[:cwd].to_s.strip.empty?
+
+        case ProcessIdentity.identity(rec[:pid], rec[:proc_start])
+        when :same then out[ClaudeHistory.encode(ClaudeHistory.canonical(rec[:cwd]))] << rec
+        when :unknown then return nil
+        # A running claude whose own file no longer matches its start time is a format
+        # drift, not a recycled pid: doubt, not "no writer".
+        when :different then return nil if pids.include?(rec[:pid])
+        end
+      end
+      return nil if (pids - seen).any?
+
+      out.default_proc = nil
+      out
+    rescue StandardError
+      nil
+    end
+
+    # Pids of running Claude Code processes (`claude …` or node running its script), []
+    # when there are none, nil when `pgrep`/`ps` can't say.
+    def claude_pids
+      found = IO.popen(["pgrep", "-f", "claude"], err: File::NULL, &:read)
+      return nil unless [0, 1].include?($?.exitstatus)
+
+      pids = found.split.map(&:to_i).select(&:positive?)
+      return [] if pids.empty?
+
+      out = IO.popen({ "LC_ALL" => "C" }, ["ps", "-o", "pid=,command=", "-p", pids.join(",")], err: File::NULL, &:read)
+      return nil if out.strip.empty? # ps failed, or every match exited: either way, doubt
+
+      out.lines.filter_map do |line|
+        pid, *argv = line.split
+        pid.to_i if claude_command?(argv)
+      end
+    rescue StandardError
+      nil
+    end
+
+    # By executable name, argv[0] or the script node runs: plenty of processes merely
+    # mention ~/.claude in their arguments.
+    def claude_command?(argv) = argv.first(2).any? { |word| File.basename(word) == "claude" }
+
     def inside?(cwd, root)
       cwd == root || cwd.start_with?("#{root}/")
     end

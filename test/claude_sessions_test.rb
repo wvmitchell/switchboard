@@ -140,5 +140,72 @@ module Switchboard
       assert_nil ClaudeSessions.activity([rec("")]), "missing status"
       assert_nil ClaudeSessions.activity([rec("Busy")]), "exact strings only"
     end
+
+    # --- writers_by_key: who writes to a transcript folder (history cleanup) --------
+
+    def writers(claude: [])
+      stub_method(ClaudeSessions, :claude_pids, ->(*) { claude }) { ClaudeSessions.writers_by_key }
+    end
+
+    def key_of(path) = ClaudeHistory.encode(ClaudeHistory.canonical(path))
+
+    def test_writers_are_keyed_by_the_recorded_cwd_of_any_kind
+      w = wt("alpha")
+      write_session("1", cwd: w, kind: "bg")
+      assert_equal [Process.pid], writers.fetch(key_of(w)).map { |r| r[:pid] }
+    end
+
+    def test_a_dead_or_recycled_writer_is_none
+      w = wt("alpha")
+      write_session("dead", cwd: w, pid: 2**22 + 12_345)
+      write_session("recycled", cwd: w, procStart: "Thu Jan  1 00:00:00 1970")
+      assert_equal({}, writers)
+    end
+
+    # Value: protects=history cleanup never deletes when it can't see every writer;
+    # fails_when=any doubt below reads as "no writers"; why_new=writers_by_key is new;
+    # seam=none; no_claim=Claude's future sessions-file format
+    def test_every_doubt_is_nil
+      w = wt("alpha")
+      File.write(File.join(ClaudeSessions.sessions_dir, "#{Process.pid}.json"), "{ not json")
+      assert_nil writers, "a live pid's unreadable file"
+
+      FileUtils.rm_f(File.join(ClaudeSessions.sessions_dir, "#{Process.pid}.json"))
+      write_session("1", cwd: w, procStart: :absent)
+      assert_nil writers, "a live session without its start time"
+
+      write_session("1", cwd: w)
+      stub_method(ProcessIdentity, :identity, ->(*) { :unknown }) { assert_nil writers, "ps couldn't confirm it" }
+      assert_nil writers(claude: [Process.pid, 999_999]), "a running claude with no sessions file"
+      assert_nil writers(claude: nil), "pgrep couldn't say"
+
+      FileUtils.rm_rf(ClaudeSessions.sessions_dir)
+      assert_nil writers, "no sessions dir at all"
+    end
+
+    def test_a_running_claude_whose_own_file_drifted_is_doubt
+      write_session("1", cwd: wt("alpha"), procStart: "Thu Jan  1 00:00:00 1970")
+      assert_equal({}, writers(claude: []), "a recycled pid that isn't claude is a stranger")
+      assert_nil writers(claude: [Process.pid]), "a running claude with a mismatched file is doubt"
+    end
+
+    def test_a_running_claudes_file_naming_another_pid_or_no_cwd_is_doubt
+      write_session("1", cwd: wt("alpha"), pid: 999_999)
+      assert_nil writers(claude: [1]), "a live claude's file vouching for a dead pid"
+      FileUtils.rm(Dir.glob(File.join(ClaudeSessions.sessions_dir, "*.json")))
+      write_session(Process.pid.to_s, cwd: "")
+      assert_nil writers(claude: [Process.pid]), "no cwd, no key"
+    end
+
+    def test_a_node_launched_claude_counts_as_claude
+      assert ClaudeSessions.claude_command?(%w[node /opt/lib/node_modules/.bin/claude --resume])
+      assert ClaudeSessions.claude_command?(%w[/usr/local/bin/claude])
+      refute ClaudeSessions.claude_command?(%w[vim /Users/me/.claude/settings.json])
+    end
+
+    def test_a_dead_pids_unreadable_file_is_ignored
+      File.write(File.join(ClaudeSessions.sessions_dir, "#{2**22 + 12_345}.json"), "{ not json")
+      assert_equal({}, writers)
+    end
   end
 end

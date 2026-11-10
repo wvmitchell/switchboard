@@ -359,11 +359,12 @@ module Switchboard
     # the session orphans (process-with-no-pane vs session-with-no-worktree), so it
     # gets its own appended line and never suppresses the session summary.
     def prune_summary(report, reaped, dry)
-      [session_prune_summary(report, dry), sidebar_reap_summary(reaped, dry)].compact.join("\n")
+      [session_prune_summary(report, dry), sidebar_reap_summary(reaped, dry), history_prune_summary(report.history, dry)]
+        .compact.join("\n")
     end
 
     def session_prune_summary(report, dry)
-      return "no tmux server — nothing to reconcile" unless report.reachable
+      return "no tmux server — sessions not reconciled" unless report.reachable
       return "no sb/ sessions found" if report.sb_count.zero?
       return "#{report.sb_count} sb/ session(s), none orphaned" if report.orphans.empty?
 
@@ -379,6 +380,21 @@ module Switchboard
       return if reaped.empty?
 
       "#{dry ? 'would reap' : 'reaped'} #{reaped.size} orphaned sidebar process(es)"
+    end
+
+    # What prune did (or, dry, would do) to Claude's transcript folders.
+    def history_prune_summary(sum, dry)
+      return unless sum
+
+      parts = if dry
+                ["would link #{sum.linked} file(s)", "would check #{sum.converted} projects bridge(s) for cleanup"]
+              else
+                ["linked #{sum.linked} file(s)", "converted #{sum.converted} and deleted #{sum.deleted} projects bridge(s)"]
+              end
+      kept = sum.kept.reject { |_, n| n.zero? }.map { |why, n| "#{n} #{why.tr('_', ' ')}" }
+      parts << "kept #{kept.join(', ')}" unless kept.empty?
+      parts << "#{sum.clashes.size} clash(es), see `switchboard doctor`" unless sum.clashes.empty?
+      "history: #{parts.join('; ')}"
     end
 
     # Tear down switchboard: kill every sb/ session, the one you're in last (so
@@ -601,6 +617,7 @@ module Switchboard
     # exits non-zero). Both :ok and :partial moved the dir, so both announce the
     # new path; :partial adds the orphaned-session caveat and still fails.
     def report_rename(result, sub)
+      warn_history(result)
       case result.status
       when :ok
         announce_landing(result, sub)
@@ -630,6 +647,13 @@ module Switchboard
         warn "rename failed (git worktree move)"
         false
       end
+    end
+
+    # The rename never fails over history, but a partial carry must not pass for a full one.
+    def warn_history(result)
+      return unless result.history == :partial
+
+      warn "  Claude history was not fully carried to #{result.dest} — run `switchboard doctor`"
     end
 
     # Point the user at the new path. The interactive shell's cwd is now stale
