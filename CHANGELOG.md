@@ -10,6 +10,15 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
+## [0.71.0] — New workspaces never reuse an old workspace's folder name (2026-11-13)
+
+### Changed
+- Placeholder names now end in a random four-digit hex suffix (`brave-otter-3f9a`). Claude and
+  Codex key a workspace's history by its folder, so a name reused after its workspace was deleted
+  could hand a new workspace an old one's conversations. The word lists also grew from 1,406 to
+  about 15,000 pairs, for roughly a billion possible names. Existing suffixless placeholders still
+  read as placeholders for the rename nudge.
+
 ## [0.70.0] — Renamed workspaces keep their Claude history in real folders (2026-11-09)
 
 ### Changed

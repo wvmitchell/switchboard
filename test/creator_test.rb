@@ -37,7 +37,7 @@ module Switchboard
       dest = build(config)
       refute_nil dest
       leaf = File.basename(dest)
-      assert_match(/\A[a-z]+-[a-z]+\z/, leaf, "an adjective-noun placeholder leaf")
+      assert_match(/\A[a-z]+-[a-z]+-[0-9a-f]{4}\z/, leaf, "an adjective-noun-hex placeholder leaf")
       assert_equal File.join(config.worktree_root, "proj", leaf), dest
       assert_equal leaf, Git.current_branch(dest), "branch matches the leaf (no prefix here)"
     end
