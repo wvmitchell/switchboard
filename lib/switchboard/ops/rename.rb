@@ -111,7 +111,10 @@ module Switchboard
         return "workspace #{shown} (#{w[:path]})" if same[shown]
         return "the folder #{w[:path]}" if same[File.basename(w[:path])]
       end
-      parents = (listing.map { |w| File.dirname(Paths.real_or_self(w[:path])) } - [File.dirname(Paths.real_or_self(project["path"]))]).uniq
+      # Every worktree parent but the primary checkout's, plus this workspace's own: the
+      # display rule compares against its siblings even beside the primary.
+      primary_parent = File.dirname(Paths.real_or_self(project["path"]))
+      parents = (listing.map { |w| File.dirname(Paths.real_or_self(w[:path])) } - [primary_parent] + [File.dirname(real)]).uniq
       parents.each do |dir|
         Names.siblings(dir).each do |f|
           next if File.join(dir, f) == real
@@ -137,7 +140,11 @@ module Switchboard
     # mid-exec, a respawn not yet booted). A rename refuses while any is running: such a
     # sidebar would show folder names and an old prune would kill renamed sessions.
     def stale_peers
-      (CodeReload.sidebar_reload_targets || []).reject(&:names?).map(&:pane)
+      targets = CodeReload.sidebar_reload_targets
+      # A server that can't list its panes may still run an old sidebar: unknown isn't none.
+      return Tmux.sessions.nil? ? [] : ["(tmux couldn't list panes)"] if targets.nil?
+
+      targets.reject(&:names?).map(&:pane)
     end
 
     # Start the detached worker that types `/rename <name>` into the workspace's live

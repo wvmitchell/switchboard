@@ -143,6 +143,9 @@ module Switchboard
         next unless projects.include?(e.project)
 
         Creation.with_project_lock(e.project) do
+          # Re-read under the lock: a rename may have rewritten the entry since the scan.
+          fresh, now_map = Names.read_all
+          e = fresh == :ok && now_map[e.real] or next
           if live_paths.include?(e.real) || File.directory?(e.real)
             rewrite(e, "") unless dry_run || e.missing_since.empty?
           elsif e.missing_since.empty?

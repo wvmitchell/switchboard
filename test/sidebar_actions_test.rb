@@ -257,6 +257,30 @@ module Switchboard
 
     # Deleting the session you're in: fall back to home first, then kill — and DON'T
     # reload in-process (this process dies with the session; home + the reaper drive).
+    # Value: protects=deleting a renamed workspace kills its session even though removal
+    # drops its folder and stored name; fails_when=the session is looked up after
+    # start_removal; seam=start_removal/Tmux.session_for/kill_session
+    def test_delete_finds_the_session_before_removal_starts
+      sb = deletable_sidebar
+      ENV["SWITCHBOARD_BIN"] = "/bin/switchboard"
+      removed = false
+      killed = []
+      sb.define_singleton_method(:start_removal) { |*, **| removed = true }
+      sb.define_singleton_method(:reload) { |**| nil }
+      stub_method(Tmux, :session_for, ->(*) { removed ? nil : "sb/app/renamed" }) do
+        stub_method(Tmux, :session_of, ->(*) { "sb/home" }) do
+          stub_method(Tmux, :kill_session, ->(n) { killed << n; true }) do
+            stub_method(Git, :clean?, ->(*) { true }) do
+              stub_method(sb, :confirm, ->(*) { true }) { sb.send(:delete) }
+            end
+          end
+        end
+      end
+      assert_equal ["sb/app/renamed"], killed
+    ensure
+      ENV.delete("SWITCHBOARD_BIN")
+    end
+
     def test_delete_current_session_goes_home_and_kills_without_reloading
       sb = deletable_sidebar
       ENV["SWITCHBOARD_BIN"] = "/bin/switchboard"

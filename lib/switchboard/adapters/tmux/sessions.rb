@@ -11,6 +11,9 @@ module Switchboard
     # so callers (the sidebar loop) keep running.
     def go(worktree, start: nil)
       name = session_for_switch(worktree) or return
+      # A rename may have renamed it since the lookup: re-check by folder before creating
+      # one, or the start command would launch a second agent in this folder.
+      name = session_for(worktree) || name unless has_session?(name)
       ensure_session(name, worktree.path, start)
       ensure_sidebar(name)      # reconcile every window to the saved @sb_sidebar flag
       sidebar = window_sidebar_pane(name) # the window we'll land on (nil if hidden)
@@ -64,6 +67,7 @@ module Switchboard
       return expected unless found || owned_elsewhere?(expected, worktree, live)
       return nil unless found
       return found if found == expected || live.any? { |s| s[:name] == expected }
+      return found unless worktree.name_known? # never heal toward a name guessed off the folder
 
       rename_session(found, expected) ? expected : found
     end
@@ -219,8 +223,8 @@ module Switchboard
 
     # Kill a worktree's session (if any) — used when deleting a workspace. Found by
     # session path, so a session another workspace holds under this name is left alone.
-    def kill(worktree)
-      name = session_for(worktree) or return false
+    def kill(worktree, name = session_for(worktree))
+      return false unless name
       kill_session(name)
     end
 

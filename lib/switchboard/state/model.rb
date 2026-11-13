@@ -17,6 +17,10 @@ module Switchboard
     def real_path
       @real_path ||= Paths.real_or_self(path)
     end
+
+    # Whether display_name reflects the store, not a folder-name fallback for one that
+    # couldn't be read: anything that renames a session from it checks this first.
+    def name_known? = Names.read_all.first == :ok
   end
 
   Project = Struct.new(:name, :path, :base_ref, :worktrees, keyword_init: true)

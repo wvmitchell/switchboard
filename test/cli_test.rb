@@ -840,6 +840,25 @@ module Switchboard
       end
     end
 
+    # Value: protects=a name two projects share never resolves to one of them silently (a
+    # script's cd would land in the wrong project), and project/name disambiguates;
+    # fails_when=path takes the first hit or drops exit 2; why_new=the path test above has a
+    # single project; seam=none; no_claim=a duplicate inside one project (rename forbids it)
+    def test_path_refuses_a_name_two_projects_share_until_qualified
+      repos = %w[proj other].to_h { |p| [p, temp_git_repo(p)] }
+      File.write(Config.path, YAML.dump("worktree_root" => path("wts"),
+                                        "projects" => repos.map { |n, r| { "name" => n, "path" => r } }))
+      dirs = repos.to_h { |n, r| [n, path("wts", n, "dup").tap { |d| git(r, "worktree", "add", "-q", d, "-b", "dup") }] }
+      code = 0
+      out = nil
+      err = capture_err { out = capture { begin; CLI.run(%w[path dup]); rescue SystemExit => e; code = e.status; end } }
+      assert_equal ["", 2], [out, code]
+      assert_includes err, "[ambiguous] dup is in several projects:"
+      assert_includes err, "proj/dup"
+      assert_includes err, "other/dup"
+      assert_equal "#{File.realpath(dirs['other'])}\n", capture { CLI.run(%w[path other/dup]) }
+    end
+
     def test_workspace_at_is_nil_outside_any_repo
       FileUtils.mkdir_p(path("plain"))
       Dir.chdir(path("plain")) { assert_nil Model.workspace_at(Config.new) }

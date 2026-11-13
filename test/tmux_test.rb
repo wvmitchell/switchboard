@@ -715,6 +715,44 @@ module Switchboard
                    "the expected name wins among this folder's sessions"
     end
 
+    # Value: protects=an unreadable names store never renames a renamed workspace's session
+    # back to its folder name; fails_when=the switch heals from a folder-name fallback;
+    # seam=Tmux.sessions/rename_session, Names.read_all
+    def test_switching_never_heals_when_the_names_store_is_unreadable
+      dir = FileUtils.mkdir_p(path("wt", "feat")).first
+      wt = Worktree.new(project: "app", path: dir)
+      healed = false
+      stub_method(Names, :read_all, -> { [:error, "/n", "EACCES"] }) do
+        stub_method(Tmux, :rename_session, ->(*) { healed = true }) do
+          stub_method(Tmux, :sessions, -> { [{ name: "sb/app/oauth-fix", created: 1, path: dir }] }) do
+            assert_equal "sb/app/oauth-fix", Tmux.session_for_switch(wt), "switch into the session as it is"
+          end
+        end
+      end
+      refute healed, "no heal from a name guessed off the folder"
+    end
+
+    # Value: protects=a switch that raced a rename never creates a second session (and a
+    # second agent) under the old name; fails_when=go creates its looked-up name without
+    # re-checking by folder; seam=Tmux.session_for_switch/has_session?/session_for/ensure_session
+    def test_go_rechecks_by_folder_before_creating_a_session
+      wt = Worktree.new(project: "app", path: "/wt/feat")
+      made = nil
+      stub_method(Tmux, :session_for_switch, ->(_w) { "sb/app/old" }) do
+        stub_method(Tmux, :has_session?, ->(_n) { false }) do
+          stub_method(Tmux, :session_for, ->(*) { "sb/app/new" }) do
+            stub_method(Tmux, :ensure_session, ->(n, *_) { made = n; false }) do
+              %i[ensure_sidebar focus_work switch pin].each { |m| Tmux.define_singleton_method(m) { |*| nil } }
+              stub_method(Tmux, :window_sidebar_pane, ->(*) { nil }) { Tmux.go(wt) }
+            end
+          end
+        end
+      end
+      assert_equal "sb/app/new", made, "the rename already renamed it: use that session"
+    ensure
+      %i[ensure_sidebar focus_work switch pin].each { |m| Tmux.singleton_class.send(:remove_method, m) rescue nil }
+    end
+
     # Value: protects=a [partial] rename heals on the next switch; fails_when=the switch
     # creates a second session or renames onto a taken name; seam=Tmux.sessions/rename_session
     def test_switching_heals_a_stale_session_name_once_and_only_when_free

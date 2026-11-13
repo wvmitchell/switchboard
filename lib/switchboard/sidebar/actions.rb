@@ -504,10 +504,13 @@ module Switchboard
           Creation.transition(rec["id"], from: Creation::PRE_READY, to: :canceled)
           Creation.ack(rec["id"]) # seen and deleted: its ✘ must not come back once the tree is gone
         end
-        start_removal(repo, node.path, node.branch, branches: branches) # marks + hides the row, spawns the reaper
-
         worktree = Worktree.new(project: node.project, path: node.path, branch: node.branch,
                                 dirty: false, pr: nil, base: nil, primary: false)
+        # Found by its folder BEFORE removal: the reaper drops the folder and its stored
+        # name, after which a renamed workspace's session can't be found.
+        session = Tmux.session_for(worktree)
+        start_removal(repo, node.path, node.branch, branches: branches) # marks + hides the row, spawns the reaper
+
         # If we're deleting the very session we're attached to, killing it would
         # eject us from switchboard (this sidebar lives inside it). Fall back to
         # the persistent home session first, then kill — "the one you're in, last".
@@ -516,12 +519,12 @@ module Switchboard
         # every pane once the removal lands). hooks_only on the non-current reload skips
         # the intermittent lsof fallback (the other dots refresh on the next tick).
         current = Tmux.session_of
-        deleting_current = !current.nil? && current == Tmux.session_for(worktree)
+        deleting_current = !current.nil? && current == session
         if deleting_current
           Tmux.go_home
-          Tmux.kill(worktree)
+          Tmux.kill(worktree, session)
         else
-          Tmux.kill(worktree)
+          Tmux.kill(worktree, session)
           reload(hooks_only: true)
         end
       end

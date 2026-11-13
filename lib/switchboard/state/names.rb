@@ -46,7 +46,12 @@ module Switchboard
       Dir.children(d).each do |f|
         next if f.start_with?(".")
 
-        entry = parse(File.read(File.join(d, f), encoding: Encoding::UTF_8))
+        raw = begin
+          File.read(File.join(d, f), encoding: Encoding::UTF_8)
+        rescue Errno::ENOENT
+          next # deleted since the listing (a rename back, a delete, prune): not an error
+        end
+        entry = parse(raw)
         map[entry.real] = entry if entry && key(entry.real) == f
       end
       [:ok, map]

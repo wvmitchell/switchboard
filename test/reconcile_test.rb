@@ -280,6 +280,48 @@ module Switchboard
       assert_equal [live, "/elsewhere/x"].sort, Names.read_all.last.keys.sort, "gone 30 days: dropped; another project's: untouched"
     end
 
+    # Value: protects=doctor's dry-run prune never marks or drops a stored name, and a folder
+    # that came back loses its gone mark; fails_when=prune_names ignores dry_run, or never
+    # clears missing_since (a returned folder's name is dropped 30 days after it first went
+    # missing); why_new=the names test above runs only real prunes on a folder that stays
+    # gone; seam=none; no_claim=lock ordering between prune and rename
+    def test_a_dry_run_leaves_names_alone_and_a_returned_folder_is_unmarked
+      setup_app_project
+      back = File.join(File.realpath(path("worktrees", "app")), "back")
+      Names.write(back, "came-back", project: "app")
+      dry = ->(now) { with_tmux([], current: nil, killer: ->(_) {}) { Reconcile.prune(Config.new, dry_run: true, now: now) } }
+      dry.call(NOW)
+      assert_empty Names.read_all.last[back].missing_since, "a dry run marks nothing"
+
+      run_prune([])
+      refute_empty Names.read_all.last[back].missing_since
+      assert_equal 1, dry.call(NOW + Names::MISSING_TTL + 1).names, "a dry run counts what it would drop"
+      assert Names.read_all.last.key?(back), "...and drops nothing"
+
+      FileUtils.mkdir_p(back)
+      run_prune([])
+      assert_empty Names.read_all.last[back].missing_since, "the folder came back: unmarked"
+    end
+
+    # Value: protects=prune never reverts a rename that lands between its read and the lock;
+    # fails_when=prune_names rewrites from its unlocked snapshot; seam=Creation.with_project_lock
+    def test_prune_names_never_reverts_a_rename_that_lands_before_the_lock
+      setup_app_project
+      live = File.realpath(path("worktrees", "app", "feat"))
+      Names.write(live, "old-title", project: "app", missing_since: NOW - 5)
+      real_lock = Creation.method(:with_project_lock)
+      calls = 0
+      lock = lambda do |p, &blk|
+        # the 2nd lock is prune_names' (the 1st is the session prune): rename right before it
+        Names.write(live, "fresh-title", project: "app") if (calls += 1) == 2
+        real_lock.call(p, &blk)
+      end
+      stub_method(Creation, :with_project_lock, lock) { run_prune([]) }
+      e = Names.read_all.last[live]
+      assert_equal "fresh-title", e.name
+      assert_empty e.missing_since
+    end
+
     # The primary checkout's parent is the dir holding the main repo — switchboard
     # doesn't own it. A dangling symlink there (never a bridge) must survive prune.
     def test_prune_does_not_sweep_the_main_repos_parent_dir

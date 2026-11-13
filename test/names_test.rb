@@ -56,6 +56,21 @@ module Switchboard
       File.chmod(0o755, Names.dir) if File.exist?(Names.dir)
     end
 
+    # Value: protects=an entry deleted mid-read (a rename back, a delete, prune) never makes the
+    # whole store read as unreadable; fails_when=read_all lets a per-file ENOENT abort the
+    # scan; seam=File.read
+    def test_an_entry_deleted_mid_read_is_skipped_not_an_error
+      a = dir("wts", "app", "a")
+      b = dir("wts", "app", "b")
+      Names.write(a, "kept", project: "app")
+      Names.write(b, "gone", project: "app")
+      gone = File.join(Names.dir, Names.key(b))
+      real_read = File.method(:read)
+      status, map = stub_method(File, :read, ->(f, **o) { f == gone ? raise(Errno::ENOENT, f) : real_read.call(f, **o) }) { Names.read_all }
+      assert_equal :ok, status
+      assert_equal ["kept"], map.values.map(&:name)
+    end
+
     # Value: protects=a long-lived sidebar keeps showing names through a transient read
     # failure; fails_when=the cache is dropped on an error; seam=Names.read_all
     def test_a_failed_reread_keeps_the_last_good_names

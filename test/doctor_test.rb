@@ -564,6 +564,44 @@ module Switchboard
       assert_includes out, "1 sidebar(s) running code that doesn't know stored names (pane %9)"
     end
 
+    # Value: protects=a rename interrupted between its branch/session step and the store (or a
+    # lost store) is reported with the exact command that restores the name; fails_when=
+    # doctor_name_drift stops comparing the session or the branch against the shown name;
+    # why_new=the problem test above has no unnamed workspace with a drifted session or
+    # branch; seam=Tmux.sessions; no_claim=Git.pushed? against a real remote
+    def test_doctor_names_points_at_a_session_or_branch_that_drifted_from_the_name
+      feat = names_project
+      doctor = lambda do |live|
+        stub_method(Tmux, :sessions, -> { live }) do
+          stub_method(Rename, :stale_peers, -> { [] }) { capture { Doctor.doctor_names(Config.new) } }
+        end
+      end
+      out = doctor.call([{ name: "sb/app/oauth-fix", created: 1, path: feat }])
+      assert_includes out, "#{feat}: its session is called `oauth-fix` but it has no stored name; " \
+                           "to keep it, run `cd #{Shellwords.escape(feat)} && switchboard rename oauth-fix`"
+
+      git(feat, "branch", "-m", "feat", "oauth-fix")
+      out = doctor.call([])
+      assert_includes out, "#{feat}: branch `oauth-fix` doesn't match its name `feat`; if a rename was interrupted, " \
+                           "run `cd #{Shellwords.escape(feat)} && switchboard rename oauth-fix`"
+    end
+
+    # Value: protects=a name that silently shows as its folder (a clash) and an unreadable
+    # store are each surfaced, the latter as a failing row that says renames are refused;
+    # fails_when=the clash branch or the unreadable early-return is dropped (doctor goes
+    # silent while every rename fails [names-unreadable]); why_new=no doctor test covers a
+    # clash or an unreadable store; seam=Names.read_all; no_claim=which side of a clash wins
+    def test_doctor_names_reports_a_clash_and_an_unreadable_store
+      feat = names_project
+      FileUtils.mkdir_p(File.join(File.dirname(feat), "taken.name"))
+      Names.write(feat, "taken-name", project: "app", branch: "feat")
+      out = stub_method(Rename, :stale_peers, -> { [] }) { capture { Doctor.doctor_names(Config.new) } }
+      assert_includes out, "`taken-name` (#{feat}) clashes with another workspace in that folder"
+
+      out = stub_method(Names, :read_all, -> { [:error, "/n", "EACCES"] }) { capture { Doctor.doctor_names(Config.new) } }
+      assert_includes out, "names store /n: EACCES — renames are refused until it's readable"
+    end
+
     def test_doctor_names_is_silent_when_every_name_is_in_order
       feat = names_project
       Names.write(feat, "oauth-fix", project: "app", branch: "feat")

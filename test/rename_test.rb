@@ -7,6 +7,19 @@ module Switchboard
   # is the stubbed seam. The shared core behind both the sidebar `r` key and `switchboard
   # rename`. The folder never moves: every agent keys its history by the cwd.
   class RenameTest < SandboxTest
+    # Tests that fake a live tmux server (Tmux.sessions) get a server with no sidebar panes,
+    # unless they stub the pane listing themselves: stale_peers refuses on an unlistable one.
+    def setup
+      super
+      @targets = CodeReload.method(:sidebar_reload_targets)
+      CodeReload.define_singleton_method(:sidebar_reload_targets) { [] }
+    end
+
+    def teardown
+      CodeReload.define_singleton_method(:sidebar_reload_targets, @targets)
+      super
+    end
+
     # Config registering `proj` -> a real repo.
     def config_for(repo, **extra)
       File.write(Config.path, YAML.dump({ "worktree_root" => path("wts"),
@@ -124,6 +137,44 @@ module Switchboard
       end
       assert_equal "old", name_of(old)
       assert Git.branch_exists?(repo, "old"), "the branch is untouched"
+    end
+
+    # Value: protects=a name equal to a plain (non-worktree) folder beside the workspace is
+    # refused, since the folder name would win the display rule and the rename would report
+    # ok yet show nothing; fails_when=clash_for stops scanning the worktree parents' folders;
+    # why_new=the exists test's folder is itself a worktree, caught by the listing loop;
+    # seam=none; no_claim=folders outside the worktree parents
+    def test_a_plain_folder_beside_the_workspace_holds_its_name
+      repo = temp_git_repo("proj")
+      old = add_worktree(repo, "old")
+      stray = FileUtils.mkdir_p(path("wts", "proj", "stray.dir")).first
+      result = Rename.perform(config_for(repo), "proj", old, "stray-dir")
+      assert_equal :exists, result.status
+      assert_includes result.detail, "the folder #{File.join(File.realpath(File.dirname(stray)), 'stray.dir')}"
+      assert_equal "old", name_of(old)
+    end
+
+    # Value: protects=a worktree beside the primary checkout can't take a sibling folder's name
+    # (which the display rule would override); fails_when=clash_for skips the primary's
+    # parent; seam=none
+    def test_a_folder_beside_the_primary_checkout_holds_its_name
+      repo = temp_git_repo("proj")
+      beside = path("beside")
+      git(repo, "worktree", "add", "-q", beside, "-b", "beside")
+      FileUtils.mkdir_p(path("notes"))
+      result = Rename.perform(config_for(repo), "proj", beside, "notes")
+      assert_equal :exists, result.status
+      assert_includes result.detail, "the folder"
+      assert_equal "beside", Git.current_branch(beside), "nothing changed"
+    end
+
+    # Value: protects=an unanswerable sidebar query never reads as "no old sidebars";
+    # fails_when=stale_peers turns a failed list-panes into []; seam=CodeReload/Tmux.sessions
+    def test_stale_peers_refuses_when_panes_cant_be_listed_on_a_live_server
+      stub_method(CodeReload, :sidebar_reload_targets, -> { nil }) do
+        stub_method(Tmux, :sessions, -> { [] }) { refute_empty Rename.stale_peers, "server up, panes unknown: refuse" }
+        stub_method(Tmux, :sessions, -> { nil }) { assert_empty Rename.stale_peers, "no server: no sidebars to fear" }
+      end
     end
 
     def test_two_concurrent_renames_to_one_name_have_exactly_one_winner
