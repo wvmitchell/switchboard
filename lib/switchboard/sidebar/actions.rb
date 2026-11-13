@@ -410,7 +410,7 @@ module Switchboard
         # still untouched, else keep it (re-entry stays a plain shell) for d on its row,
         # which asks before forcing.
         unless Creator.untouched?(rec["path"], project["base_ref"])
-          return flash("kept #{File.basename(rec['path'])}: it has changes — d on its row deletes it")
+          return flash("kept #{rec['name']}: it has changes — d on its row deletes it")
         end
 
         # The branch actually checked out there — a dir-only rename (the branch was
@@ -477,7 +477,7 @@ module Switchboard
         return unless project
 
         repo = project["path"]
-        label = File.basename(node.path)
+        label = node.name
         base = project["base_ref"]
         branches = WorkspaceBranches.plan(repo, node.path, base)
         listing = branches && WorkspaceBranches.listing(branches, base)
@@ -515,7 +515,8 @@ module Switchboard
         # (it hydrates the PendingDelete hide, and the reaper's broadcast_warm repaints
         # every pane once the removal lands). hooks_only on the non-current reload skips
         # the intermittent lsof fallback (the other dots refresh on the next tick).
-        deleting_current = Tmux.session_of == Tmux.session_name(worktree)
+        current = Tmux.session_of
+        deleting_current = !current.nil? && current == Tmux.session_for(worktree)
         if deleting_current
           Tmux.go_home
           Tmux.kill(worktree)
@@ -545,24 +546,23 @@ module Switchboard
         Workspaces.remove!(repo, path, branch, force_branch: force_branch, branches: branches)
       end
 
-      # Rename a workspace: move its worktree directory (the display name) + rename
-      # its session in place. Shares the core with `switchboard rename` via Rename
-      # (issue #42); the sidebar reloads on every outcome (silent on failure, as
-      # before — the tree just re-reads git truth).
+      # Rename a workspace: its stored name, branch, session and Claude title; the folder
+      # never moves. Shares the core with `switchboard rename` via Rename; the sidebar
+      # reloads on every outcome.
       def rename
         node = current
         return unless node && node.kind == "ws"
         project = @config.project(node.project)
         return unless project
 
-        newname = prompt_line("rename #{File.basename(node.path)} to")
+        newname = prompt_line("rename #{node.name} to")
         return reload if blank_input?(newname)
 
         # The CLI warns these to stderr; the sidebar can't (stderr would paint over
         # the TUI), so flash on the bottom row — a silent reload would leave a failed
         # rename looking like nothing happened.
         result = Rename.perform(@config, node.project, node.path, newname)
-        msg = rename_error(result) || (result.history == :partial && "renamed, but Claude history wasn't fully carried — run `switchboard doctor`")
+        msg = rename_error(result)
         flash(msg) if msg
         # The agent there is about to see /rename appear; tell YOU it's switchboard's.
         # The status line, not flash: flash waits for a key on every rename.
@@ -574,12 +574,16 @@ module Switchboard
       # reloaded tree is feedback enough; :unchanged is not an error).
       def rename_error(result)
         case result.status
-        when :exists  then "already exists: #{File.basename(result.dest)}"
-        when :branch_exists then "branch #{File.basename(result.dest)} already exists — pick another name"
+        when :exists then "#{result.name} is taken by #{result.detail}"
+        when :branch_exists then "branch #{result.detail} already exists — pick another name"
         when :invalid then "invalid name — letters/digits/. - _, no /, and a valid git branch"
-        when :partial then "renamed the dir, but the tmux session rename failed — run prune"
-        when :failed  then "rename failed (git worktree move)"
+        when :partial then "renamed; the tmux session kept its old name until you switch to it"
         when :building then "still creating… rename once it's ready"
+        when :stale_peers then "a sidebar runs older code — run `switchboard reload-sidebars`, then rename"
+        when :names_unreadable then "can't read the names store #{result.detail}"
+        when :listing_failed then "can't list #{result.detail}'s worktrees"
+        when :rollback_failed then "rename failed and the branch is now #{result.detail[1]} — run `switchboard doctor`"
+        when :failed then "couldn't save the name: #{result.detail}"
         end
       end
     end

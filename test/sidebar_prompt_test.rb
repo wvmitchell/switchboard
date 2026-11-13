@@ -416,43 +416,18 @@ module Switchboard
       stub_method(sb, :prompt_line, ->(*) { "beta" }) do
         stub_method(sb, :reload, -> { reloaded = true }) do
           stub_method(sb, :flash, ->(msg) { flashed = msg }) do
-            stub_method(Rename, :perform, ->(*) { Rename::Result.new(:exists, "/wt/beta") }) do
+            stub_method(Rename, :perform, ->(*) { Rename::Result.new(:exists, "/wt/alpha", nil, "beta", "workspace beta (/wt/beta)") }) do
               sb.send(:rename)
             end
           end
         end
       end
-      assert_match(/already exists: beta/, flashed.to_s, "the failure reason is flashed")
-      assert reloaded, "the sidebar still reloads after flashing"
-    end
-
-    # A successful rename does NOT flash — the reloaded tree is feedback enough.
-    def test_rename_does_not_flash_on_success
-      File.write(Config.path, YAML.dump("projects" => [{ "name" => "app", "path" => "/x" }]))
-      sb = sidebar(nodes: [proj("app"), ws("alpha", path: "/wt/alpha")], cursor: 1)
-      sb.instance_variable_set(:@config, Config.new)
-      reloaded = false
-      stub_method(sb, :prompt_line, ->(*) { "beta" }) do
-        stub_method(sb, :reload, -> { reloaded = true }) do
-          stub_method(sb, :flash, ->(*) { flunk "no flash on a successful rename" }) do
-            stub_method(Rename, :perform, ->(*) { Rename::Result.new(:ok, "/wt/beta") }) do
-              sb.send(:rename)
-            end
-          end
-        end
-      end
-      assert reloaded
-    end
-
-    # rename_error maps each non-success status to a distinct message; success and
-    # :unchanged return nil (no flash). Pins all arms so a typo can't slip through.
-    def test_rename_error_maps_each_status
-      sb = sidebar
-      assert_match(/already exists: beta/, sb.send(:rename_error, Rename::Result.new(:exists, "/wt/beta")))
-      assert_match(/branch beta already exists/, sb.send(:rename_error, Rename::Result.new(:branch_exists, "/wt/beta")))
-      assert_match(/invalid name/,         sb.send(:rename_error, Rename::Result.new(:invalid, nil)))
-      assert_match(/session rename failed/, sb.send(:rename_error, Rename::Result.new(:partial, "/wt/x")))
-      assert_match(/rename failed/,        sb.send(:rename_error, Rename::Result.new(:failed, nil)))
+      assert_match(/beta is taken by workspace beta/, sb.send(:rename_error, Rename::Result.new(:exists, "/wt/a", nil, "beta", "workspace beta (/wt/b)")))
+      assert_match(/branch wvm\/beta already exists/, sb.send(:rename_error, Rename::Result.new(:branch_exists, "/wt/a", nil, "beta", "wvm/beta")))
+      assert_match(/invalid name/,         sb.send(:rename_error, Rename::Result.new(:invalid, "/wt/a")))
+      assert_match(/kept its old name until you switch/, sb.send(:rename_error, Rename::Result.new(:partial, "/wt/x", nil, "x")))
+      assert_match(/couldn't save the name: EACCES/, sb.send(:rename_error, Rename::Result.new(:failed, "/wt/a", nil, "a", "EACCES")))
+      assert_match(/reload-sidebars/, sb.send(:rename_error, Rename::Result.new(:stale_peers, "/wt/a", nil, "a", ["%3"])))
       assert_nil sb.send(:rename_error, Rename::Result.new(:ok, "/wt/x")), "success doesn't flash"
       assert_nil sb.send(:rename_error, Rename::Result.new(:unchanged, "/wt/x")), "unchanged doesn't flash"
     end

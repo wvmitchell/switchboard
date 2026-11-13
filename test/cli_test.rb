@@ -602,23 +602,12 @@ module Switchboard
 
     # --- prune_summary: honest reporting (F5) + dry-run next step (DX-2) ------
 
-    def test_prune_summary_adds_the_history_line_with_or_without_tmux
-      sum = ClaudeHistory::Summary.zero
-      sum.linked = 3
-      sum.deleted = 2
-      sum.kept["recent"] = 1
-      lines = CLI.prune_summary(Reconcile::Report.new(reachable: false, sb_count: 0, orphans: [], history: sum), [], false)
+    def test_prune_summary_reports_dropped_names_with_or_without_tmux
+      lines = CLI.prune_summary(Reconcile::Report.new(reachable: false, sb_count: 0, orphans: [], names: 2), [], false)
       assert_includes lines, "no tmux server — sessions not reconciled"
-      assert_includes lines, "history: linked 3 file(s); converted 0 and deleted 2 projects bridge(s); kept 1 recent"
-      assert_includes CLI.prune_summary(report.tap { |r| r.history = sum }, [], true), "history: would link 3 file(s)"
-    end
-
-    def test_a_partial_history_carry_warns_but_the_rename_still_succeeds
-      result = Rename::Result.new(:ok, path("wts", "x"), nil, :partial)
-      _, err = capture_io { CLI.warn_history(result) }
-      assert_includes err, "Claude history was not fully carried"
-      _, quiet = capture_io { CLI.warn_history(Rename::Result.new(:ok, path("wts", "x"), nil, :linked)) }
-      assert_empty quiet
+      assert_includes lines, "dropped 2 stored name(s) for workspaces gone 30 days"
+      assert_includes CLI.prune_summary(report.tap { |r| r.names = 1 }, [], true), "would drop 1 stored name(s)"
+      refute_includes CLI.prune_summary(report.tap { |r| r.names = 0 }, [], false), "stored name"
     end
 
     def test_prune_summary_distinguishes_unreachable_from_empty
@@ -770,51 +759,84 @@ module Switchboard
       end
     end
 
-    def test_rename_renames_a_managed_worktree_from_inside_it
+    # Value: protects=the agent verb names the workspace without moving it, and says so;
+    # fails_when=the folder moves, a cd hint comes back, or the name isn't stored; seam=none
+    def test_rename_names_a_managed_worktree_from_inside_it_and_keeps_the_folder
       old = rename_fixture
-      # git canonicalizes the worktree path (macOS /var -> /private/var), so assert
-      # on the leaf shape, not the exact symlinked prefix.
       out = Dir.chdir(old) { capture { assert CLI.rename("fresh") } }
-      assert File.directory?(path("wts", "proj", "fresh"))
-      assert_includes out, "renamed to "
-      assert_includes out, "wts/proj/fresh"
-      assert_includes out, "cd into the new path"
+      assert File.directory?(old), "the folder never moves"
+      refute File.exist?(path("wts", "proj", "fresh"))
+      assert_includes out, "renamed to fresh"
+      assert_includes out, "folder (unchanged): "
+      refute_includes out, "cd "
+      assert_equal "fresh", Model.workspace_at(Config.new, old).display_name
     end
 
-    def test_rename_reports_partial_and_fails
+    def rename_with(result)
       stub_method(Model, :workspace_at, ->(*) { Worktree.new(project: "proj", path: "/x", primary: false) }) do
-        stub_method(Rename, :perform, ->(*) { Rename::Result.new(:partial, "/wts/proj/new") }) do
+        stub_method(Rename, :perform, ->(*) { result }) do
+          ok = nil
           err = nil
-          capture { err = capture_err { refute CLI.rename("new") } } # :partial also puts the landing to stdout
-          assert_match(/session rename failed/, err)
+          out = capture { err = capture_err { ok = CLI.rename("new") } }
+          [ok, out, err]
         end
       end
     end
 
-    def test_rename_reports_exists_and_fails
-      stub_method(Model, :workspace_at, ->(*) { Worktree.new(project: "proj", path: "/x", primary: false) }) do
-        stub_method(Rename, :perform, ->(*) { Rename::Result.new(:exists, "/wts/proj/taken") }) do
-          err = capture_err { refute CLI.rename("taken") }
-          assert_match(/already exists/, err)
-        end
-      end
-    end
-
-    def test_rename_reports_branch_exists_and_fails
-      stub_method(Model, :workspace_at, ->(*) { Worktree.new(project: "proj", path: "/x", primary: false) }) do
-        stub_method(Rename, :perform, ->(*) { Rename::Result.new(:branch_exists, "/wts/proj/taken") }) do
-          err = capture_err { refute CLI.rename("taken") }
-          assert_match(/branch named taken already exists/, err)
-        end
+    # Value: protects=every failure an agent can hit is one stderr line with a stable token,
+    # the values, what was committed and the next step, and exit 1; fails_when=a token is
+    # dropped, a message names the folder as the new name, or a failure exits 0; seam=Rename.perform
+    def test_every_rename_failure_is_a_tokened_instruction_on_stderr
+      cases = {
+        Rename::Result.new(:partial, "/x", nil, "new") => ["[partial] name saved as new", "switching to the workspace renames it"],
+        Rename::Result.new(:exists, "/x", nil, "new", "workspace new (/wts/proj/a)") => ["[exists] new is taken by workspace new (/wts/proj/a); nothing changed"],
+        Rename::Result.new(:branch_exists, "/x", nil, "new", "wvm/new") => ["[branch-exists] a branch named wvm/new already exists"],
+        Rename::Result.new(:invalid, "/x", nil, "old") => ["[invalid]", "valid git branch"],
+        Rename::Result.new(:building, "/x", nil, "old") => ["[building]"],
+        Rename::Result.new(:stale_peers, "/x", nil, "old", %w[%3 %9]) => ["[stale-peers] nothing renamed: sidebar pane(s) %3 %9", "reload-sidebars"],
+        Rename::Result.new(:names_unreadable, "/x", nil, "old", "/n: EACCES") => ["[names-unreadable] can't read the names store /n: EACCES"],
+        Rename::Result.new(:listing_failed, "/x", nil, "old", "/repo") => ["[listing-failed] can't list the worktrees of /repo"],
+        Rename::Result.new(:failed, "/x", nil, "old", "EACCES") => ["[failed] couldn't save the name", "EACCES", "nothing changed"],
+        Rename::Result.new(:rollback_failed, "/x", nil, "old", ["EACCES", "wvm/new", "wvm/old"]) => ["[rollback-failed]", "it is now wvm/new", "git branch -m wvm/new wvm/old in /x"]
+      }
+      cases.each do |result, wants|
+        ok, _out, err = rename_with(result)
+        refute ok, result.status
+        assert_equal 1, err.lines.size, "#{result.status}: one stderr line"
+        wants.each { |w| assert_includes err, w, result.status }
       end
     end
 
     def test_rename_reports_unchanged_and_succeeds
-      stub_method(Model, :workspace_at, ->(*) { Worktree.new(project: "proj", path: "/x", primary: false) }) do
-        stub_method(Rename, :perform, ->(*) { Rename::Result.new(:unchanged, "/wts/proj/old") }) do
-          out = capture { assert CLI.rename("old") }
-          assert_match(/already named old/, out)
-        end
+      ok, out, err = rename_with(Rename::Result.new(:unchanged, "/x", nil, "old"))
+      assert ok
+      assert_match(/already named old/, out)
+      assert_empty err
+    end
+
+    # Value: protects=`switchboard path` is a scripting contract: one absolute path on stdout,
+    # or empty stdout and a distinct exit; fails_when=a failure prints to stdout, an exit code
+    # moves, or it guesses from folder names when the store is unreadable; seam=none
+    def test_path_prints_one_folder_or_fails_with_a_distinct_exit
+      old = rename_fixture("calm-fern-0a1b")
+      Dir.chdir(old) { capture { CLI.rename("oauth-fix") } }
+      old = File.realpath(old) # git lists the canonical path (macOS /var -> /private/var)
+      run = lambda do |*argv|
+        code = 0
+        out = nil
+        err = capture_err { out = capture { begin; CLI.run(["path", *argv]); rescue SystemExit => e; code = e.status; end } }
+        [out, err, code]
+      end
+      assert_equal ["#{old}\n", "", 0], run["oauth-fix"]
+      assert_equal ["#{old}\n", "", 0], run["proj/oauth-fix"]
+      assert_equal ["#{old}\n", "", 0], run["calm-fern-0a1b"], "the folder name works too"
+      out, err, code = run["nope"]
+      assert_equal ["", 1], [out, code]
+      assert_includes err, "[not-found] no workspace called nope"
+      stub_method(Names, :read_all, -> { [:error, "/n", "EACCES"] }) do
+        out, err, code = run["oauth-fix"]
+        assert_equal ["", 3], [out, code]
+        assert_includes err, "[names-unreadable]"
       end
     end
 
@@ -886,38 +908,10 @@ module Switchboard
       assert wt.primary, "the trunk checkout is flagged primary"
     end
 
-    # The cd hint must return you to the subdir you were standing in, under the new
-    # path (subpath_in non-empty branch + report_rename's File.join).
-    def test_rename_cd_hint_preserves_the_subdir
-      old = rename_fixture
-      FileUtils.mkdir_p(File.join(old, "sub", "dir"))
-      out = Dir.chdir(File.join(old, "sub", "dir")) { capture { assert CLI.rename("fresh") } }
-      assert_includes out, "wts/proj/fresh/sub/dir"
-    end
-
-    def test_rename_reports_invalid_and_fails
-      stub_method(Model, :workspace_at, ->(*) { Worktree.new(project: "proj", path: "/x", primary: false) }) do
-        stub_method(Rename, :perform, ->(*) { Rename::Result.new(:invalid, nil) }) do
-          err = capture_err { refute CLI.rename("bad name") }
-          assert_match(/invalid name/, err)
-          assert_match(/valid git branch name/, err)
-        end
-      end
-    end
-
-    def test_rename_reports_failed_and_fails
-      stub_method(Model, :workspace_at, ->(*) { Worktree.new(project: "proj", path: "/x", primary: false) }) do
-        stub_method(Rename, :perform, ->(*) { Rename::Result.new(:failed, nil) }) do
-          err = capture_err { refute CLI.rename("x") }
-          assert_match(/rename failed/, err)
-        end
-      end
-    end
-
     def test_rename_pokes_the_sidebar_when_inside_tmux
       poked = false
       stub_method(Model, :workspace_at, ->(*) { Worktree.new(project: "proj", path: "/x", primary: false) }) do
-        stub_method(Rename, :perform, ->(*) { Rename::Result.new(:ok, "/wts/proj/new") }) do
+        stub_method(Rename, :perform, ->(*) { Rename::Result.new(:ok, "/wts/proj/x", nil, "new") }) do
           stub_method(Tmux, :poke_current_sidebar, -> { poked = true }) do
             ENV["TMUX"] = "/tmp/fake-tmux,1,0"
             capture { assert CLI.rename("new") }
@@ -1012,15 +1006,15 @@ module Switchboard
 
     def test_a_rename_that_spawned_the_sync_tells_the_agent_the_coming_note_is_switchboards
       stub_method(Model, :workspace_at, ->(*) { Worktree.new(project: "proj", path: "/x", primary: false) }) do
-        stub_method(Rename, :perform, ->(*) { Rename::Result.new(:ok, "/wts/proj/new", true) }) do
+        stub_method(Rename, :perform, ->(*) { Rename::Result.new(:ok, "/wts/proj/x", true, "new") }) do
           out = capture { assert CLI.rename("new") }
           assert_match(/Claude session here will be renamed to new too/, out)
           assert_match(/switchboard syncing it, not a new request/, out)
         end
-        stub_method(Rename, :perform, ->(*) { Rename::Result.new(:unchanged, "/wts/proj/new", true) }) do
+        stub_method(Rename, :perform, ->(*) { Rename::Result.new(:unchanged, "/wts/proj/x", true, "new") }) do
           assert_match(/renamed to new too/, capture { assert CLI.rename("new") })
         end
-        stub_method(Rename, :perform, ->(*) { Rename::Result.new(:ok, "/wts/proj/new") }) do
+        stub_method(Rename, :perform, ->(*) { Rename::Result.new(:ok, "/wts/proj/x", nil, "new") }) do
           refute_match(/Claude session/, capture { assert CLI.rename("new") })
         end
       end

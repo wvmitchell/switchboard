@@ -162,14 +162,14 @@ module Switchboard
     # --- reaching every sidebar (R1, R2, R5) -----------------------------------
 
     def test_parse_reload_targets_splits_tagged_from_old
-      raw = "%1\t101\t101\t\t\tsb-sidebar\t/opt/sb/bin/switchboard sidebar\n" \
-            "%2\t102\t\t\t\tsb-sidebar\t\"/my dir/bin/switchboard\" sidebar\n" \
-            "%3\t103\t99\t\t\tsb-sidebar\t/opt/sb/bin/switchboard sidebar\n" \
-            "%4\t104\t104\t\t\tzsh\tzsh\n" \
-            "%5\t105\t\t\t\tsb-sidebar\t\"unbalanced\n" \
-            "%6\t106\t0\t\t\tsb-sidebar\t/opt/sb/bin/switchboard sidebar\n" \
-            "%7\t107\t107\t/Cellar/b\t\tsb-sidebar\t/opt/sb/bin/switchboard sidebar\n" \
-            "%8\t108\t108\t\t1\tsb-sidebar\t/opt/sb/bin/switchboard sidebar\n"
+      raw = "%1\t101\t101\t\t\tsb-sidebar\t101:names\t/opt/sb/bin/switchboard sidebar\n" \
+            "%2\t102\t\t\t\tsb-sidebar\t\t\"/my dir/bin/switchboard\" sidebar\n" \
+            "%3\t103\t99\t\t\tsb-sidebar\t99:names\t/opt/sb/bin/switchboard sidebar\n" \
+            "%4\t104\t104\t\t\tzsh\t\tzsh\n" \
+            "%5\t105\t\t\t\tsb-sidebar\t\t\"unbalanced\n" \
+            "%6\t106\t0\t\t\tsb-sidebar\t\t/opt/sb/bin/switchboard sidebar\n" \
+            "%7\t107\t107\t/Cellar/b\t\tsb-sidebar\t99:names\t/opt/sb/bin/switchboard sidebar\n" \
+            "%8\t108\t108\t\t1\tsb-sidebar\t\t/opt/sb/bin/switchboard sidebar\n"
       got = CodeReload.parse_reload_targets(raw).map { |t| [t.pane, t.pid, t.tagged, t.between, t.tag_pid, t.failed, t.bin] }
       assert_equal [["%1", 101, true, false, nil, false, "/opt/sb/bin/switchboard"],
                     ["%2", 102, false, false, nil, false, "/my dir/bin/switchboard"],
@@ -179,6 +179,8 @@ module Switchboard
                     ["%7", 107, true, false, nil, true, "/opt/sb/bin/switchboard"]], # a failed reload, recorded
                                                                                           # %8: a dead pane (remain-on-exit) is skipped
                    got, "only sidebar panes; a tag must equal the pane's pid"
+      # Reads stored names only when it advertises its OWN pid (%7's is a foreign pid; %2 none).
+      assert_equal [true, false, true, false, false, false], CodeReload.parse_reload_targets(raw).map(&:names?)
     end
 
     # Value: protects=a pane some other program titled sb-sidebar is never respawned (respawn
@@ -546,14 +548,18 @@ module Switchboard
         CodeReload.flag_failed_reload("%3", "/Cellar/b")
       end
       assert_equal ["tmux", "-u", "set-option", "-p", "-t", "%3", CodeReload::TAG, "42",
-                    ";", "set-option", "-p", "-u", "-t", "%3", CodeReload::FAILED_TAG], calls[0]
-      assert_equal ["tmux", "-u", "set-option", "-p", "-t", "%3", CodeReload::TAG, "0"], calls[1]
+                    ";", "set-option", "-p", "-u", "-t", "%3", CodeReload::FAILED_TAG,
+                    ";", "set-option", "-p", "-t", "%3", CodeReload::CAPS_TAG, "42:names"], calls[0]
+      assert_equal ["tmux", "-u", "set-option", "-p", "-t", "%3", CodeReload::TAG, "0",
+                    ";", "set-option", "-p", "-u", "-t", "%3", CodeReload::CAPS_TAG], calls[1],
+                   "going between images stops advertising: only code that reads names sets it again"
       assert_equal ["tmux", "-u", "set-option", "-p", "-t", "%3", CodeReload::FAILED_TAG, "/Cellar/b"], calls[2]
       calls.clear
       stub_method(Tmux, :system, ->(*argv, **) { calls << argv; false }) do
         refute CodeReload.tag_sidebar_pane("%3", 42, clear_failed: false), "a tag that didn't land says so"
       end
-      assert_equal [["tmux", "-u", "set-option", "-p", "-t", "%3", CodeReload::TAG, "42"]], calls,
+      assert_equal [["tmux", "-u", "set-option", "-p", "-t", "%3", CodeReload::TAG, "42",
+                     ";", "set-option", "-p", "-t", "%3", CodeReload::CAPS_TAG, "42:names"]], calls,
                    "old code re-tagging itself leaves the failure flag"
     end
 

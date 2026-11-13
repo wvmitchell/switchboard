@@ -17,26 +17,31 @@ module Switchboard
 
     # The reconcile outcome, so the CLI can report honestly: reachable=false ⇒ no
     # tmux server; sb_count ⇒ how many sb/ sessions exist; orphans ⇒ the names
-    # killed (or, in a dry run, that would be); history ⇒ what happened to Claude's
-    # transcript folders (a ClaudeHistory::Summary, nil when not run).
-    Report = Struct.new(:reachable, :sb_count, :orphans, :history, keyword_init: true)
+    # killed (or, in a dry run, that would be); names ⇒ stored names dropped because
+    # their folder has been gone MISSING_TTL (nil when the store couldn't be read).
+    Report = Struct.new(:reachable, :sb_count, :orphans, :names, keyword_init: true)
 
     module_function
 
     # Pure: of the live sessions, the ones that belong to a verified project
-    # (match a prefix), are NOT backed by a worktree (absent from the union of
-    # valid names), are older than the grace window, and aren't the session
-    # we're in. No tmux/git here, so the whole decision is unit-testable.
+    # (match a prefix), are NOT backed by a worktree, are older than the grace window,
+    # and aren't the session we're in. Backed means its creation path (`:real`, the
+    # caller-resolved realpath of #{session_path}) is a live worktree, whatever the
+    # session is called, so a rename mid-prune can never make a live session look
+    # orphaned; a session whose path isn't a live worktree (one created at a path an old
+    # rename moved away from) falls back to name matching against `valid`. No tmux/git
+    # here, so the whole decision is unit-testable.
     #
     # The age check requires a POSITIVE created stamp: if tmux returned a blank /
     # unparsable `session_created` (`.to_i` → 0), we can't trust the age, so we
     # treat the session as too-fresh-to-judge and keep it rather than let a
     # garbled stamp read as "ancient" and bypass the grace guard.
-    def orphans(live, valid, prefixes, current:, now:, grace: SESSION_GRACE)
+    def orphans(live, valid, prefixes, current:, now:, grace: SESSION_GRACE, live_paths: Set.new)
       live.select do |s|
         name = s[:name]
         created = s[:created].to_i
         owned?(name, prefixes) &&
+          !(s[:real] && live_paths.include?(s[:real])) &&
           !valid.include?(name) &&
           created.positive? && now - created >= grace &&
           name != current
@@ -52,34 +57,23 @@ module Switchboard
     end
 
     # Reconcile and, unless dry_run, kill. Builds its own fresh Model so the
-    # snapshot is as late as possible (narrows the create-vs-reconcile race).
-    # Only VERIFIED projects contribute: Model already drops missing-dir repos,
-    # and an empty worktree list (git failed / no primary) ⇒ skip — so a
-    # moved/unreadable repo never makes its live sessions look orphaned. The diff
-    # is against the UNION of all verified valid names, so two projects whose
-    # names sanitize to the same prefix protect each other's sessions.
-    #
-    # `catch_up_history:` also tidies Claude's transcript folders (ClaudeHistory), last and
-    # with or without a tmux server (prune from a plain shell is the usual recovery). Last,
-    # because a rename waits on the history lock between moving its worktree and renaming
-    # its session: work between the sessions read and the worktree listing would widen
-    # that window into a kill. The sidebar's launch prune passes false: no history work in
-    # a UI process.
-    def prune(config, dry_run: false, now: Time.now.to_i, catch_up_history: true)
-      report = prune_sessions(config, dry_run, now)
-      report.history = prune_history(config, Model.new(config, with_dirty: false).projects, dry_run, Time.at(now)) if catch_up_history
+    # snapshot is as late as possible. Only VERIFIED projects contribute: Model already
+    # drops missing-dir repos, and an empty or failed worktree list ⇒ skip — so a
+    # moved/unreadable repo never makes its live sessions look orphaned. Each project is
+    # decided and killed under its Creation.with_project_lock with a fresh session and
+    # strict worktree read, so it serializes with Rename (which holds the same lock).
+    def prune(config, dry_run: false, now: Time.now.to_i)
+      report, live_paths, verified = prune_sessions(config, dry_run, now)
+      report.names = prune_names(verified, live_paths, dry_run, now)
       report
     end
 
     def prune_sessions(config, dry_run, now)
-      live = Tmux.sessions
-      return Report.new(reachable: false, sb_count: 0, orphans: []) if live.nil?
-
       projects = Model.new(config, with_dirty: false).projects
-      prefixes = []
       valid = []
       parents = []
       verified = []
+      live_paths = Set.new
       projects.each do |project|
         names = project.worktrees.map { |w| Tmux.session_name(w) }
         # A listing git failed, or a worktree in it we couldn't read (non-UTF-8 path), would
@@ -87,7 +81,6 @@ module Switchboard
         next if names.empty? || Git.worktrees(project.path, strict: true).nil?
 
         verified << [project.name, project.path]
-        prefixes << Tmux.session_prefix(project.name)
         valid.concat(names)
         # Collect parent dirs of DEDICATED worktrees only. The primary checkout's
         # parent is the dir holding the main repo — switchboard doesn't own it and
@@ -96,9 +89,13 @@ module Switchboard
         repo = real(project.path)
         project.worktrees.each do |w|
           wt = real(w.path)
+          live_paths << wt
           parents << File.dirname(wt) unless wt == repo
         end
       end
+
+      first = Tmux.sessions
+      return [Report.new(reachable: false, sb_count: 0, orphans: []), live_paths, verified] if first.nil?
 
       # Any configured project we couldn't verify (unreadable, empty, or a missing folder Model
       # drops) keeps its prefix out of reach too: another project's name may sanitize to it
@@ -108,78 +105,60 @@ module Switchboard
 
       reap_bridges(parents) unless dry_run
 
-      orphaned = orphans(live, valid, prefixes - skipped, current: Tmux.session_of, now: now)
-      orphaned.each { |name| Tmux.kill_session(name) } unless dry_run
-      Report.new(reachable: true, sb_count: live.size, orphans: orphaned)
+      current = Tmux.session_of
+      orphaned = verified.flat_map do |name, path|
+        prune_project(name, path, valid, live_paths, skipped, current, now, dry_run)
+      end.uniq
+      [Report.new(reachable: true, sb_count: first.size, orphans: orphaned), live_paths, verified]
     end
 
-    # Sweep the projects bridges older versions left, link what renamed workspaces' old
-    # keys gained since, and reap dangling projects bridges. A dry run changes nothing and
-    # counts what it would do.
-    def prune_history(config, projects, dry_run, now)
-      pairs = history_pairs(config, projects: projects)
-      owned = owned_prefixes(config, projects: projects)
-      return preview_history(pairs, owned) if dry_run
+    # One project's orphans, decided and killed under its lock from fresh reads.
+    def prune_project(name, path, valid, live_paths, skipped, current, now, dry_run)
+      Creation.with_project_lock(name) do
+        live = Tmux.sessions or return []
+        fresh = Git.worktrees(path, strict: true) or return []
 
-      sum = ClaudeHistory.sweep(owned: owned, now: now)
-      caught = ClaudeHistory.catch_up(pairs, now: now)
-      sum.linked += caught.linked
-      sum.clashes.concat(caught.clashes)
-      ClaudeHistory.reap_bridges(owned: owned)
-      ClaudeHistory.trim_log
-      sum
-    rescue StandardError
-      nil
-    end
-
-    def preview_history(pairs, owned)
-      sum = ClaudeHistory::Summary.zero
-      sum.converted = ClaudeHistory.sweep_candidates(owned: owned).size # converted or deleted: decided at run time
-      ClaudeHistory.inspect_pairs(pairs).each do |p|
-        sum.linked += p[:missing]
-        sum.clashes.concat(p[:clashes])
+        paths = live_paths | fresh.reject { |w| w[:bare] }.map { |w| real(w[:path]) }
+        names = fresh.reject { |w| w[:bare] }.map { |w| Tmux.session_name(Worktree.new(project: name, path: w[:path])) }
+        resolved = live.map { |s| s.merge(real: s[:path] && Paths.real_or_nil(s[:path])) }
+        found = orphans(resolved, valid | names, [Tmux.session_prefix(name)] - skipped,
+                        current: current, now: now, live_paths: paths)
+        found.each { |n| Tmux.kill_session(n) } unless dry_run
+        found
       end
-      sum
     end
 
-    # [old_path, new_path] for each worktree bridge (the symlink a rename leaves at the old
-    # path) that still resolves to a live worktree: a renamed workspace's history pairs.
-    def history_pairs(config, projects: nil)
-      projects ||= Model.new(config, with_dirty: false).projects
-      live = projects.flat_map { |p| p.worktrees.map { |w| real(w.path) } }.to_set
-      worktree_parents(config, projects).flat_map do |dir|
-        Dir.children(dir).filter_map do |name|
-          bridge = File.join(dir, name)
-          target = File.symlink?(bridge) && Paths.real_or_nil(bridge)
-          [bridge, target] if target && live.include?(target)
+    # Stored names whose folder is gone: a verified project's entry gets `missing_since`
+    # the first time, and is dropped once that's MISSING_TTL old (a hand-moved worktree
+    # keeps its name long enough for doctor to point at it). A folder that came back
+    # clears the mark. Never touches an unverified project's entries, and does nothing
+    # when the store can't be read. The count dropped (or that would be), or nil.
+    def prune_names(verified, live_paths, dry_run, now)
+      status, map = Names.read_all
+      return nil unless status == :ok
+
+      projects = verified.map(&:first).to_set
+      dropped = 0
+      map.each_value do |e|
+        next unless projects.include?(e.project)
+
+        Creation.with_project_lock(e.project) do
+          if live_paths.include?(e.real) || File.directory?(e.real)
+            rewrite(e, "") unless dry_run || e.missing_since.empty?
+          elsif e.missing_since.empty?
+            rewrite(e, now) unless dry_run
+          elsif now - e.missing_since.to_i >= Names::MISSING_TTL
+            dropped += 1
+            Names.delete(e.real) unless dry_run
+          end
         end
-      rescue StandardError
-        []
       end
+      dropped
     end
 
-    # The encoded key prefixes of switchboard's own workspaces: history cleanup touches
-    # nothing in Claude's projects folder outside them.
-    def owned_prefixes(config, projects: nil)
-      projects ||= Model.new(config, with_dirty: false).projects
-      # Only folders under worktree_root: a worktree git found elsewhere (~/code/x-wt) would
-      # otherwise claim every key under ~/code.
-      root = "#{Paths.real_or_self(config.worktree_root)}/"
-      worktree_parents(config, projects).select { |dir| "#{dir}/".start_with?(root) }
-                                        .map { |dir| "#{ClaudeHistory.encode(dir)}-" }
-    end
-
-    # Where each project's dedicated worktrees live: the configured worktree root and any
-    # parent a dedicated worktree actually sits in (never the primary checkout's parent).
-    def worktree_parents(config, projects)
-      configured = config.projects.filter_map do |p|
-        Paths.real_or_nil(File.join(config.worktree_root, Placeholder.sanitize(p["name"]))) if p["name"]
-      end
-      found = projects.flat_map do |project|
-        repo = real(project.path)
-        project.worktrees.filter_map { |w| File.dirname(real(w.path)) unless real(w.path) == repo }
-      end
-      (configured + found).uniq.select { |d| File.directory?(d) }
+    def rewrite(entry, missing_since)
+      Names.write(entry.real, entry.name, project: entry.project, branch: entry.branch,
+                                          named_at: entry.named_at, missing_since: missing_since)
     end
 
     # Pure: which running sidebar PIDs are orphans — their tty is not among the live

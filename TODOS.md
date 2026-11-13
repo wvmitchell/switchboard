@@ -63,19 +63,12 @@ safe today; each is narrow).
 
 ## Background dispatch (v0.51.0) follow-ups
 
-- **Renaming an un-set-up build can drop its guard.** *Why:* in the few ms between
-  `git worktree move` and `leave_bridge`, another sidebar's GC sees the old path missing
-  (rule 3) and deletes the unfinished record; `certified?(nil)` then lets a later
-  re-entry start the agent on the un-set-up tree. Relatedly a stale failed record can
-  attach to an unrelated tree later renamed (or clash-relabeled) onto its path, and then
-  `unfinished_at?` lets a confirmed `d` force past that tree's lock. *Start in:*
-  `Creation.renamable?` (refuse an `unfinished?` record) and `Rename.perform` (refuse a
-  destination a record claims). The same check closes a newer case (v0.57.1 review): a
-  workspace renamed onto the exact placeholder an in-flight build reserved makes that
-  build's `worktree add` fail with "already exists" over a tree on its branch, so the
-  build fails and keeps it (nothing is lost, but the renamed workspace wears the build's
-  ✘ until dismissed). Check under `Creation.with_project_lock`, as `reserve` does.
-  **Priority:** P2.
+- **A stale failed record can attach to a clash-relabeled tree.** *Why:* a failed record
+  whose path a later build is clash-relabeled onto attaches to that unrelated tree, and
+  `unfinished_at?` then lets a confirmed `d` force past its lock. (Renames no longer move
+  folders, so they can't land on a record's path, and rename refuses a name an in-flight
+  build reserved.) *Start in:* the relabel in `Creator.move_off`: refuse a destination a
+  record claims, under `Creation.with_project_lock`. **Priority:** P3.
 - **Input edges in the task prompt and modals.** *Why:* an unpaired paste-start marker
   wedges the task prompt in paste mode (Esc/^C/↵ all become text; `prefix-s` escapes); a
   literal paste-end inside pasted text ends the paste early; a 1 KB read split on a
@@ -111,10 +104,8 @@ safe today; each is narrow).
   a distinct glyph) when a hooked `ready` record gets no hook state file within N
   seconds of launch. **Priority:** P1.
 - **Smaller dispatch edges noted in review, all below the fix bar.** A ring for the
-  workspace you're viewing if its `wait: false` ack was skipped that scan; GC racing a
-  rename's `worktree move` can drop a hooked record's first-turn ping; `quit` from
-  outside tmux cancels every server's builds; renaming onto a path a record still holds;
-  the launcher claiming by path rather than record id (`launch <id> <dest>` would make
+  workspace you're viewing if its `wait: false` ack was skipped that scan; `quit` from
+  outside tmux cancels every server's builds; the launcher claiming by path rather than record id (`launch <id> <dest>` would make
   every by-path lookup moot). From the 0.51.0 /ship run: a finished record whose path git
   stops listing shows an undismissable "still creating…" row; `reap_dead_owner` waits on
   the record lock and can return a just-deleted record (one-scan ghost); an empty
@@ -163,13 +154,14 @@ safe today; each is narrow).
   `/\A[\w.-]+\z/` already blocks traversal + spaces but still permits the dot/dash
   collapse (`example.com` and `example-com` both map to `sb/example-com/`), so the
   fix belongs at this shared point, not a create-only regex tweak. Low priority — the collision needs unusual names
-  and `prune --dry-run` makes it visible before anything is killed. *Also covers
-  the leaf:* `switchboard rename` (issue #42) and the sidebar `r` produce a new
-  workspace leaf that `Tmux.session_name` sanitizes the same way, so `rename
-  foo.bar` next to an existing `foo-bar` workspace collides on `sb/proj/foo-bar`
-  — the move succeeds but `rename_session` then fails into the existing name
-  (rename now reports `:partial`; prune/doctor surface the orphan). Same
-  validation point should guard leaf names, not just project names.
+  and `prune --dry-run` makes it visible before anything is killed. (Workspace names are
+  covered: rename refuses a name whose tmux session name another workspace already has.)
+
+- **Color only on a terminal.** *Why:* `doctor` and the `upgrade`/`install` finishing lines
+  print ANSI color (`\e[32m✓\e[0m`, `Doctor#row` and its siblings in doctor.rb and
+  installer.rb) even when stdout isn't a terminal, so a pipe, a log or a `!` capture shows
+  `[32m✓[0m`. *Start in:* one helper that colors only when `$stdout.tty?`, used by every
+  check mark. **Priority:** P3.
 
 - **`doctor` warns on missing/moved project repo dirs.** A `switchboard doctor`
   line listing config projects whose `path` no longer exists. *Why:* `prune`
@@ -197,34 +189,6 @@ safe today; each is narrow).
   distinguish the failing step so the message can hint at identity vs permissions
   vs network. Low priority — `projects_root` defaults to `~` (writable) and the
   generic errors match today's posture.
-
-## Rename / worktree-move (issue #42) follow-ups
-
-- **Agent dots may land on the wrong row after a rename onto a dead bridge
-  (suspected, verify first).** *What:* rename `A->B` while its agent runs, then rename
-  another workspace `C->A` (`Git.move_worktree`, via `Rename.perform`, clears the stale `A` bridge). The hook
-  reporter (`HookFile::SCRIPT`) keys state on `cwd=$(pwd -P)`. If Claude spawns hooks with cwd = its remembered project path
-  `A`, the B agent's dots and chimes now show on C's row; if hooks inherit Claude's
-  kernel cwd, it's already right (`lsof -a -d cwd` and tmux `pane_current_path` both
-  report the moved dir, probe-verified 2026-10-22). *Why:* wrong-row dots/chimes/bold.
-  *Pros:* one attribution rule for dots and the remote-link glyph. *Cons:* a fix needs
-  the reporter to write its pid (a reporter-script rewrite on every machine, the
-  `hook-reporter-atomic-rewrite` care applies). *Context:* the remote-link glyph
-  (eng review D10) already attributes by live pid cwd via one batched `lsof`; start by
-  reproducing the sequence above with a real hooked agent, then reuse that helper.
-
-- **Narrow the rename move→session-rename prune window (or make prune
-  bridge-aware).** `Rename.perform` does `Git.move_worktree` then
-  `Tmux.rename_session` as two steps. In the (microsecond) gap the dir is at the
-  NEW path but the session still has the OLD leaf name, and the old path is only a
-  bridge symlink — invisible to `git worktree list`. A concurrent `Reconcile.prune`
-  (a `go_home` launch or a manual `switchboard prune` in another terminal) sampling
-  exactly then would see `sb/<proj>/<old>` as an orphan and could kill a live
-  agent. *Why low:* the window is two consecutive shell-outs, and it's pre-existing
-  — the sidebar `r` rename always did move-then-rename; #42 only extracted it.
-  *Start in:* teach `Reconcile.prune` to treat a session whose leaf has a live
-  bridge symlink as non-orphaned, OR have `Rename` hold a brief guard. Surfaced by
-  Codex during the #42 review.
 
 ## PR-badge refresh (issue #19) follow-ups
 

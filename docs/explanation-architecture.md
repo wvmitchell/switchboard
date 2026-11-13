@@ -207,8 +207,13 @@ and flag is in [Reference: the `switchboard` command](reference-cli.md).
 
 ## tmux is the window manager
 
-Each worktree maps to exactly one tmux session named `sb/<project>/<leaf>`
-(`Tmux.session_name`).
+Each worktree maps to exactly one tmux session named `sb/<project>/<name>`
+(`Tmux.session_name`), where `<name>` is the workspace's display name: its stored name if
+it has been renamed, otherwise its folder name (see
+[a rename never moves the folder](#a-rename-never-moves-the-folder)). The name is only a
+label, though. Switchboard finds a workspace's session by the folder the session was
+created in (tmux's `#{session_path}`, `Tmux.session_for`), so switch, delete and prune
+can't mistake a session for another workspace that happens to want the same name.
 
 `tmux.rb` holds the shared constants and two small doors, `Tmux.run` and `Tmux.query`. The rest of
 the module is split by concern under `adapters/tmux/` (`sessions`, `sidebar_panes`, `presence`, `notify`,
@@ -241,11 +246,45 @@ through those doors, so a test that stubs `Tmux.system` or `IO.popen` still catc
   registry; a session named `sb/…` is switchboard's, anything else isn't. This is
   what lets `prune` reconcile sessions against worktrees (`reconcile.rb`) without
   tracking state — it diffs the live `sb/` sessions against the worktrees git
-  reports.
+  reports, matching each session by the folder it was created in.
 - **`sb/home`** maps to no worktree (it lives in `$HOME`), so it never matches a
   project prefix and is never pruned. It's the safe fallback (deleting the
   workspace you're *in* switches you here first, then kills it) and the stable
   launch base (bare `switchboard` from a shell lands here).
+
+## A rename never moves the folder
+
+A new workspace is born with a random placeholder folder name, like `gentle-lantern-3f9a`,
+and gets a real name later (from you with `r`, or from its agent with `switchboard
+rename`). The obvious way to rename it would be to move the folder. Switchboard doesn't,
+and the folder keeps its birth name for as long as the workspace lives.
+
+The reason is conversation history. Claude and Codex both file a session's history under
+the directory it ran in, as the operating system reports it (`getcwd`). Move the folder and
+`claude --continue`, `/resume` and `codex resume` all go looking under the new path and
+find nothing, while a session still running keeps writing under the old one. Keeping that
+working across a move takes agent-specific code that follows each agent's private storage
+layout, and breaks whenever an agent changes it. A folder that never moves needs none of
+that: every agent, present or future, finds its history where it left it.
+
+So what a workspace is *called* lives apart from where it lives. The names store
+(`Names`, one small file per workspace under `$XDG_STATE_HOME/switchboard/names`) maps a
+folder's real path to its name, and a workspace with no entry is called by its folder
+name. `Worktree#display_name` reads it, and the sidebar, the tmux session, the branch and
+Claude's session title all follow the display name. A rename changes the stored name, the
+branch (only while it's unpushed and still matches the old name), the tmux session in
+place, and Claude's title. It runs under the project lock and refuses a name another
+workspace, folder, in-progress build or live session in that project already uses. Names
+are compared the way tmux will spell them, so `foo.bar` and `foo-bar` count as the same.
+
+The cost is that a folder's name on disk stops matching what you call the workspace.
+`switchboard path <name>` closes that gap for shells and scripts: it prints the folder of
+the workspace with that name.
+
+Every sidebar is its own process, and one still running older code would show folder names
+and race a rename. So a sidebar that reads stored names says so with a pane option
+(`@sb_caps`, set alongside the `@sb_reload` tag and cleared before every re-exec), and
+rename refuses with `[stale-peers]` while any sidebar doesn't advertise it.
 
 ## Adding a project
 
@@ -350,6 +389,12 @@ read in full. Every configured project it couldn't verify (a missing folder, a f
 undecodable listing) protects its prefix, since another project's name may sanitize to the
 same one (`app.dev` and `app-dev`).
 
+A session counts as backed by a worktree when the folder it was created in is a live
+worktree, whatever the session is called. Only a session created somewhere that isn't a
+live worktree falls back to matching by name. Each project is decided under its project
+lock, from a fresh session list and worktree read, so a rename running at the same moment
+can never make a live session look orphaned.
+
 **Orphaned sidebars.** `prune` also reaps them (`Reconcile.reap_sidebars`). It pairs each
 running sidebar with its tty (`Tmux.sidebar_processes`) and SIGTERMs any whose tty matches
 no live pane (`Tmux.live_pane_ttys`). So a sidebar that owns a pane is never touched, and an
@@ -372,28 +417,14 @@ is a second guard on top of that: inside a throwaway server, the reap is skipped
 Orphans mostly pile up from interrupted `bin/test-smoke` runs, whose daemon servers outlive
 the run; the smoke harness sweeps those before each run.
 
-**Claude's history folders.** Claude keeps each workspace's transcripts in
-`~/.claude/projects/<encoded path>`, keyed by the path a session started in. A rename changes
-the path, but a session still running keeps writing under the old key, and readers such as
-gstack's transcript guard refuse a folder that isn't a real directory. So both keys must stay
-real. `ClaudeHistory.link` builds a real folder at the new key and hard-links every file
-into it (transcripts and any plain folder beside them; a symlink, socket or fifo is skipped
-and logged). Claude appends in place, so each later append shows under both names, and no
-symlink is ever left in `projects/`. Prune's history pass (`Reconcile.prune_history`) does the
-rest from the worktree bridges, which already record old path to new:
-- It links files the old key gained after the rename.
-- It converts or deletes the projects bridges older versions left.
+**Stored names.** Prune also tidies the names store. When a stored name's folder is gone,
+prune marks the entry with the time it noticed, and drops it once the folder has been gone
+30 days. The wait gives `doctor` time to point at a worktree you moved by hand, so you can
+carry its name over. Prune only does this for verified projects, and does nothing when the
+store can't be read.
 
-It deletes only on proof:
-- **Ownership.** The key must sit under one of switchboard's own worktree folders.
-- **No writer.** A known-empty writer list from `ClaudeSessions.writers_by_key`, where any
-  doubt reads as "unknown".
-- **Quiet.** A target unchanged for 10 minutes, holding only files and folders.
-
-A bridge with a writer, or an unknown one, is converted into a real folder instead; one
-that isn't quiet yet waits for a later prune. Conversion uses an atomic `renamex_np` swap on macOS, so a live session never sees its
-folder missing. Workspace creation (`Creator.clear_history_routes`) drops the bridges a
-reused name would otherwise inherit.
+**Legacy rename bridges.** Older versions moved the folder on rename and left a symlink at
+the old path. Prune still removes those once they dangle (`Reconcile.reap_bridges`).
 
 ## Configurable tmux keys
 

@@ -10,7 +10,7 @@ module Switchboard
     # session is first created — never on a re-switch into a live one. Non-exec
     # so callers (the sidebar loop) keep running.
     def go(worktree, start: nil)
-      name = session_name(worktree)
+      name = session_for_switch(worktree) or return
       ensure_session(name, worktree.path, start)
       ensure_sidebar(name)      # reconcile every window to the saved @sb_sidebar flag
       sidebar = window_sidebar_pane(name) # the window we'll land on (nil if hidden)
@@ -53,8 +53,48 @@ module Switchboard
       File.expand_path(ENV["HOME"] || Dir.pwd)
     end
 
+    # The session to switch into for a worktree, healing a stale name on the way: a rename
+    # whose tmux step failed (:partial) left the session under its old name, and this
+    # renames it to the expected one when that's free. nil when the expected name is
+    # held by another workspace's session: never switch into someone else's.
+    def session_for_switch(worktree)
+      live = sessions || []
+      expected = session_name(worktree)
+      found = session_for(worktree, live)
+      return expected unless found || owned_elsewhere?(expected, worktree, live)
+      return nil unless found
+      return found if found == expected || live.any? { |s| s[:name] == expected }
+
+      rename_session(found, expected) ? expected : found
+    end
+
+    # A workspace's live session. Identity is the folder the session was created in
+    # (#{session_path}), which no longer changes on rename; a session whose path is this
+    # workspace wins, preferring the expected name. A session found by NAME counts only
+    # when its path isn't another live directory (a pre-upgrade session at a path an old
+    # rename moved away from). nil when there's none.
+    def session_for(worktree, live = sessions)
+      return nil if live.nil?
+
+      want = Paths.real_or_self(worktree.path)
+      expected = session_name(worktree)
+      mine = live.select { |s| s[:path] && Paths.real_or_nil(s[:path]) == want }
+      return expected if mine.any? { |s| s[:name] == expected }
+      return mine.first[:name] unless mine.empty?
+
+      byname = live.find { |s| s[:name] == expected }
+      byname && !owned_elsewhere?(expected, worktree, live) ? expected : nil
+    end
+
+    # Whether a live session by this name was created in another existing directory.
+    def owned_elsewhere?(name, worktree, live)
+      s = live.find { |x| x[:name] == name } or return false
+      real = s[:path] && Paths.real_or_nil(s[:path])
+      !real.nil? && real != Paths.real_or_self(worktree.path) && File.directory?(real)
+    end
+
     def session_name(worktree)
-      "sb/#{worktree.project}/#{worktree.leaf}".gsub(SANITIZE, "-")
+      "sb/#{worktree.project}/#{worktree.display_name}".gsub(SANITIZE, "-")
     end
 
     # The session-name prefix shared by all of a project's worktrees. Reconcile
@@ -65,26 +105,28 @@ module Switchboard
       "sb/#{project}/".gsub(SANITIZE, "-")
     end
 
-    # Every live switchboard session as {name:, created:} (epoch seconds), or nil
+    # Every live switchboard session as {name:, created:, path:} (epoch seconds; path is
+    # the dir it was created in), or nil
     # if tmux is unreachable (no server) — distinct from [] (server up, none ours)
     # so callers can report honestly. The `-F` format is single-quoted with the
     # interpolation escaped (#\{...}); a bare #{} would be Ruby string
     # interpolation, not a tmux format, and silently yield junk.
     def sessions
-      raw = `tmux -u list-sessions -F '#\{session_name}\t#\{session_created}' 2>/dev/null`
+      raw = `tmux -u list-sessions -F '#\{session_name}\t#\{session_created}\t#\{session_path}' 2>/dev/null`
       return nil unless $?.success?
 
       sb_sessions(raw)
     end
 
     # Pure filter/parse over `tmux list-sessions` output: keep only sb/ sessions,
-    # parse the trailing epoch. Split out so it's unit-testable without a server.
+    # parse the epoch and the path. The path is LAST, so a tab in it can't shift the
+    # other fields. Split out so it's unit-testable without a server.
     def sb_sessions(raw)
       raw.to_s.lines.filter_map do |line|
-        name, created = line.chomp.split("\t", 2)
+        name, created, path = line.chomp.split("\t", 3)
         next if name.nil? || !name.start_with?("sb/")
 
-        { name: name, created: created.to_i }
+        { name: name, created: created.to_i, path: path.to_s.empty? ? nil : path }
       end
     end
 
@@ -175,9 +217,11 @@ module Switchboard
       name.empty? ? nil : name
     end
 
-    # Kill a worktree's session (if any) — used when deleting a workspace.
+    # Kill a worktree's session (if any) — used when deleting a workspace. Found by
+    # session path, so a session another workspace holds under this name is left alone.
     def kill(worktree)
-      kill_session(session_name(worktree))
+      name = session_for(worktree) or return false
+      kill_session(name)
     end
 
     # Kill a session by exact name. The "=" pins an exact match — a bare name is

@@ -33,7 +33,7 @@ module Switchboard
       doctor_prs(config)
       doctor_sounds(config)
       doctor_sessions(config)
-      doctor_history(config)
+      doctor_names(config)
       doctor_remote_links
       doctor_session_names
       doctor_orphan_sidebars
@@ -117,7 +117,7 @@ module Switchboard
       mine = ENV["CLAUDE_CONFIG_DIR"].to_s
       theirs = tmux_global_env("CLAUDE_CONFIG_DIR").to_s
       # Resolved dirs, not raw strings: unset vs ~/.claude (or a trailing /) is the same dir
-      return if File.expand_path(ClaudeHistory.claude_root(mine)) == File.expand_path(ClaudeHistory.claude_root(theirs))
+      return if File.expand_path(ClaudeSessions.claude_root(mine)) == File.expand_path(ClaudeSessions.claude_root(theirs))
 
       puts "  \e[33m–\e[0m remote links (⇅): CLAUDE_CONFIG_DIR is #{mine.empty? ? 'unset' : mine.inspect} here but " \
            "#{theirs.empty? ? 'unset' : theirs.inspect} in tmux, where sidebars run — export it in .zshenv " \
@@ -262,7 +262,7 @@ module Switchboard
     # show there — doctor is the discovery surface). Silent outside tmux / with
     # no server: nothing to assert.
     def doctor_sessions(config)
-      report = Reconcile.prune(config, dry_run: true, catch_up_history: false) # doctor_history covers it
+      report = Reconcile.prune(config, dry_run: true)
       return unless report.reachable
 
       if report.orphans.empty?
@@ -272,39 +272,62 @@ module Switchboard
       end
     end
 
-    # Claude transcript history after renames (ClaudeHistory). Info lines only, each with
-    # what to do; silent when everything is carried and tidy.
-    def doctor_history(config)
-      projects = Model.new(config, with_dirty: false).projects
-      pairs = Reconcile.history_pairs(config, projects: projects)
-      owned = Reconcile.owned_prefixes(config, projects: projects)
+    # Stored workspace names (Names). Info lines only, each with the command that fixes
+    # it; never prompts. Silent when every name is in order.
+    def doctor_names(config)
       info = ->(msg) { puts "  \e[33m–\e[0m #{msg}" }
+      status, map, err = Names.read_all
+      return puts(row(false, "names store #{map}: #{err} — renames are refused until it's readable")) unless status == :ok
 
-      bridges = ClaudeHistory.sweep_candidates(owned: owned).size
-      info["#{bridges} projects bridge(s) left in Claude's projects folder by older versions — run `switchboard prune` to clean them up"] if bridges.positive?
-      ClaudeHistory.inspect_pairs(pairs).each { |p| doctor_history_pair(p, info) }
-      projects.flat_map(&:worktrees).reject(&:primary).each do |w|
-        next unless ClaudeHistory.reused?(w.path)
-
-        info["#{File.basename(w.path)}: its Claude history folder already holds an earlier workspace's sessions (a reused name), so `/resume` there lists them"]
-      end
-      count, since = ClaudeHistory.errors
-      info["#{count} Claude history error(s) since #{since}; see #{ClaudeHistory.log_path}"] if count
+      Names.invalid.each { |f| info["unusable stored name #{f} (bad format or name); delete it, then rename the workspace again"] }
+      projects = Model.new(config, with_dirty: false).projects
+      workspaces = projects.flat_map(&:worktrees)
+      by_real = workspaces.to_h { |w| [w.real_path, w] }
+      map.each_value { |e| doctor_name_entry(e, by_real, map, info) }
+      # Only switchboard's own workspaces (under worktree_root, not a primary checkout).
+      root = "#{Paths.real_or_self(config.worktree_root)}/"
+      primaries = projects.map { |p| Paths.real_or_self(p.path) }
+      ours = workspaces.select { |w| w.real_path.start_with?(root) && !primaries.include?(w.real_path) }
+      ours.each { |w| doctor_name_drift(config, w, map, info) }
+      doctor_unadvertised_sidebars
     rescue StandardError
       nil
     end
 
-    def doctor_history_pair(pair, info)
-      if pair[:missing].positive?
-        info["#{pair[:missing]} transcript file(s) from before a rename not yet linked into #{File.basename(pair[:new])} — run `switchboard prune`"]
+    def doctor_name_entry(entry, by_real, map, info)
+      if !by_real.key?(entry.real)
+        moved = by_real.values.find { |w| !map.key?(w.real_path) && !entry.branch.empty? && w.branch == entry.branch }
+        hint = moved ? "it looks like it moved to #{moved.path}: run `#{rename_cmd(moved.path, entry.name)}`" : "if you moved it, run `cd <its new folder> && switchboard rename #{Shellwords.escape(entry.name)}`"
+        info["name `#{entry.name}` was for #{entry.real}, which is gone; #{hint}"]
+      elsif Names.clash?(entry, map)
+        info["`#{entry.name}` (#{entry.real}) clashes with another workspace in that folder, so it shows its folder name; rename one of them"]
       end
-      pair[:clashes].each do |old, new|
-        if old.end_with?(".jsonl")
-          info["split transcript #{File.basename(old, '.jsonl')}: both copies kept; `/resume` at the new path shows #{new}; nothing to do unless you need #{old}"]
-        else
-          info["#{File.basename(old)} differs between #{old} and #{new}; both copies kept"]
-        end
+    end
+
+    # A workspace whose live session or branch says a different name than it's shown with:
+    # a rename interrupted between the branch and the store, or a name lost with the store.
+    def doctor_name_drift(config, w, map, info)
+      return if map.key?(w.real_path)
+
+      session = Tmux.session_for(w)
+      leaf = session&.delete_prefix(Tmux.session_prefix(w.project))
+      if leaf && leaf != Tmux.session_name(w).delete_prefix(Tmux.session_prefix(w.project))
+        info["#{w.path}: its session is called `#{leaf}` but it has no stored name; to keep it, run `#{rename_cmd(w.path, leaf)}`"]
+      elsif w.branch.to_s != "" && File.basename(w.branch) != w.folder_name &&
+            w.branch == Rename.branch_for(config, File.basename(w.branch)) && !Git.pushed?(w.path, w.branch)
+        info["#{w.path}: branch `#{w.branch}` doesn't match its name `#{w.display_name}`; if a rename was interrupted, run `#{rename_cmd(w.path, File.basename(w.branch))}`"]
       end
+    end
+
+    def rename_cmd(folder, name) = "cd #{Shellwords.escape(folder)} && switchboard rename #{Shellwords.escape(name)}"
+
+    # Sidebars that don't advertise reading stored names make rename refuse ([stale-peers]).
+    def doctor_unadvertised_sidebars
+      stale = Rename.stale_peers
+      return if stale.empty?
+
+      puts row(false, "#{stale.size} sidebar(s) running code that doesn't know stored names (pane #{stale.join(', ')}) — " \
+                      "renames are refused until you run `switchboard reload-sidebars`")
     end
 
     # Surface orphaned sidebar *processes* — a `switchboard sidebar` that outlived

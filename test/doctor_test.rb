@@ -537,46 +537,38 @@ module Switchboard
       refute_includes out, "trusted"
     end
 
-    # --- doctor_history: Claude transcript folders after renames ---------------
+    # --- doctor_names: stored workspace names ------------------------------------
 
-    SID = "0b7c5d2e-1f3a-4b5c-8d9e-0a1b2c3d4e5f"
-
-    def history_project
+    def names_project
       repo = temp_git_repo("app")
       wt = path("worktrees", "app", "feat")
       FileUtils.mkdir_p(File.dirname(wt))
       git(repo, "worktree", "add", "-q", "-b", "feat", wt)
       File.write(Config.path, YAML.dump("worktree_root" => path("worktrees"), "projects" => [{ "name" => "app", "path" => repo }]))
-      root = ENV["SWITCHBOARD_CLAUDE_PROJECTS_DIR"]
-      FileUtils.mkdir_p(root)
-      [root, File.realpath(File.dirname(wt))]
+      File.realpath(wt)
     end
 
-    def test_doctor_history_names_each_problem_with_its_fix
-      root, parent = history_project
-      real = File.join(root, ClaudeHistory.encode(File.join(parent, "first")))
-      FileUtils.mkdir_p(real)
-      File.write(File.join(real, "#{SID}.jsonl"), "turn\n")
-      File.symlink(real, File.join(root, ClaudeHistory.encode(File.join(parent, "old"))))
-      File.symlink(File.join(parent, "feat"), File.join(parent, "renamed-from"))
-      split_old = File.join(root, ClaudeHistory.encode(File.join(parent, "renamed-from")))
-      split_new = File.join(root, ClaudeHistory.encode(File.join(parent, "feat")))
-      [split_old, split_new].each { |d| FileUtils.mkdir_p(d) }
-      File.write(File.join(split_old, "#{SID}.jsonl"), "old\n")
-      File.link(File.join(split_old, "#{SID}.jsonl"), File.join(split_new, "shared.jsonl"))
-      File.write(File.join(split_new, "#{SID}.jsonl"), "new\n")
-      ClaudeHistory.record_error("link", "/k", RuntimeError.new("boom"))
+    # Value: protects=every name problem is reported with a command that fixes it, and
+    # nothing prompts; fails_when=an orphaned, moved or unusable entry goes unreported, or a
+    # printed command isn't shell-escaped; seam=Names (real files)
+    def test_doctor_names_reports_each_problem_with_its_fix
+      feat = names_project
+      parent = File.dirname(feat)
+      Names.write(File.join(parent, "gone"), "old-work", project: "app", branch: "feat")
+      File.write(File.join(Names.dir, "junk"), "not\tan\tentry\n")
+      out = stub_method(Rename, :stale_peers, -> { ["%9"] }) { capture { Doctor.doctor_names(Config.new) } }
 
-      out = capture { Doctor.doctor_history(Config.new) }
-
-      assert_includes out, "1 projects bridge(s) left in Claude's projects folder by older versions — run `switchboard prune`"
-      assert_includes out, "split transcript #{SID}: both copies kept"
-      assert_includes out, "1 Claude history error(s) since"
+      assert_includes out, "name `old-work` was for #{File.join(parent, 'gone')}, which is gone; it looks like it moved to #{feat}: " \
+                           "run `cd #{Shellwords.escape(feat)} && switchboard rename old-work`"
+      assert_includes out, "unusable stored name #{File.join(Names.dir, 'junk')}"
+      assert_includes out, "1 sidebar(s) running code that doesn't know stored names (pane %9)"
     end
 
-    def test_doctor_history_is_silent_when_everything_is_tidy
-      history_project
-      assert_equal "", capture { Doctor.doctor_history(Config.new) }.strip
+    def test_doctor_names_is_silent_when_every_name_is_in_order
+      feat = names_project
+      Names.write(feat, "oauth-fix", project: "app", branch: "feat")
+      out = stub_method(Rename, :stale_peers, -> { [] }) { capture { Doctor.doctor_names(Config.new) } }
+      assert_equal "", out.strip
     end
 
     # --- doctor_sessions: actionable orphan line (DX-1), three branches --------

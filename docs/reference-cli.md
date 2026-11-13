@@ -244,47 +244,67 @@ left alone and isn't an error. (The global codex block is deliberately left; it'
 not per-worktree, and `switchboard uninstall` removes it.)
 
 ### `switchboard rename <name>`
-Rename the workspace you're standing in: moves the worktree directory to `<name>`
-(the display leaf) and renames its `sb/` tmux session in place, so a running agent
-and its conversation survive. This is the verb for an **agent to (re)name its own
-live workspace** once it knows what the work actually is — the sidebar's `r` key
-does the same from the tree. It also carries Claude's conversation history to the new
-path, so `/resume` and `claude --continue` find it there. The history is hard-linked, not
-moved: the old and new history folders both stay real folders holding the same files, so
-a session still running under the old name keeps working. If something couldn't be carried,
-`rename` says so on stderr ("run `switchboard doctor`") and still succeeds.
+Rename the workspace you're standing in. This is the verb for an **agent to name its own
+live workspace** once it knows what the work actually is; the sidebar's `r` key does the
+same from the tree. A rename changes what the workspace is called:
 
-**Renaming mid-task is safe** — the dir move doesn't strand your running shell. The
-move leaves a symlink bridge at the old path (below), so a frozen cwd keeps
-resolving and the session is renamed in place, never restarted. So an agent should
-rename the moment it knows the name, not defer to the end to avoid moving its own
-directory.
+- its stored name, which the sidebar shows;
+- its `sb/` tmux session, renamed in place, so a running agent and its conversation
+  survive;
+- its git branch, when that's safe (below);
+- the live Claude session's title (below).
 
-**It also renames the git branch** to match — `<branch_prefix>/<name>` (the dir
-stays the bare `<name>`) — but only when that's safe: the branch is still the
-auto-created one (its name still matches the old leaf) **and** it hasn't been
-pushed. A **pushed** branch (one with a remote-tracking ref or a configured upstream,
-i.e. a likely PR) or
-a branch you switched yourself is left untouched and only the dir moves. So name a
-fresh workspace late and you get a clean, convention-correct branch; rename one
-that's already on a PR and the branch identity is preserved.
+**The folder never moves.** It keeps the name it was created with, so Claude's and
+Codex's conversation history (`claude --continue`, `/resume`, `codex resume`) keeps
+working, and so does a shell or agent standing in it. That also makes renaming mid-task
+safe: an agent should rename the moment it knows the name. Use
+[`switchboard path`](#switchboard-path-name) to find a workspace's folder by its name.
 
-It refuses to rename the primary/trunk checkout, a name that collapses to empty, a
-name containing `/` (the leaf must be flat), or a workspace still being created in the
-background (retry once it's ready). When the branch would be renamed too, it also refuses
-a name git won't accept as a branch, and if a branch by the target name **already exists**
-(a leftover from a deleted workspace) it stops with that message and moves nothing — pick
-another name. It exits non-zero on any failure so `switchboard rename x && cd …` is safe to
-chain.
+On success it prints:
 
-Run with **no name** and it prints usage plus the current workspace name and exits
-non-zero — switchboard doesn't guess a name; you (or the agent) supply it.
+```
+renamed to oauth-fix
+folder (unchanged): /Users/you/worktrees/app/gentle-lantern-3f9a
+```
+
+or `already named <name>` when the name didn't change. Renaming back to the folder's own
+name simply drops the stored name.
+
+**It also renames the git branch** to match, `<branch_prefix>/<name>`, but only when
+that's safe: the branch is still the auto-created one (its name still matches the
+current name) **and** it hasn't been pushed. A **pushed** branch (one with a
+remote-tracking ref or a configured upstream, i.e. a likely PR) or a branch you switched
+yourself is left untouched, and only the name changes. So name a fresh workspace late and
+you get a clean, convention-correct branch; rename one that's already on a PR and the
+branch identity is preserved.
+
+It refuses to rename the primary checkout. Run with **no name** and it prints usage plus
+the current workspace name and exits non-zero; switchboard doesn't guess a name.
+
+#### Rename failures
+
+Every other failure is one line on stderr, led by a stable token, and exits 1, so
+`switchboard rename x && …` is safe to chain. The line says what was changed (usually
+nothing) and what to do next.
+
+| Token | Meaning |
+|---|---|
+| `[exists]` | Another workspace, folder, build in progress or live session in this project already uses the name. Names are compared as tmux would spell them, so `foo.bar` and `foo-bar` clash. Nothing changed; pick another name. |
+| `[branch-exists]` | A branch with the target name already exists (often a leftover from a deleted workspace). Nothing changed; pick another name. |
+| `[invalid]` | The name sanitizes to nothing usable, contains `/`, or isn't a valid git branch name. |
+| `[building]` | The workspace is still being created in the background. Rename it once it's ready. |
+| `[stale-peers]` | A sidebar pane is running code that doesn't read stored names. Run `switchboard reload-sidebars`, then retry. `switchboard upgrade` reloads sidebars, so this clears on its own after an upgrade. |
+| `[names-unreadable]` | The names store can't be read. Fix its permissions and retry. |
+| `[listing-failed]` | git couldn't list the project's worktrees. Nothing changed. |
+| `[failed]` | The name couldn't be saved (or the branch couldn't be renamed). The branch is unchanged or was put back. |
+| `[rollback-failed]` | The name couldn't be saved, and the branch couldn't be put back either. The line prints the `git branch -m` to run. |
+| `[partial]` | The name was saved, but the tmux session kept its old name. Nothing else to do: switching to the workspace renames the session. |
 
 > **New workspaces start with a placeholder name.** Create one from the sidebar
-> (`n`) — no name prompt — and switchboard gives it a throwaway
+> (`n`), with no name prompt, and switchboard gives it a random
 > *adjective-noun-hex* name (e.g. `wandering-finch-3f9a`) and a matching branch, so you can
-> start working before you've decided what it is, then `rename` it (dir + branch)
-> once you know.
+> start working before you've decided what it is, then `rename` it once you know. The
+> placeholder stays the folder's name for good.
 
 > **The agent names it (on by default).** With [`auto_rename`](reference-config.md#auto_rename)
 > on — the default — a `SessionStart` hook tells the running agent to `switchboard rename` a
@@ -298,10 +318,25 @@ non-zero — switchboard doesn't guess a name; you (or the agent) supply it.
 > to the current name retries it. See [`sync_session_name`](reference-config.md#sync_session_name).
 > (`switchboard sync-session-name` is that worker; not for direct use.)
 
-> **After a rename, `cd` into the new path.** The move leaves a symlink bridge at
-> the old path (so a running agent's hooks keep resolving), but your interactive
-> shell's `pwd` still reports the old name. The command prints the exact `cd` to
-> run — into the same subdir you were in, under the new path.
+### `switchboard path <name>`
+Print the folder of the workspace called `<name>`. Since a rename never moves the folder,
+a renamed workspace's folder still has its placeholder name; this maps one to the other.
+`<name>` can also be `<project>/<name>` (when two projects use the same name) or a
+folder name.
+
+It prints exactly one absolute path on stdout and exits 0, so it's safe in a script:
+
+```sh
+p=$(switchboard path oauth-fix) && cd -- "$p"
+```
+
+On failure stdout is empty and stderr carries one of these:
+
+| Token | Exit | Meaning |
+|---|---|---|
+| `[not-found]` | 1 | No workspace by that name. |
+| `[ambiguous]` | 2 | The name is in several projects; the candidates follow as `<project>/<name>` lines. |
+| `[names-unreadable]` | 3 | The names store can't be read. |
 
 ### `switchboard monitoring on [secs] | off | notify` (bare = status)
 Declare (or clear) that this workspace is running a **background monitor / recurring
@@ -329,14 +364,12 @@ alone, as are those of a project whose folder is missing, even under a session p
 another project shares. It also reaps orphaned sidebar processes: a
 `switchboard sidebar` whose pane is gone.
 
-It also tidies Claude's history folders (`~/.claude/projects`) for your workspaces, and
-prints a `history:` line saying what it did. It links files a renamed workspace's old
-folder gained after the rename (a session started there after `/clear`, say) into the new
-one. It also cleans up the *projects bridges* (symlinks between history folders) that older
-switchboard versions left: one a running session may still write through (or when it can't
-tell) becomes a real folder, and a quiet one nothing writes through is deleted, since its
-target keeps the history. `--dry-run` counts the files it would link and the bridges it
-would check, without changing anything. This part runs even with no tmux server. See
+A session belongs to the workspace whose folder it was created in, whatever it's
+called, so a renamed workspace's session is never taken for an orphan.
+
+It also forgets stored names for workspaces that are gone: a name whose folder has been
+missing for 30 days is dropped, reported as `dropped N stored name(s) for workspaces gone
+30 days`. This part runs even with no tmux server. See
 [How-to: housekeeping](howto-housekeeping.md).
 
 ### `switchboard quit`
@@ -360,9 +393,11 @@ unreadable, out of date because an older release wrote them, or unparseable, nam
 of its hooks codex has approved, `N/M trusted`, or a fix when the block is stale, can't
 be rewritten safely, or collides with your own `[hooks]`), `gh`
 auth + per-project badge staleness, audio player +
-sound resolution, orphaned sessions, Claude history after renames (projects bridges left
-to clean up, files not yet carried, split transcripts, a reused name's earlier history and
-logged history errors, each with what to do), the remote links (`⇅`) it sees (or a warning
+sound resolution, orphaned sessions, stored workspace names (a name whose folder is gone,
+with the `rename` to run if the worktree looks like it moved; an unusable entry; a name
+that clashes and falls back to the folder name; a session or unpushed branch whose name
+disagrees with the workspace's; an unreadable names store; sidebars that don't read stored
+names), the remote links (`⇅`) it sees (or a warning
 when Claude is running but its session files are missing, none are in the shape
 switchboard reads, or every live one fails the start-time check, i.e. a Claude update
 moved or reshaped them), a `CLAUDE_CONFIG_DIR` that differs between your shell and tmux

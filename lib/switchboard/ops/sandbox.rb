@@ -94,7 +94,7 @@ module Switchboard
           "SWITCHBOARD_BRANCH_FOLD_FILE"    => File.join(state_dir, "branch_fold"),
           "SWITCHBOARD_WIDTH_FILE"          => File.join(state_dir, "width"),
           "SWITCHBOARD_CACHE_DIR"           => File.join(state_dir, "cache"),
-          "SWITCHBOARD_CLAUDE_PROJECTS_DIR" => File.join(state_dir, "claude-projects"),
+          "SWITCHBOARD_NAMES_DIR"           => File.join(state_dir, "names"),
           "SWITCHBOARD_CLAUDE_SESSIONS_DIR" => File.join(state_dir, "claude-sessions"),
           "SWITCHBOARD_UPDATE_CACHE"        => File.join(state_dir, "update", "latest.json"),
           "XDG_STATE_HOME"                  => File.join(state_dir, "xdg-state"),

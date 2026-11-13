@@ -37,6 +37,7 @@ module Switchboard
       when "enable-hooks"      then exit(1) if enable_hooks(argv[1]) == false
       when "disable-hooks"     then exit(1) if disable_hooks(argv[1]) == false
       when "rename"            then exit(1) unless rename(argv[1])
+      when "path"              then path(argv[1])
       when "rename-nudge"      then HookCommands.rename_nudge(argv.drop(1))
       when "sync-session-name" then sync_session_name(argv[1], argv[2])
       when "monitoring"        then monitoring(argv[1], argv[2])
@@ -359,7 +360,7 @@ module Switchboard
     # the session orphans (process-with-no-pane vs session-with-no-worktree), so it
     # gets its own appended line and never suppresses the session summary.
     def prune_summary(report, reaped, dry)
-      [session_prune_summary(report, dry), sidebar_reap_summary(reaped, dry), history_prune_summary(report.history, dry)]
+      [session_prune_summary(report, dry), sidebar_reap_summary(reaped, dry), names_prune_summary(report.names, dry)]
         .compact.join("\n")
     end
 
@@ -383,18 +384,11 @@ module Switchboard
     end
 
     # What prune did (or, dry, would do) to Claude's transcript folders.
-    def history_prune_summary(sum, dry)
-      return unless sum
+    # Stored names whose folder has been gone long enough to drop (see Reconcile.prune_names).
+    def names_prune_summary(dropped, dry)
+      return unless dropped&.positive?
 
-      parts = if dry
-                ["would link #{sum.linked} file(s)", "would check #{sum.converted} projects bridge(s) for cleanup"]
-              else
-                ["linked #{sum.linked} file(s)", "converted #{sum.converted} and deleted #{sum.deleted} projects bridge(s)"]
-              end
-      kept = sum.kept.reject { |_, n| n.zero? }.map { |why, n| "#{n} #{why.tr('_', ' ')}" }
-      parts << "kept #{kept.join(', ')}" unless kept.empty?
-      parts << "#{sum.clashes.size} clash(es), see `switchboard doctor`" unless sum.clashes.empty?
-      "history: #{parts.join('; ')}"
+      "#{dry ? 'would drop' : 'dropped'} #{dropped} stored name(s) for workspaces gone #{Names::MISSING_TTL / 86_400} days"
     end
 
     # Tear down switchboard: kill every sb/ session, the one you're in last (so
@@ -419,7 +413,7 @@ module Switchboard
         return
       end
 
-      leaf = File.basename(wt.path)
+      leaf = wt.display_name
       case sub
       when "on"
         ttl = Monitoring.positive_int(ttl_arg) # nil => default window; garbage falls back too
@@ -594,76 +588,63 @@ module Switchboard
       puts "  (codex hooks are global — `switchboard uninstall` removes them)" if CodexHook.installed?
     end
 
-    # Rename the workspace the cwd is in (issue #42) — the agent verb: a running
-    # agent has the best context for a good name, so let it (re)name its own live
-    # workspace. Resolves the workspace from cwd, refuses the primary checkout,
-    # then runs the shared Rename core (dir move + bridge + session rename).
-    # Returns true on success so `run` can exit non-zero on failure — an agent's
-    # `switchboard rename x && cd …` must not proceed past a failed rename.
+    # Rename the workspace the cwd is in — the agent verb: a running agent has the best
+    # context for a good name, so let it name its own live workspace. Resolves the
+    # workspace from cwd, refuses the primary checkout, then runs the shared Rename core.
+    # The folder never moves, so there's nothing to cd into afterwards. Returns true on
+    # success so `run` can exit non-zero on failure.
     def rename(newname)
       wt = Model.workspace_at(config)
       return warn("not inside a switchboard-managed worktree (cd into one first)") unless wt
       return warn("can't rename the primary checkout") if wt.primary
+      return warn(%(usage: switchboard rename <newname> (this workspace is "#{wt.display_name}"))) if newname.nil?
 
-      # No-arg: nothing to rename to. Print usage + the current name (the agent/user
-      # supplies the new name — switchboard no longer guesses one). Falsy ⇒ exit 1.
-      return warn(%(usage: switchboard rename <newname> (this workspace is "#{File.basename(wt.path)}"))) if newname.nil?
-
-      sub = subpath_in(wt.path) # capture before the move so the cd hint is subdir-aware
-      report_rename(Rename.perform(config, wt.project, wt.path, newname), sub)
+      report_rename(Rename.perform(config, wt.project, wt.path, newname))
     end
 
-    # Map a Rename::Result to output, returning true on success (false ⇒ `run`
-    # exits non-zero). Both :ok and :partial moved the dir, so both announce the
-    # new path; :partial adds the orphaned-session caveat and still fails.
-    def report_rename(result, sub)
-      warn_history(result)
-      case result.status
-      when :ok
-        announce_landing(result, sub)
-        Tmux.poke_current_sidebar if ENV["TMUX"]
-        true
-      when :partial
-        announce_landing(result, sub)
-        warn "  the tmux session rename failed — run `switchboard prune` to clean the orphan"
-        false
-      when :unchanged
-        puts "already named #{File.basename(result.dest)}"
+    # Map a Rename::Result to output, true on success. Written for the agent that usually
+    # runs it: every failure is one stderr line led by a stable [token], with the values,
+    # what was committed, and what to do next.
+    def report_rename(result)
+      ok = %i[ok unchanged].include?(result.status)
+      if ok || result.status == :partial
+        puts(result.status == :unchanged ? "already named #{result.name}" : "renamed to #{result.name}")
+        puts "folder (unchanged): #{result.dest}" unless result.status == :unchanged
         announce_session_sync(result)
-        true
-      when :invalid
-        warn "invalid name — must be letters/digits/. - _ (no `/`) and a valid git branch name"
-        false
-      when :exists
-        warn "already exists: #{result.dest}"
-        false
-      when :branch_exists
-        warn "a branch named #{File.basename(result.dest)} already exists — choose another name"
-        false
-      when :building
-        warn "this workspace is still being created; rename it once it's ready"
-        false
-      else # :failed
-        warn "rename failed (git worktree move)"
-        false
+        Tmux.poke_current_sidebar if ENV["TMUX"] && result.status != :unchanged
       end
+      warn(rename_failure(result)) unless ok
+      ok
     end
 
-    # The rename never fails over history, but a partial carry must not pass for a full one.
-    def warn_history(result)
-      return unless result.history == :partial
-
-      warn "  Claude history was not fully carried to #{result.dest} — run `switchboard doctor`"
-    end
-
-    # Point the user at the new path. The interactive shell's cwd is now stale
-    # (the bridge keeps the OLD path resolvable, but `pwd` still reports it), so
-    # cd into the new one — preserving any subdir they were standing in.
-    def announce_landing(result, sub)
-      target = sub.empty? ? result.dest : File.join(result.dest, sub)
-      puts "renamed to #{result.dest}"
-      puts "  cd into the new path: cd #{Shellwords.escape(target)}"
-      announce_session_sync(result)
+    def rename_failure(result)
+      d = result.detail
+      case result.status
+      when :partial
+        "[partial] name saved as #{result.name}; the tmux session kept its old name; switching to the " \
+          "workspace renames it (retrying rename won't); nothing else to do"
+      when :exists
+        "[exists] #{result.name} is taken by #{d}; nothing changed; pick another name"
+      when :branch_exists
+        "[branch-exists] a branch named #{d} already exists; nothing changed; pick another name"
+      when :invalid
+        "[invalid] that name sanitizes to nothing usable; use letters, digits, . - _ (no /) that make a valid git branch"
+      when :building
+        "[building] this workspace is still being created; nothing changed; rename it once it's ready"
+      when :stale_peers
+        "[stale-peers] nothing renamed: sidebar pane(s) #{d.join(' ')} run code that doesn't know stored names; " \
+          "run switchboard reload-sidebars, then retry; if a pane stays listed, close it"
+      when :names_unreadable
+        "[names-unreadable] can't read the names store #{d}; nothing changed; fix its permissions and retry"
+      when :listing_failed
+        "[listing-failed] can't list the worktrees of #{d}; nothing changed; run git worktree list there to see why, then retry"
+      when :rollback_failed
+        err, now, was = d
+        "[rollback-failed] couldn't save the name (#{err}) and couldn't restore the branch: it is now #{now}, the name is " \
+          "still #{result.name}; run git branch -m #{Shellwords.escape(now)} #{Shellwords.escape(was)} in #{result.dest}, then retry"
+      else
+        "[failed] couldn't save the name to #{Names.dir}: #{d}; the branch is unchanged; nothing changed; fix the folder's permissions and retry"
+      end
     end
 
     # Usually an agent ran the rename, and it's about to see Claude's "session renamed"
@@ -671,19 +652,38 @@ module Switchboard
     def announce_session_sync(result)
       return unless result.spawned
 
-      leaf = File.basename(result.dest)
-      puts "  any live Claude session here will be renamed to #{leaf} too, #{SessionName::WHEN} — " \
-           "a note that the session was named #{leaf} is switchboard syncing it, not a new request"
+      puts "  any live Claude session here will be renamed to #{result.name} too, #{SessionName::WHEN} — " \
+           "a note that the session was named #{result.name} is switchboard syncing it, not a new request"
     end
 
-    # cwd relative to a worktree root ("" when standing at the root), so the
-    # rename cd hint can return the user to the same subdir under the new path.
-    def subpath_in(root)
-      cwd = Paths.real_or_nil(Dir.pwd)
-      base = Paths.real_or_nil(root)
-      return "" unless cwd && base && cwd.start_with?("#{base}/")
+    # `switchboard path <name>` (or <project>/<name>, or a folder name): the folder a
+    # workspace lives in, for shells and scripts. Exactly one absolute path on stdout, or
+    # empty stdout and a [token] on stderr: 1 not found, 2 ambiguous, 3 names unreadable.
+    def path(arg)
+      return warn("usage: switchboard path <name> | <project>/<name>") || exit(1) if arg.to_s.empty?
 
-      cwd[(base.length + 1)..]
+      status, map, err = Names.read_all
+      unless status == :ok
+        warn "[names-unreadable] #{map}: #{err}"
+        exit 3
+      end
+      project, name = arg.include?("/") ? arg.split("/", 2) : [nil, arg]
+      hits = Model.new(config, with_dirty: false).projects.flat_map do |p|
+        next [] if project && p.name != project
+
+        p.worktrees.reject(&:primary).select { |w| w.display_name == name || w.folder_name == name }.map { |w| [p.name, w] }
+      end
+      hits = hits.uniq { |_, w| w.real_path }
+      case hits.size
+      when 1 then puts hits.first.last.path
+      when 0
+        warn "[not-found] no workspace called #{name} (try: switchboard path <project>/<name>)"
+        exit 1
+      else
+        warn "[ambiguous] #{name} is in several projects:"
+        hits.each { |p, w| warn "#{p}/#{w.display_name}" }
+        exit 2
+      end
     end
 
     # Play a configured sound, for trying audio out / picking sounds (and showing
@@ -731,7 +731,8 @@ module Switchboard
           switchboard refresh      re-fetch PR badges from gh (normally automatic)
           switchboard enable-hooks [P]   wire agent-state dots in a worktree (default: cwd)
           switchboard disable-hooks [P]  remove them from that worktree
-          switchboard rename NAME    rename the current workspace (dir + tmux session + Claude session name)
+          switchboard rename NAME    rename the current workspace (name + branch + tmux session + Claude session name; the folder never moves)
+          switchboard path NAME      print the folder of the workspace called NAME (or PROJECT/NAME): p=$(switchboard path x) && cd -- "$p"
           switchboard monitoring on [secs]|off  flag this workspace as running a background monitor (∞; optional secs = liveness ttl for slow loops; bare = status)
           switchboard monitoring notify  (from a monitored workspace) surface this cycle's output — bold + a distinct alert sound, even though routine ticks stay silent
           switchboard sound [done|waiting|alert]  play a state's sound (try audio / pick sounds)

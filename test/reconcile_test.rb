@@ -12,7 +12,7 @@ module Switchboard
     NOW = 1_700_000_000
     OLD = NOW - 100 # comfortably older than SESSION_GRACE
 
-    def sess(name, created = OLD) = { name: name, created: created }
+    def sess(name, created = OLD) = { name: name, created: created, path: nil }
 
     # --- orphans (pure) ------------------------------------------------------
 
@@ -249,102 +249,35 @@ module Switchboard
       refute File.symlink?(bridge), "prune reaps the dangling bridge"
     end
 
-    # Prune also GCs the dangling projects bridges older versions left in
-    # ~/.claude/projects (ClaudeHistory.reap_bridges), but only under switchboard's own
-    # workspace keys: a symlink someone else keeps there is not ours to delete.
-    def test_prune_reaps_only_owned_dangling_claude_history_bridges
+    # Value: protects=a renamed workspace's session survives prune whatever it's called,
+    # so a rename mid-prune kills nothing; fails_when=orphans goes back to name-only
+    # matching; seam=Tmux.sessions (paths are real folders)
+    def test_prune_keeps_a_session_created_in_a_live_worktree_whatever_its_name
       setup_app_project
-      root = ENV["SWITCHBOARD_CLAUDE_PROJECTS_DIR"]
-      FileUtils.mkdir_p(root)
-      mine = File.join(root, "#{ClaudeHistory.encode(File.realpath(path('worktrees', 'app')))}-old-name")
-      theirs = File.join(root, "-not-a-switchboard-key")
-      [mine, theirs].each { |b| File.symlink(File.join(root, "gone"), b) }
-      run_prune([sess("sb/app/app"), sess("sb/app/feat")])
-      refute File.symlink?(mine), "prune reaps an owned dangling projects bridge"
-      assert File.symlink?(theirs), "a symlink under someone else's key is left alone"
+      feat = path("worktrees", "app", "feat")
+      killed = run_prune([sess("sb/app/app"), { name: "sb/app/oauth-fix", created: OLD, path: feat },
+                          { name: "sb/app/stale", created: OLD, path: path("worktrees", "app", "gone") }])
+      assert_equal ["sb/app/stale"], killed, "a session at a gone path falls back to name matching"
     end
 
-    # A workspace renamed old-name -> feat: the worktree bridge old-name pairs the keys.
-    def renamed_pair
+    # Value: protects=a stored name outlives a hand-moved worktree long enough for doctor to
+    # point at it, and never piles up; fails_when=prune drops it at once, never, or for an
+    # unverified project; seam=Names
+    def test_prune_marks_then_drops_a_stored_name_whose_folder_is_gone
       setup_app_project
-      root = ENV["SWITCHBOARD_CLAUDE_PROJECTS_DIR"]
-      parent = File.realpath(path("worktrees", "app"))
-      File.symlink(File.join(parent, "feat"), File.join(parent, "old-name"))
-      old_dir = File.join(root, ClaudeHistory.encode(File.join(parent, "old-name")))
-      FileUtils.mkdir_p(old_dir)
-      File.write(File.join(old_dir, "0b7c5d2e-1f3a-4b5c-8d9e-0a1b2c3d4e5f.jsonl"), "turn\n")
-      File.join(root, ClaudeHistory.encode(File.join(parent, "feat")))
-    end
-
-    # Value: protects=prune from a plain shell still carries late history; fails_when=the
-    # history work sits after the tmux early return; why_new=new ordering; seam=none;
-    # no_claim=none beyond protects
-    def test_prune_catches_history_up_even_without_tmux
-      new_dir = renamed_pair
-      report = stub_method(Tmux, :sessions, -> { nil }) { Reconcile.prune(Config.new) }
-      refute report.reachable
-      assert_equal 1, report.history.linked
-      assert File.exist?(File.join(new_dir, "0b7c5d2e-1f3a-4b5c-8d9e-0a1b2c3d4e5f.jsonl"))
-    end
-
-    # Value: protects=prune's history sweep never deletes a projects bridge beside the
-    # primary checkout (a sibling repo's key); fails_when=worktree_parents takes in the
-    # primary's parent; why_new=only a non-matching foreign key was tested; seam=none;
-    # no_claim=keys of worktrees placed by hand outside the worktree root
-    def test_history_cleanup_never_owns_the_primary_checkouts_parent
-      setup_app_project
-      root = ENV["SWITCHBOARD_CLAUDE_PROJECTS_DIR"]
-      FileUtils.mkdir_p(root)
-      target = File.join(root, "-elsewhere")
-      FileUtils.mkdir_p(target)
-      File.write(File.join(target, "0b7c5d2e-1f3a-4b5c-8d9e-0a1b2c3d4e5f.jsonl"), "turn\n")
-      File.utime(Time.now - 3600, Time.now - 3600, *Dir.glob("#{target}/**/*"), target)
-      sibling = File.join(root, ClaudeHistory.encode(File.join(File.realpath(path), "other-repo")))
-      File.symlink(target, sibling)
-
-      assert_equal ["#{ClaudeHistory.encode(File.realpath(path('worktrees', 'app')))}-"],
-                   Reconcile.owned_prefixes(Config.new)
-      stub_method(ClaudeSessions, :writers_by_key, ->(*) { {} }) { run_prune([sess("sb/app/app")]) }
-      assert File.symlink?(sibling), "a bridge beside the primary checkout is not ours"
-    end
-
-    # Value: protects=a worktree git found outside worktree_root never makes its whole parent
-    # (e.g. ~/code) switchboard-owned; fails_when=owned_prefixes takes every found parent;
-    # why_new=targeted review; seam=none; no_claim=none beyond protects
-    # Value: protects=a rename that moves its worktree while prune runs, then waits on the
-    # history lock before renaming its session, never gets that live session killed;
-    # fails_when=history work sits between prune's sessions read and its worktree listing;
-    # why_new=adversarial review + fix-check; seam=the sweep stub stands in for the lock
-    # wait; no_claim=real tmux timing
-    def test_a_rename_during_the_history_pass_keeps_its_session
-      setup_app_project
-      repo = path("app")
-      from = path("worktrees", "app", "feat")
-      to = path("worktrees", "app", "feat2")
-      t = self
-      renaming = lambda do |**|
-        t.send(:git, repo, "worktree", "move", from, to)
-        ClaudeHistory::Summary.zero
+      gone = File.join(File.realpath(path("worktrees", "app")), "gone")
+      live = File.realpath(path("worktrees", "app", "feat"))
+      Names.write(gone, "old-work", project: "app")
+      Names.write(live, "oauth-fix", project: "app")
+      Names.write("/elsewhere/x", "theirs", project: "unregistered")
+      run_prune([])
+      entries = Names.read_all.last
+      refute_empty entries[gone].missing_since, "first sight: marked, kept"
+      assert_empty entries[live].missing_since
+      stub_method(Time, :now, -> { Time.at(NOW + Names::MISSING_TTL + 1) }) do
+        Reconcile.prune(Config.new, now: NOW + Names::MISSING_TTL + 1)
       end
-      killed = stub_method(ClaudeHistory, :sweep, renaming) do
-        run_prune([sess("sb/app/app"), sess("sb/app/feat")]) # the session isn't renamed yet
-      end
-      assert_empty killed, "the just-moved worktree's session is live, not an orphan"
-    end
-
-    def test_a_worktree_outside_the_worktree_root_owns_nothing
-      setup_app_project
-      File.write(Config.path, YAML.dump("worktree_root" => path("elsewhere"), "projects" => [{ "name" => "app", "path" => path("app") }]))
-      assert_empty Reconcile.owned_prefixes(Config.new)
-    end
-
-    def test_a_dry_run_counts_history_without_changing_it_and_the_sidebar_skips_it
-      new_dir = renamed_pair
-      stub_method(Tmux, :sessions, -> { nil }) do
-        assert_equal 1, Reconcile.prune(Config.new, dry_run: true).history.linked
-        assert_nil Reconcile.prune(Config.new, catch_up_history: false).history
-      end
-      refute File.exist?(new_dir), "neither run touched Claude's folders"
+      assert_equal [live, "/elsewhere/x"].sort, Names.read_all.last.keys.sort, "gone 30 days: dropped; another project's: untouched"
     end
 
     # The primary checkout's parent is the dir holding the main repo — switchboard

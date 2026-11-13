@@ -339,6 +339,14 @@ listing that long ago could belong to another process by the time it's signaled,
   and a respawn would kill the boot.
 - **Dead panes are never targets** (`#{pane_dead}`, under remain-on-exit).
 
+**A pane also says what its code can do.** Alongside the tag, a sidebar sets `@sb_caps` to
+`<pid>:names` when its code reads stored workspace names, and clears it before every exec.
+A rename checks it: while any sidebar doesn't advertise `names`, its row would show the
+folder name and its session lookups would go by the old rules, so rename refuses with
+`[stale-peers]` until a reload brings that pane up to date. The value counts only when its
+pid matches the pane's `@sb_reload` tag, so a leftover value can't vouch for a different
+process.
+
 **Untagged panes are restarted instead.** A sidebar older than 0.59, or one on tmux older
 than 3.0, has no tag, and `SIGUSR1`'s default action would kill it. So it's restarted with
 `respawn-pane -k` and *no* command, which reruns the pane's own start command. The respawn

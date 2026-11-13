@@ -265,7 +265,7 @@ module Switchboard
       reloaded = false
       sb.define_singleton_method(:reload) { |**| reloaded = true }
       stub_method(Git, :clean?, ->(*) { true }) do
-        stub_method(Tmux, :session_name, ->(*) { "sb/app/a" }) do
+        stub_method(Tmux, :session_for, ->(*) { "sb/app/a" }) do # found by its folder
           stub_method(Tmux, :session_of, ->(*) { "sb/app/a" }) do   # WE are that session
             stub_method(Tmux, :go_home, -> { went_home = true }) do
               stub_method(Tmux, :kill, ->(*) { killed = true }) do

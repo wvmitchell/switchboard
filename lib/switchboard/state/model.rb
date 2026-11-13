@@ -2,14 +2,20 @@
 
 module Switchboard
   # A single worktree, the unit you switch between. `branch` is the live HEAD
-  # (git truth); the display name is the worktree's directory leaf.
+  # (git truth). Its folder never moves; what it's CALLED is the stored name for its
+  # realpath (Names), else the folder name. Anything shown, matched or typed uses
+  # display_name; folder_name is only for paths on disk (test/name_folder_guard_test.rb).
   Worktree = Struct.new(:project, :path, :branch, :dirty, :pr, :base, :primary, keyword_init: true) do
-    def leaf
+    def folder_name
       File.basename(path)
     end
 
     def display_name
-      leaf
+      Names.name_for(real_path) || folder_name
+    end
+
+    def real_path
+      @real_path ||= Paths.real_or_self(path)
     end
   end
 

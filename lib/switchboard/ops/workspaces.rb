@@ -25,10 +25,20 @@ module Switchboard
     # dispatched tree already proven untouched (nothing past its base): a placeholder branch
     # never reads as merged into your local base, so the safe -d would leak one per canceled build.
     def remove!(repo, path, branch, force_branch: false, branches: nil)
+      real = Paths.real_or_self(path)
       removed = Git.remove_worktree(repo, path, force: true, locked: Creation.unfinished_at?(path))
+      forget_name(real) if removed
       return Git.delete_branch(repo, branch, force: force_branch) unless branches
 
       WorkspaceBranches.delete_and_report(repo, branches) if removed
+    end
+
+    # Drop a deleted workspace's stored name, only once its folder is confirmed gone and
+    # under its project's lock (a rename of it can't interleave). A failed removal keeps it.
+    def forget_name(real)
+      status, map = Names.read_all
+      entry = status == :ok && map[real] or return
+      Creation.with_project_lock(entry.project) { Names.delete(real) unless File.directory?(real) }
     end
   end
 end
