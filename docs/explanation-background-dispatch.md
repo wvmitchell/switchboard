@@ -349,10 +349,17 @@ carries a *quoted* trailing `#` comment, since YAML would eat an unquoted one.
 
 Workspace naming is deferred. `n` in the sidebar doesn't ask for a
 name. You get a **placeholder**, a throwaway
-adjective-noun name from `Placeholder.generate` (`placeholder.rb`, a small in-repo word
+adjective-noun-hex name from `Placeholder.generate` (`placeholder.rb`, a small in-repo word
 list, no gem), and a matching branch. You start the work first and name it afterwards,
-with `r`, `switchboard rename`, or the agent's nudge. Generated names retry past a
-directory or branch collision.
+with `r`, `switchboard rename`, or the agent's nudge.
+
+A placeholder ends in a random four-digit hex suffix (`brave-otter-3f9a`). Claude and
+Codex both key a workspace's history by its folder, so a name handed out again after its
+workspace was deleted would quietly give the new workspace the old one's conversations:
+`claude --continue` could pick up a task that ended weeks ago. With about a billion
+possible names, that reuse is very unlikely at the volumes a project sees, and
+switchboard doesn't have to remember every name it ever handed out. Generated names
+still retry past a directory, branch or session that exists right now.
 
 The worker cuts the branch with `--no-track`, so a branch off `origin/main` doesn't
 inherit it as an upstream. Otherwise the rename check below would read every fresh

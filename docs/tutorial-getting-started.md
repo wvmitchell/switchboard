@@ -96,8 +96,8 @@ session for it. Its row shows a yellow `◌` while it's being built; when it's r
 you hear a chime and the row goes bold. Press **`↵`** on it to switch in — you're
 now in the new worktree's shell.
 
-The name is a throwaway **placeholder** — a random `adjective-noun` like
-`wandering-finch` — so you can start working before you've decided what the work
+The name is a throwaway **placeholder** — a random `adjective-noun-hex` like
+`wandering-finch-3f9a` — so you can start working before you've decided what the work
 is. Name it once you know: press `r` on its row, or run `switchboard rename
 <name>` from inside it (it renames the branch to match too). With `auto_rename` on
 (the default), the agent you start here even renames it for you once it

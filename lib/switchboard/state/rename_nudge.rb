@@ -70,8 +70,8 @@ module Switchboard
     #
     # The descriptiveness clause is a deliberate counterweight. With NO length guidance the
     # agent fills the vacuum with two compounding terseness priors — its git-branch instinct
-    # (the name becomes a branch, so kebab-case 1–2 tokens) and mimicry of the two-token
-    # `adjective-noun` placeholder it's literally replacing — and names far terser than is
+    # (the name becomes a branch, so kebab-case 1–2 tokens) and mimicry of the short
+    # `adjective-noun-hex` placeholder it's literally replacing — and names far terser than is
     # useful (the daily complaint: every name two words). So the message names the SHAPE it
     # wants outright — a few-word hyphenated phrase, with a concrete example — rather than
     # leaving length to instinct.

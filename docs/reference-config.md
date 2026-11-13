@@ -106,7 +106,7 @@ in each worktree's Claude hooks telling a running agent to `switchboard rename <
 once it understands the work — naming the workspace **and** its branch. This completes
 deferred naming: since `n` only ever creates placeholders, the agent names them so you
 don't have to. It only fires while the workspace still has its generated **placeholder**
-name (e.g. `wandering-finch`); the moment it's named, the nudge stops. The instruction is
+name (e.g. `wandering-finch-3f9a`); the moment it's named, the nudge stops. The instruction is
 advisory (the agent renames when it's ready, or ignores it) — it never renames on its own.
 Set `auto_rename: false` to opt out; the placeholder then stays until you rename it with `r`.
 

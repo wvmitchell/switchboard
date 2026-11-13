@@ -583,7 +583,7 @@ it, and could trap the agent unable to stop.
 
 Both stop the moment the workspace is renamed, because "still unnamed" is derived, not
 stored: the signal is `Placeholder.generated?(leaf)` (the name is a generated
-adjective-noun), with no marker file.
+adjective-noun-hex, or a legacy adjective-noun from before 0.71.0), with no marker file.
 
 The subcommand finds the worktree from the hook's stdin `cwd` (via `Model.workspace_at`), and
 **always exits 0, printing only the JSON or nothing**. A stray byte on stdout poisons
