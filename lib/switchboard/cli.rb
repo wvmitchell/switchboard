@@ -634,6 +634,9 @@ module Switchboard
       when :stale_peers
         "[stale-peers] nothing renamed: sidebar pane(s) #{d.join(' ')} run code that doesn't know stored names; " \
           "run switchboard reload-sidebars, then retry; if a pane stays listed, close it"
+      when :panes_unknown
+        "[panes-unknown] tmux couldn't list its panes, so switchboard can't tell whether an older sidebar is " \
+          "running; nothing changed; retry, and if it persists check `tmux list-panes -a`"
       when :names_unreadable
         "[names-unreadable] can't read the names store #{d}; nothing changed; fix its permissions and retry"
       when :listing_failed

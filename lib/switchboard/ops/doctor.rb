@@ -324,6 +324,7 @@ module Switchboard
     # Sidebars that don't advertise reading stored names make rename refuse ([stale-peers]).
     def doctor_unadvertised_sidebars
       stale = Rename.stale_peers
+      return puts(row(false, "tmux couldn't list its panes, so renames are refused until it can — check `tmux list-panes -a`")) if stale.nil?
       return if stale.empty?
 
       puts row(false, "#{stale.size} sidebar(s) running code that doesn't know stored names (pane #{stale.join(', ')}) — " \

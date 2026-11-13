@@ -794,6 +794,7 @@ module Switchboard
         Rename::Result.new(:invalid, "/x", nil, "old") => ["[invalid]", "valid git branch"],
         Rename::Result.new(:building, "/x", nil, "old") => ["[building]"],
         Rename::Result.new(:stale_peers, "/x", nil, "old", %w[%3 %9]) => ["[stale-peers] nothing renamed: sidebar pane(s) %3 %9", "reload-sidebars"],
+        Rename::Result.new(:panes_unknown, "/x", nil, "old") => ["[panes-unknown]", "nothing changed"],
         Rename::Result.new(:names_unreadable, "/x", nil, "old", "/n: EACCES") => ["[names-unreadable] can't read the names store /n: EACCES"],
         Rename::Result.new(:listing_failed, "/x", nil, "old", "/repo") => ["[listing-failed] can't list the worktrees of /repo"],
         Rename::Result.new(:failed, "/x", nil, "old", "EACCES") => ["[failed] couldn't save the name", "EACCES", "nothing changed"],

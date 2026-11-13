@@ -172,7 +172,7 @@ module Switchboard
     # fails_when=stale_peers turns a failed list-panes into []; seam=CodeReload/Tmux.sessions
     def test_stale_peers_refuses_when_panes_cant_be_listed_on_a_live_server
       stub_method(CodeReload, :sidebar_reload_targets, -> { nil }) do
-        stub_method(Tmux, :sessions, -> { [] }) { refute_empty Rename.stale_peers, "server up, panes unknown: refuse" }
+        stub_method(Tmux, :sessions, -> { [] }) { assert_nil Rename.stale_peers, "server up, panes unknown" }
         stub_method(Tmux, :sessions, -> { nil }) { assert_empty Rename.stale_peers, "no server: no sidebars to fear" }
       end
     end
@@ -237,6 +237,14 @@ module Switchboard
       assert_equal ["%7"], result.detail
       assert_equal "old", name_of(old)
       assert Git.branch_exists?(repo, "old")
+    end
+
+    def test_unlistable_panes_refuse_as_unknown_not_as_a_stale_sidebar
+      repo = temp_git_repo("proj")
+      old = add_worktree(repo, "old")
+      result = stub_method(Rename, :stale_peers, -> { nil }) { Rename.perform(config_for(repo), "proj", old, "new") }
+      assert_equal :panes_unknown, result.status
+      assert_equal "old", name_of(old)
     end
 
     def test_an_unreadable_store_or_listing_refuses_instead_of_guessing

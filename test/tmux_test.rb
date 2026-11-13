@@ -742,15 +742,20 @@ module Switchboard
         stub_method(Tmux, :has_session?, ->(_n) { false }) do
           stub_method(Tmux, :session_for, ->(*) { "sb/app/new" }) do
             stub_method(Tmux, :ensure_session, ->(n, *_) { made = n; false }) do
-              %i[ensure_sidebar focus_work switch pin].each { |m| Tmux.define_singleton_method(m) { |*| nil } }
-              stub_method(Tmux, :window_sidebar_pane, ->(*) { nil }) { Tmux.go(wt) }
+              stub_method(Tmux, :ensure_sidebar, ->(*) {}) do
+                stub_method(Tmux, :focus_work, ->(*) {}) do
+                  stub_method(Tmux, :switch, ->(*) {}) do
+                    stub_method(Tmux, :pin, ->(*) {}) do
+                      stub_method(Tmux, :window_sidebar_pane, ->(*) { nil }) { Tmux.go(wt) }
+                    end
+                  end
+                end
+              end
             end
           end
         end
       end
       assert_equal "sb/app/new", made, "the rename already renamed it: use that session"
-    ensure
-      %i[ensure_sidebar focus_work switch pin].each { |m| Tmux.singleton_class.send(:remove_method, m) rescue nil }
     end
 
     # Value: protects=a [partial] rename heals on the next switch; fails_when=the switch

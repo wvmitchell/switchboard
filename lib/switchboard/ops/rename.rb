@@ -19,6 +19,7 @@ module Switchboard
   #   :branch_exists  a branch by the new name already exists
   #   :building       still being created; nothing changed
   #   :stale_peers    a sidebar runs code that can't read stored names (`detail`: panes)
+  #   :panes_unknown  tmux is running but couldn't list its panes, so that can't be told
   #   :names_unreadable / :listing_failed  a uniqueness source couldn't be read (`detail`)
   #   :failed         the name couldn't be saved; the branch was put back (`detail`)
   #   :rollback_failed  ...and the branch couldn't be put back (`detail`: [err, new, old])
@@ -54,6 +55,7 @@ module Switchboard
       return res[:building] unless Creation.renamable?(Creation.for_path(path))
 
       stale = stale_peers
+      return res[:panes_unknown] if stale.nil?
       return res[:stale_peers, stale] unless stale.empty?
 
       name = Placeholder.sanitize(newname)
@@ -138,11 +140,11 @@ module Switchboard
 
     # Live sidebar panes whose code can't read stored names (an older binary, a reload
     # mid-exec, a respawn not yet booted). A rename refuses while any is running: such a
-    # sidebar would show folder names and an old prune would kill renamed sessions.
+    # sidebar would show folder names and an old prune would kill renamed sessions. nil
+    # when a running server couldn't list its panes: unknown isn't none.
     def stale_peers
       targets = CodeReload.sidebar_reload_targets
-      # A server that can't list its panes may still run an old sidebar: unknown isn't none.
-      return Tmux.sessions.nil? ? [] : ["(tmux couldn't list panes)"] if targets.nil?
+      return (Tmux.sessions.nil? ? [] : nil) if targets.nil?
 
       targets.reject(&:names?).map(&:pane)
     end

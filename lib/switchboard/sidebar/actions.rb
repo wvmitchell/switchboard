@@ -583,6 +583,7 @@ module Switchboard
         when :partial then "renamed; the tmux session kept its old name until you switch to it"
         when :building then "still creating… rename once it's ready"
         when :stale_peers then "a sidebar runs older code — run `switchboard reload-sidebars`, then rename"
+        when :panes_unknown then "tmux couldn't list its panes — retry the rename"
         when :names_unreadable then "can't read the names store #{result.detail}"
         when :listing_failed then "can't list #{result.detail}'s worktrees"
         when :rollback_failed then "rename failed and the branch is now #{result.detail[1]} — run `switchboard doctor`"
