@@ -55,7 +55,18 @@ module Switchboard
                    lichen maple meadow moss otter pine quill raven ridge river sparrow spruce thicket willow wren
                    brook canyon hollow lantern pebble thistle].freeze
 
+    # Only the original lists ever produced suffixless names, so a two-word name built from
+    # a newer word is the user's own and must not draw the rename nudge.
+    def test_a_suffixless_name_counts_only_from_the_original_lists
+      assert Placeholder.generated?("brave-otter")
+      refute Placeholder.generated?("silver-fox"), "newer words, no suffix"
+      refute Placeholder.generated?("brave-fox"), "one newer word, no suffix"
+      assert Placeholder.generated?("silver-fox-3f9a"), "newer words carry the suffix"
+    end
+
     def test_word_lists_grew_and_keep_every_old_word
+      assert_equal OLD_ADJECTIVES, Placeholder::LEGACY_ADJECTIVES, "the legacy lists never change"
+      assert_equal OLD_NOUNS, Placeholder::LEGACY_NOUNS
       assert_empty OLD_ADJECTIVES - Placeholder::ADJECTIVES
       assert_empty OLD_NOUNS - Placeholder::NOUNS
       [Placeholder::ADJECTIVES, Placeholder::NOUNS].each do |words|

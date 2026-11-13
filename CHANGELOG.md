@@ -17,7 +17,8 @@ refer to the project's earlier, private repository; the public tracker starts at
   Codex key a workspace's history by its folder, so a name reused after its workspace was deleted
   could hand a new workspace an old one's conversations. The word lists also grew from 1,406 to
   about 15,000 pairs, for roughly a billion possible names. Existing suffixless placeholders still
-  read as placeholders for the rename nudge.
+  read as placeholders for the rename nudge, but a two-word name using any of the new words is
+  treated as one you chose, so the nudge leaves it alone.
 
 ## [0.70.0] — Renamed workspaces keep their Claude history in real folders (2026-11-09)
 

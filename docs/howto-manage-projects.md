@@ -70,7 +70,7 @@ fetches the base ref, cuts a new branch, creates the worktree under
 `◌` (yellow) while it's being built and set up, with your task beside it. When it's
 ready you get a chime and the row goes bold — for a task given to a hooked `claude`,
 when its first turn is done. Switch in with `↵` whenever you like. The name is a
-throwaway placeholder (e.g. `wandering-finch`) you rename later with `r` (or let the
+throwaway placeholder (e.g. `wandering-finch-3f9a`) you rename later with `r` (or let the
 agent name it — see [`switchboard rename`](reference-cli.md#switchboard-rename-name)); the
 branch is named `<name>`, or `<branch_prefix>/<name>` if you set `branch_prefix` in
 config.
