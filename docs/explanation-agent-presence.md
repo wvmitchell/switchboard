@@ -536,7 +536,7 @@ A `SessionStart` command (`rename-nudge`) rides *beside* the sh state reporter
 `auto_rename_for`, global plus per-project; on by default, since placeholders are the
 only way to create), `HookCommands.rename_nudge` injects a `SessionStart` `additionalContext`
 instruction telling the agent to `switchboard rename` the workspace once it understands the
-work. That renames both the folder and its branch.
+work. That changes the workspace's name and its branch, never its folder.
 
 `RenameNudge.decide` is the pure gate. It fires when the setting is on, the name is still a
 placeholder, and `source` is one of `startup`, `resume`, `fork`, `clear` or `compact`.
@@ -582,7 +582,7 @@ it, and could trap the agent unable to stop.
 ### Both clear themselves
 
 Both stop the moment the workspace is renamed, because "still unnamed" is derived, not
-stored: the signal is `Placeholder.generated?(leaf)` (the name is a generated
+stored: the signal is `Placeholder.generated?` on the workspace's display name (it is a generated
 adjective-noun-hex, or a legacy adjective-noun from before 0.71.0), with no marker file.
 
 The subcommand finds the worktree from the hook's stdin `cwd` (via `Model.workspace_at`), and
@@ -746,10 +746,8 @@ out of context, and `SessionStart` fires again on them precisely so a hook can r
 So an agent that starts a monitor *after* either still knows to run `monitoring on`
 (`MonitoringNudge.clears_on?` vs. `nudges_on?`).
 
-**Renames carry the marker.** `Rename.perform` carries it with `Monitoring.carry`, which keeps
-an agent-declared window, capturing the old realpath *before* `move_worktree`, since the
-bridge symlink resolves it to the new folder afterwards. `Attention`'s bold is carried too,
-through the shared `KeyedMarkerStore.carry`, so a rename doesn't drop it.
+**Renames leave the marker alone.** It is keyed by the workspace folder's realpath, and a
+rename never moves the folder, so the marker (like `Attention`'s bold) simply stays put.
 
 The session-boundary behavior (nudge and clears) is gated on the `background_presence`
 setting (global plus per-project, on by default, like `auto_rename`). The setting only
@@ -870,7 +868,7 @@ A few more rules keep it from ringing twice or never:
 - **Nothing is released on a failed session read** (`sessions_ok:`).
 - **Monitored and first-turn paths never hold,** since they're already suppressed.
 
-Holds are carried on rename and wiped on quit (both quit paths).
+Holds are keyed by the workspace folder, which a rename never moves, and wiped on quit (both quit paths).
 
 ### The dispatch ping waits too
 
@@ -895,8 +893,7 @@ as "finished". The same result goes to `Presence.links(sessions:)` in the `ensur
 The scan pre-filters by recorded cwd (raw or realpath) against the *tracked* workspace paths
 before any `kill(0)`, `ps` or `lsof`. `same?` is one `ps` per session (batching measured no
 faster), and 15 Claudes cost about 125 ms per 3-second scan. Filtering by config roots
-instead would drop git-discovered worktrees outside `worktree_root`. Renames pass through
-the bridge symlink.
+instead would drop git-discovered worktrees outside `worktree_root`.
 
 ## Remote links: the `⇅`
 
@@ -907,8 +904,8 @@ folded or expanded, and appears on workspace rows only.
 ### Observed, not declared
 
 Unlike the `∞`, there's nothing to declare: Claude already writes the truth. Every live
-Claude session has `<claude dir>/sessions/<pid>.json` (`ClaudeHistory.claude_root`, shared
-with the transcript reader; test seam `SWITCHBOARD_CLAUDE_SESSIONS_DIR`), and `/rc` adds a
+Claude session has `<claude dir>/sessions/<pid>.json` (`ClaudeSessions.claude_root`; test
+seam `SWITCHBOARD_CLAUDE_SESSIONS_DIR`), and `/rc` adds a
 `bridgeSessionId`. It's removed on disconnect, a *new* id appears on reconnect, and the link
 is `https://claude.ai/code/<id>`. No hook or env var exposes it
 ([last verified](../CLAUDE.md#upstream-contracts-last-verified)).
@@ -932,11 +929,11 @@ Claude removes its file on a clean exit. `kill(0)` runs first, so a dead leftove
 forks a `ps`; those files can sit there forever.
 
 **A session is placed by its *kernel* cwd, not the file's `cwd`.** The file's `cwd` and
-`tmux` fields are startup stamps. After `rename A→B`, the bridge keeps `realpath(A)` correct,
-until another workspace is renamed *onto* `A` (`Rename.perform` clears a dead bridge), when
-`realpath(A)` names the wrong tree. One batched `lsof -a -d cwd` (`Agents.cwds_of`, shared
-with `Agents.process_cwds`; about 27 ms for 4 pids, and only when a tracked worktree has a live session)
-follows the moved folder. The recorded `cwd` is only the fallback. (The agent dots may share
+`tmux` fields are startup stamps, so they can name a path that has since moved (a folder
+an older switchboard's rename moved, for one). One batched `lsof -a -d cwd`
+(`Agents.cwds_of`, shared with `Agents.process_cwds`; about 27 ms for 4 pids, and only when
+a tracked worktree has a live session) reads where the process really is. The recorded
+`cwd` is only the fallback. (The agent dots may share
 this flaw; that hasn't been verified.)
 
 **The warm gate fingerprints the set of links, not directory mtimes.** Claude rewrites
@@ -950,7 +947,7 @@ moves only when a link appears, ends, or crosses the stale line.
 
 An off-screen pane runs the cheap scan (`cheap: !@visible`): `kill(0)` liveness and the
 recorded `cwd`, with no `ps` or `lsof`. So hidden panes warm whenever anything in the
-fingerprint moves. Its rare misses (a recycled pid, a rename onto an old name) last until the
+fingerprint moves. Its rare misses (a recycled pid) last until the
 pane's next visible scan, within `REFRESH`. It follows `@visible`, not `hooks_only`, because
 the on-screen reload after a delete passes `hooks_only` too.
 
@@ -1030,8 +1027,7 @@ since a crash leftover can share its resumed session's bridge id. Every scan re-
 (`revalidate_link_view`):
 
 - the same session stays through a re-sort and a reconnect (same pid, new bridge id);
-- it follows its workspace through a rename, and another workspace renamed onto the old path
-  doesn't take over the QR;
+- a rename doesn't disturb it, since the workspace's folder stays where it was;
 - an ended session falls back to the newest one left;
 - the last one ending closes the overlay.
 

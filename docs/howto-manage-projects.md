@@ -70,7 +70,7 @@ fetches the base ref, cuts a new branch, creates the worktree under
 `◌` (yellow) while it's being built and set up, with your task beside it. When it's
 ready you get a chime and the row goes bold — for a task given to a hooked `claude`,
 when its first turn is done. Switch in with `↵` whenever you like. The name is a
-throwaway placeholder (e.g. `wandering-finch-3f9a`) you rename later with `r` (or let the
+placeholder (e.g. `wandering-finch-3f9a`) you rename later with `r` (or let the
 agent name it — see [`switchboard rename`](reference-cli.md#switchboard-rename-name)); the
 branch is named `<name>`, or `<branch_prefix>/<name>` if you set `branch_prefix` in
 config.
@@ -103,19 +103,27 @@ away.
 ## Rename a workspace
 
 Highlight a workspace, press `r`, type the new name (or run `switchboard rename
-<name>` from inside it). Switchboard moves the worktree directory to the new name
-and **renames the branch to match** (`<branch_prefix>/<name>`) — unless the branch
-has been pushed or you switched it yourself, in which case the branch is left
-intact and only the directory moves. It leaves a temporary bridge symlink behind
-so a *running* agent in that worktree keeps reporting state through the move; the
-bridge is reaped automatically once it's no longer needed. Claude's conversation
-history comes along too, hard-linked into the new path's history folder, so `/resume`
-and `claude --continue` find it there.
+<name>` from inside it). Switchboard changes what the workspace is called: its sidebar
+row, its tmux session (renamed in place, so nothing running in it is interrupted) and
+Claude's session title. It also **renames the branch to match**
+(`<branch_prefix>/<name>`), unless the branch has been pushed or you switched it
+yourself, in which case the branch is left alone.
 
-New workspaces start with a throwaway placeholder name (that's all `n` makes), so
-renaming is the normal last step — and with `auto_rename` on (the default) the
-agent does it for you once it understands the work. See
-[`switchboard rename`](reference-cli.md#switchboard-rename-name).
+The folder never moves. It keeps the placeholder name it was created with, which is
+what lets `claude --continue`, `/resume` and `codex resume` keep finding the
+conversation history after a rename (both agents file history under the folder's
+path). To get from a name to its folder in a shell, use
+[`switchboard path`](reference-cli.md#switchboard-path-name):
+
+```sh
+p=$(switchboard path oauth-fix) && cd -- "$p"
+```
+
+New workspaces start with a placeholder name (that's all `n` makes), so renaming is the
+normal last step, and with `auto_rename` on (the default) the agent does it for you once
+it understands the work. Names you give workspaces are kept in switchboard's state folder
+(see [where files live](reference-config.md#filesystem-locations)); deleting a workspace
+forgets its name. See [`switchboard rename`](reference-cli.md#switchboard-rename-name).
 
 ## Remove a workspace or unregister a project
 

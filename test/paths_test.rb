@@ -13,6 +13,7 @@ module Switchboard
     STATE = {
       "AgentState.state_dir" => ["SWITCHBOARD_STATE_DIR", "agents"],
       "Attention.state_dir" => ["SWITCHBOARD_ATTENTION_DIR", "attention"],
+      "Names.dir" => ["SWITCHBOARD_NAMES_DIR", "names"],
       "BranchFold.marker" => ["SWITCHBOARD_BRANCH_FOLD_FILE", "branch_fold"],
       "Collapse.state_dir" => ["SWITCHBOARD_COLLAPSE_DIR", "collapse"],
       "Creation.state_dir" => ["SWITCHBOARD_CREATION_DIR", "creation"],
@@ -154,7 +155,7 @@ module Switchboard
     # Each copy keeps the failure it had before it moved here: a vanished path keeps its raw
     # spelling, except where it must match nothing.
     REAL_OR_SELF = %w[Attention.realpath ClaudeSessions.real Creation.real_path Monitoring.realpath
-                      Notify.realpath Reconcile.real Rename.canonical SessionName::Outcome.realpath].freeze
+                      Notify.realpath Reconcile.real SessionName::Outcome.realpath].freeze
     REAL_OR_NIL = %w[OffstageHold.realpath].freeze
     NIL_FOR_BLANK = %w[Attention.realpath Monitoring.realpath Notify.realpath].freeze
 

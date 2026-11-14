@@ -193,9 +193,6 @@ baselines track those lines, one per contract. How each works is in the explanat
   screen ([explanation-session-name-sync](explanation-session-name-sync.md)). Its tests replay recorded Claude screens in
   `test/fixtures/session_name`; the versions those came from, and the last live check,
   are in CLAUDE.md's list.
-- Claude's **history folders** in `~/.claude/projects/`, which a rename hard-links into a
-  real folder at the new path and prune later tidies
-  ([architecture § Prune only touches what it can prove is stale](explanation-architecture.md#prune-only-touches-what-it-can-prove-is-stale)).
 
 Re-verifying one doesn't advance the others.
 
@@ -206,11 +203,11 @@ Re-verifying one doesn't advance the others.
   ```
 
   For every version past the reviewed baseline, grep its entries for:
-  `hook|SessionStart|SessionEnd|Stop|stop_hook_active|PermissionRequest|Notification|additionalContext|settings.local.json|sessions/|bridgeSessionId|procStart|remote.control|CLAUDECODE|CLAUDE_CODE_SESSION_ID|worktree|status|busy|background agent|background task|rename|session name|prompt box|prompt input|input box|divider|placeholder|vim mode|transcript file|transcripts? (folder|director|path|location)|old transcripts|TRANSCRIPT_LOCAL_GC|cleanupPeriodDays|projects/|\.jsonl|session files?`.
+  `hook|SessionStart|SessionEnd|Stop|stop_hook_active|PermissionRequest|Notification|additionalContext|settings.local.json|sessions/|bridgeSessionId|procStart|remote.control|CLAUDECODE|CLAUDE_CODE_SESSION_ID|worktree|status|busy|background agent|background task|rename|session name|prompt box|prompt input|input box|divider|placeholder|vim mode|session files?`.
   Skip `[VSCode]`, `[Cloud sessions]`, `[Claude Tag]`, `[Code Review]`, Windows,
   PowerShell, self-hosted runner and mod-only entries. Then advance the baseline.
 
-  The last four terms cover the sessions-file `status` contract the ◷ reads
+  The terms from `status` to `background task` cover the sessions-file `status` contract the ◷ reads
   ([agent presence § Waiting on background work](explanation-agent-presence.md#waiting-on-background-work-the-)). It's undocumented, and a changelog entry about it may
   not name the file ("background agents now report their status"). What switchboard
   relies on, in `~/.claude/sessions/<pid>.json`:
@@ -239,34 +236,12 @@ Re-verifying one doesn't advance the others.
   A redesign of the prompt box or theme, a new input mode, or a change to `/rename` is a
   drift finding even when its entry doesn't say "prompt box".
 
-  The terms from `transcript file` on cover the history folders. Claude doesn't document
-  how it lays out `~/.claude/projects/`, and most entries about transcripts are about
-  resuming a damaged one, so the terms aim at where transcripts live and how they're
-  written or cleaned up instead. What a rename and prune rely on:
-
-  - A workspace's folder is keyed by its real start path, encoded (a session started
-    through a symlink writes under the resolved path), and holds only `*.jsonl`
-    transcripts and `<uuid>/` folders.
-  - Claude appends to a transcript in place. That's what lets one hard-linked file show
-    new lines under both the old and the new key. Rewriting it through a new file and a
-    rename would split the history in two.
-  - `claude --continue` picks its session before SessionStart hooks run, which is why
-    the rename links the history itself instead of waiting for a hook.
-  - The sessions file keeps `pid`, `cwd` and `procStart`, which `ClaudeSessions.writers_by_key`
-    reads to know whether anyone still writes under a key before prune deletes it.
-
-  Drift is a change to the key encoding, the folder layout or how transcripts are
-  written (a trim or compaction that rewrites the file counts); a reader of the folder
-  that refuses one it didn't create; or Claude starting to clean up `projects/` folders
-  itself rather than old transcripts inside them. The hook ordering is already covered
-  by `SessionStart` in the hook terms.
-
   When the **installed** version moves, `switchboard doctor`'s "remote links (⇅)" line
   must still show `N linked` with no warning while a `/rc` session is open
   (`RemoteLink.health` is the canary).
 
   Claude moves every couple of days, so the other two run only when that version's
-  changelog hits the ◷, session-name or history-folder terms above, or otherwise on Monday if the installed
+  changelog hits the ◷ or session-name terms above, or otherwise on Monday if the installed
   version has moved since the last live run. A changelog entry that isn't published yet
   counts as no hit until it is. Between runs a real break still shows: a failed rename
   leaves a `session name:` line in `doctor`, and a broken ◷ chimes at the hand-off in
@@ -310,13 +285,6 @@ Re-verifying one doesn't advance the others.
     screen, so this run is the only check on the screen. A placeholder workspace that's
     due for a name is the natural one to use.
 
-    The same rename checks the history folders, so it runs on a history-folder hit too.
-    Send that session one more prompt, then compare its transcript under the old and the
-    new key (`ls -li` in both folders of `~/.claude/projects/`). The new key must be a
-    real folder, not a symlink, and the transcript must have one inode in both with the
-    new turn in it. Two inodes, or the new lines under only one key, means Claude no
-    longer appends in place. `doctor` shows that later as a `split transcript` line, but
-    only after someone renames, so this is the check that catches it first.
 - **Codex**: the installed version (`codex --version`) and
   `gh release list -R openai/codex -L 3 --exclude-pre-releases`. Grep release notes for
   `hook|trust|config.toml|worktree|linked|PermissionRequest|SessionStart|toml_edit|env snapshot`.

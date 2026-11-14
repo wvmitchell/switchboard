@@ -109,18 +109,6 @@ module Switchboard
       refute File.exist?(marker_file(w)), "and GC'd, not just hidden"
     end
 
-    # The declared window survives a rename — carry re-encodes the ttl onto the new key, so
-    # a renamed slow-cycle monitor doesn't silently revert to the default until its next tick.
-    def test_carry_preserves_a_declared_ttl
-      old = wt("old")
-      new = wt("new")
-      Monitoring.mark(old, ttl: Monitoring::TTL * 4)
-      Monitoring.carry(old, new)
-      aged = Time.now - Monitoring::TTL - 60 # past the default, within the carried window
-      File.utime(aged, aged, marker_file(new))
-      assert_includes Monitoring.monitored([new]), new, "the agent's ttl rides through the rename"
-    end
-
     # decode is the read-time interpreter: honor a valid trailing ttl, fall back to the
     # default on a bad one, and — the tab-in-path guard (from review) — never truncate a
     # realpath that itself contains a tab. Only a trailing \t<positive-int> is a ttl.
@@ -157,23 +145,5 @@ module Switchboard
       assert File.exist?(f), "an empty (torn) read is skipped this cycle, never deleted"
     end
 
-    # Carry across a rename: the key is the realpath, which the dir move changes, so the
-    # marker is re-keyed old -> new. One shared helper (KeyedMarkerStore.carry) backs this
-    # and Attention's identical fix.
-    def test_carry_moves_the_marker_to_the_new_realpath
-      old = wt("old")
-      new = wt("new")
-      Monitoring.mark(old)
-      Monitoring.carry(old, new)
-      refute File.exist?(marker_file(old)), "old key removed"
-      assert_includes Monitoring.monitored([new]), new, "new key present and live"
-    end
-
-    def test_carry_is_a_noop_when_nothing_is_monitored
-      old = wt("old")
-      new = wt("new")
-      Monitoring.carry(old, new) # no marker at old
-      assert_empty Monitoring.monitored([new]), "carry of an absent marker creates nothing"
-    end
   end
 end

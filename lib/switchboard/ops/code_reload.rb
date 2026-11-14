@@ -22,6 +22,8 @@ module Switchboard
     SPREAD_ENV = "SWITCHBOARD_RELOAD_SPREAD" # tests and smoke runs set 0
     TAG = "@sb_reload"   # pane option: this pane's sidebar pid, so a sender knows it can take the signal
     FAILED_TAG = "@sb_reload_failed" # pane option: the root a reload couldn't switch to, or the bin when it wouldn't resolve (doctor, the next reload)
+    CAPS_TAG = "@sb_caps" # pane option: "<sidebar pid>:names" while this pane runs code that reads stored names (Rename.stale_peers)
+    CAPS = "names"
     SIGNAL = "USR1"
     SPREAD = 30          # seconds an off-screen sidebar may wait, so a fleet doesn't boot + rescan at once
     PREFLIGHT_SECS = 3
@@ -277,6 +279,13 @@ module Switchboard
 
       args = ["set-option", "-p", "-t", pane, TAG, value.to_s]
       args += [";", "set-option", "-p", "-u", "-t", pane, FAILED_TAG] if clear_failed && value.to_s != "0"
+      # Advertise what this code reads, and clear it before an exec (value 0): only code that
+      # understands stored names sets it again, so a reload into an older binary leaves it off.
+      args += if value.to_s == "0"
+                [";", "set-option", "-p", "-u", "-t", pane, CAPS_TAG]
+              else
+                [";", "set-option", "-p", "-t", pane, CAPS_TAG, "#{value}:#{CAPS}"]
+              end
       Tmux.run(*args) == true
     end
 
@@ -287,13 +296,16 @@ module Switchboard
       Tmux.run("set-option", "-p", "-t", pane, FAILED_TAG, root.to_s)
     end
 
-    ReloadTarget = Struct.new(:pane, :pid, :tag, :tagged, :between, :tag_pid, :failed, :bin, keyword_init: true)
+    ReloadTarget = Struct.new(:pane, :pid, :tag, :tagged, :between, :tag_pid, :failed, :bin, :caps, keyword_init: true) do
+      # Runs code that reads stored names: the advertised pid is this sidebar's own tag.
+      def names? = !between && tag.match?(/\A[1-9]\d*\z/) && caps == "#{tag}:#{CAPS}"
+    end
 
     # Every sidebar pane, split by whether it can reload itself. nil off a server.
     def sidebar_reload_targets
       out = Tmux.query("list-panes", "-a", "-F",
                        "\#{pane_id}\t\#{pane_pid}\t\#{#{TAG}}\t\#{#{FAILED_TAG}}\t" \
-                       "\#{pane_dead}\t\#{pane_title}\t\#{pane_start_command}")
+                       "\#{pane_dead}\t\#{pane_title}\t\#{#{CAPS_TAG}}\t\#{pane_start_command}")
       out && parse_reload_targets(out)
     end
 
@@ -304,12 +316,12 @@ module Switchboard
     # pane (remain-on-exit) is skipped: its pid may already belong to something else.
     def parse_reload_targets(raw)
       raw.to_s.lines.filter_map do |line|
-        id, pid, tag, failed, dead, title, command = line.chomp.split("\t", 7)
+        id, pid, tag, failed, dead, title, caps, command = line.chomp.split("\t", 8)
         next unless id && dead != "1" && title.to_s.strip == Tmux::SIDEBAR_TITLE && pid.to_s.match?(/\A\d+\z/)
 
         other = tag.to_s.match?(/\A[1-9]\d*\z/) && tag != pid ? tag.to_i : nil
         ReloadTarget.new(pane: id, pid: pid.to_i, tag: tag.to_s, tagged: tag == pid, between: tag == "0", tag_pid: other,
-                         failed: !failed.to_s.empty?, bin: start_bin(command))
+                         failed: !failed.to_s.empty?, bin: start_bin(command), caps: caps.to_s)
       end
     end
 

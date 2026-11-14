@@ -75,19 +75,6 @@ module Switchboard
       false
     end
 
-    # Rename: the hold follows its worktree (old realpath captured before the move). Not
-    # KeyedMarkerStore.carry, which rewrites the content to the bare path and would drop
-    # the pid the kill(0) maturity reads.
-    def carry(old_real, new_real)
-      file = File.join(state_dir, key(old_real))
-      content = File.read(file).chomp
-      _real, epoch, pid = content.split("\t", 3)
-      KeyedMarkerStore.write(state_dir, key(new_real), [new_real, epoch, pid].join("\t"))
-      KeyedMarkerStore.delete(state_dir, key(old_real))
-    rescue StandardError
-      nil
-    end
-
     # Wipe every hold. Rides `quit` beside AgentState/Monitoring/Notify.clear_all: the
     # agents are gone, so nothing will finish.
     def clear_all

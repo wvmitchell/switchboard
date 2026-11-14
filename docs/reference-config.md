@@ -529,6 +529,7 @@ Everything switchboard writes, and how to redirect it. State dirs follow XDG.
 | Full-header toggle (`H`) | `$XDG_STATE_HOME/switchboard/full_header` → `~/.local/state/switchboard/full_header` | `$SWITCHBOARD_FULL_HEADER_FILE` (a file path) |
 | Branch-fold toggle (`z`) | `$XDG_STATE_HOME/switchboard/branch_fold` → `~/.local/state/switchboard/branch_fold` | `$SWITCHBOARD_BRANCH_FOLD_FILE` (a file path) |
 | Sidebar width (`←`/`→`) | `$XDG_STATE_HOME/switchboard/width` → `~/.local/state/switchboard/width` | `$SWITCHBOARD_WIDTH_FILE` (a file path) |
+| Workspace names (what you renamed each workspace to; **back this up**) | `$XDG_STATE_HOME/switchboard/names` → `~/.local/state/switchboard/names` | `$SWITCHBOARD_NAMES_DIR` |
 | Session-name sync outcomes (what `doctor` lists) | `$XDG_STATE_HOME/switchboard/session-name` → `~/.local/state/switchboard/session-name` | `$SWITCHBOARD_SESSION_NAME_DIR` |
 | Background-create records (`n` and `switchboard new` dispatches) | `$XDG_STATE_HOME/switchboard/creation` → `~/.local/state/switchboard/creation` | `$SWITCHBOARD_CREATION_DIR` |
 | PR-badge cache | `$XDG_CACHE_HOME/switchboard/prs` → `~/.cache/switchboard/prs` | `$SWITCHBOARD_CACHE_DIR` |
@@ -543,6 +544,12 @@ its contents have drifted from the embedded version (atomically, so a hook runni
 at that moment isn't broken), while the sound
 WAVs carry `ASSET_VERSION` in their filename — a version bump writes new files and
 the stale ones are simply never referenced again.
+
+The workspace-names store is the one file in the state folder that holds your own data
+rather than a cache or a view setting. Each entry records the name you gave a workspace,
+keyed by its folder. Lose it and every renamed workspace goes back to showing its
+placeholder folder name (nothing else breaks, and you can rename them again), so include
+it if you back up your dotfiles.
 
 A few more files and behaviors can be redirected the same way:
 

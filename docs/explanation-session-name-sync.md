@@ -18,8 +18,9 @@ keyboard.
 ## The approach: a background worker that types
 
 On a successful rename (`:ok`, `:partial` or `:unchanged`), `Rename.perform` spawns
-`switchboard sync-session-name <dest> <leaf>`. That runs `SessionName.work`
-(`session_name.rb`) as a daemon, which types `/rename <leaf>` into each live Claude
+`switchboard sync-session-name <dest> <name>`, where `<dest>` is the workspace's folder
+and `<name>` its new name. That runs `SessionName.work`
+(`session_name.rb`) as a daemon, which types `/rename <name>` into each live Claude
 session in the workspace. It only spawns when `ENV["TMUX"]` is set (which also keeps the
 offline test suite from spawning it) and `sync_session_name_for` is on.
 
@@ -32,8 +33,8 @@ A few details around the spawn:
 - **Retrying is just renaming again.** A same-name rename starts a fresh worker.
 - **It survives the caller.** The worker spawns in its own process group, so an agent's
   tool runner can't kill it before it daemonizes.
-- **It only accepts real names and real worktrees.** Rename spawns only for a leaf that
-  `SessionName::NAME` accepts. A case-only rename syncs the case the directory kept. The
+- **It only accepts real names and real worktrees.** Rename spawns only for a name that
+  `SessionName::NAME` accepts. The
   public `sync-session-name` command refuses any `dest` that isn't a non-primary
   switchboard worktree.
 
@@ -146,7 +147,7 @@ After typing, switchboard waits for the box to show the text. Claude takes about
 to draw a key, so right after typing the box can still read empty. Settling and backing
 out both keep polling through empty or partly drawn boxes, for about 1.2 seconds.
 
-**Enter is pressed only on an exact `❯ /rename <leaf>`,** with every gate re-read first:
+**Enter is pressed only on an exact `❯ /rename <name>`,** with every gate re-read first:
 
 - the box and the status, after the slower `ps` and tmux checks, since a permission
   prompt that opened meanwhile would be approved by Enter;
@@ -245,18 +246,19 @@ A per-pid flock keeps two workers from typing into the same session.
 
 If you rename again while a worker is running, the newer one takes over:
 
-- **The old path points at the new one.** The newer rename leaves a bridge symlink at
-  the old `dest` (`superseded?`, checked again inside the per-pid lock).
+- **The stored name moves on.** A worker checks that the workspace is still called the
+  name it was started with (`superseded?`, which reads the names store, checked again
+  inside the per-pid lock).
 - **The newest worker holds the claim.** A newer worker for the same workspace takes
   `SessionName::Owner`'s claim, so a retried rename replaces the running worker.
 - **Claims are swept, never deleted by their owner.** Stale claims are swept by pid
   liveness, because a check-then-delete raced the next claim. A missing claim reads as
   still ours.
-- **A superseded worker writes no outcome.** Its `dest` is now a bridge to the new
-  workspace.
-- **A late-booting worker steps aside.** A worker whose `dest` was renamed again before
-  it even booted exits before claiming, since claiming through the bridge would take the
-  newest worker's claim.
+- **A superseded worker writes no outcome.** Its name is stale, so its verdict would be
+  too.
+- **A late-booting worker steps aside.** A worker whose workspace was renamed again before
+  it even booted exits before claiming, since claiming would take the newest worker's
+  claim.
 
 ## When it can't tell, it waits
 
@@ -285,7 +287,7 @@ carries over between workers, since sticky and carry-over rules each grow new co
 cases. At the time limit, a box still holding any `/rename …` is a
 `failed_send` (a `:leftover` pass), so leftover text is reported by whichever worker
 finds it. With someone at the keyboard, only our exact line counts, since anything else
-may be theirs. A rename simply forgets the old path's marker.
+may be theirs.
 
 `RemoteLink.health`'s `odd_status`, `unnamed` and `unknown_kind` are canaries for
 Claude changing the `status`, `name` or `kind` fields this depends on.

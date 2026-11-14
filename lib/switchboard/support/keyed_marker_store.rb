@@ -109,19 +109,5 @@ module Switchboard
       Set.new
     end
 
-    # Move a marker from one key to another — used to carry a path-keyed marker across a
-    # worktree rename, where the key (a realpath) changes but the marker should survive.
-    # A no-op when nothing is stored at old_value. The content is rewritten to new_value
-    # so the marker's stored path matches its new location, and the write is atomic
-    # (temp+rename) like every other, so a peer scan never catches a torn carry. Fully
-    # rescued: a failed carry drops the marker rather than crash the rename.
-    def carry(dir, old_value, new_value)
-      return unless File.exist?(File.join(dir, key(old_value)))
-
-      write(dir, key(new_value), new_value)
-      delete(dir, key(old_value))
-    rescue StandardError
-      nil
-    end
   end
 end

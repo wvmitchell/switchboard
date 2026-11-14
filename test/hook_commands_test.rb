@@ -175,6 +175,25 @@ module Switchboard
       assert_equal "", run_nudge(worktree: named, stdin: '{"stop_hook_active":false,"cwd":"/x"}', args: ["--stop"])
     end
 
+    # Value: protects=once renamed, a placeholder FOLDER no longer nudges (the name lives in
+    # the store now), and an unreadable store means silence, never a nudge on a named
+    # workspace; fails_when=the check reads the folder again, or treats unknown as unnamed;
+    # seam=Names
+    def test_a_renamed_placeholder_folder_and_an_unreadable_store_are_both_silent
+      nudge_config("auto_rename" => true)
+      dir = FileUtils.mkdir_p(path("wts", "proj", "wandering-finch-3f9a")).first
+      wt = Worktree.new(project: "proj", path: dir, primary: false)
+      refute_empty run_nudge(worktree: wt, stdin: '{"source":"resume","cwd":"/x"}'), "still a placeholder"
+      Names.write(File.realpath(dir), "oauth-fix", project: "proj")
+      assert_equal "", run_nudge(worktree: wt, stdin: '{"source":"resume","cwd":"/x"}')
+      assert_equal "", run_nudge(worktree: wt, stdin: '{"stop_hook_active":false,"cwd":"/x"}', args: ["--stop"])
+      Names.delete(File.realpath(dir))
+      stub_method(Names, :read_all, -> { [:error, "/n", "EACCES"] }) do
+        assert_equal "", run_nudge(worktree: wt, stdin: '{"source":"resume","cwd":"/x"}')
+        assert_equal "", run_nudge(worktree: wt, stdin: '{"stop_hook_active":false,"cwd":"/x"}', args: ["--stop"])
+      end
+    end
+
     def test_rename_nudge_stop_silent_when_auto_rename_off
       nudge_config("auto_rename" => false)
       assert_equal "", run_nudge(worktree: placeholder_wt,
