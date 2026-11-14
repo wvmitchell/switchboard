@@ -124,8 +124,8 @@ off. It checks, with the fix inline for anything red:
   a worktree on the same branch looks like where it moved), an entry file that can't be
   used, a name that clashes with another workspace's and so shows the folder name, and a
   session or unpushed branch whose name disagrees with the workspace's. A names store it
-  can't read, or a sidebar running code that doesn't know stored names, is flagged too,
-  since renames are refused until it's fixed.
+  can't read, a sidebar running code that doesn't know stored names, or a tmux that can't
+  list its panes is flagged too, since renames are refused until it's fixed.
 - Remote links (`⇅`): how many Claude sessions are linked, or a warning when a
   Claude update moved or reshaped the session files the glyph reads, and (inside
   tmux) when your shell and tmux disagree on `CLAUDE_CONFIG_DIR`. See

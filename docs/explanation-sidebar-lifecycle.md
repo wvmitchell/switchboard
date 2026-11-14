@@ -558,8 +558,8 @@ hands over to a new one:
 - **Newer code accepts every older payload.** It reads each field leniently. One that won't
   decode is a blank resume, still a reload; only an absent payload is a cold start.
   `code_reload_test` pins a frozen v1 string.
-- **The signals never change meaning.** `@sb_reload`, `@sb_reload_failed` and `SIGUSR1`
-  keep what they mean.
+- **The signals never change meaning.** `@sb_reload`, `@sb_reload_failed`, `@sb_caps` and
+  `SIGUSR1` keep what they mean.
 - **`Creation` records stay readable by older launchers,** because a launcher
   (`Creator.launch`) lives as long as its agent and keeps the code it started with.
 

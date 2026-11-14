@@ -294,6 +294,7 @@ nothing) and what to do next.
 | `[invalid]` | The name sanitizes to nothing usable, contains `/`, or isn't a valid git branch name. |
 | `[building]` | The workspace is still being created in the background. Rename it once it's ready. |
 | `[stale-peers]` | A sidebar pane is running code that doesn't read stored names. Run `switchboard reload-sidebars`, then retry. `switchboard upgrade` reloads sidebars, so this clears on its own after an upgrade. |
+| `[panes-unknown]` | tmux is running but couldn't list its panes, so switchboard can't tell whether an older sidebar is running. Nothing changed; retry, and if it keeps happening check `tmux list-panes -a`. |
 | `[names-unreadable]` | The names store can't be read. Fix its permissions and retry. |
 | `[listing-failed]` | git couldn't list the project's worktrees. Nothing changed. |
 | `[failed]` | The name couldn't be saved (or the branch couldn't be renamed). The branch is unchanged or was put back. |
@@ -397,7 +398,7 @@ sound resolution, orphaned sessions, stored workspace names (a name whose folder
 with the `rename` to run if the worktree looks like it moved; an unusable entry; a name
 that clashes and falls back to the folder name; a session or unpushed branch whose name
 disagrees with the workspace's; an unreadable names store; sidebars that don't read stored
-names), the remote links (`⇅`) it sees (or a warning
+names, or a tmux that can't list its panes), the remote links (`⇅`) it sees (or a warning
 when Claude is running but its session files are missing, none are in the shape
 switchboard reads, or every live one fails the start-time check, i.e. a Claude update
 moved or reshaped them), a `CLAUDE_CONFIG_DIR` that differs between your shell and tmux

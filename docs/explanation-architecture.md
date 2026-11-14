@@ -284,7 +284,9 @@ the workspace with that name.
 Every sidebar is its own process, and one still running older code would show folder names
 and race a rename. So a sidebar that reads stored names says so with a pane option
 (`@sb_caps`, set alongside the `@sb_reload` tag and cleared before every re-exec), and
-rename refuses with `[stale-peers]` while any sidebar doesn't advertise it.
+rename refuses with `[stale-peers]` while any sidebar doesn't advertise it. When tmux is
+running but can't list its panes, rename refuses with `[panes-unknown]` instead: a sidebar
+it can't see isn't proof there is none.
 
 ## Adding a project
 
