@@ -157,6 +157,20 @@ safe today; each is narrow).
   and `prune --dry-run` makes it visible before anything is killed. (Workspace names are
   covered: rename refuses a name whose tmux session name another workspace already has.)
 
+- **Show a renamed workspace's folder in the full header.** *Why:* a rename never moves
+  the folder, so a renamed workspace's folder keeps its placeholder name; the `H` full
+  header should show that folder beside the name so "where is this on disk?" has an answer
+  without leaving the sidebar (`switchboard path` answers it from a shell today). *Start
+  in:* `Sidebar#header` (sidebar/render.rb) and `Worktree#folder_name`. Deferred from plan:
+  thoughts/claude-history-decoupling.md (criterion 8). **Priority:** P1.
+
+- **Shared test fixtures with a renamed workspace by default.** *Why:* tests run with an
+  empty names store, so a label built from the folder passes by accident; a fixture whose
+  workspace has a stored name that differs from its folder makes such a mix-up fail
+  existing tests. `test/name_folder_guard_test.rb` pins folder-derived names per file in
+  the meantime. *Start in:* `SandboxTest` helpers and the sidebar/model fixtures. Deferred
+  from plan: thoughts/claude-history-decoupling.md (criterion 14). **Priority:** P1.
+
 - **Color only on a terminal.** *Why:* `doctor` and the `upgrade`/`install` finishing lines
   print ANSI color (`\e[32m✓\e[0m`, `Doctor#row` and its siblings in doctor.rb and
   installer.rb) even when stdout isn't a terminal, so a pipe, a log or a `!` capture shows
