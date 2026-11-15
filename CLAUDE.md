@@ -57,6 +57,7 @@ locally without touching real state:
 | Agent-state dots, Claude/Codex hook delivery, the global codex block | [explanation-agent-presence](docs/explanation-agent-presence.md), [§ Inside the global codex block](docs/explanation-agent-presence.md#inside-the-global-codex-block) |
 | The rename nudge, the agent-dispatch instruction, completion sounds, bold until viewed, `KeyedMarkerStore` | [explanation-agent-presence § One edge, four consumers](docs/explanation-agent-presence.md#one-edge-four-consumers), [§ The self-naming nudge](docs/explanation-agent-presence.md#the-self-naming-nudge), [§ The agent-dispatch instruction](docs/explanation-agent-presence.md#the-agent-dispatch-instruction) |
 | ∞ monitoring + `monitoring notify`, ⇅ remote links + QR, ◷ background work | [explanation-agent-presence § Background monitors](docs/explanation-agent-presence.md#background-monitors-the-), [§ ◷](docs/explanation-agent-presence.md#waiting-on-background-work-the-), [§ ⇅](docs/explanation-agent-presence.md#remote-links-the-) |
+| Workspace names (`Names`), rename that never moves a folder, `switchboard path` | [explanation-architecture § A rename never moves the folder](docs/explanation-architecture.md#a-rename-never-moves-the-folder), [reference-cli](docs/reference-cli.md) |
 | Session-name sync (typing `/rename` into Claude's pane) | [explanation-session-name-sync](docs/explanation-session-name-sync.md) |
 | Folds, full header, width, diff counts, `/` search, `?` overlay, `sidebar_keys` | [explanation-sidebar-views](docs/explanation-sidebar-views.md) |
 | Baked paths (`StablePath`), releases, the update line, `switchboard upgrade` | [explanation-distribution](docs/explanation-distribution.md), [reference-release](docs/reference-release.md) |
@@ -84,9 +85,10 @@ The ones that broke something before. Each doc above explains why.
   and never advise deleting the block by hand.
 - **Undocumented upstream files fail closed** (Claude's sessions file): an unrecognized
   shape is no signal, never a wrong one.
-- **A live session's transcript folder is a real directory.** Switchboard never creates a
-  symlink in `~/.claude/projects`; rename hard-links history (`ClaudeHistory`), and cleanup
-  there deletes only on proof (owned key, `writers_by_key` known-empty, quiet target).
+- **A workspace's folder never moves.** Every agent keys its history by the cwd, so rename
+  changes only the stored name (`Names`), the branch, the tmux session and Claude's title.
+  A name comes from `Worktree#display_name`, never the folder (`test/name_folder_guard_test.rb`),
+  and a session belongs to the workspace whose folder it was created in (`#{session_path}`).
 - **Dispatch never starts an agent on an un-set-up tree, and never destroys work**: the
   agent starts only through `Creation.authorize_launch`, and rollback removes only what it
   can prove is its own.
@@ -94,7 +96,7 @@ The ones that broke something before. Each doc above explains why.
 - **Hook commands print only JSON or nothing, and exit 0** (`rename-nudge`): a stray byte
   poisons Claude.
 - **Cross-version contracts**: a newer sidebar accepts every older resume payload;
-  `@sb_reload`, `@sb_reload_failed` and `SIGUSR1` never change meaning; `Creation`
+  `@sb_reload`, `@sb_reload_failed`, `@sb_caps` and `SIGUSR1` never change meaning; `Creation`
   records stay readable by older launchers. New `Keymap::ACTIONS` go LAST.
 
 ## Upstream contracts, last verified
@@ -116,12 +118,10 @@ tracks these lines; update them when you re-verify one.
 - **◷ sessions-file `status`:** last verified live against **Claude Code 2.1.308–2.1.310**
   (v0.56.0), re-checked live on 2.1.311–2.1.312, 2.1.314, 2.1.316, 2.1.318 and 2.1.319 (a background
   agent's hand-off held its chime).
-- **Claude history folders** (`~/.claude/projects/<encode(cwd)>`): verified live on Claude
-  Code 2.1.321. Transcripts are appended in place (same inode), the key is
-  `encode(physical cwd)` (a session started through a symlinked path writes under the real
-  one), a worktree's folder holds only `*.jsonl` and `<uuid>/` (`memory/` appears only for
-  non-git folders), `claude --continue` picks its session before SessionStart hooks run, and
-  `writers_by_key` reads the sessions file's `pid`, `cwd` and `procStart`.
+- **History is keyed by the cwd** (why rename never moves a folder): Claude stores
+  transcripts under its encoded real cwd, and `codex resume` filters by the recorded real
+  cwd; both read it with `getcwd`, so a symlinked launch path keys by the target. Verified
+  live on Claude Code 2.1.322 and the installed codex-cli (2026-11-10).
 - **Session-name sync** (Claude's screen and `/rename`): pinned by real 2.1.310 captures in
   `test/fixtures/session_name` and confirmed live on 2.1.312, 2.1.314, 2.1.316, 2.1.318 and 2.1.319
   (the sidebar's `r`, the pane in view).

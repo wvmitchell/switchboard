@@ -42,6 +42,18 @@ module Switchboard
       assert_equal leaf, Git.current_branch(dest), "branch matches the leaf (no prefix here)"
     end
 
+    # Value: protects=a stale stored name for a reused folder path never labels the new
+    # workspace; fails_when=the worker stops clearing it; seam=Placeholder.generate
+    def test_build_clears_a_stale_name_left_for_its_folder
+      config = config_for(temp_git_repo("proj", origin: true))
+      parent = FileUtils.mkdir_p(File.join(config.worktree_root, "proj")).first
+      dest = File.join(File.realpath(parent), "calm-fern-0a1b")
+      Names.write(dest, "someone-elses-work", project: "proj")
+      built = stub_method(Placeholder, :generate, -> { "calm-fern-0a1b" }) { build(config) }
+      assert_equal "calm-fern-0a1b", File.basename(built)
+      assert_empty Names.read_all.last
+    end
+
     def test_build_honors_branch_prefix
       config = config_for(temp_git_repo("proj", origin: true), "branch_prefix" => "wv")
       dest = build(config)
@@ -134,32 +146,5 @@ module Switchboard
       refute Git.pushed?(repo, branch), "a freshly-created branch reads as not-pushed"
     end
 
-    # Value: protects=a new workspace at a reused name inherits no stranger's history route;
-    # fails_when=creation keeps a worktree bridge pointing at it or a projects bridge at its
-    # key; why_new=new; seam=none; no_claim=Claude's resume picker (live check e)
-    def test_creation_clears_history_routes_into_the_new_path
-      parent = path("worktrees", "proj")
-      dest = File.join(parent, "lucky-fox")
-      FileUtils.mkdir_p(dest)
-      dest = File.realpath(dest)
-      parent = File.dirname(dest)
-      File.symlink(dest, File.join(parent, "older-name"))     # a rename onto a name now reused
-      File.symlink(File.join(parent, "x"), File.join(parent, "other"))
-      root = File.realpath(FileUtils.mkdir_p(ENV["SWITCHBOARD_CLAUDE_PROJECTS_DIR"]).first)
-      ENV["SWITCHBOARD_CLAUDE_PROJECTS_DIR"] = root
-      stranger = File.join(root, "-stranger")
-      FileUtils.mkdir_p(stranger)
-      File.write(File.join(stranger, "0b7c5d2e-1f3a-4b5c-8d9e-0a1b2c3d4e5f.jsonl"), "theirs\n")
-      File.utime(Time.now - 3600, Time.now - 3600, *Dir.glob("#{stranger}/**/*"), stranger)
-      squat = File.join(root, ClaudeHistory.encode(dest))
-      File.symlink(stranger, squat)
-
-      stub_method(ClaudeSessions, :writers_by_key, ->(*) { {} }) { Creator.clear_history_routes(dest) }
-
-      refute File.symlink?(File.join(parent, "older-name"))
-      assert File.symlink?(File.join(parent, "other")), "a bridge to somewhere else stays"
-      refute File.symlink?(squat), "no projects bridge at the new key"
-      assert File.exist?(File.join(stranger, "0b7c5d2e-1f3a-4b5c-8d9e-0a1b2c3d4e5f.jsonl")), "its data stays put"
-    end
   end
 end

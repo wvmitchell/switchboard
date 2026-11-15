@@ -28,7 +28,7 @@ a **`Creation`** record (`creation.rb`) claiming it, as one step (`Creator.dispa
 That step runs under `Creation.with_project_lock`, a per-project flock that the worker's
 collision retry takes too, so two panes can never hand out the same name and have one
 launcher claim the other's task. `Creator.reserve` skips names already taken by a
-directory, a branch, a dangling rename bridge, or another in-flight record. Then the
+directory, a branch, a rename bridge an older version left behind, or another in-flight record. Then the
 sidebar spawns `switchboard create-workspace <id>` and goes back to drawing. Nothing on
 the input loop builds anything or touches the network; reserve's local branch and
 session lookups are its only shell-outs.
@@ -97,7 +97,7 @@ A few rules keep the writers from stepping on each other:
 - **State changes are gated on the expected state.** A `transition` names the state it
   moves *from*. If a racing writer already advanced the record, that writer wins, and a
   no-op tells the worker to stop.
-- **The newest record wins a lookup.** Every lookup by path (`for_path`, `repath`)
+- **The newest record wins a lookup.** Every lookup by path (`for_path`)
   takes the newest record, because a finished record can outlive its tree on a reused
   path.
 - **The owner travels with the work.** The record's owner (pid plus start time,
@@ -208,8 +208,7 @@ as `.unbuilt-<id>`), so a ✘ never sits on someone else's folder.
 ### When ours and theirs can't be told apart, keep everything
 
 git's "already exists" means git created nothing. So if a tree on our branch sits at the
-destination anyway (a workspace renamed onto the placeholder, or a failing hook printing
-git's words), there's no way to tell whose it is. Nothing is removed or retried, and the
+destination anyway (a failing hook printing git's words, say), there's no way to tell whose it is. Nothing is removed or retried, and the
 record stays to guard it.
 
 ### Rolling back only what's provably ours
@@ -348,10 +347,17 @@ carries a *quoted* trailing `#` comment, since YAML would eat an unquoted one.
 ## Deferred naming
 
 Workspace naming is deferred. `n` in the sidebar doesn't ask for a
-name. You get a **placeholder**, a throwaway
+name. You get a **placeholder**, a random
 adjective-noun-hex name from `Placeholder.generate` (`placeholder.rb`, a small in-repo word
 list, no gem), and a matching branch. You start the work first and name it afterwards,
 with `r`, `switchboard rename`, or the agent's nudge.
+
+The placeholder is also the workspace's folder name, for good. Renaming changes what the
+workspace is called (the sidebar row, the branch, the tmux session and Claude's session
+title), never the folder, so every agent keeps finding its history; see
+[a rename never moves the folder](explanation-architecture.md#a-rename-never-moves-the-folder).
+Creation clears any stored name left for the new folder's path, so a stale name can't
+label it.
 
 A placeholder ends in a random four-digit hex suffix (`brave-otter-3f9a`). Claude and
 Codex both key a workspace's history by its folder, so a name handed out again after its
@@ -365,18 +371,19 @@ The worker cuts the branch with `--no-track`, so a branch off `origin/main` does
 inherit it as an upstream. Otherwise the rename check below would read every fresh
 worktree as already pushed.
 
-`Rename.perform` renames both the directory (to the bare `<name>`) and the branch (to
-`<branch_prefix>/<name>`), but it renames the branch only when that's safe:
+`Rename.perform` stores the new name and renames the branch to
+`<branch_prefix>/<name>`, but it renames the branch only when that's safe:
 
-- it's still the auto-created branch (its basename still equals the old name), and
+- it's still the auto-created branch (its basename still equals the current name), and
 - it hasn't been pushed. `Git.pushed?` means a remote-tracking ref exists or an upstream
   is configured.
 
-A pushed or diverged branch is left alone, and only the directory is renamed.
+A pushed or diverged branch is left alone, and only the name changes.
 
-All the branch checks (`valid_branch_name?`, and `branch_exists?` giving the
-`:branch_exists` result) run before anything moves, and the branch is renamed first. So
-a collision fails cleanly with nothing moved, and the agent retries with another name.
+All the checks (the name is free, `valid_branch_name?`, and `branch_exists?` giving the
+`:branch_exists` result) run before anything changes, and the branch is renamed before the
+name is saved. So a collision fails cleanly with nothing changed, and the agent retries
+with another name. If the name then can't be saved, the branch is put back.
 
 ## Dispatching from the command line
 

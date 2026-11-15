@@ -723,7 +723,7 @@ module Switchboard
     # Best-effort and silent — we're mid-render, and a tmux/git hiccup must never
     # stop the sidebar from drawing.
     def reconcile_on_launch
-      Reconcile.prune(@config, catch_up_history: false) # no history work in a UI process
+      Reconcile.prune(@config)
     rescue StandardError
       nil
     end

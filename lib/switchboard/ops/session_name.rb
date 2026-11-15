@@ -59,14 +59,13 @@ module Switchboard
     # worker's verdict wins.
     def work(dest, name, clock: -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) }, sleeper: ->(s) { pause(s) })
       return :invalid unless name.to_s.match?(NAME)
-      # Renamed again before we booted: `dest` is a bridge, and claiming through it would
-      # take the newest worker's claim.
+      # Renamed again before we booted: the stored name moved on.
       return :superseded if superseded?(dest, name)
 
-      # Keyed once, by the canonical path checked to still carry our name: claim and
-      # verdict can then never follow a bridge a later rename leaves at `dest`.
+      # Keyed once, by the canonical path checked to still carry our name: a rename landing
+      # between the check above and here must not let this worker take the newer one's claim.
       real = Outcome.realpath(dest)
-      return :superseded unless File.basename(real) == name
+      return :superseded unless display_name(real) == name
 
       token = Owner.claim(real)
       run(dest, name, token, real, clock, sleeper)
@@ -127,11 +126,14 @@ module Switchboard
       end
     end
 
-    # A newer rename moved the workspace on (a bridge symlink or nothing at `dest`), so
-    # this worker's name is stale.
+    # A newer rename gave the workspace another name (or it's gone), so this worker's
+    # name is stale. The folder never moves; the name lives in Names.
     def superseded?(dest, name)
-      File.symlink?(dest) || !File.directory?(dest) || File.basename(dest) != name
+      real = Paths.real_or_self(dest)
+      !File.directory?(real) || display_name(real) != name
     end
+
+    def display_name(real) = Names.name_for(real) || File.basename(real)
 
     # Every wait — between polls and inside one delivery. The unit tests stub it.
     def pause(secs)

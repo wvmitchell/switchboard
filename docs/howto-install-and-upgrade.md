@@ -66,13 +66,15 @@ it off. Clone installs don't check: `git` already tells you when your branch mov
   It refuses if tracked files have uncommitted changes. Untracked and ignored files
   are fine, unless the update would overwrite one: then git refuses and names the file.
 
-After upgrading from a version older than hard-linked history, run `switchboard prune`
-once. It turns the history symlinks older renames left in `~/.claude/projects` into real
-folders, or removes them when nothing uses them, and `switchboard doctor` reminds you while
-any remain. A sidebar still running the old code until it reloads can leave one more
-symlink behind; the next prune handles it. Going back to an older version loses nothing:
-its renames move history and leave symlinks again, never overwriting a file, and a prune
-on a newer version tidies them up.
+Workspaces renamed by an older version keep the folder that rename gave them, and show
+that folder name until you rename them again. From now on a rename changes only a
+workspace's name, never its folder.
+
+**Before going back to an older version,** rename your renamed workspaces back to their
+folder names, or close them. An older switchboard doesn't know about stored names: it
+shows folder names, and its `prune` matches tmux sessions by name, so it could close a
+renamed workspace's live session as an orphan. A renamed workspace is one whose name in
+the sidebar differs from its folder's; `switchboard path <name>` shows its folder.
 
 Then the new version finishes the setup:
 

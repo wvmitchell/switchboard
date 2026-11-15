@@ -405,10 +405,10 @@ module Switchboard
       went = flashed = nil
       stub_method(sb, :flash, ->(msg) { flashed = msg }) do
         stub_method(sb, :switch, ->(node) { went = node.path }) do
-          stub_method(Tmux, :has_session?, ->(_n) { false }) { sb.send(:enter) }
+          stub_method(Tmux, :session_for, ->(*) { nil }) { sb.send(:enter) }
           assert_equal "still creating…", flashed
           assert_nil went, "no session yet: never switch"
-          stub_method(Tmux, :has_session?, ->(_n) { true }) { sb.send(:enter) }
+          stub_method(Tmux, :session_for, ->(*) { "sb/app/quiet-otter" }) { sb.send(:enter) }
         end
       end
       assert_equal dir, went

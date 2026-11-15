@@ -73,7 +73,8 @@ module Switchboard
     end
 
     def rename_piece(config, wt, source)
-      leaf = File.basename(wt.path)
+      return nil unless Names.read_all.first == :ok # unreadable: the name is unknown, so say nothing
+      leaf = wt.display_name
       return nil unless RenameNudge.decide(auto_rename: config.auto_rename_for(wt.project),
                                            placeholder: Placeholder.generated?(leaf), source: source)
 
@@ -130,7 +131,8 @@ module Switchboard
       wt = Model.workspace_at(config, cwd)
       return nil if wt.nil? || wt.primary
 
-      leaf = File.basename(wt.path)
+      return nil unless Names.read_all.first == :ok
+      leaf = wt.display_name
       return nil unless RenameNudge.decide_stop(auto_rename: config.auto_rename_for(wt.project),
                                                 placeholder: Placeholder.generated?(leaf),
                                                 stop_hook_active: payload["stop_hook_active"])

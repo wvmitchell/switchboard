@@ -12,16 +12,16 @@ module Switchboard
   class TmuxTest < SandboxTest
     # --- sb_sessions: the pure list parse ------------------------------------
 
-    def test_sb_sessions_keeps_only_sb_prefixed_and_parses_created
-      raw = "sb/app/feat\t1700000000\nother\t1700000001\nsb/home\t1700000002\n"
+    def test_sb_sessions_keeps_only_sb_prefixed_and_parses_created_and_path
+      raw = "sb/app/feat\t1700000000\t/wt/a b\tc\nother\t1700000001\t/x\nsb/home\t1700000002\t\n"
       got = Tmux.sb_sessions(raw)
-      assert_equal [{ name: "sb/app/feat", created: 1_700_000_000 },
-                    { name: "sb/home", created: 1_700_000_002 }], got
+      assert_equal [{ name: "sb/app/feat", created: 1_700_000_000, path: "/wt/a b\tc" }, # the path is last: a tab in it can't shift a field
+                    { name: "sb/home", created: 1_700_000_002, path: nil }], got
     end
 
     def test_sb_sessions_drops_blank_lines_and_handles_missing_created
       raw = "\nsb/app/x\t\n"
-      assert_equal [{ name: "sb/app/x", created: 0 }], Tmux.sb_sessions(raw)
+      assert_equal [{ name: "sb/app/x", created: 0, path: nil }], Tmux.sb_sessions(raw)
     end
 
     def test_sb_sessions_does_not_match_bare_sb_without_slash
@@ -689,13 +689,95 @@ module Switchboard
 
     # --- kill delegates to the single kill path ------------------------------
 
-    def test_kill_delegates_to_kill_session_with_the_session_name
-      wt = Worktree.new(project: "app", path: "/wt/feat")
+    def test_kill_delegates_to_kill_session_with_the_session_found_by_path
+      dir = FileUtils.mkdir_p(path("wt", "feat")).first
+      wt = Worktree.new(project: "app", path: dir)
       killed = nil
-      stub_method(Tmux, :kill_session, ->(name) { killed = name; true }) do
-        Tmux.kill(wt)
+      live = [{ name: "sb/app/old-name", created: 1, path: dir }]
+      stub_method(Tmux, :sessions, -> { live }) do
+        stub_method(Tmux, :kill_session, ->(name) { killed = name; true }) { Tmux.kill(wt) }
       end
-      assert_equal "sb/app/feat", killed
+      assert_equal "sb/app/old-name", killed, "a session created in the folder is its session, whatever it's called"
+    end
+
+    # Value: protects=switch, kill and delete never act on another workspace's session that
+    # happens to hold this one's name; fails_when=session_for trusts a name match whose path
+    # is another live folder; seam=Tmux.sessions
+    def test_session_for_never_takes_another_folders_session_by_name
+      mine = FileUtils.mkdir_p(path("wt", "feat")).first
+      theirs = FileUtils.mkdir_p(path("wt", "other")).first
+      wt = Worktree.new(project: "app", path: mine)
+      assert_nil Tmux.session_for(wt, [{ name: "sb/app/feat", created: 1, path: theirs }])
+      assert_equal "sb/app/feat", Tmux.session_for(wt, [{ name: "sb/app/feat", created: 1, path: path("gone") }]),
+                   "a pre-upgrade session at a path an old rename moved away from is judged by name"
+      assert_equal "sb/app/feat", Tmux.session_for(wt, [{ name: "sb/app/x", created: 1, path: mine },
+                                                        { name: "sb/app/feat", created: 1, path: mine }]),
+                   "the expected name wins among this folder's sessions"
+    end
+
+    # Value: protects=an unreadable names store never renames a renamed workspace's session
+    # back to its folder name; fails_when=the switch heals from a folder-name fallback;
+    # seam=Tmux.sessions/rename_session, Names.read_all
+    def test_switching_never_heals_when_the_names_store_is_unreadable
+      dir = FileUtils.mkdir_p(path("wt", "feat")).first
+      wt = Worktree.new(project: "app", path: dir)
+      healed = false
+      stub_method(Names, :read_all, -> { [:error, "/n", "EACCES"] }) do
+        stub_method(Tmux, :rename_session, ->(*) { healed = true }) do
+          stub_method(Tmux, :sessions, -> { [{ name: "sb/app/oauth-fix", created: 1, path: dir }] }) do
+            assert_equal "sb/app/oauth-fix", Tmux.session_for_switch(wt), "switch into the session as it is"
+          end
+        end
+      end
+      refute healed, "no heal from a name guessed off the folder"
+    end
+
+    # Value: protects=a switch that raced a rename never creates a second session (and a
+    # second agent) under the old name; fails_when=go creates its looked-up name without
+    # re-checking by folder; seam=Tmux.session_for_switch/has_session?/session_for/ensure_session
+    def test_go_rechecks_by_folder_before_creating_a_session
+      wt = Worktree.new(project: "app", path: "/wt/feat")
+      made = nil
+      stub_method(Tmux, :session_for_switch, ->(_w) { "sb/app/old" }) do
+        stub_method(Tmux, :has_session?, ->(_n) { false }) do
+          stub_method(Tmux, :session_for, ->(*) { "sb/app/new" }) do
+            stub_method(Tmux, :ensure_session, ->(n, *_) { made = n; false }) do
+              stub_method(Tmux, :ensure_sidebar, ->(*) {}) do
+                stub_method(Tmux, :focus_work, ->(*) {}) do
+                  stub_method(Tmux, :switch, ->(*) {}) do
+                    stub_method(Tmux, :pin, ->(*) {}) do
+                      stub_method(Tmux, :window_sidebar_pane, ->(*) { nil }) { Tmux.go(wt) }
+                    end
+                  end
+                end
+              end
+            end
+          end
+        end
+      end
+      assert_equal "sb/app/new", made, "the rename already renamed it: use that session"
+    end
+
+    # Value: protects=a [partial] rename heals on the next switch; fails_when=the switch
+    # creates a second session or renames onto a taken name; seam=Tmux.sessions/rename_session
+    def test_switching_heals_a_stale_session_name_once_and_only_when_free
+      dir = FileUtils.mkdir_p(path("wt", "feat")).first
+      other = path("x")
+      wt = Worktree.new(project: "app", path: dir)
+      renamed = []
+      stub_method(Tmux, :rename_session, ->(a, b) { renamed << [a, b]; true }) do
+        stub_method(Tmux, :sessions, -> { [{ name: "sb/app/old", created: 1, path: dir }] }) do
+          assert_equal "sb/app/feat", Tmux.session_for_switch(wt)
+        end
+        stub_method(Tmux, :sessions, -> { [{ name: "sb/app/old", created: 1, path: dir }, { name: "sb/app/feat", created: 1, path: other }] }) do
+          assert_equal "sb/app/old", Tmux.session_for_switch(wt), "the expected name is someone else's: switch under the old one"
+        end
+        FileUtils.mkdir_p(other)
+        stub_method(Tmux, :sessions, -> { [{ name: "sb/app/feat", created: 1, path: other }] }) do
+          assert_nil Tmux.session_for_switch(wt), "never switch into another folder's session"
+        end
+      end
+      assert_equal [%w[sb/app/old sb/app/feat]], renamed
     end
 
     # --- kill_all: current session dies LAST ---------------------------------

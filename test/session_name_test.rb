@@ -1342,6 +1342,9 @@ module Switchboard
       assert SessionName.superseded?(path("nope"), "nope")
       assert SessionName.superseded?(ws("x"), "y")
       refute SessionName.superseded?(ws("x"), "x")
+      Names.write(File.realpath(ws("x")), "named-it", project: "proj")
+      refute SessionName.superseded?(ws("x"), "named-it"), "the stored name is the workspace's name"
+      assert SessionName.superseded?(ws("x"), "x"), "renamed: the folder name is stale"
     end
 
     def test_work_with_no_live_session_is_done_at_once

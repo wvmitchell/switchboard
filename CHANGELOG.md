@@ -10,6 +10,38 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
+## [0.72.0] — Renaming a workspace never moves its folder (2026-11-13)
+
+### Changed
+- `r` and `switchboard rename` change what a workspace is called (the sidebar row, the tmux
+  session, the branch while it's unpushed, and Claude's session title) and never move its folder.
+  Claude and Codex both find a workspace's history by its folder, so `claude --continue`, `/resume`
+  and `codex resume` keep working after a rename, for both agents. Before, Codex lost its history
+  on every rename and Claude's was carried by copying links into its private folders.
+- The folder keeps its placeholder name for life, so `git worktree list`, your shell prompt and
+  editor titles show it. The chosen name is stored in `~/.local/state/switchboard/names`
+  (override `SWITCHBOARD_NAMES_DIR`); back it up like your config.
+- `switchboard rename` no longer prints a `cd` line: nothing moved. Every failure is one stderr
+  line led by a stable token (`[exists]`, `[stale-peers]`, `[partial]`, ...) saying what happened,
+  what changed and what to do.
+- tmux sessions are matched to a workspace by the folder they were started in, so a rename can't
+  make prune kill a live session. If a rename couldn't rename the session, switching to the
+  workspace finishes the job.
+- Switchboard no longer reads or writes Claude's history folders; prune and doctor lost their
+  history lines. Doctor now reports stored-name problems, each with the command that fixes it.
+
+### Added
+- `switchboard path <name>` prints the folder of the workspace with that name (or
+  `<project>/<name>`, or its folder name): `p=$(switchboard path oauth-fix) && cd -- "$p"`.
+
+### Upgrading
+- `switchboard upgrade` reloads every sidebar. Until a sidebar runs this version, renames refuse
+  with `[stale-peers]`; run `switchboard reload-sidebars`.
+- Before running an older switchboard again, rename workspaces back to their folder names (a
+  renamed one shows a name in the sidebar that differs from its folder; `switchboard path` shows
+  the folder) or close them: an older prune matches sessions by name and could close a renamed
+  workspace's session.
+
 ## [0.71.0] — New workspaces never reuse an old workspace's folder name (2026-11-13)
 
 ### Changed

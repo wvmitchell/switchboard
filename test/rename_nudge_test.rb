@@ -34,12 +34,12 @@ module Switchboard
     end
 
     # #101: the message must reassure that renaming a live workspace is safe — the
-    # bridge re-links the old path — or a careful agent defers the rename to avoid
-    # stranding its own shell.
+    # folder never moves — or a careful agent defers the rename to avoid stranding its
+    # own shell.
     def test_message_reassures_renaming_in_place_is_safe
       m = RenameNudge.message("wandering-finch")
       assert_includes m, "safe"
-      assert_includes m, "strand"
+      assert_includes m, "never this folder"
     end
 
     # The opt-in framing: auto_rename is ON, so the agent must NAME the workspace
@@ -102,7 +102,7 @@ module Switchboard
     def test_stop_message_reassures_renaming_in_place_is_safe
       m = RenameNudge.stop_message("calm-otter")
       assert_includes m, "safe"
-      assert_includes m, "strand"
+      assert_includes m, "never this folder"
     end
 
     # The backstop steers toward a fuller name too, for the agent that only reaches Stop.

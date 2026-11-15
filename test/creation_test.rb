@@ -212,28 +212,6 @@ module Switchboard
       assert Creation.transition(Creation.for_path(wt)["id"], from: :building, to: :launching)
     end
 
-    def test_repath_carries_the_record_to_the_new_dir
-      old = path("wt", "quiet-otter")
-      FileUtils.mkdir_p(old)
-      rec = dispatch(path: old)
-      Creation.repath(old, File.realpath(old), path("wt", "pr-retry"))
-      found = Creation.find(rec["id"])
-      assert_equal path("wt", "pr-retry"), found["path"]
-      assert_equal "pr-retry", found["name"]
-    end
-
-    # Like for_path: the build in this dir is the newest record, not a finished one left
-    # on a reused path.
-    def test_repath_moves_the_newest_record_on_a_reused_path
-      old = path("wt", "quiet-otter")
-      FileUtils.mkdir_p(old)
-      stale = dispatch(path: old, now: Time.now - 3600)
-      fresh = dispatch(path: old)
-      Creation.repath(old, File.realpath(old), path("wt", "named"))
-      assert_equal path("wt", "named"), Creation.find(fresh["id"])["path"]
-      assert_equal old, Creation.find(stale["id"])["path"]
-    end
-
     # --- GC -------------------------------------------------------------------------------
 
     def test_gc_fails_a_queued_record_whose_worker_never_started

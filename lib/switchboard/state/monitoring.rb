@@ -100,26 +100,6 @@ module Switchboard
       survivors.map { |content| decode(content).first }.to_set
     end
 
-    # Carry a marker across a rename (dir move changes the realpath key). old/new are
-    # canonical paths captured by the caller — old BEFORE the move, new AFTER (the bridge
-    # symlink makes realpath(old) resolve to new post-move). NOT a plain delegate to the
-    # shared carry: that rewrites content to the new path only, which would DROP an
-    # agent-declared ttl (a renamed 30-min monitor would revert to the default until its
-    # next re-affirm — one long cycle of a wrongly-dark dot). So we read the old marker's
-    # ttl and re-encode it onto the new key. A fresh mtime is correct (the rename is
-    # activity). Fully rescued: a failed carry drops the marker rather than crash rename.
-    def carry(old_real, new_real)
-      dir = state_dir
-      old_file = File.join(dir, key(old_real))
-      return unless File.exist?(old_file)
-
-      _real, ttl = decode(File.read(old_file).chomp)
-      KeyedMarkerStore.write(dir, key(new_real), encode(new_real, ttl == TTL ? nil : ttl))
-      KeyedMarkerStore.delete(dir, key(old_real))
-    rescue StandardError
-      nil
-    end
-
     # Marker content encodes the realpath and, when the agent picked one, its ttl:
     # "<realpath>" (default window) or "<realpath>\t<seconds>". Kept bare unless a valid
     # positive ttl is given, so nothing changes for the common case.

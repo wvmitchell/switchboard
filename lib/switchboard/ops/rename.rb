@@ -3,135 +3,165 @@
 require_relative "../support/paths"
 
 module Switchboard
-  # Rename a workspace: move its worktree directory (the display name), rename its
-  # branch when that's safe (#94), rename its tmux session in place, and (inside tmux)
-  # start the worker that renames its live Claude session too. The shared core behind both front-ends — the
-  # sidebar `r` key (Sidebar#rename) and the `switchboard rename` CLI verb
-  # (issue #42) — so a running agent can (re)name its own live workspace.
+  # Rename a workspace. The folder never moves: every agent keys its history by the cwd,
+  # so moving it would orphan that history. A rename changes only what switchboard CALLS
+  # the workspace: its stored name (Names), its branch when that's safe, its tmux session
+  # in place, and (inside tmux) Claude's session title via the session-name worker. The
+  # shared core behind the sidebar's `r` and `switchboard rename`, so a running agent can
+  # name its own live workspace, mid-work, without stranding anything.
   #
-  # A pushed or diverged branch is left as-is so its PR link stays intact. No UI
-  # here: callers own the prompt / reload / messages. The result is a status the
-  # caller maps to output:
+  # No UI here: callers own the prompt / reload / messages. The result's status:
   #
-  #   :ok        moved + session renamed (or no session to rename — clientless)
-  #   :unchanged the name didn't change (rename to the current leaf)
-  #   :invalid   the name sanitizes to empty, carries a "/", or isn't a valid branch
-  #   :exists    a real dir already sits at the target
-  #   :branch_exists a branch by the target name already exists (a lingering branch
-  #              from a deleted workspace) — nothing moved; pick another name (#94)
-  #   :failed    the git worktree move failed (or the project is unknown)
-  #   :building  the workspace is still being created; nothing moved
-  #   :partial   the dir moved but a *reachable* session's rename failed — the
-  #              dir is the source of truth, so this is recoverable (prune reaps
-  #              the orphan), but the caller should say so rather than claim :ok
+  #   :ok             named (session renamed, or no live session to rename)
+  #   :unchanged      it already has that name
+  #   :invalid        the name sanitizes to empty, carries a "/", or isn't a valid branch
+  #   :exists         another workspace, folder, build or session holds the name (`detail`)
+  #   :branch_exists  a branch by the new name already exists
+  #   :building       still being created; nothing changed
+  #   :stale_peers    a sidebar runs code that can't read stored names (`detail`: panes)
+  #   :panes_unknown  tmux is running but couldn't list its panes, so that can't be told
+  #   :names_unreadable / :listing_failed  a uniqueness source couldn't be read (`detail`)
+  #   :failed         the name couldn't be saved; the branch was put back (`detail`)
+  #   :rollback_failed  ...and the branch couldn't be put back (`detail`: [err, new, old])
+  #   :partial        named, but the tmux session rename failed; the next switch heals it
   #
-  # `spawned` is true when a session-name worker was started (see SessionName); `history`
-  # is ClaudeHistory.link's outcome, for the caller to report.
+  # `dest` is the workspace's unchanged path, `name` the name it has now, `spawned` true
+  # when the session-name worker was started.
   module Rename
     module_function
 
-    Result = Struct.new(:status, :dest, :spawned, :history)
+    Result = Struct.new(:status, :dest, :spawned, :name, :detail)
 
-    def perform(config, project_name, old_path, newname)
-      sync_session_name(config, project_name, move(config, project_name, old_path, newname))
+    def perform(config, project_name, path, newname)
+      sync_session_name(config, project_name, name_it(config, project_name, path, newname))
     end
 
-    # The rename itself; `perform` adds the session-name sync on top.
-    def move(config, project_name, old_path, newname)
+    # The rename itself, all under the project's lock so it serializes with another rename,
+    # with placeholder reservation, and with prune. `perform` adds the title sync on top.
+    def name_it(config, project_name, path, newname)
       project = config.project(project_name)
-      return Result.new(:failed) unless project
-      # The worker still holds the old path for its session and launch line; renaming
-      # under it would orphan that session and later start a second agent.
-      return Result.new(:building) unless Creation.renamable?(Creation.for_path(old_path))
+      return Result.new(:failed, path, nil, nil, "unknown project #{project_name}") unless project
+
+      Creation.with_project_lock(project_name) { locked(config, project, project_name, path, newname) }
+    end
+
+    def locked(config, project, project_name, path, newname)
+      wt = Worktree.new(project: project_name, path: path)
+      real = Paths.real_or_self(path)
+      current = wt.display_name
+      res = ->(status, detail = nil, name = current) { Result.new(status, path, nil, name, detail) }
+      # The worker computes its session name before opening it, so a rename mid-build would
+      # split the session from the build.
+      return res[:building] unless Creation.renamable?(Creation.for_path(path))
+
+      stale = stale_peers
+      return res[:panes_unknown] if stale.nil?
+      return res[:stale_peers, stale] unless stale.empty?
 
       name = Placeholder.sanitize(newname)
-      # Reject a "/" the sanitizer preserves: a slashed name would nest the dir
-      # while Tmux.session_name / Worktree#leaf only see the basename, so the
-      # session and sidebar would silently disagree with the path. Agents type
-      # branch-style names (feature/auth), so this is the likely CLI input.
-      return Result.new(:invalid) if name.empty? || name.include?("/")
+      # A "/" the sanitizer keeps would read as a path segment in the session name.
+      return res[:invalid] if name.empty? || name.include?("/")
+      return res[:unchanged] if name == current
 
-      dest = File.join(File.dirname(old_path), name)
-      # Same target ⇒ nothing to do. File.identical? also catches a case-only
-      # rename (Old -> old) on a case-insensitive FS (macOS APFS), where the two
-      # names ARE the same dir and git worktree move can't separate them — so it's
-      # "unchanged", not a collision or a failure. (A case-only change therefore
-      # also doesn't sync the branch — an accepted edge; see #94.)
-      # old_path, not dest: on a case-only rename the dir keeps its old case, and the session
-      # name must match the dir.
-      # Not when `dest` is a symlink: renaming back onto the bridge an earlier rename left
-      # (A->B, then B->A) resolves to old_path too, but it's a real move.
-      return Result.new(:unchanged, old_path) if dest == old_path || (!File.symlink?(dest) && File.identical?(dest, old_path))
-      # A real dir blocks the move; a stale rename-bridge symlink does not
-      # (move_worktree clears it first), so only a non-symlink counts as taken.
-      return Result.new(:exists, dest) if File.exist?(dest) && !File.symlink?(dest)
+      live = Tmux.sessions || []
+      old_session = Tmux.session_for(wt, live)
+      status, map, err = Names.read_all
+      return res[:names_unreadable, "#{map}: #{err}"] unless status == :ok
 
-      sync = sync_branch?(project["path"], old_path)
-      # All branch checks BEFORE any dir move / history carry, so a collision or
-      # invalid name fails clean (nothing moved) and the agent can retry with another
-      # name. Branch is renamed FIRST so a branch failure aborts before we touch the
-      # dir or transcripts (#94).
-      if sync
+      listing = Git.worktrees(project["path"], strict: true)
+      return res[:listing_failed, project["path"]] unless listing
+
+      clash = clash_for(project_name, project, real, name, map, listing, live, old_session)
+      return res[:exists, clash, name] if clash
+
+      branch = sync_branch?(project["path"], path, current)
+      if branch
         new_branch = branch_for(config, name)
-        return Result.new(:invalid, dest) unless Git.valid_branch_name?(new_branch)
-        return Result.new(:branch_exists, dest) if Git.branch_exists?(project["path"], new_branch)
-        return Result.new(:failed, dest) unless Git.rename_branch(project["path"], sync, new_branch)
+        return res[:invalid, nil, name] unless Git.valid_branch_name?(new_branch)
+        return res[:branch_exists, new_branch, name] if Git.branch_exists?(project["path"], new_branch)
+        return res[:failed, "couldn't rename branch #{branch}", name] unless Git.rename_branch(project["path"], branch, new_branch)
       end
 
-      # Capture the canonical OLD path before the move: move_worktree leaves a bridge
-      # symlink at old_path resolving to dest, so realpath(old_path) AFTER the move
-      # returns dest — carrying the markers post-move would key off the wrong path.
-      old_real = canonical(old_path)
+      saved = if name == wt.folder_name
+                Names.delete(real) # back to the folder name: no entry needed
+              else
+                Names.write(real, name, project: project_name, branch: branch ? new_branch : Git.current_branch(path))
+              end
+      unless saved == :ok
+        return res[:failed, saved.last] unless branch
+        return res[:failed, saved.last] if Git.rename_branch(project["path"], new_branch, branch)
 
-      # bridge: leave a symlink at the old path so a running agent's frozen
-      # project dir keeps resolving and its hooks keep reporting (see move_worktree).
-      unless Git.move_worktree(project["path"], old_path, dest, bridge: true)
-        # The dir move failed after the branch was renamed — put the branch back so
-        # the dir and branch can't diverge, then report the failure. Best-effort: if
-        # this rollback ALSO fails (a racing process took the old name), the dir keeps
-        # the old leaf on the new branch — a rare double-fault we accept rather than
-        # loop; a later rename sees the mismatch and just won't re-sync the branch.
-        Git.rename_branch(project["path"], branch_for(config, name), sync) if sync
-        return Result.new(:failed, dest)
+        return res[:rollback_failed, [saved.last, new_branch, branch]]
       end
 
-      # Carry the shared per-worktree markers (bold, monitoring, a held ◷ chime) to the new realpath, so a
-      # rename doesn't drop them — all are keyed by realpath, which just changed. Notify is
-      # CLEARED, not carried: its marker can't distinguish a pending alert from a consumed one
-      # (consumption is a per-process mtime cursor, not on disk), so carrying it would replay
-      # a false "come look" chime under the new path. The bold (Attention) is the durable
-      # signal and IS carried, so a truly-pending alert survives visually; clearing also
-      # disposes of the old-realpath marker the bridge symlink would otherwise keep alive.
-      new_real = canonical(dest)
-      Attention.carry(old_real, new_real)
-      Monitoring.carry(old_real, new_real)
-      OffstageHold.carry(old_real, new_real)
-      Notify.clear(old_real)
-      SessionName::Outcome.forget(old_real) # about the old name; this rename's worker judges afresh
-      Creation.repath(old_path, old_real, dest) # a dispatch the agent renamed on turn one still pings
-
-      status = rename_session(project_name, old_path, dest)
-      # Carry the agent's conversation history so `/resume` and `claude --continue` find it at
-      # the new path. After the session rename: link may wait on the history lock, and while
-      # the worktree has moved but the session hasn't, a prune would read that live session
-      # as an orphan.
-      history = ClaudeHistory.link(old_path, dest)
-      Result.new(status, dest, nil, history)
+      SessionName::Outcome.forget(real) # about the old name; this rename's worker judges afresh
+      Result.new(rename_session(old_session, Tmux.session_name(wt), live), path, nil, name)
     end
 
-    # Start the detached worker that types `/rename <leaf>` into the workspace's live
+    # What already holds `name` in this project, or nil. Compared as tmux session names
+    # (foo.bar and foo-bar are one session): every other workspace's name, every other
+    # folder in the project's worktree parents (folder names win the display rule, so a
+    # name equal to one would be silently overridden), every unfinished build, and every
+    # live sb/ session that isn't this workspace's.
+    def clash_for(project_name, project, real, name, map, listing, live, own_session)
+      want = Names.session_leaf(name)
+      same = ->(other) { Names.session_leaf(other) == want }
+      others = listing.reject { |w| w[:bare] || Paths.real_or_self(w[:path]) == real }
+      others.each do |w|
+        r = Paths.real_or_self(w[:path])
+        shown = map[r] && !Names.clash?(map[r], map) ? map[r].name : File.basename(w[:path])
+        return "workspace #{shown} (#{w[:path]})" if same[shown]
+        return "the folder #{w[:path]}" if same[File.basename(w[:path])]
+      end
+      # Every worktree parent but the primary checkout's, plus this workspace's own: the
+      # display rule compares against its siblings even beside the primary.
+      primary_parent = File.dirname(Paths.real_or_self(project["path"]))
+      parents = (listing.map { |w| File.dirname(Paths.real_or_self(w[:path])) } - [primary_parent] + [File.dirname(real)]).uniq
+      parents.each do |dir|
+        Names.siblings(dir).each do |f|
+          next if File.join(dir, f) == real
+
+          return "the folder #{File.join(dir, f)}" if same[f]
+        end
+      end
+      Creation.all.each do |r|
+        next unless r["project"] == project_name && Creation::PRE_READY.include?(r["state"]) && Paths.real_or_self(r["path"].to_s) != real
+
+        return "a build in progress (#{r['path']})" if same[r["name"].to_s]
+      end
+      prefix = Tmux.session_prefix(project_name)
+      live.each do |s|
+        next if s[:name] == own_session || !s[:name].start_with?(prefix)
+
+        return "the tmux session #{s[:name]}" if same[s[:name].delete_prefix(prefix)]
+      end
+      nil
+    end
+
+    # Live sidebar panes whose code can't read stored names (an older binary, a reload
+    # mid-exec, a respawn not yet booted). A rename refuses while any is running: such a
+    # sidebar would show folder names and an old prune would kill renamed sessions. nil
+    # when a running server couldn't list its panes: unknown isn't none.
+    def stale_peers
+      targets = CodeReload.sidebar_reload_targets
+      return (Tmux.sessions.nil? ? [] : nil) if targets.nil?
+
+      targets.reject(&:names?).map(&:pane)
+    end
+
+    # Start the detached worker that types `/rename <name>` into the workspace's live
     # agent session once that's safe. Only inside tmux — the worker drives tmux, and the
     # offline suite (no TMUX) can never launch a real switchboard from a rename test. A
     # same-name rename spawns too: it's the retry doctor points at.
     def sync_session_name(config, project_name, result)
       return result unless %i[ok partial unchanged].include?(result.status)
       return result unless ENV["TMUX"] && config.sync_session_name_for(project_name)
-      return result unless File.basename(result.dest).match?(SessionName::NAME) # the worker would refuse it
+      return result unless result.name.to_s.match?(SessionName::NAME) # the worker would refuse it
 
       bin = ENV["SWITCHBOARD_BIN"] or return result
       # Its own process group: an agent's tool runner that kills the rename command's group
       # on return can't take the worker down before it daemonizes.
-      Process.detach(Process.spawn(bin, "sync-session-name", result.dest, File.basename(result.dest),
+      Process.detach(Process.spawn(bin, "sync-session-name", Paths.real_or_self(result.dest), result.name,
                                    pgroup: true, in: File::NULL, out: File::NULL, err: File::NULL))
       result.spawned = true
       result
@@ -139,40 +169,33 @@ module Switchboard
       result
     end
 
-    # File.realpath, degrading to the raw path on a vanished/odd path — a best-effort
-    # canonical key for the marker carry (a bad path just misses a carry, never raises).
-    def canonical(path) = Paths.real_or_self(path)
-
-    # The branch to rename, or false when the branch should be left alone. We sync
-    # the branch to match the new leaf only when it's still the auto-created branch
-    # (its basename equals the old leaf) AND it hasn't been pushed — renaming a
-    # pushed branch would orphan its remote ref / PR. `pushed?` checks a
-    # remote-tracking ref, NOT @{upstream} (worktree add auto-tracks the base) (#94).
-    def sync_branch?(repo, old_path)
-      branch = Git.current_branch(old_path)
+    # The branch to rename, or false when the branch should be left alone: only while it's
+    # still the auto-named one (its leaf is the workspace's current name) AND unpushed —
+    # renaming a pushed branch would orphan its remote ref / PR. `pushed?` checks a
+    # remote-tracking ref, NOT @{upstream} (worktree add auto-tracks the base).
+    def sync_branch?(repo, path, current_name)
+      branch = Git.current_branch(path)
       return false if branch.empty?
-      return false unless File.basename(branch) == File.basename(old_path)
+      return false unless File.basename(branch) == current_name
       return false if Git.pushed?(repo, branch)
 
       branch
     end
 
-    # The convention-correct branch for a leaf: <branch_prefix>/<leaf>, or bare
-    # <leaf> when no prefix is configured. The workspace dir stays the bare leaf.
+    # The convention-correct branch for a name: <branch_prefix>/<name>, or bare <name>
+    # when no prefix is configured.
     def branch_for(config, name)
       [config.branch_prefix, name].compact.join("/")
     end
 
-    # Rename the session in place (don't kill it) so a running agent and its
-    # conversation survive. Returns :ok when there was nothing to rename (same
-    # name, or no live session — a clientless rename from a plain shell) or the
-    # rename succeeded; :partial only when a session genuinely existed and the
-    # rename failed, so the caller can distinguish "fine" from "orphaned".
-    def rename_session(project_name, old_path, dest)
-      old_name = Tmux.session_name(Worktree.new(project: project_name, path: old_path))
-      new_name = Tmux.session_name(Worktree.new(project: project_name, path: dest))
-      return :ok if old_name == new_name
-      return :ok unless Tmux.has_session?(old_name) # no session yet / no server — not a failure
+    # Rename the live session in place (never kill it) so a running agent and its
+    # conversation survive. :ok when there was nothing to rename (no live session — a
+    # clientless rename from a plain shell — or the name didn't change) or it worked;
+    # :partial when a session exists and the rename failed. Nothing dies either way:
+    # sessions are matched by the folder they were created in, not their name.
+    def rename_session(old_name, new_name, live)
+      return :ok if old_name.nil? || old_name == new_name
+      return :ok unless live.any? { |s| s[:name] == old_name }
 
       Tmux.rename_session(old_name, new_name) ? :ok : :partial
     end

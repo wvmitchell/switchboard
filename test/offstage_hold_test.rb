@@ -43,14 +43,6 @@ module Switchboard
       assert_empty Dir.children(OffstageHold.state_dir)
     end
 
-    def test_carry_follows_a_rename
-      a = wt("A")
-      b = wt("B")
-      OffstageHold.hold(a, pid: 7, now: Time.at(1_000))
-      OffstageHold.carry(a, b)
-      assert_equal({ b => { pid: 7, at: 1_000 } }, OffstageHold.held([a, b]), "pid and hold time carried")
-    end
-
     def test_clear_all_wipes_every_hold
       OffstageHold.hold(wt("alpha"), pid: 1)
       OffstageHold.hold(wt("beta"), pid: 1)

@@ -49,8 +49,8 @@ module Switchboard
       PLACEHOLDER_TRIES.times do
         name = Placeholder.generate
         dest = File.join(root, name)
-        # File.symlink? too: a rename leaves a bridge at the old placeholder path, and once
-        # its target is deleted the dangling link reads as !exist? yet still blocks git.
+        # File.symlink? too: an older version's rename left a bridge at the old path, and
+        # once its target is deleted the dangling link reads as !exist? yet still blocks git.
         next if File.exist?(dest) || File.symlink?(dest) || pending.include?(dest) ||
                 Git.branch_exists?(project["path"], branch_for(config, name)) ||
                 stale_session?(project_name, dest) # a leftover sb/ session would swallow the launch line
@@ -131,7 +131,7 @@ module Switchboard
       end
 
       enable_hooks(dest) # dots/nudges for ANY agent, typed by hand or not
-      clear_history_routes(dest)
+      Names.delete(Paths.real_or_self(dest)) # a stale name for this folder must not label the new workspace
       # A first guess, so a setup step running claude doesn't chime; the launcher
       # decides for real from the command it runs.
       Creation.update(id, hooked: hooked?(config, rec["project"], dest))
@@ -146,22 +146,6 @@ module Switchboard
       # ran there either. A claimed build is the launcher's, so only our own record.
       cur = Creation.find(id)
       discard(config, project, name, dest) if cur&.dig("state") == "canceled" && cur["owner_pid"] == Process.pid
-    end
-
-    # A reused name must not inherit history: drop the worktree bridges an older rename
-    # left pointing at this path (prune would read them as "this workspace was renamed
-    # from there" and link that history in), and any projects bridge at its Claude key.
-    def clear_history_routes(dest)
-      dir = File.dirname(dest)
-      Dir.children(dir).each do |name|
-        bridge = File.join(dir, name)
-        File.delete(bridge) if File.symlink?(bridge) && File.identical?(bridge, dest)
-      rescue StandardError
-        next
-      end
-      ClaudeHistory.free_key(dest)
-    rescue StandardError
-      nil
     end
 
     # git worktree add for the reserved name, retrying past a dir/branch collision with

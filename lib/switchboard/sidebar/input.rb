@@ -293,7 +293,7 @@ module Switchboard
 
         rec = @creation_for[node.path] or return false
         Creation::PRE_READY.include?(rec["state"]) &&
-          !Tmux.has_session?(Tmux.session_name(Worktree.new(project: node.project, path: node.path)))
+          !Tmux.session_for(Worktree.new(project: node.project, path: node.path))
       end
 
       # ↵ on such a row: a ✘ shows why (and counts as seen); a build in flight says so;

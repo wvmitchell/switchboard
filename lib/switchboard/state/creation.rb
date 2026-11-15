@@ -242,15 +242,6 @@ module Switchboard
       !(%w[queued building].include?(rec["state"]) || (rec["state"] == "launching" && !rec["agent_started"]))
     end
 
-    # Carry a record across a workspace rename. Matched by its raw path, or by the
-    # realpath captured BEFORE the move: afterwards the old path is a bridge symlink
-    # that resolves to the NEW dir, so comparing realpaths then would never match.
-    def repath(old_path, old_real, new_path)
-      # Newest first, like for_path: an older record can share the path.
-      rec = all.reverse.find { |r| r["path"] == old_path || (r["path"] && real_path(r["path"]) == old_real) }
-      update(rec["id"], path: new_path, name: File.basename(new_path)) if rec
-    end
-
     # Does this record's latest transition deserve a ping? A bare create pings on ready;
     # a tasked create pings on its first turn when a Stop hook will report it, else on
     # ready; any failure pings. Queued/building/launching never do.

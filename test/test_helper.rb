@@ -84,7 +84,7 @@ module Switchboard
       ENV["SWITCHBOARD_FULL_HEADER_FILE"] = path("full_header") # FullHeader toggle (full header on every session)
       ENV["SWITCHBOARD_WIDTH_FILE"]    = path("width")     # Width (shared sidebar pane width, ←/→ resize)
       ENV["SWITCHBOARD_CACHE_DIR"]     = path("cache")     # Pr cache (T3 seam)
-      ENV["SWITCHBOARD_CLAUDE_PROJECTS_DIR"] = path("claude-projects") # ClaudeHistory (rename carries /resume history)
+      ENV["SWITCHBOARD_NAMES_DIR"]     = path("names")     # Names (what each workspace is called)
       ENV["SWITCHBOARD_CLAUDE_SESSIONS_DIR"] = path("claude-sessions") # RemoteLink (Claude's live session files, /rc links)
       ENV["SWITCHBOARD_RELEASES_URL"] = path("no-releases") # LatestRelease: never GitHub from a test
       ENV["SWITCHBOARD_UPDATE_CACHE"] = path("update", "latest.json") # UpdateCheck's cache (#47)

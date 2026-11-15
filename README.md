@@ -67,6 +67,10 @@ new code without a restart. More in
 The rest are in the [key map](docs/reference-keybindings.md), and any of them can be
 remapped with [`sidebar_keys`](docs/reference-config.md#sidebar_keys).
 
+A new workspace starts with a random placeholder name. Press `r` to rename it (or let its
+agent do it). Renaming never moves the worktree's folder, so the agent's conversation
+history stays put; `switchboard path <name>` prints a workspace's folder.
+
 ## Start your agent automatically
 
 Tell switchboard what to run in a new workspace, and optionally how to set it up first:
