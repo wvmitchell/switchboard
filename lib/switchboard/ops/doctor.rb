@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "shellwords"
+require_relative "../support/marks"
 
 module Switchboard
   # `switchboard doctor`: read-only checks of the dependencies, config, install wiring, hooks

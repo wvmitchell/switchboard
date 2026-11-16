@@ -13,7 +13,7 @@ refer to the project's earlier, private repository; the public tracker starts at
 ## [0.72.2] — Plain check marks when output isn't a terminal (2026-11-16)
 
 ### Fixed
-- `doctor`, `install` and `upgrade` color their ✓ / – / ✗ marks only on a terminal. Piped,
+- `doctor`, `install` and `upgrade` color their ✓ / – / ✗ / ! marks only on a terminal. Piped,
   logged or captured output now shows the plain mark instead of `[32m✓[0m`. Set `NO_COLOR` to
   keep them plain on a terminal too.
 

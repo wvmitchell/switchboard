@@ -560,7 +560,7 @@ A few more files and behaviors can be redirected the same way:
 | Where release tags are read from | the switchboard GitHub repo | `$SWITCHBOARD_RELEASES_URL` (the test suite points it at a dead path, so nothing reaches GitHub) |
 | Background update check | on, for a Homebrew install | `$SWITCHBOARD_NO_UPDATE_CHECK` set to anything but empty or `0` turns it off (the test suite, smoke runs and the sandbox set it) |
 | How long an off-screen sidebar may wait before a code reload | up to 30 seconds | `$SWITCHBOARD_RELOAD_SPREAD` (seconds; the reload smoke test sets 0) |
-| Colored ✓ / – / ✗ marks in `doctor`, `install` and `upgrade` | colored on a terminal, plain when piped or logged | `$NO_COLOR` set to anything non-empty keeps them plain on a terminal too |
+| Colored ✓ / – / ✗ / ! marks in `doctor`, `install` and `upgrade` | colored on a terminal, plain when piped or logged | `$NO_COLOR` set to anything non-empty keeps them plain on a terminal too |
 
 An exported-but-empty variable counts as unset for every file and folder location above.
 That covers the `$XDG_*` roots, each store's own override, `$SWITCHBOARD_CONFIG`,

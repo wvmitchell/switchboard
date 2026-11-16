@@ -3,6 +3,7 @@
 require "fileutils"
 require "shellwords"
 require_relative "../support/marker_block"
+require_relative "../support/marks"
 require_relative "../adapters/codex_hook"
 require_relative "../support/stable_path"
 require_relative "../root"
