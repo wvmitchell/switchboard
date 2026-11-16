@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "shellwords"
+require_relative "../support/marks"
 
 module Switchboard
   # `switchboard doctor`: read-only checks of the dependencies, config, install wiring, hooks
@@ -57,7 +58,7 @@ module Switchboard
       SessionName::Outcome.all.each do |o|
         retry_hint = "retry with `switchboard rename #{o[:name]}` from inside it"
         retry_hint = "clear that prompt, then #{retry_hint}" if o[:kind] == SessionName::Outcome::FAILED_SEND
-        puts "  \e[33m–\e[0m session name: #{o[:path]} — #{SessionName::Outcome::MESSAGES.fetch(o[:kind], o[:kind])}; #{retry_hint}"
+        puts "  #{Marks.note} session name: #{o[:path]} — #{SessionName::Outcome::MESSAGES.fetch(o[:kind], o[:kind])}; #{retry_hint}"
       end
       h = RemoteLink.health
       if h[:matched].positive? && h[:unknown_kind] == h[:matched]
@@ -95,7 +96,7 @@ module Switchboard
         # Claude removes its file on exit, so no files with nothing open is the normal state
         return puts row(true, "remote links (⇅): no live Claude sessions") unless RemoteLink.claude_running?
 
-        return puts "  \e[33m–\e[0m remote links (⇅): Claude is running but there are no session files in #{h[:dir]} — a Claude update may have moved them"
+        return puts "  #{Marks.note} remote links (⇅): Claude is running but there are no session files in #{h[:dir]} — a Claude update may have moved them"
       end
       if h[:shaped].zero?
         return puts row(false, "remote links (⇅): #{h[:files]} session files in #{h[:dir]}, none in the shape switchboard reads — Claude changed the format; the ⇅ won't show")
@@ -119,7 +120,7 @@ module Switchboard
       # Resolved dirs, not raw strings: unset vs ~/.claude (or a trailing /) is the same dir
       return if File.expand_path(ClaudeSessions.claude_root(mine)) == File.expand_path(ClaudeSessions.claude_root(theirs))
 
-      puts "  \e[33m–\e[0m remote links (⇅): CLAUDE_CONFIG_DIR is #{mine.empty? ? 'unset' : mine.inspect} here but " \
+      puts "  #{Marks.note} remote links (⇅): CLAUDE_CONFIG_DIR is #{mine.empty? ? 'unset' : mine.inspect} here but " \
            "#{theirs.empty? ? 'unset' : theirs.inspect} in tmux, where sidebars run — export it in .zshenv " \
            "or `tmux set-environment -g CLAUDE_CONFIG_DIR …` so the ⇅ reads the right dir"
     end
@@ -152,7 +153,7 @@ module Switchboard
                else
                  "unrecognized — a typo, or a nested key that lost its parent/indent"
                end
-        puts "  \e[33m–\e[0m config key #{key.inspect} at the top level does nothing: #{hint}"
+        puts "  #{Marks.note} config key #{key.inspect} at the top level does nothing: #{hint}"
       end
     end
 
@@ -161,7 +162,7 @@ module Switchboard
       raw = config.raw_max_branch_history
       return if raw.nil? || config.valid_max_branch_history?(raw)
 
-      puts "  \e[33m–\e[0m max_branch_history #{raw.inspect} isn't a whole number above 0 — using #{Config::BRANCH_HISTORY_DEFAULT}"
+      puts "  #{Marks.note} max_branch_history #{raw.inspect} isn't a whole number above 0 — using #{Config::BRANCH_HISTORY_DEFAULT}"
     end
 
     # Surface a bad `sidebar_keys` remap (issue #108) so a binding that didn't take
@@ -183,7 +184,7 @@ module Switchboard
         next if config.valid_sidebar_key?(raw)
 
         ok = false
-        puts "  \e[33m–\e[0m sidebar_keys.#{a.name} #{raw.inspect} isn't a single printable key — using #{a.default.inspect}"
+        puts "  #{Marks.note} sidebar_keys.#{a.name} #{raw.inspect} isn't a single printable key — using #{a.default.inspect}"
       end
       Keymap.collisions(config).each do |c|
         ok = false
@@ -194,7 +195,7 @@ module Switchboard
                  "its default #{c[:key].inspect} is taken by #{c[:winner]} — left unbound; set sidebar_keys.#{c[:action]} to reach it"
                end
         what += "; its arrow/ctrl aliases still work" if action && !action.aliases.empty?
-        puts "  \e[33m–\e[0m sidebar_keys.#{c[:action]} #{what}"
+        puts "  #{Marks.note} sidebar_keys.#{c[:action]} #{what}"
       end
       puts row(true, "sidebar_keys: #{overridden.size} remapped, no clashes") if ok
     end
@@ -212,7 +213,7 @@ module Switchboard
       config.projects.each do |project|
         age = Pr.cache_age(project["name"])
         if age.nil?
-          puts "  \e[33m–\e[0m PR badges #{project['name']}: never fetched (auto-refreshes on switch/idle)"
+          puts "  #{Marks.note} PR badges #{project['name']}: never fetched (auto-refreshes on switch/idle)"
         else
           puts row(true, "PR badges #{project['name']}: refreshed #{humanize_age(age)} ago")
         end
@@ -237,7 +238,7 @@ module Switchboard
       %w[done waiting alert].each do |state|
         spec = config.sound_for(nil, state.to_sym)
         if spec.nil?
-          puts "  \e[33m–\e[0m sound #{state}: muted"
+          puts "  #{Marks.note} sound #{state}: muted"
           next
         end
 
@@ -275,7 +276,7 @@ module Switchboard
     # Stored workspace names (Names). Info lines only, each with the command that fixes
     # it; never prompts. Silent when every name is in order.
     def doctor_names(config)
-      info = ->(msg) { puts "  \e[33m–\e[0m #{msg}" }
+      info = ->(msg) { puts "  #{Marks.note} #{msg}" }
       status, map, err = Names.read_all
       return puts(row(false, "names store #{map}: #{err} — renames are refused until it's readable")) unless status == :ok
 
@@ -386,7 +387,7 @@ module Switchboard
       elsif File.identical?(wired, Installer.fragment_path)
         puts row(true, "tmux bindings wired (switchboard.tmux)")
       elsif File.exist?(wired)
-        puts "  \e[33m–\e[0m tmux is wired to another install (#{wired}) — `switchboard install` re-wires it to this one"
+        puts "  #{Marks.note} tmux is wired to another install (#{wired}) — `switchboard install` re-wires it to this one"
       else
         puts row(false, "tmux is wired to a missing install (#{wired}) — re-run `switchboard install`")
       end
@@ -417,13 +418,13 @@ module Switchboard
         next if role == "toggle" && skip_toggle
         if (refused = Installer.refused_key(role, config: config))
           why = role == "home" ? "tmux refused it, or the toggle fell back onto it" : "tmux refused it"
-          puts "  \e[33m–\e[0m tmux_keys.#{role} is #{refused} in config, but it isn't bound (#{why}) — pick another key"
+          puts "  #{Marks.note} tmux_keys.#{role} is #{refused} in config, but it isn't bound (#{why}) — pick another key"
           next
         end
         next unless Installer.key_drift?(role, config: config)
 
         bound = Installer.tmux_option("@switchboard-#{role}-key")
-        puts "  \e[33m–\e[0m tmux_keys.#{role} is #{config.tmux_key(role) || 'unbound'} in config, but tmux has " \
+        puts "  #{Marks.note} tmux_keys.#{role} is #{config.tmux_key(role) || 'unbound'} in config, but tmux has " \
              "#{bound ? "prefix-#{bound}" : 'nothing'} bound — run `switchboard upgrade` (or reload tmux) to apply it"
       end
     end
@@ -434,19 +435,19 @@ module Switchboard
     def doctor_key_config(config)
       if config.load_error
         kept = %w[toggle home].any? { |role| Installer.tmux_option("@switchboard-#{role}-key") }
-        puts "  \e[33m–\e[0m tmux_keys: #{kept ? 'keeping the keys already bound' : 'using the default keys'} " \
+        puts "  #{Marks.note} tmux_keys: #{kept ? 'keeping the keys already bound' : 'using the default keys'} " \
              "(config.yml didn't parse — see above)"
       end
       %w[toggle home].each do |role|
         raw = config.raw_tmux_key(role)
         next if raw.nil? || config.valid_tmux_key?(raw)
 
-        puts "  \e[33m–\e[0m tmux_keys.#{role} #{raw.inspect} isn't a usable key — using #{config.tmux_key(role) || 'unbound'}"
+        puts "  #{Marks.note} tmux_keys.#{role} #{raw.inspect} isn't a usable key — using #{config.tmux_key(role) || 'unbound'}"
       end
       home_raw = config.raw_tmux_key("home")
       return unless config.valid_tmux_key?(home_raw) && config.tmux_key("home").nil?
 
-      puts "  \e[33m–\e[0m tmux_keys.home #{home_raw.inspect} collides with the toggle key — home left unbound"
+      puts "  #{Marks.note} tmux_keys.home #{home_raw.inspect} collides with the toggle key — home left unbound"
     end
 
     # If tmux-bind clobbered a prior non-switchboard binding on the chosen key (it
@@ -457,7 +458,7 @@ module Switchboard
         prev = Installer.tmux_option("@switchboard-#{role}-clobbered")
         next unless prev
 
-        puts "  \e[33m–\e[0m prefix-#{Installer.tmux_option("@switchboard-#{role}-key")} (#{role}) replaced a prior binding: #{prev}"
+        puts "  #{Marks.note} prefix-#{Installer.tmux_option("@switchboard-#{role}-key")} (#{role}) replaced a prior binding: #{prev}"
       end
     end
 
@@ -490,7 +491,7 @@ module Switchboard
         if Installer.linked?(link)
           puts row(true, "PATH symlink: #{link}")
         elsif optional
-          puts "  \e[33m–\e[0m PATH symlink: #{link} (optional shorthand, not linked)"
+          puts "  #{Marks.note} PATH symlink: #{link} (optional shorthand, not linked)"
         else
           puts row(false, "PATH symlink: #{link}")
         end
@@ -507,7 +508,7 @@ module Switchboard
         required = name == Installer::COMMAND_NAME
         if found.empty?
           puts(required ? row(false, "Homebrew install, but `switchboard` isn't on PATH — run `brew link switchboard`")
-                        : "  \e[33m–\e[0m `#{name}` isn't on PATH (optional shorthand)")
+                        : "  #{Marks.note} `#{name}` isn't on PATH (optional shorthand)")
         elsif File.identical?(found, Installer.bin_path)
           puts row(true, "on PATH via Homebrew: #{found}")
         elsif switchboard_bin?(found) && File.symlink?(found)
@@ -517,7 +518,7 @@ module Switchboard
         elsif required
           puts row(false, "`switchboard` on PATH is #{found}, another program — put Homebrew's bin earlier on PATH")
         else
-          puts "  \e[33m–\e[0m `#{name}` on PATH is #{found} (another program; optional shorthand)"
+          puts "  #{Marks.note} `#{name}` on PATH is #{found} (another program; optional shorthand)"
         end
       end
     end
@@ -543,9 +544,9 @@ module Switchboard
 
       latest = LatestRelease.latest
       if latest.nil?
-        puts "  \e[33m–\e[0m switchboard #{VERSION} — couldn't check for a newer release (offline?)"
+        puts "  #{Marks.note} switchboard #{VERSION} — couldn't check for a newer release (offline?)"
       elsif LatestRelease.compare(latest, VERSION).positive?
-        puts "  \e[33m–\e[0m switchboard #{latest} is available (you have #{VERSION}) — `switchboard upgrade`"
+        puts "  #{Marks.note} switchboard #{latest} is available (you have #{VERSION}) — `switchboard upgrade`"
       else
         puts row(true, "switchboard #{VERSION} (latest)")
       end
@@ -558,19 +559,19 @@ module Switchboard
       when :current then puts row(true, "agent-state reporter: #{script}")
       when :stale
         # Another binary's SCRIPT may differ from the installed one's; only that one can judge.
-        puts(Installer.installed_bin? ? "  \e[33m–\e[0m agent-state reporter is from another release — `switchboard upgrade`" : "  \e[33m–\e[0m agent-state reporter: #{script}")
+        puts(Installer.installed_bin? ? "  #{Marks.note} agent-state reporter is from another release — `switchboard upgrade`" : "  #{Marks.note} agent-state reporter: #{script}")
       else
         if Installer.reporter_needed?
           puts row(false, "agent-state reporter missing (#{script}) — hooked agents can't report; `switchboard upgrade`")
         else
-          puts "  \e[33m–\e[0m agent-state reporter not materialized yet (created on first worktree/enable-hooks)"
+          puts "  #{Marks.note} agent-state reporter not materialized yet (created on first worktree/enable-hooks)"
         end
       end
     end
 
     # ✓/✗ status line shared by the doctor checks.
     def row(ok, msg)
-      format("  %s %s", ok ? "\e[32m✓\e[0m" : "\e[31m✗\e[0m", msg)
+      format("  %s %s", ok ? Marks.ok : Marks.bad, msg)
     end
 
     # Some setups launch codex with the trust bypass in their session_command, never
@@ -599,15 +600,15 @@ module Switchboard
         elsif adapter.unparseable?(here) # ours or not: enable-hooks refuses either
           puts row(false, "#{adapter.label} hooks here: #{adapter.corrupt_reason(here)} — fix it, then `switchboard enable-hooks`")
         elsif !adapter.enabled?(here)
-          puts "  \e[33m–\e[0m #{adapter.label} hooks off here — `switchboard enable-hooks`"
+          puts "  #{Marks.note} #{adapter.label} hooks off here — `switchboard enable-hooks`"
         elsif !Installer.installed_bin?
-          puts "  \e[33m–\e[0m #{adapter.label} hooks here: #{adapter.settings_path(here)} (run the installed `switchboard doctor` to check they're current)"
+          puts "  #{Marks.note} #{adapter.label} hooks here: #{adapter.settings_path(here)} (run the installed `switchboard doctor` to check they're current)"
         elsif adapter.current?(here)
-          puts "  \e[32m✓\e[0m #{adapter.label} hooks here: #{adapter.settings_path(here)}"
+          puts "  #{Marks.ok} #{adapter.label} hooks here: #{adapter.settings_path(here)}"
         elsif Installer.configured_worktrees.any? { |wt| File.identical?(wt, here) }
-          puts "  \e[33m–\e[0m #{adapter.label} hooks here are out of date — `switchboard upgrade` (or `switchboard enable-hooks`)"
+          puts "  #{Marks.note} #{adapter.label} hooks here are out of date — `switchboard upgrade` (or `switchboard enable-hooks`)"
         else # upgrade only refreshes configured projects
-          puts "  \e[33m–\e[0m #{adapter.label} hooks here are out of date — `switchboard enable-hooks` (not a configured project, so `upgrade` skips it)"
+          puts "  #{Marks.note} #{adapter.label} hooks here are out of date — `switchboard enable-hooks` (not a configured project, so `upgrade` skips it)"
         end
       end
 
@@ -615,28 +616,28 @@ module Switchboard
         trusted, total = CodexHook.trust_status
         state = CodexHook.block_state
         if state == :collision
-          puts "  \e[33m!\e[0m codex hooks (global): #{CodexHook.config_path} already has its own [hooks] config " \
+          puts "  #{Marks.alert} codex hooks (global): #{CodexHook.config_path} already has its own [hooks] config " \
                "outside switchboard's block — two [hooks] tables are invalid TOML; merge yours into one place"
         elsif state == :unsafe
-          puts "  \e[33m!\e[0m codex hooks (global): #{CodexHook.config_path} — can't be rewritten safely: " \
+          puts "  #{Marks.alert} codex hooks (global): #{CodexHook.config_path} — can't be rewritten safely: " \
                "#{CodexHook::UNSAFE_ADVICE} `switchboard install`"
         elsif state == :stale
-          puts "  \e[33m!\e[0m codex hooks (global): #{CodexHook.config_path} — the block doesn't match what this " \
+          puts "  #{Marks.alert} codex hooks (global): #{CodexHook.config_path} — the block doesn't match what this " \
                "switchboard (#{CodexHook.bin}) writes — re-run `switchboard install` " \
                "from the install you use, then trust the hooks in codex `/hooks`"
         elsif trusted == total
-          puts "  \e[32m✓\e[0m codex hooks (global): #{CodexHook.config_path} — #{trusted}/#{total} trusted"
+          puts "  #{Marks.ok} codex hooks (global): #{CodexHook.config_path} — #{trusted}/#{total} trusted"
         elsif codex_bypasses_trust?(config)
-          puts "  \e[32m✓\e[0m codex hooks (global): #{CodexHook.config_path} — #{trusted}/#{total} trusted, " \
+          puts "  #{Marks.ok} codex hooks (global): #{CodexHook.config_path} — #{trusted}/#{total} trusted, " \
                "but your session_command runs codex with --dangerously-bypass-hook-trust, so they run anyway"
         else
-          puts "  \e[33m!\e[0m codex hooks (global): #{CodexHook.config_path} — #{trusted}/#{total} trusted"
+          puts "  #{Marks.alert} codex hooks (global): #{CodexHook.config_path} — #{trusted}/#{total} trusted"
           puts "      codex never runs an untrusted hook, so its dots won't move — run `/hooks` in codex and trust " \
                "the switchboard hooks (or start codex with --dangerously-bypass-hook-trust)"
         end
       else
         # From a home shell this would nag everyone who declined it at install.
-        puts "  \e[33m–\e[0m codex hooks (global) not installed — `switchboard install --codex-hooks`" if here
+        puts "  #{Marks.note} codex hooks (global) not installed — `switchboard install --codex-hooks`" if here
       end
     end
   end

@@ -114,6 +114,7 @@ module Switchboard
       ENV["GIT_CONFIG_VALUE_1"] = "0"
       ENV["GH_CONFIG_DIR"]     = path("gh")
       ENV.delete("GH_TOKEN")
+      ENV.delete("NO_COLOR") # Marks reads it; a developer's export must not change what tests see
       ENV.delete("GIT_SSH_COMMAND") # the clone fetch and release lookup honor a user's ssh choice
       ENV.delete("GIT_SSH")
       ENV.delete("TMUX")

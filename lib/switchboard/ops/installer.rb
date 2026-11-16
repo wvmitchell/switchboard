@@ -3,6 +3,7 @@
 require "fileutils"
 require "shellwords"
 require_relative "../support/marker_block"
+require_relative "../support/marks"
 require_relative "../adapters/codex_hook"
 require_relative "../support/stable_path"
 require_relative "../root"
@@ -637,15 +638,15 @@ module Switchboard
     end
 
     def ok(msg)
-      puts "  \e[32m✓\e[0m #{msg}"
+      puts "  #{Marks.ok} #{msg}"
     end
 
     def bad(msg)
-      puts "  \e[31m✗\e[0m #{msg}"
+      puts "  #{Marks.bad} #{msg}"
     end
 
     def note(msg)
-      puts "  \e[33m–\e[0m #{msg}"
+      puts "  #{Marks.note} #{msg}"
     end
   end
 end

@@ -10,6 +10,13 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
+## [0.72.2] — Plain check marks when output isn't a terminal (2026-11-16)
+
+### Fixed
+- `doctor`, `install` and `upgrade` color their ✓ / – / ✗ / ! marks only on a terminal. Piped,
+  logged or captured output now shows the plain mark instead of `[32m✓[0m`. Set `NO_COLOR` to
+  keep them plain on a terminal too.
+
 ## [0.72.1] — A name with stray bytes no longer crashes rename (2026-11-16)
 
 ### Fixed
