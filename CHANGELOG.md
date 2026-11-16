@@ -13,8 +13,8 @@ refer to the project's earlier, private repository; the public tracker starts at
 ## [0.72.1] — A name with stray bytes no longer crashes rename (2026-11-16)
 
 ### Fixed
-- `switchboard rename` and new workspace names drop bytes that aren't valid UTF-8, like any
-  other character a name can't use. Before, such a name stopped the command with a Ruby error.
+- `switchboard rename` drops bytes that aren't valid UTF-8 from the new name, like any other
+  character a name can't use. Before, such a name stopped the command with a Ruby error.
 
 ## [0.72.0] — Renaming a workspace never moves its folder (2026-11-13)
 

@@ -781,8 +781,6 @@ module Switchboard
 
     def test_the_note_path_marks_the_name_and_not_the_note
       sb = sidebar(nodes: [proj("app"), ws("auth-row")])
-      rec = { "state" => "ready", "task" => "auth task" }
-      sb.instance_variable_set(:@creation_for, { "/wt/auth-row" => rec })
       node = rows_of(sb).last
       stub_method(sb, :row_note, ->(_) { "auth task" }) do
         sb.send(:handle, "/auth\t")

@@ -19,7 +19,11 @@ module Switchboard
     def test_fixture_workspaces_are_renamed
       node = ws("x")
       refute_equal "x", File.basename(node.path), "the folder isn't the name"
-      assert_equal "x", Worktree.new(project: node.project, path: node.path).display_name
+      ["x", "c d", "café"].each do |name|
+        node = ws(name)
+        assert_equal name, Worktree.new(project: node.project, path: node.path).display_name,
+                     "#{name}: a name Names refuses keeps folder == name instead of a half-renamed row"
+      end
     end
 
     # --- #57 split guards ------------------------------------------------------

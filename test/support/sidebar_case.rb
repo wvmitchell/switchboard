@@ -28,10 +28,15 @@ module Switchboard
     end
 
     # Every workspace is renamed by default: its folder isn't its name, and the name is
-    # stored, so a label or match built from the folder fails here instead of passing.
+    # stored, so a label or match built from the folder fails here instead of passing. A
+    # name Names refuses (spaces, escapes) can't be stored, so by default it keeps
+    # folder == name.
     def ws(name, project: "app", path: nil, pr: nil)
-      path ||= wt(name)
-      Names.write(path, name, project: project) unless File.basename(path) == name
+      storable = Names.valid_name?(name)
+      path ||= storable ? wt(name) : "/wt/#{name}"
+      if storable && File.basename(path) != name
+        Names.write(path, name, project: project) == :ok or raise "fixture couldn't store #{name}"
+      end
       Tree::Node.new(kind: "ws", project: project, path: path, name: name, pr: pr)
     end
 
