@@ -354,7 +354,7 @@ module Switchboard
       ENV["SWITCHBOARD_BIN"] = "/new/bin/switchboard"
       AgentHooks.enable(repo)
       out = stub_method(Installer, :installed_bin?, -> { true }) { Dir.chdir(repo) { capture { Doctor.doctor_hooks(Config.new) } } }
-      assert_includes out, "\e[32m✓\e[0m claude hooks here: #{ClaudeHook.settings_path(File.realpath(repo))}" # doctor prints git's realpath
+      assert_includes out, "✓ claude hooks here: #{ClaudeHook.settings_path(File.realpath(repo))}" # doctor prints git's realpath
       refute_includes out, "out of date"
       refute_includes out, "run the installed"
     end
@@ -965,7 +965,7 @@ module Switchboard
       row = -> { stub_method(Installer, :installed_bin?, -> { true }) { capture { Doctor.doctor_reporter } } }
       assert_includes row.call, "not materialized yet"
       HookFile.ensure_script
-      assert_includes row.call, "\e[32m✓\e[0m agent-state reporter"
+      assert_includes row.call, "✓ agent-state reporter"
       File.write(HookFile.script_path, "#!/bin/sh\n# an older release\n")
       assert_includes row.call, "from another release — `switchboard upgrade`"
       neutral = stub_method(Installer, :installed_bin?, -> { false }) { capture { Doctor.doctor_reporter } }
@@ -974,7 +974,7 @@ module Switchboard
       File.write(Config.path, YAML.dump("projects" => [{ "name" => "app", "path" => repo }]))
       ClaudeHook.enable(repo)
       File.delete(HookFile.script_path)
-      assert_includes row.call, "\e[31m✗\e[0m agent-state reporter missing"
+      assert_includes row.call, "✗ agent-state reporter missing"
     end
 
     # Value: protects=doctor naming the real problem with a settings file that IS valid JSON

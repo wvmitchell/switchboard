@@ -157,12 +157,6 @@ safe today; each is narrow).
   and `prune --dry-run` makes it visible before anything is killed. (Workspace names are
   covered: rename refuses a name whose tmux session name another workspace already has.)
 
-- **Color only on a terminal.** *Why:* `doctor` and the `upgrade`/`install` finishing lines
-  print ANSI color (`\e[32m✓\e[0m`, `Doctor#row` and its siblings in doctor.rb and
-  installer.rb) even when stdout isn't a terminal, so a pipe, a log or a `!` capture shows
-  `[32m✓[0m`. *Start in:* one helper that colors only when `$stdout.tty?`, used by every
-  check mark. **Priority:** P3.
-
 - **`doctor` warns on missing/moved project repo dirs.** A `switchboard doctor`
   line listing config projects whose `path` no longer exists. *Why:* `prune`
   deliberately leaves unverifiable projects' sessions alone (so a moved repo never

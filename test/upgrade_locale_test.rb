@@ -56,7 +56,7 @@ module Switchboard
       run_bin("upgrade", "--finish", "0.0.1") # bring everything current
       out, status = run_bin("doctor", dir: @wt)
       assert status.success?, out
-      assert_includes out.b, "\e[32m✓\e[0m claude hooks here: ".b, "the current row, not the neutral one"
+      assert_includes out.b, "✓ claude hooks here: ".b, "the current row, not the neutral one"
       refute_includes out.b, "run the installed".b
       refute_includes out.b, "out of date".b
       refute_match(/Error|\.rb:\d+/, out)

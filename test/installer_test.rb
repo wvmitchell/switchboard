@@ -1417,8 +1417,8 @@ module Switchboard
         # Value: protects=every refusal renders as a failure (✗), never a success tick;
         # fails_when=a refusal arm is switched to `ok`; why_new=the text was pinned, the glyph
         # wasn't; seam=none; no_claim=exit status (report_codex_install only prints)
-        assert_includes out, "\e[31m✗\e[0m", result.inspect
-        refute_includes out, "\e[32m✓\e[0m", result.inspect
+        assert_includes out, "✗", result.inspect
+        refute_includes out, "✓", result.inspect
       end
       # enable-hooks shares this reporter: a refusal there tells you to re-run enable-hooks.
       %i[unsafe conflict].each do |result|
