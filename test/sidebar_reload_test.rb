@@ -187,8 +187,9 @@ module Switchboard
     # --- the carried cursor -------------------------------------------------------
 
     def test_the_cursor_returns_to_its_row_by_identity
-      sb = sidebar(nodes: [proj("app"), ws("a"), ws("b")])
-      sb.instance_variable_set(:@resume_cursor, { "kind" => "ws", "project" => "app", "path" => "/wt/b", "branch" => nil })
+      b = ws("b")
+      sb = sidebar(nodes: [proj("app"), ws("a"), b])
+      sb.instance_variable_set(:@resume_cursor, { "kind" => "ws", "project" => "app", "path" => b.path, "branch" => nil })
       sb.send(:restore_resumed_cursor)
       assert_equal "b", current_node(sb).name
       assert_nil sb.instance_variable_get(:@resume_cursor), "once only"
@@ -202,7 +203,8 @@ module Switchboard
     end
 
     def test_a_vanished_cursor_row_with_no_header_falls_back_to_the_current_workspace
-      sb = sidebar(nodes: [proj("app"), ws("a"), ws("b")], current_path: "/wt/a", cursor: 2)
+      a = ws("a")
+      sb = sidebar(nodes: [proj("app"), a, ws("b")], current_path: a.path, cursor: 2)
       sb.instance_variable_set(:@resume_cursor, { "kind" => "ws", "project" => "gone", "path" => "/wt/gone", "branch" => nil })
       sb.send(:restore_resumed_cursor)
       assert_equal "a", current_node(sb).name
@@ -719,7 +721,7 @@ module Switchboard
       end
       assert_equal ["/Cellar/new/bin/switchboard", "sidebar"], seen[:argv], "the keg the check ran, not the opt link"
       assert_equal "/opt/sb/bin/switchboard", ENV["SWITCHBOARD_BIN"], "the stable path stays the env the new image inherits"
-      assert_equal "/wt/b", seen[:payload][:cursor]["path"]
+      assert_equal ws("b").path, seen[:payload][:cursor]["path"]
       refute seen[:reexec], "a system-Ruby re-exec must still happen in the new image"
       assert_equal "IGNORE", seen[:usr1], "ignored across exec (R4)"
       assert_equal [0, Process.pid], tags, "0 while between images, then restored after the failed exec"

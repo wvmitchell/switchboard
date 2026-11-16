@@ -27,9 +27,16 @@ module Switchboard
       Tree::Node.new(kind: "proj", project: name, path: "/repos/#{name}")
     end
 
+    # Every workspace is renamed by default: its folder isn't its name, and the name is
+    # stored, so a label or match built from the folder fails here instead of passing.
     def ws(name, project: "app", path: nil, pr: nil)
-      Tree::Node.new(kind: "ws", project: project, path: path || "/wt/#{name}", name: name, pr: pr)
+      path ||= wt(name)
+      Names.write(path, name, project: project) unless File.basename(path) == name
+      Tree::Node.new(kind: "ws", project: project, path: path, name: name, pr: pr)
     end
+
+    # The default folder of `ws(name)`, for tests that key state by a workspace's path.
+    def wt(name) = "/wt/#{name}-folder"
 
     def br(branch, active: false, last: false)
       Tree::Node.new(kind: "br", project: "app", branch: branch, active: active, last: last)

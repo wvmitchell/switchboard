@@ -10,6 +10,12 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
+## [0.72.1] — A name with stray bytes no longer crashes rename (2026-11-16)
+
+### Fixed
+- `switchboard rename` and new workspace names drop bytes that aren't valid UTF-8, like any
+  other character a name can't use. Before, such a name stopped the command with a Ruby error.
+
 ## [0.72.0] — Renaming a workspace never moves its folder (2026-11-13)
 
 ### Changed

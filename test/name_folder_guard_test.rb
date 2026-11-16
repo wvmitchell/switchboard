@@ -4,9 +4,10 @@ require_relative "test_helper"
 
 module Switchboard
   # A workspace's folder never moves, so its name is no longer its folder name: anything
-  # shown, matched or typed must use Worktree#display_name. In tests the names store is
-  # usually empty, so a `File.basename(wt.path)` label passes by accident; this pins every
-  # place lib/ derives a name from a path, by file. A new one fails here: use display_name,
+  # shown, matched or typed must use Worktree#display_name. The sidebar fixtures rename
+  # every workspace, but most other tests leave the names store empty, where a
+  # `File.basename(wt.path)` label passes by accident; this pins every place lib/ derives
+  # a name from a path, by file. A new one fails here: use display_name,
   # or (for a path on disk, a file's own name) add it with its reason. Reads files only.
   class NameFolderGuardTest < Minitest::Test
     LIB = File.expand_path("../lib/switchboard", __dir__)
