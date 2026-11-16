@@ -452,7 +452,7 @@ module Switchboard
 
     # Value: protects=a project gone from under a search never leaves a stale index; fails_when=the top fallback goes; why_new=cursor_to_current no-ops at home; seam=none; no_claim=how the project was removed
     def test_a_vanished_project_goes_to_the_current_workspace_else_the_top
-      sb = tree(cursor: 6, current_path: "/wt/alpha")
+      sb = tree(cursor: 6, current_path: wt("alpha"))
       sb.send(:handle, "/oauth\t")
       sb.instance_variable_set(:@nodes, sb.instance_variable_get(:@nodes).reject { _1.project == "api" })
       sb.send(:recompute_rows)
@@ -781,8 +781,6 @@ module Switchboard
 
     def test_the_note_path_marks_the_name_and_not_the_note
       sb = sidebar(nodes: [proj("app"), ws("auth-row")])
-      rec = { "state" => "ready", "task" => "auth task" }
-      sb.instance_variable_set(:@creation_for, { "/wt/auth-row" => rec })
       node = rows_of(sb).last
       stub_method(sb, :row_note, ->(_) { "auth task" }) do
         sb.send(:handle, "/auth\t")
@@ -802,14 +800,14 @@ module Switchboard
 
     def test_a_match_restores_the_rows_own_style
       style = Sidebar::Render::SEARCH_MATCH
-      sb = sidebar(nodes: [proj("xauthy"), ws("xauthy"), br("xauthy", active: true)], attention: ["/wt/xauthy"])
+      sb = sidebar(nodes: [proj("xauthy"), ws("xauthy"), br("xauthy", active: true)], attention: [wt("xauthy")])
       sb.send(:handle, "/auth\r")
       header, row, branch = rows_of(sb)
       assert_includes sb.send(:line, header, false, 40), "#{style}auth\e[0m\e[1my"
       assert_includes sb.send(:line, row, false, 40), "#{style}auth\e[0m\e[1;33my", "unviewed stays bold yellow"
       refute_includes sb.send(:line, branch, false, 40), style, "a branch row is never marked"
       refute_includes sb.send(:line, branch, true, 40), style, "not under the cursor either"
-      sb.instance_variable_set(:@current_path, "/wt/xauthy")
+      sb.instance_variable_set(:@current_path, wt("xauthy"))
       assert_includes sb.send(:line, row, false, 40), "#{style}auth\e[0m\e[36my", "the current row stays cyan"
     end
 
@@ -920,8 +918,8 @@ module Switchboard
     # Value: protects=a habitual second enter can't approve a tool call; fails_when=the waiting check goes; why_new=new rule; seam=none; no_claim=a prompt that appeared since the last scan
     def test_a_lone_row_waiting_on_a_prompt_takes_two_enters
       waiting = {
-        "◆ on screen" => ->(sb) { sb.instance_variable_set(:@agents, { "/wt/oauth" => :waiting }) },
-        "◆ aged out, or the scan failed" => ->(sb) { sb.instance_variable_get(:@agent_state).instance_variable_set(:@last_waiting, Set["/wt/oauth"]) }
+        "◆ on screen" => ->(sb) { sb.instance_variable_set(:@agents, { wt("oauth") => :waiting }) },
+        "◆ aged out, or the scan failed" => ->(sb) { sb.instance_variable_get(:@agent_state).instance_variable_set(:@last_waiting, Set[wt("oauth")]) }
       }
       waiting.each do |name, set_up|
         sb = tree
@@ -1039,7 +1037,7 @@ module Switchboard
       assert_lone_footers(" [1/1] · ↵ open · tab stay", " [1/1] · ↵ open · esc", 35) { tree }
       assert_lone_footers(" [1/1] · ↵ open", " [1/1] · ↵ open · esc", 34) { tree }
       assert_lone_footers(" [1/1] · ↵ · esc", " [1/1] · ↵ open · esc", 40) do
-        tree.tap { _1.instance_variable_set(:@agents, { "/wt/oauth" => :waiting }) }
+        tree.tap { _1.instance_variable_set(:@agents, { wt("oauth") => :waiting }) }
       end
 
       sb = tree

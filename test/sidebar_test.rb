@@ -13,6 +13,19 @@ module Switchboard
   # sidebar builders live in SidebarCase (test/support/sidebar_case.rb), shared
   # by every sidebar_*_test.rb since the #57 split.
   class SidebarTest < SidebarCase
+    # Value: protects=every sidebar test running against a renamed workspace, so a label or
+    # match built from the folder fails; fails_when=ws goes back to folder == name or stops
+    # storing the name; seam=none
+    def test_fixture_workspaces_are_renamed
+      node = ws("x")
+      refute_equal "x", File.basename(node.path), "the folder isn't the name"
+      ["x", "c d", "café"].each do |name|
+        node = ws(name)
+        assert_equal name, Worktree.new(project: node.project, path: node.path).display_name,
+                     "#{name}: a name Names refuses keeps folder == name instead of a half-renamed row"
+      end
+    end
+
     # --- #57 split guards ------------------------------------------------------
     # Two failure modes of the concern split are silent by construction; these
     # make them loud, permanently.

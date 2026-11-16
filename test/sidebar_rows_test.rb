@@ -74,8 +74,9 @@ module Switchboard
     end
 
     def test_a_workspace_being_deleted_leaves_the_folded_count
-      sb = sidebar(nodes: [proj("app"), ws("a"), ws("b")], collapsed: ["app"])
-      sb.instance_variable_set(:@pending_delete, Set["/wt/b"])
+      b = ws("b")
+      sb = sidebar(nodes: [proj("app"), ws("a"), b], collapsed: ["app"])
+      sb.instance_variable_set(:@pending_delete, Set[b.path])
       sb.send(:recompute_rows)
       assert_equal 1, folded_header(sb).folded, "unfolding wouldn't show it, so it doesn't count"
     end

@@ -79,7 +79,7 @@ module Switchboard
     # File.join — "../../etc" sanitizes to "etc", "/tmp/x" to "tmp/x", "." to "".
     # The one rule for workspace and project folder names (Creator, Rename).
     def sanitize(name)
-      cleaned = name.to_s.strip.gsub(/\s+/, "-").gsub(%r{[^\w./-]}, "")
+      cleaned = name.to_s.scrub("").strip.gsub(/\s+/, "-").gsub(%r{[^\w./-]}, "")
       cleaned.split("/").reject { |seg| seg.empty? || seg == "." || seg == ".." }.join("/")
     end
   end

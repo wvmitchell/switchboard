@@ -39,6 +39,12 @@ module Switchboard
       refute Placeholder.generated?(nil), "nil"
     end
 
+    # A name typed or passed with bytes that aren't UTF-8 (`switchboard rename $'ab\xff'`)
+    # loses them like any other unusable character instead of raising.
+    def test_sanitize_drops_invalid_bytes
+      assert_equal "abc", Placeholder.sanitize("ab\xFFc".dup.force_encoding(Encoding::UTF_8))
+    end
+
     def test_sanitize_neutralizes_traversal
       assert_equal "etc", Placeholder.sanitize("../../etc")
       assert_equal "tmp/x", Placeholder.sanitize("/tmp/x")
