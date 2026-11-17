@@ -18,6 +18,7 @@ module Switchboard
   #   :exists         another workspace, folder, build or session holds the name (`detail`)
   #   :branch_exists  a branch by the new name already exists
   #   :building       still being created; nothing changed
+  #   :deleting       `switchboard delete` is removing it; nothing changed
   #   :stale_peers    a sidebar runs code that can't read stored names (`detail`: panes)
   #   :panes_unknown  tmux is running but couldn't list its panes, so that can't be told
   #   :names_unreadable / :listing_failed  a uniqueness source couldn't be read (`detail`)
@@ -53,6 +54,7 @@ module Switchboard
       # The worker computes its session name before opening it, so a rename mid-build would
       # split the session from the build.
       return res[:building] unless Creation.renamable?(Creation.for_path(path))
+      return res[:deleting] if DeleteReceipt.live_for?(real)
 
       stale = stale_peers
       return res[:panes_unknown] if stale.nil?

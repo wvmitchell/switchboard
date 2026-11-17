@@ -24,21 +24,52 @@ module Switchboard
     # or unmerged branch, even after a failed removal. `force_branch:` is for a
     # dispatched tree already proven untouched (nothing past its base): a placeholder branch
     # never reads as merged into your local base, so the safe -d would leak one per canceled build.
+    #
+    # Like `switchboard delete`, it writes a receipt first and, once git no longer lists the
+    # tree, forgets everything switchboard kept for it (Deletion.forget), so a reaper killed
+    # mid-delete is finished by the next delete or prune. The removal stays forced: `d`'s
+    # confirm already accepted a dirty tree.
     def remove!(repo, path, branch, force_branch: false, branches: nil)
       real = Paths.real_or_self(path)
+      receipt = reaper_receipt(repo, path, real, branches)
       removed = Git.remove_worktree(repo, path, force: true, locked: Creation.unfinished_at?(path))
-      forget_name(real) if removed
-      return Git.delete_branch(repo, branch, force: force_branch) unless branches
+      trees = Git.worktrees(repo, strict: true)
+      gone = removed && trees && trees.none? { |w| Paths.real_or_self(w[:path]) == real }
+      unless gone
+        DeleteReceipt.delete(real) if receipt && trees # verified still there: nothing to recover
+        return branches ? nil : Git.delete_branch(repo, branch, force: force_branch)
+      end
 
-      WorkspaceBranches.delete_and_report(repo, branches) if removed
+      _removed, kept, failed = Deletion.forget(receipt || receipt_fields(repo, path, real, branches))
+      Git.delete_branch(repo, branch, force: force_branch) unless branches
+      DeleteReceipt.delete(real) if failed.empty?
+      report_kept(kept)
     end
 
-    # Drop a deleted workspace's stored name, only once its folder is confirmed gone and
-    # under its project's lock (a rename of it can't interleave). A failed removal keeps it.
-    def forget_name(real)
-      status, map = Names.read_all
-      entry = status == :ok && map[real] or return
-      Creation.with_project_lock(entry.project) { Names.delete(real) unless File.directory?(real) }
+    def reaper_receipt(repo, path, real, branches)
+      receipt = receipt_fields(repo, path, real, branches)
+      DeleteReceipt.write(receipt) ? receipt : nil
+    end
+
+    # The reaper's argv carries no project or record (it's a cross-version contract), so
+    # both are found here, before the folder goes.
+    def receipt_fields(repo, path, real, branches)
+      repo_real = Paths.real_or_self(repo)
+      project = Config.new.projects.find { |p| p["path"] && Paths.real_or_self(p["path"]) == repo_real }
+      rec = Creation.for_path(real)
+      name = project ? Worktree.new(project: project["name"], path: path).display_name : File.basename(path)
+      { "path" => path, "real" => real, "project" => project&.dig("name").to_s, "repo" => repo, "name" => name,
+        "record" => rec&.dig("id"), "token" => rec&.dig("token"), "server" => Creation.current_server,
+        "branches" => (branches || []).map { |e| "#{e.sha}:#{e.name}" }, "phase" => "removed", "deleted" => [] }
+        .merge(DeleteReceipt.owner)
+    end
+
+    # Runs after the row is gone, often from a daemon, so tmux is the only place to say so.
+    def report_kept(kept)
+      names = kept.select { |k| k.start_with?("branch ") }.map { |k| k.split(" ", 3)[1] }
+      return if names.empty?
+
+      Tmux.notify_everyone("switchboard: kept branch #{names.join(', ')} (in use or changed)", display_time: Tmux.display_time)
     end
   end
 end

@@ -582,6 +582,7 @@ module Switchboard
         when :invalid then "invalid name — letters/digits/. - _, no /, and a valid git branch"
         when :partial then "renamed; the tmux session kept its old name until you switch to it"
         when :building then "still creating… rename once it's ready"
+        when :deleting then "it's being deleted"
         when :stale_peers then "a sidebar runs older code — run `switchboard reload-sidebars`, then rename"
         when :panes_unknown then "tmux couldn't list its panes — retry the rename"
         when :names_unreadable then "can't read the names store #{result.detail}"

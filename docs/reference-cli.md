@@ -339,6 +339,150 @@ On failure stdout is empty and stderr carries one of these:
 | `[ambiguous]` | 2 | The name is in several projects; the candidates follow as `<project>/<name>` lines. |
 | `[names-unreadable]` | 3 | The names store can't be read. |
 
+### `switchboard delete <name> | <project>/<name> [--creation <id>] [--force] [-n]`
+Delete a workspace from a shell: its session, its folder, the branches that are its alone,
+and everything switchboard kept for it (its stored name, its dispatch record, and every
+marker), leaving nothing switchboard owns behind. Built for an agent cleaning up a
+workspace it dispatched, so it refuses anything that could lose work.
+
+- **Which workspace:** `<name>` resolves like `switchboard path` (a stored name or a folder
+  name, optionally `<project>/<name>`), but from git's full worktree lists: if any project's
+  list can't be read, it refuses rather than guess.
+- **`--creation <id>`** (the `id:` line `switchboard new` printed): the workspace must be
+  the very tree that record built, proven by a token `new` wrote into the tree's git admin
+  folder. Alone, the record names the target; with a name, the two must agree. `new` prints
+  the whole command for you as its `delete:` line.
+- **Checks, before anything changes:** not the project's own checkout, not where you are,
+  not still building, not already being deleted, not locked by you, no uncommitted or
+  untracked changes, no commits that are on neither its base nor a remote (including ones
+  only its own history log reaches, and its submodules' commits), and nobody using it.
+  After a rebase or amend, the commits you replaced still count until you push or
+  `--force`. The last three are re-checked after its session closes, and git itself refuses a
+  file written after that.
+- **`--force`** is for a human: it overrides `[dirty]`, `[unpushed]`, `[branches-unknown]`
+  and `[busy]` (exit 5) and nothing else.
+- **`-n` / `--dry-run`** runs every check and prints the plan (session, folder, branches
+  with ✓ or !, record, history kept), and exits as the real run would. It changes nothing.
+- **Ignored files go with the folder**, as with `git worktree remove`: build output, a
+  `.env`, notes in a gitignored folder. `-n` lists them first.
+- **Agent history stays.** Claude's transcripts and Codex's sessions aren't switchboard's,
+  and they're the record of what the agent did. Claude's folder is named in a `kept:` line.
+
+On success it prints stable lines a script can read, and exits 0:
+
+```
+removed: folder /Users/you/worktrees/app/quiet-otter
+removed: name oauth-fix
+removed: branch oauth-fix
+removed: record 20261116135217-a1b2c3
+kept: branch shared-fix (another workspace uses it)
+kept: history /Users/you/.claude/projects/-Users-you-worktrees-app-quiet-otter (Claude's own)
+```
+
+Every failure is one stderr line, `[token] <what>; changed: <none or what>; fix: <what to
+do> (reference-cli.md#delete-<token>)`, then up to 20 indented detail lines. Exit 5 is the
+"a human's `--force` would proceed" class; its fix never tells an agent to add `--force`.
+
+| Token | Exit |
+|---|---|
+| [`[not-found]`](#delete-not-found) | 1 |
+| [`[ambiguous]`](#delete-ambiguous) | 2 |
+| [`[names-unreadable]`](#delete-names-unreadable) | 3 |
+| [`[primary]`](#delete-primary) | 4 |
+| [`[inside]`](#delete-inside) | 4 |
+| [`[not-yours]`](#delete-not-yours) | 4 |
+| [`[building]`](#delete-building) | 4 |
+| [`[locked]`](#delete-locked) | 4 |
+| [`[deleting]`](#delete-deleting) | 4 |
+| [`[listing-failed]`](#delete-listing-failed) | 4 |
+| [`[other-server]`](#delete-other-server) | 4 |
+| [`[tmux-unknown]`](#delete-tmux-unknown) | 4 |
+| [`[dirty]`](#delete-dirty) | 5 |
+| [`[unpushed]`](#delete-unpushed) | 5 |
+| [`[branches-unknown]`](#delete-branches-unknown) | 5 |
+| [`[busy]`](#delete-busy) | 5 |
+| [`[remove-failed]`](#delete-remove-failed) | 6 |
+| [`[partial]`](#delete-partial) | 7 |
+| [`[session-alive]`](#delete-session-alive) | 8 |
+| [`[changed-during-delete]`](#delete-changed-during-delete) | 8 |
+| [`[usage]`](#delete-usage) | 64 |
+| [`[failed]`](#delete-failed) | 70 |
+
+An interrupted delete leaves a receipt: the next `delete` of the same workspace (or
+`switchboard prune`, once git no longer lists it) finishes it, and `doctor` names one that
+stopped while git still lists the workspace.
+
+Two limits remain until a follow-up release: a deleted branch's PR badge stays in the PR
+cache, and a `--force` delete detaches other clients attached to the session (an unforced
+one refuses `[busy]` first). After upgrading, run `switchboard reload-sidebars` before
+relying on `--creation`: an older sidebar can still collect a `new` record you've looked at.
+
+#### delete: not-found
+`[not-found]`, exit 1. No workspace by that name. Fix: check `switchboard path <project>/<name>`.
+
+#### delete: ambiguous
+`[ambiguous]`, exit 2. The name is in several projects; the candidates follow. Fix: name it as `<project>/<name>`.
+
+#### delete: names-unreadable
+`[names-unreadable]`, exit 3. The names store can't be read. Fix: fix that folder's permissions, then retry.
+
+#### delete: primary
+`[primary]`, exit 4. That's the project's own checkout, not a workspace. Fix: ask a human.
+
+#### delete: inside
+`[inside]`, exit 4. You're inside it: your current directory, your tmux pane's session, or a parent process that's one of its panes. Fix: run it from another workspace or a shell outside this one, or press `d` in the sidebar.
+
+#### delete: not-yours
+`[not-yours]`, exit 4. The `--creation` record is missing, built a different folder or project, isn't for this tree (a tree re-created at the same path), or predates `delete --creation`. Fix: never fall back to deleting by name; ask a human.
+
+#### delete: building
+`[building]`, exit 4. Its build is still in flight. Fix: retry at the next check; still building after 10 minutes, ask a human.
+
+#### delete: locked
+`[locked]`, exit 4. You locked it with `git worktree lock`. `--force` doesn't override your lock. Fix: `git worktree unlock <path>` if you're done with it, else leave it.
+
+#### delete: deleting
+`[deleting]`, exit 4. Another delete of it is running (its receipt's owner is alive). A dead owner's delete is taken over automatically. Fix: retry at the next check.
+
+#### delete: listing-failed
+`[listing-failed]`, exit 4. A project's worktree list couldn't be read, so the name can't be resolved safely. Fix: run `git worktree list` in that project to see why, then retry.
+
+#### delete: other-server
+`[other-server]`, exit 4. Its record was made on another tmux server, which this command can't see. Fix: run the same command from a shell inside that server.
+
+#### delete: tmux-unknown
+`[tmux-unknown]`, exit 4. tmux is running but couldn't be asked about sessions, panes or clients. Nothing changed. Fix: check `tmux ls`, then retry.
+
+#### delete: dirty
+`[dirty]`, exit 5. Uncommitted or untracked changes, listed below the line (or status couldn't be read). Fix: commit or stash them, or ask a human.
+
+#### delete: unpushed
+`[unpushed]`, exit 5. A branch it would delete (or a detached HEAD, a commit only its history log reaches, or a submodule) has commits on neither its base nor any remote. With no base and no remotes, every commit counts. Fix: push it, or ask a human.
+
+#### delete: branches-unknown
+`[branches-unknown]`, exit 5. It can't tell which branches are its own, or git couldn't count their commits. Fix: ask a human. With `--force` the workspace goes and every branch stays.
+
+#### delete: busy
+`[busy]`, exit 5. Someone may still be using it: an agent thinking or waiting, a live agent process with no fresh idle report, a live ∞ monitor, a ◷ hold, or another tmux client attached. A failed process scan counts as busy. An agent idle at its prompt doesn't. Fix: wait for it and retry at the next check, or ask a human.
+
+#### delete: remove-failed
+`[remove-failed]`, exit 6. Git refused or failed, or the folder's removal couldn't be confirmed. The session is closed. Fix: retry the same command once; fails again, ask a human with git's message.
+
+#### delete: partial
+`[partial]`, exit 7. The folder is gone but something listed below was left. The receipt is kept. Fix: `switchboard prune` finishes it, or remove each item.
+
+#### delete: session-alive
+`[session-alive]`, exit 8. Its session didn't close. The record is acknowledged; the folder wasn't touched. Fix: `tmux kill-session -t =<name>`, then retry.
+
+#### delete: changed-during-delete
+`[changed-during-delete]`, exit 8. The re-check after its session closed found new changes, commits or a busy signal, or git refused an unforced removal. The session is closed and the record acknowledged; the workspace still shows. Fix: open it to see what changed (`claude --continue` there resumes the agent), then retry or ask a human.
+
+#### delete: usage
+`[usage]`, exit 64. No target, an unknown flag, or `--creation` without a valid id. Fix: see the synopsis above.
+
+#### delete: failed
+`[failed]`, exit 70. An unexpected error. The line says how far it got and where its trace file is. Fix: run `switchboard doctor`.
+
 ### `switchboard monitoring on [secs] | off | notify` (bare = status)
 Declare (or clear) that this workspace is running a **background monitor / recurring
 loop**, so the sidebar shows a steady `∞` instead of reading as idle/done. `on`

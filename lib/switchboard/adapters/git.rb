@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "open3"
+
 require "shellwords"
 require "fileutils"
 require_relative "../support/process_identity"
@@ -148,6 +150,106 @@ module Switchboard
       args << "--force" if force && locked
       args << path
       system(*args, out: File::NULL, err: File::NULL)
+    end
+
+    # `git worktree remove`, with git's own stderr for the caller to show or match: [ok, err].
+    # Unforced, git refuses a tree with changes (untracked files counted, whatever the user's
+    # status.showUntrackedFiles says) or with initialized submodules.
+    def remove_worktree_reporting(repo, path, force: false, locked: false)
+      args = ["git", "-c", "status.showUntrackedFiles=all", "-C", repo, "worktree", "remove"]
+      args << "--force" if force
+      args << "--force" if force && locked
+      _out, err, status = Open3.capture3(*args, path)
+      [status.success?, err.to_s.scrub]
+    rescue SystemCallError => e
+      [false, e.message]
+    end
+
+    SUBMODULE_REFUSAL = /submodule/i
+
+    # Commits on `sha` that are on neither `base` (when it resolves) nor any remote-tracking
+    # ref. With neither, every commit counts. nil when git couldn't say.
+    def unique_commits(repo, sha, base)
+      args = ["rev-list", "--count", sha, "--not", "--remotes"]
+      args << base if base && rev_parse(repo, base)
+      out = capture(repo, *args).strip
+      $?&.success? && out.match?(/\A\d+\z/) ? out.to_i : nil
+    end
+
+    # Commits that only this worktree's own history can reach: its HEAD reflog and its
+    # per-worktree refs (refs/worktree/*, refs/bisect/*) all live in its admin dir and go
+    # with it. Counted against every remote, `base`, and every local branch except `leaving`
+    # (the ones being deleted with it). nil when git couldn't say.
+    def history_only_commits(worktree, repo, base, leaving)
+      log = capture(worktree, "log", "-g", "--format=%H", "HEAD")
+      return nil unless $?&.success?
+
+      own = capture(worktree, "for-each-ref", "--format=%(objectname)", "refs/worktree", "refs/bisect")
+      return nil unless $?&.success?
+
+      tips = (log.split + own.split).uniq
+      return 0 if tips.empty?
+
+      keep = local_branches(repo) - leaving
+      args = ["git", "-C", repo, "rev-list", "--count", "--stdin", "--not", "--remotes"]
+      args << base if base && rev_parse(repo, base)
+      out, status = Open3.capture2(*args, stdin_data: (tips + ["--not"] + keep.map { |b| "refs/heads/#{b}" }).join("\n") + "\n", err: File::NULL)
+      status.success? && out.strip.match?(/\A\d+\z/) ? out.to_i : nil
+    rescue SystemCallError
+      nil
+    end
+
+    # Commits in this worktree's submodules (recursively) that no remote of theirs has, or
+    # nil when git couldn't say. A linked worktree keeps its submodules' git data in its own
+    # admin dir, so they go with it.
+    def submodule_unpushed(worktree)
+      return 0 unless File.exist?(File.join(worktree, ".gitmodules"))
+
+      out = capture(worktree, "submodule", "foreach", "--quiet", "--recursive", "git rev-list --count --all --not --remotes")
+      $?&.success? ? out.split.sum(&:to_i) : nil
+    end
+
+    # Ignored files and folders git would delete with the tree, top level first.
+    def ignored_paths(worktree)
+      out = capture(worktree, "status", "--porcelain", "--ignored=matching", "--untracked-files=normal")
+      $?&.success? ? out.scrub.lines(chomp: true).select { |l| l.start_with?("!! ") }.map { |l| l[3..] } : []
+    end
+
+    # This worktree's HEAD commit, or nil when it can't be read.
+    def head(worktree)
+      rev_parse(worktree, "HEAD")
+    end
+
+    # The worktree's own admin dir (`.git/worktrees/<id>` for a linked tree), absolute.
+    def admin_dir(worktree)
+      out = capture(worktree, "rev-parse", "--absolute-git-dir").strip
+      $?&.success? && !out.empty? ? out : nil
+    end
+
+    # `git status --porcelain` lines, or nil when status failed.
+    def status_lines(worktree)
+      out = capture(worktree, "--no-optional-locks", "status", "--porcelain", "--untracked-files=normal", "--ignore-submodules=none")
+      $?&.success? ? out.scrub.lines(chomp: true) : nil
+    end
+
+    # The repository's shared git dir (where `worktrees/<id>` admin dirs live), absolute.
+    def common_dir(repo)
+      out = capture(repo, "rev-parse", "--path-format=absolute", "--git-common-dir").strip
+      $?&.success? && File.directory?(out) ? out : nil
+    end
+
+    # Branches some worktree of `repo` is in the middle of rebasing (git keeps the name in
+    # the rebase state, not in `worktree list`), or nil when the common dir can't be read.
+    def rebasing_branches(repo)
+      common = common_dir(repo) or return nil
+
+      dirs = [common, *Dir.glob(File.join(common, "worktrees", "*"))]
+      dirs.flat_map do |d|
+        %w[rebase-merge rebase-apply].filter_map do |state|
+          name = File.read(File.join(d, state, "head-name")).strip rescue next
+          name.delete_prefix("refs/heads/")
+        end
+      end
     end
 
     # Delete a branch. Default -d is safe (refuses if unmerged → returns false,

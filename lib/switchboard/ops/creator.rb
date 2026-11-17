@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "securerandom"
+
 require "tempfile"
 require "shellwords"
 
@@ -65,12 +67,13 @@ module Switchboard
     # record, or :no_name / :no_record.
     # `brief_from: "cli"` marks a brief another agent wrote (`switchboard new`), so the
     # launched agent is told its first message isn't the user asking.
-    def dispatch(config, project_name, task, brief_from: nil)
+    # `via: "cli"` keeps the record while its tree exists, so `delete --creation` finds it.
+    def dispatch(config, project_name, task, brief_from: nil, via: nil)
       Creation.with_project_lock(project_name) do
         name, dest = reserve(config, project_name)
         next :no_name unless dest
 
-        Creation.create(project: project_name, name: name, path: dest, task: task, brief_from: brief_from) || :no_record
+        Creation.create(project: project_name, name: name, path: dest, task: task, brief_from: brief_from, via: via) || :no_record
       end
     end
 
@@ -98,6 +101,19 @@ module Switchboard
       false
     end
 
+    # A random token in the new tree's own admin dir, then in the record (in that order: a
+    # crash between leaves a token-less record, which `delete --creation` refuses). Git
+    # removes the admin dir with the worktree, so a tree re-created at the same path can't
+    # carry it, and that's how delete proves the tree is the one this record built.
+    def stamp_generation(id, dest)
+      admin = Git.admin_dir(dest) or return {}
+      token = "#{id}-#{SecureRandom.hex(8)}"
+      File.write(File.join(admin, Deletion::TOKEN_FILE), token)
+      { token: token }
+    rescue StandardError
+      {}
+    end
+
     def stale_session?(project_name, dest)
       Tmux.has_session?(Tmux.session_name(Worktree.new(project: project_name, path: dest)))
     end
@@ -123,7 +139,8 @@ module Switchboard
         return Creation.mark_failed(id, "worktree_add", err)
       end
 
-      unless Creation.update(id, unless_state: %w[canceled failed], name: name, path: dest, worktree_added: true)
+      stamp = stamp_generation(id, dest)
+      unless Creation.update(id, unless_state: %w[canceled failed], name: name, path: dest, worktree_added: true, **stamp)
         # Canceled mid-add. A tree we can't prove untouched stays — then record that it
         # exists, so GC keeps the guard that re-enters it as a plain shell.
         Creation.update(id, name: name, path: dest, worktree_added: true) unless discard(config, project, name, dest)

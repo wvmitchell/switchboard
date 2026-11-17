@@ -19,14 +19,16 @@ module Switchboard
       "cli" => 1,                      # `switchboard path` also accepts a folder name
       "ops/code_reload" => 1,          # a binary's name
       "ops/creator" => 4,              # shells and commands, not workspaces
+      "ops/deletion" => 3,             # `delete` also accepts a folder name, like `path`
       "ops/doctor" => 5,               # the binary, a branch leaf, and the folder beside its name
       "ops/installer" => 1,            # a symlink's name
       "ops/isolated_server" => 2,      # socket dirs and the tmux binary
-      "ops/leftovers" => 5,            # store files named by a pid or a temp suffix, and .git
+      "ops/leftovers" => 6,            # store files named by a pid, a key or a temp suffix, and .git
       "ops/registrar" => 1,            # a repo's default project name
       "ops/rename" => 4,               # folders that block a name, and "back to the folder name"
       "ops/sandbox" => 1,              # a sandbox file named after its checkout
       "ops/session_name" => 1,         # display_name's own fallback
+      "ops/workspaces" => 1,           # a receipt's label when the repo isn't a registered project
       "sidebar" => 1,                  # a state file's name
       "sidebar/render" => 1,           # the ⇅ view's label when its workspace has no row
       "state/creation" => 1,           # a record file's name

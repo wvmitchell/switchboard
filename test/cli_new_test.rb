@@ -68,6 +68,8 @@ module Switchboard
       assert_match(/dispatched a new workspace in this project \(proj\): "#{rec['name']}"/, out)
       refute rec["acked"], "the ready chime is how you hear about it"
       assert_equal "cli", rec["brief_from"], "an agent wrote this brief"
+      assert_equal "cli", rec["via"], "kept while its tree exists, for delete --creation"
+      assert_includes out, "  id:   #{rec['id']}\n  delete: switchboard delete --creation #{rec['id']}\n"
     end
 
     def test_a_named_other_project_says_another_project

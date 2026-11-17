@@ -271,8 +271,11 @@ Re-verifying one doesn't advance the others.
     whatever Claude does. And a subagent that backgrounds its own wait leaves only a shell
     running, which reads `shell`, whose chime rings at the hand-off by design.
 
-    Nothing can delete a workspace from the CLI, so ask the maintainer to delete it in the
-    next digest.
+    Keep the `id:` that `switchboard new` printed: the `delete:` line under it is the
+    command that removes the throwaway. Once the check is over, run that line. If it
+    refuses `[building]`, `[deleting]`, `[busy]` or `[tmux-unknown]`, retry it once at the
+    next check; any other refusal, or a second one, goes in the digest as printed. Never
+    add `--force`.
   - **Session-name sync**: rename a workspace that has an idle Claude session with the
     sidebar's `r`, then keep the pane in view without typing. Within a few seconds the
     Claude session must carry the new name (the `name` in its sessions file, or the `/resume` picker), and

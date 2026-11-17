@@ -69,8 +69,9 @@ module Switchboard
     # The subset of `paths` currently marked for deletion (fresh within TTL). Scans the
     # whole store so stale markers GC everywhere, then intersects — the render filter
     # tests node.path directly against this set. `now` injectable for tests.
-    def pending(paths, now: Time.now)
-      live = live_paths(now)
+    # `gc: false` reads without collecting stale markers.
+    def pending(paths, now: Time.now, gc: true)
+      live = gc ? live_paths(now) : KeyedMarkerStore.entries(state_dir).filter_map { |_, c, m| c if now - m <= TTL }.to_set
       paths.select { |p| live.include?(p) }.to_set
     end
 

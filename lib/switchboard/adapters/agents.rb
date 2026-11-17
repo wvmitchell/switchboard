@@ -22,6 +22,42 @@ module Switchboard
       end.to_set
     end
 
+    # Strict, for deciding what to destroy: the cwd of every live agent process, with no pid
+    # cap; nil when the process scan or the cwd lookup failed (a failed scan can't say
+    # nobody is there).
+    def scan
+      out = IO.popen(["pgrep", "-f", CLIS.join("|")], err: File::NULL, &:read)
+      return nil unless [0, 1].include?($?.exitstatus) # 1 is "no match"
+
+      pids = out.split.map(&:to_i).select(&:positive?) - [Process.pid]
+      return [] if pids.empty?
+
+      found = cwds_of_strict(pids)
+      found && (found.values + tmux_cwds)
+    rescue StandardError
+      nil
+    end
+
+    # Like cwds_of, but nil on failure. A pid that exited between pgrep and lsof just has
+    # no line, which lsof reports with a non-zero status: that's only a failure when lsof
+    # printed nothing at all for pids that were alive.
+    def cwds_of_strict(pids)
+      out = IO.popen(["lsof", "-a", "-d", "cwd", "-p", pids.join(","), "-Fn"], err: File::NULL, &:read)
+      found = {}
+      pid = nil
+      out.each_line do |line|
+        line = line.chomp
+        if line.start_with?("p") then pid = line[1..].to_i
+        elsif line.start_with?("n") && pid then found[pid] = lsof_path(line[1..])
+        end
+      end
+      return nil if found.empty? && pids.any? { |p| ProcessIdentity.alive?(p) }
+
+      found
+    rescue StandardError
+      nil
+    end
+
     def agent_cwds
       (tmux_cwds + process_cwds).uniq
     end

@@ -264,6 +264,24 @@ module Switchboard
       assert_nil Creation.find(rec["id"])
     end
 
+    # Value: protects=`delete --creation` still finds a `switchboard new` record after you've
+    # looked at its row; fails_when=drop?'s acked+terminal rule runs first; why_new=D3;
+    # seam=none; no_claim=rendering (an acked terminal record with a tree draws no cue)
+    def test_a_cli_record_stays_while_its_tree_does
+      dir = path("wt", "from-cli")
+      rec = Creation.create(project: "proj", name: "from-cli", path: dir, task: "t", via: "cli")
+      FileUtils.mkdir_p(dir)
+      File.write(File.join(dir, ".git"), "gitdir: x\n")
+      Creation.update(rec["id"], state: "turn_done", worktree_added: true, acked: true, setup_ok: true)
+      Creation.gc
+      refute_nil Creation.find(rec["id"])
+      assert Creation.held_for_delete?(Creation.find(rec["id"])), "the sidebar draws it as gone"
+      refute Creation.held_for_delete?(Creation.find(rec["id"]).merge("acked" => false)), "until you've seen it"
+      FileUtils.rm_rf(dir)
+      Creation.gc
+      assert_nil Creation.find(rec["id"])
+    end
+
     # Value: protects=an un-set-up tree on disk keeps its guard record even when worktree_added was never written; fails_when=drop? keys the unfinished guard on the flag, so an add killed mid-checkout loses its record after one ack; why_new=keep-tests always set worktree_added; seam=none; no_claim=how the tree came to exist
     def test_gc_keeps_an_unfinished_record_while_its_tree_is_on_disk
       dir = path("wt", "half-built")

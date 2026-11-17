@@ -381,21 +381,28 @@ module Switchboard
       assert_includes said.to_s, "kept branch feature"
     end
 
-    # Value: protects=a branch that became busy after the confirm survives; fails_when=delete moves to update-ref, which doesn't refuse a checkout; why_new=branch -D is the guard here; seam=none; no_claim=none
-    def test_delete_refuses_a_branch_checked_out_elsewhere
+    # Value: protects=a branch that became busy after the confirm survives; fails_when=the
+    # fresh checked-out check before update-ref goes; why_new=update-ref, unlike branch -D,
+    # deletes a branch checked out elsewhere; seam=none; no_claim=none
+    def test_delete_keeps_a_branch_checked_out_elsewhere
       repo = temp_git_repo("app")
       git(repo, "branch", "taken")
-      wt = path("elsewhere")
-      git(repo, "worktree", "add", "-q", wt, "taken")
+      git(repo, "worktree", "add", "-q", path("elsewhere"), "taken")
       entry = WorkspaceBranches.entry(repo, "taken", "main")
-      assert_equal %w[taken], WorkspaceBranches.delete(repo, [entry])
+      kept = []
+      Deletion.branches({ "repo" => repo, "branches" => ["#{entry.sha}:taken"], "deleted" => [] }, [], kept, [])
+      assert_equal ["branch taken (another workspace uses it)"], kept
       assert_includes branches(repo), "taken"
     end
 
     def test_a_branch_already_gone_is_not_reported_as_kept
       repo = temp_git_repo("app")
-      entry = WorkspaceBranches::Entry.new(name: "gone", sha: "abc")
-      assert_empty WorkspaceBranches.delete(repo, [entry])
+      removed = []
+      kept = []
+      receipt = { "repo" => repo, "branches" => ["abc:gone"], "deleted" => [] }
+      Deletion.branches(receipt, removed, kept, [])
+      assert_empty kept
+      assert_equal ["gone"], receipt["deleted"], "an absent ref counts as deleted"
     end
   end
 end

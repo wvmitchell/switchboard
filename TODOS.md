@@ -741,3 +741,14 @@ safe today; each is narrow).
   after living with search. *Start in:* the stepping in `Sidebar::Input` (`step_search`),
   reading `@attention` and the dot states; it needs its own key, since `n` is scoped to a
   search. **Priority:** P3.
+
+## `switchboard delete` follow-ups
+
+- **The sidebar's `d` could use delete's remote-aware unpushed check.** *Why:* `d`'s
+  confirm marks `!` against the base only, so a branch already pushed to a remote still
+  reads as at risk, while `switchboard delete` counts commits on neither the base nor any
+  remote. *Start in:* `WorkspaceBranches.listing` and `Git.unique_commits`. **Priority:** P3.
+- **A `switchboard workspaces` listing with each dispatch's creation id.** *Why:* an agent
+  that lost the `id:` line `new` printed can only delete its throwaway by name, which
+  skips the generation-token proof. *Start in:* `CLI#list_projects` for the table shape,
+  `Creation.all` for the ids. **Priority:** P3.

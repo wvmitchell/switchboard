@@ -572,5 +572,50 @@ module Switchboard
       assert Git.tracking_upstream?(repo, "feat")
       assert Git.pushed?(repo, "feat"), "a configured @{upstream} counts as tracked"
     end
+
+    # --- delete's helpers ---------------------------------------------------------
+
+    # Value: protects=delete's unpushed check counts commits on neither the base nor a
+    # remote, and every commit with neither; fails_when=a base or remote is ignored;
+    # why_new=delete preflight; seam=none
+    def test_unique_commits
+      repo = temp_git_repo("app", origin: true)
+      git(repo, "checkout", "-q", "-b", "work")
+      File.write(File.join(repo, "a"), "x")
+      git(repo, "add", "-A")
+      git(repo, "commit", "-q", "-m", "a")
+      sha = Git.rev_parse(repo, "work")
+      assert_equal 1, Git.unique_commits(repo, sha, "main")
+      git(repo, "push", "-q", "origin", "work")
+      assert_equal 0, Git.unique_commits(repo, sha, "main")
+      assert_equal 0, Git.unique_commits(repo, Git.rev_parse(repo, "main"), "main")
+      bare = temp_git_repo("solo")
+      assert_equal 1, Git.unique_commits(bare, Git.rev_parse(bare, "main"), nil), "no base, no remote: every commit counts"
+      assert_nil Git.unique_commits(repo, "0" * 40, "main")
+    end
+
+    # Value: protects=an unforced removal refuses an untracked file even when the user hides
+    # untracked files, and a submodule refusal is recognized; fails_when=the -c flag stops
+    # reaching git's check; why_new=delete's unforced removal; seam=none
+    def test_unforced_removal_refuses_hidden_untracked_files_and_names_submodules
+      repo = temp_git_repo("app")
+      wt = path("wt")
+      git(repo, "worktree", "add", "-q", "-b", "w", wt)
+      git(repo, "config", "status.showUntrackedFiles", "no")
+      File.write(File.join(wt, "new.txt"), "x")
+      ok, err = Git.remove_worktree_reporting(repo, wt)
+      refute ok
+      assert_includes err, "--force"
+      assert File.exist?(File.join(wt, "new.txt"))
+
+      sub = temp_git_repo("sub")
+      git(wt, "-c", "protocol.file.allow=always", "submodule", "add", "-q", sub, "sub")
+      git(wt, "commit", "-q", "-am", "sub")
+      File.delete(File.join(wt, "new.txt"))
+      ok, err = Git.remove_worktree_reporting(repo, wt)
+      refute ok
+      assert_match Git::SUBMODULE_REFUSAL, err
+      assert Git.remove_worktree_reporting(repo, wt, force: true).first
+    end
   end
 end

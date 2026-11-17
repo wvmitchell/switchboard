@@ -324,12 +324,14 @@ module Switchboard
       stub_method(WorkspaceBranches, :plan, ->(*) { planned }) do
         stub_method(Git, :clean?, ->(*) { true }) do
           stub_method(Git, :remove_worktree, ->(repo, p, **) { removed = [repo, p]; true }) do
-            stub_method(WorkspaceBranches, :delete_and_report, ->(_repo, entries) { branch_deleted = entries.map(&:name) }) do
-              stub_method(Tmux, :session_of, ->(*) { "sb/home" }) do
-                stub_method(Tmux, :session_name, ->(*) { "sb/app/a" }) do
-                  stub_method(Tmux, :kill, ->(*) {}) do
-                    stub_method(sb, :confirm, ->(*) { true }) do
-                      sb.send(:delete)
+            stub_method(Git, :worktrees, ->(*, **) { [] }) do
+              stub_method(Deletion, :forget, ->(r) { branch_deleted = r["branches"].map { |b| b.split(":", 2)[1] } and [[], [], []] }) do
+                stub_method(Tmux, :session_of, ->(*) { "sb/home" }) do
+                  stub_method(Tmux, :session_name, ->(*) { "sb/app/a" }) do
+                    stub_method(Tmux, :kill, ->(*) {}) do
+                      stub_method(sb, :confirm, ->(*) { true }) do
+                        sb.send(:delete)
+                      end
                     end
                   end
                 end
@@ -531,12 +533,14 @@ module Switchboard
       deleted = nil
       stub_method(Process, :spawn, ->(*_a, **_k) { raise Errno::ENOENT }) do
         stub_method(Git, :remove_worktree, ->(*, **) { true }) do
-          stub_method(WorkspaceBranches, :delete_and_report, ->(_repo, entries) { deleted = entries }) do
-            sb.send(:start_removal, "/repos/app", "/wt/a", "feature", branches: planned)
+          stub_method(Git, :worktrees, ->(*, **) { [] }) do
+            stub_method(Deletion, :forget, ->(r) { deleted = r["branches"] and [[], [], []] }) do
+              sb.send(:start_removal, "/repos/app", "/wt/a", "feature", branches: planned)
+            end
           end
         end
       end
-      assert_equal planned, deleted
+      assert_equal ["abc:old"], deleted
     ensure
       ENV.delete("SWITCHBOARD_BIN")
     end

@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "open3"
+
 module Switchboard
   # Sessions: finding, making, naming, switching and killing them.
   module Tmux
@@ -223,6 +225,43 @@ module Switchboard
 
     # Kill a worktree's session (if any) — used when deleting a workspace. Found by
     # session path, so a session another workspace holds under this name is left alone.
+    # Strict, for deciding what to destroy: every session as { id:, name:, path: }, [] when
+    # no server is running, nil when tmux is up but couldn't be asked.
+    def sessions_strict
+      out, err, status = Open3.capture3("tmux", "-u", "list-sessions", "-F", "#\{session_id}\t#\{session_name}\t#\{session_path}")
+      # No server: nothing listening, or no socket at all. Anything else (a sandbox that
+      # can't reach the socket) is "couldn't ask", never "nobody's there".
+      return [] if !status.success? && err.match?(/no server running|error connecting to .*\(no such file or directory\)/i)
+      return nil unless status.success?
+
+      out.lines(chomp: true).filter_map do |line|
+        id, name, path = line.split("\t", 3)
+        { id: id, name: name, path: path } if id && name
+      end
+    rescue SystemCallError
+      nil
+    end
+
+    # Clients attached to a session (by id), or nil when tmux couldn't say.
+    def session_clients(id)
+      out = query("list-clients", "-t", id, "-F", "#\{client_name}")
+      out&.lines(chomp: true)&.reject(&:empty?)
+    end
+
+    # Every pane of a session (by id) as { pid:, sidebar: }, or nil when tmux couldn't say.
+    def session_panes(id)
+      out = query("list-panes", "-s", "-t", id, "-F", "#\{pane_pid}\t#\{pane_title}")
+      out&.lines(chomp: true)&.filter_map do |line|
+        pid, title = line.split("\t", 2)
+        { pid: pid.to_i, sidebar: title.to_s.strip == SIDEBAR_TITLE } if pid.to_i.positive?
+      end
+    end
+
+    # Kill a session by its id (`$3`), which a rename can't redirect.
+    def kill_session_id(id)
+      system("tmux", "-u", "kill-session", "-t", id, out: File::NULL, err: File::NULL)
+    end
+
     def kill(worktree, name = session_for(worktree))
       return false unless name
       kill_session(name)
