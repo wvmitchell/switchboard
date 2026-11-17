@@ -285,6 +285,9 @@ module Switchboard
         puts row(false, "#{counts.values.sum} leftover file(s) from deleted workspaces (#{Leftovers.breakdown(counts)}) — " \
                         "run `switchboard prune` to clear them")
       end
+      Leftovers.interrupted(config).each do |r|
+        puts row(false, "interrupted delete of #{r['path']} — run `switchboard delete #{Shellwords.escape("#{r['project']}/#{r['name']}")}` to finish it")
+      end
       Leftovers.stray_folders(config).each do |dir|
         puts row(false, "#{dir} is under the worktree root but isn't a workspace — if nothing in it is needed, " \
                         "run `rm -rf #{Shellwords.escape(dir)}`")

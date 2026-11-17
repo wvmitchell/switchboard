@@ -77,7 +77,7 @@ module Switchboard
           next unless n.kind == "ws"
 
           rec = by_real[Creation.real_path(n.path.to_s)]
-          h[n.path] = rec if rec
+          h[n.path] = rec if rec && !Creation.held_for_delete?(rec)
         end
       end
 

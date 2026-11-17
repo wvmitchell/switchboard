@@ -52,7 +52,7 @@ module Switchboard
       planned = [WorkspaceBranches::Entry.new(name: "old", sha: "abc", merged: true)]
       deleted = false
       stub_method(Git, :remove_worktree, ->(*, **) { false }) do
-        stub_method(WorkspaceBranches, :delete_and_report, ->(*) { deleted = true }) do
+        stub_method(Deletion, :forget, ->(*) { deleted = true and [[], [], []] }) do
           Workspaces.remove!("/repos/app", "/wt/a", "feature", branches: planned)
         end
       end

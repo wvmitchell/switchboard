@@ -10,6 +10,37 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
+## [0.74.0] — `switchboard delete`: remove a workspace from a shell, leaving nothing behind (2026-11-17)
+
+### Added
+- `switchboard delete <name> | <project>/<name> [--creation <id>] [--force] [-n]` removes a
+  workspace's session, folder, its own branches, its stored name, its dispatch record and every
+  marker switchboard kept for it. Built for an agent cleaning up after itself, it refuses
+  anything that could lose work: uncommitted or untracked changes, commits on neither the base
+  nor a remote (including ones only the workspace's history log or a submodule holds), and
+  anyone still using it (an agent working, another attached client, a live ∞ or ◷). An agent
+  idle at its prompt doesn't block it. Each refusal is one stderr line with a `[token]`, what
+  changed (nothing, for a check) and the fix; `--force` is a human's override for those four
+  and nothing else. `-n` prints the plan and changes nothing.
+- `switchboard new` prints a `delete:` line under `id:`. `delete --creation <id>` deletes only
+  the very tree that dispatch built, proven by a token in the tree's git admin folder.
+- An interrupted delete leaves a receipt: the next `delete`, or `prune`, finishes it, and
+  `doctor` names one that stopped while git still lists the workspace.
+
+### Changed
+- The sidebar's `d` now forgets everything switchboard kept for a deleted workspace too (its
+  markers and dispatch record), not just its name and branches.
+- A `switchboard new` record stays until its workspace is deleted, so `--creation` still finds
+  it after you've looked at the row. After upgrading, run `switchboard reload-sidebars` before
+  relying on `--creation`.
+- `switchboard rename` refuses while a delete of that workspace is running.
+
+### Known limits
+- A deleted branch's PR badge stays in the PR cache, and a `--force` delete detaches other
+  attached clients rather than sending them home. Both change in a follow-up release.
+- Ignored files (build output, a `.env`, notes in a gitignored folder) go with the folder, as
+  with `git worktree remove`; `-n` lists them first.
+
 ## [0.73.0] — doctor and prune find what deleted workspaces left behind (2026-11-17)
 
 ### Added

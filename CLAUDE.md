@@ -57,6 +57,7 @@ locally without touching real state:
 | Agent-state dots, Claude/Codex hook delivery, the global codex block | [explanation-agent-presence](docs/explanation-agent-presence.md), [§ Inside the global codex block](docs/explanation-agent-presence.md#inside-the-global-codex-block) |
 | The rename nudge, the agent-dispatch instruction, completion sounds, bold until viewed, `KeyedMarkerStore` | [explanation-agent-presence § One edge, four consumers](docs/explanation-agent-presence.md#one-edge-four-consumers), [§ The self-naming nudge](docs/explanation-agent-presence.md#the-self-naming-nudge), [§ The agent-dispatch instruction](docs/explanation-agent-presence.md#the-agent-dispatch-instruction) |
 | ∞ monitoring + `monitoring notify`, ⇅ remote links + QR, ◷ background work | [explanation-agent-presence § Background monitors](docs/explanation-agent-presence.md#background-monitors-the-), [§ ◷](docs/explanation-agent-presence.md#waiting-on-background-work-the-), [§ ⇅](docs/explanation-agent-presence.md#remote-links-the-) |
+| `switchboard delete`, the `Leftovers` inventory, delete receipts | [explanation-architecture § Deleting leaves nothing behind](docs/explanation-architecture.md#deleting-leaves-nothing-behind), [reference-cli](docs/reference-cli.md) |
 | Workspace names (`Names`), rename that never moves a folder, `switchboard path` | [explanation-architecture § A rename never moves the folder](docs/explanation-architecture.md#a-rename-never-moves-the-folder), [reference-cli](docs/reference-cli.md) |
 | Session-name sync (typing `/rename` into Claude's pane) | [explanation-session-name-sync](docs/explanation-session-name-sync.md) |
 | Folds, full header, width, diff counts, `/` search, `?` overlay, `sidebar_keys` | [explanation-sidebar-views](docs/explanation-sidebar-views.md) |
@@ -92,6 +93,8 @@ The ones that broke something before. Each doc above explains why.
 - **Dispatch never starts an agent on an un-set-up tree, and never destroys work**: the
   agent starts only through `Creation.authorize_launch`, and rollback removes only what it
   can prove is its own.
+- **A delete leaves nothing:** every per-workspace store is a row in `Leftovers`, which
+  delete, doctor and prune all read (`test/leftovers_test.rb`, `test/no_trace_test.rb`).
 - **Session-name sync: at most one Enter per session per worker.** Don't add a retry.
 - **Hook commands print only JSON or nothing, and exit 0** (`rename-nudge`): a stray byte
   poisons Claude.

@@ -21,7 +21,8 @@ module Switchboard
     # and any unread one could hold a candidate. Empty means there's truly nothing to take.
     # Git's own listing names this tree's branch, since a row can lag a rename. Unmerged
     # branches come first, where they're easiest to see.
-    def plan(repo, path, base)
+    # `gc: false` for delete's preflight, which must change nothing.
+    def plan(repo, path, base, gc: true)
       base = base.to_s
       worktrees = Git.worktrees(repo, strict: true)
       return nil unless worktrees
@@ -38,7 +39,7 @@ module Switchboard
 
       # A worktree already being deleted has no say in what its history used, and mid-removal
       # its reflog may be unreadable. Its current branch still counts until it's gone.
-      deleting = PendingDelete.pending(others.map { |w| w[:path] })
+      deleting = PendingDelete.pending(others.map { |w| w[:path] }, gc: gc)
       elsewhere = others.reject { |w| deleting.include?(w[:path]) }.map { |w| Git.visited_branches(w[:path]) }
       return nil if elsewhere.any?(&:nil?)
 
@@ -100,25 +101,6 @@ module Switchboard
         sha, name = arg.split(":", 2)
         Entry.new(name: name, sha: sha)
       end
-    end
-
-    # Names of the branches that survived. One already gone isn't a survivor.
-    def delete(repo, entries)
-      entries.filter_map do |e|
-        tip = Git.rev_parse(repo, "refs/heads/#{e.name}")
-        next unless tip
-
-        e.name unless tip == e.sha && Git.delete_branch(repo, e.name, force: true)
-      end
-    end
-
-    # Runs after the row is gone, often from a daemon, so tmux is the only place to say so.
-    def delete_and_report(repo, entries)
-      kept = delete(repo, entries)
-      return if kept.empty?
-
-      Tmux.notify_everyone("switchboard: kept branch #{kept.join(', ')} (in use or changed)",
-                           display_time: Tmux.display_time)
     end
   end
 end

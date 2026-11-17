@@ -23,7 +23,9 @@ module Switchboard
 
     # Stores that hold nothing per workspace (or, for the PR cache, branch names that
     # aren't paths). `reserve-*.lock` files in the creation dir outlive every record by design.
-    GLOBAL = %w[collapse branch_fold full_header width prs latest.json sounds sb-agent-hook].freeze
+    # delete-traces holds `delete`'s crash reports, dropped after TRACE_AGE.
+    GLOBAL = %w[collapse branch_fold full_header width prs latest.json sounds sb-agent-hook delete-traces].freeze
+    TRACE_AGE = 7 * 86_400
 
     # file: the entry's file; path: the folder it belongs to (nil for pid-keyed rows);
     # pid: the owning process for pid-keyed rows; rec: a Creation record, with the registered
@@ -53,6 +55,7 @@ module Switchboard
         session_owner: SessionName::Owner.dir,
         session_locks: File.join(SessionName::Outcome.dir, ".locks"),
         pending_delete: PendingDelete.state_dir,
+        delete_receipt: DeleteReceipt.dir,
         creation: Creation.state_dir,
         names: Names.dir
       }
@@ -67,8 +70,45 @@ module Switchboard
     # Removes every leftover (prune). Returns { row => count } of what was (or, dry_run,
     # would be) removed.
     def clear(config, dry_run: false, now: Time.now)
+      sweep_traces(now) unless dry_run
       scan(config, now: now).transform_values do |found|
         found.count { |item| dry_run || remove(item, now) }
+      end
+    end
+
+    # Delete's own pass: every entry that belongs to the workspace at `real`, whatever its
+    # age, except the rows delete settles itself. Returns the files it couldn't remove.
+    def clear_workspace(real, except: [])
+      ctx = Context.new(projects: [], listed: nil, roots: [], now: Time.now)
+      (dirs.keys - except - %i[session_locks names]).flat_map do |row|
+        mine = items(row, ctx).select { |i| owned?(i, real) }
+        mine.each { |i| File.delete(i.file) rescue nil }
+        mine.map(&:file).select { |f| File.exist?(f) }
+      end
+    end
+
+    # Worker claims carry only a pid, so theirs is found by the key of the realpath.
+    def owned?(item, real)
+      return File.basename(item.file) == KeyedMarkerStore.key(real) if item.row == :session_owner
+      return item.rec["id"] && item.path && Paths.real_or_self(item.path) == real if item.row == :creation
+
+      !item.path.nil? && under?(item.path, real)
+    end
+
+    # Receipts of deletes that stopped while git still lists their workspace: doctor names
+    # each with the delete that finishes it.
+    def interrupted(config)
+      ctx = context(config, Time.now)
+      return [] unless ctx.listed
+
+      DeleteReceipt.all.reject { |r| DeleteReceipt.owner_alive?(r) }.select { |r| ctx.listed.include?(r["real"]) }
+    end
+
+    def sweep_traces(now)
+      Dir.glob(File.join(Deletion.traces_dir, "*")).each do |f|
+        File.delete(f) if now - File.mtime(f) > TRACE_AGE
+      rescue StandardError
+        next
       end
     end
 
@@ -128,6 +168,12 @@ module Switchboard
       when :session_locks then pid_items(row, dir) { |f| File.basename(f)[/\A\d+\z/] }
       when :pending_delete then markers(row, dir) { nil }
       when :creation then creation_items(ctx)
+      when :delete_receipt
+        DeleteReceipt.all.map do |r|
+          Item.new(row: row, file: DeleteReceipt.file(r["real"]), path: r["real"], rec: r, mtime: File.mtime(DeleteReceipt.file(r["real"])))
+        rescue StandardError
+          nil
+        end.compact
       else []
       end
     end
@@ -187,6 +233,8 @@ module Switchboard
       when :pending_delete then ctx.now - item.mtime > PendingDelete::TTL
       when :session_owner, :session_locks then !ProcessIdentity.alive?(item.pid)
       when :creation then creation_leftover?(item.rec, ctx)
+      # A dead owner's delete whose workspace git no longer lists: prune finishes it.
+      when :delete_receipt then !ctx.listed.nil? && !DeleteReceipt.owner_alive?(item.rec) && !ctx.listed.include?(item.path)
       else orphaned?(item.path, ctx)
       end
     end
@@ -257,6 +305,11 @@ module Switchboard
     # True once the entry is gone. A Creation record is re-decided under its lock, so a
     # writer that changed it since the scan (an ack, a repath) wins.
     def remove(item, now)
+      if item.row == :delete_receipt
+        Deletion.resume(item.rec)
+        return DeleteReceipt.read(item.path).nil?
+      end
+
       if item.rec
         live = ->(r) { Creation.owner_alive?(r, now, ProcessIdentity.method(:same?)) }
         Creation.delete(item.rec["id"], wait: false) { |cur| Creation.drop?(cur, item.projects, live) }

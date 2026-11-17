@@ -88,6 +88,8 @@ module Switchboard
         assert found["worktree_added"]
         assert File.directory?(found["path"])
         assert_equal found["name"], Git.current_branch(found["path"])
+        token = File.read(File.join(Git.admin_dir(found["path"]), Deletion::TOKEN_FILE))
+        assert_equal token, found["token"], "the tree and its record share the generation token"
         _, dir, start = calls.first
         assert_equal found["path"], dir
         assert_match(/ launch #{Regexp.escape(Shellwords.escape(found['path']))}\z/, start)

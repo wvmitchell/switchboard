@@ -147,6 +147,28 @@ From the sidebar, press `d` on the highlighted row (confirms first):
 - On a **project** header: unregisters the project *and* closes its sessions. The
   repo on disk is untouched.
 
+From the shell, `switchboard delete` removes a workspace the same way `d` does, without a
+confirm, so it refuses anything that could lose work: uncommitted changes, commits that
+aren't on the base or a remote, or anyone still using it. Preview first:
+
+```sh
+switchboard delete -n oauth-fix   # the plan; changes nothing
+switchboard delete oauth-fix
+```
+
+For a workspace an agent dispatched with `switchboard new`, use the `delete:` line `new`
+printed under its `id:`. It deletes only the tree that dispatch built:
+
+```sh
+switchboard new . "check the release notes"
+#   id:   20261116135217-a1b2c3
+#   delete: switchboard delete --creation 20261116135217-a1b2c3
+switchboard delete -n --creation 20261116135217-a1b2c3
+switchboard delete --creation 20261116135217-a1b2c3
+```
+
+Every refusal and its fix is listed in [Reference: CLI](reference-cli.md#switchboard-delete-name--projectname---creation-id---force--n).
+
 From the shell, to unregister a project without touching sessions:
 
 ```sh

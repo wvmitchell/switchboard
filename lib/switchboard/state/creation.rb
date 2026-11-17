@@ -71,12 +71,13 @@ module Switchboard
       canceled: "switchboard: this build was canceled; its agent was not started"
     }.freeze
 
-    def create(project:, name:, path:, task:, brief_from: nil, now: Time.now, server: current_server)
+    def create(project:, name:, path:, task:, brief_from: nil, via: nil, now: Time.now, server: current_server)
       id = "#{now.strftime('%Y%m%d%H%M%S')}-#{SecureRandom.hex(3)}"
       rec = { "id" => id, "project" => project, "name" => name, "path" => path, "task" => task.to_s,
               "state" => "queued", "worktree_added" => false, "hooked" => false, "acked" => false,
               "gen" => 0, "ring_gen" => 0, "rung_gen" => 0, "created_at" => now.to_f, "server" => server }
       rec["brief_from"] = brief_from if brief_from # additive: older launchers ignore it
+      rec["via"] = via if via
       write(rec) ? rec : nil
     end
 
@@ -364,6 +365,12 @@ module Switchboard
       unknown && ProcessIdentity.alive?(rec["owner_pid"]) && !pid_only_expired
     end
 
+    # Kept only so `delete --creation` can find it: every other rule would have dropped it,
+    # so the sidebar draws its row as if it were gone (no ✘ or task label left behind).
+    def held_for_delete?(rec)
+      rec["via"] == "cli" && drop?(rec.except("via"))
+    end
+
     def drop?(rec, projects = nil, live = ->(_r) { false })
       # In flight, a missing tree is the worker's to report (a failed add rolled back):
       # dropping here would swallow its ✘ and the task with it.
@@ -376,6 +383,9 @@ module Switchboard
       return false if rec["state"] == "canceled" && rec["owner_pid"] && live.call(rec)
       return true if projects&.any? && !projects.include?(rec["project"]) && !PRE_READY.include?(rec["state"])
       return true if rec["state"] == "canceled"
+      # `switchboard new`'s record is the handle for `delete --creation`: it stays while its
+      # tree does, even once you've looked at it.
+      return false if rec["via"] == "cli" && tree_on_disk?(rec)
 
       rec["acked"] && terminal?(rec)
     end

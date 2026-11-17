@@ -253,6 +253,14 @@ prompt-free in their own process group, with time limits (`Git::FETCH_DEADLINE`,
 
 ### Keeping records while they guard something
 
+A record `switchboard new` made carries `via: cli`, and it stays as long as its tree is on
+disk, even after you've looked at its row. Its `id` is the handle an agent passes to
+`switchboard delete --creation`, which needs the record to prove the tree is the one it
+built: the worker writes a random token into the tree's git admin folder, then into the
+record. Git removes that folder with the worktree, so a tree re-created at the same path
+can't carry the token, and a crash between the two writes leaves a record without one,
+which `delete --creation` refuses.
+
 A failed or canceled record without `setup_ok` that has a worktree
 (`Creation.unfinished?`) is kept until that worktree is deleted. This is checked before
 the drop for unconfigured projects. A canceled record also stays while its owner is

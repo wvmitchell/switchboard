@@ -38,6 +38,7 @@ module Switchboard
       when "disable-hooks"     then exit(1) if disable_hooks(argv[1]) == false
       when "rename"            then exit(1) unless rename(argv[1])
       when "path"              then path(argv[1])
+      when "delete"            then exit(delete(argv.drop(1)))
       when "rename-nudge"      then HookCommands.rename_nudge(argv.drop(1))
       when "sync-session-name" then sync_session_name(argv[1], argv[2])
       when "monitoring"        then monitoring(argv[1], argv[2])
@@ -229,7 +230,7 @@ module Switchboard
       end
 
       rec = begin
-        Creator.dispatch(config, project, task, brief_from: ("cli" unless task.empty?)) # no brief, nothing to label
+        Creator.dispatch(config, project, task, brief_from: ("cli" unless task.empty?), via: "cli") # no brief, nothing to label
       rescue SystemCallError, IOError
         nil
       end
@@ -265,6 +266,7 @@ module Switchboard
       puts %(dispatched a new workspace #{where}: "#{rec['name']}" (◌ building))
       puts "  path: #{home_relative(rec['path'])}"
       puts "  id:   #{rec['id']}"
+      puts "  delete: switchboard delete --creation #{rec['id']}"
     end
 
     # `switchboard projects [--names]`: the registered names `new` accepts, `*` on the one
@@ -516,7 +518,7 @@ module Switchboard
       return warn("usage: switchboard remove <name>") if name.nil?
 
       _, err = Registrar.unregister(config, name)
-      return warn(err) if err
+      return warn("#{err}\nto delete a workspace: switchboard delete #{name}") if err
 
       puts "removed #{name} (its repo on disk is untouched)"
     end
@@ -638,6 +640,8 @@ module Switchboard
         "[invalid] that name sanitizes to nothing usable; use letters, digits, . - _ (no /) that make a valid git branch"
       when :building
         "[building] this workspace is still being created; nothing changed; rename it once it's ready"
+      when :deleting
+        "[deleting] switchboard delete is removing this workspace; nothing changed"
       when :stale_peers
         "[stale-peers] nothing renamed: sidebar pane(s) #{d.join(' ')} run code that doesn't know stored names; " \
           "run switchboard reload-sidebars, then retry; if a pane stays listed, close it"
@@ -669,6 +673,38 @@ module Switchboard
     # `switchboard path <name>` (or <project>/<name>, or a folder name): the folder a
     # workspace lives in, for shells and scripts. Exactly one absolute path on stdout, or
     # empty stdout and a [token] on stderr: 1 not found, 2 ambiguous, 3 names unreadable.
+    # `switchboard delete <name> | <project>/<name> [--creation <id>] [--force] [--dry-run|-n]`.
+    # Prints what it removed and kept; every refusal is one stderr line led by a [token].
+    # Returns the exit code.
+    def delete(args)
+      opts = delete_args(args)
+      result = opts.is_a?(Deletion::Result) ? opts : Deletion.run(config, **opts)
+      puts result.lines if result.lines
+      warn Deletion.message(result) unless result.ok?
+      result.exit_code
+    end
+
+    def delete_args(args)
+      opts = { name: nil, creation: nil, force: false, dry_run: false }
+      rest = args.dup
+      until rest.empty?
+        arg = rest.shift
+        case arg
+        when "--force" then opts[:force] = true
+        when "--dry-run", "-n" then opts[:dry_run] = true
+        when "--creation"
+          opts[:creation] = rest.shift
+          return Deletion.usage("--creation needs the id `switchboard new` printed") if opts[:creation].to_s.empty?
+        when /\A-/ then return Deletion.usage("unknown flag #{arg}")
+        else
+          return Deletion.usage("one workspace at a time") if opts[:name]
+
+          opts[:name] = arg
+        end
+      end
+      opts
+    end
+
     def path(arg)
       return warn("usage: switchboard path <name> | <project>/<name>") || exit(1) if arg.to_s.empty?
 
@@ -743,6 +779,7 @@ module Switchboard
           switchboard disable-hooks [P]  remove them from that worktree
           switchboard rename NAME    rename the current workspace (name + branch + tmux session + Claude session name; the folder never moves)
           switchboard path NAME      print the folder of the workspace called NAME (or PROJECT/NAME): p=$(switchboard path x) && cd -- "$p"
+          switchboard delete NAME    delete a workspace and everything switchboard kept for it; refuses anything that could lose work (-n: the plan; --creation ID: the one `new` built; --force: a human's override)
           switchboard monitoring on [secs]|off  flag this workspace as running a background monitor (∞; optional secs = liveness ttl for slow loops; bare = status)
           switchboard monitoring notify  (from a monitored workspace) surface this cycle's output — bold + a distinct alert sound, even though routine ticks stay silent
           switchboard sound [done|waiting|alert]  play a state's sound (try audio / pick sounds)

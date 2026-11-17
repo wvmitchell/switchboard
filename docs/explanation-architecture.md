@@ -407,6 +407,42 @@ finds them by comparing the number of running sidebar processes (`pgrep`) with t
 of sidebar panes (`Tmux.sidebar_pane_count`). A straggler matters because tmux recycles
 pane ids, so it can end up reading a different live pane and double-fire completion sounds.
 
+### Deleting leaves nothing behind
+
+`switchboard delete` and the sidebar's `d` both end in the same place: the folder gone and
+nothing switchboard keeps still naming it. The problem is that a workspace leaves traces in
+a dozen stores (its name, its dispatch record, the bold and ∞ and ◷ markers, agent hook
+states, rename-sync notes and worker claims, the hide marker), and most of them only heal
+when some sidebar happens to scan. The approach is one registry, `Leftovers`, that lists
+every per-workspace store. Delete clears this workspace's entries from every row, doctor
+counts what deleted workspaces left, and prune clears it, so the three can't drift; a test
+fails until a new store is a row or is declared global.
+
+The order is what makes it safe to run unattended. Every check runs before anything
+changes: the target must be a workspace, not where the caller is, not still building or
+being deleted, clean, with every commit on its base or a remote, and with nobody using it
+(an agent thinking, a hookless agent process, a live ∞ or ◷, another attached client). A
+refusal changes nothing. Then a **receipt** claims the workspace under the project lock and
+the row hides everywhere; the session closes; the checks that could have changed run again;
+git removes the folder unforced, so it refuses a file written after the re-check; and only
+once git no longer lists the worktree does delete forget the name, the branches (each at
+the sha pinned at preflight, after checking no other worktree uses it), the record and the
+markers. Forgetting waits for the folder because a removal that fails must leave a
+workspace that still works.
+
+The receipt is both the lock and the recovery record. It names the workspace, its owner
+process, the pinned branch plan and the branches already deleted, and it's rewritten before
+each destructive step. If the delete dies, the next one decides from what git lists now,
+not from the phase it stored: still listed means every check runs again, gone means the
+forget step finishes from the receipt. Prune finishes those too, and doctor names one that
+stopped while git still lists its workspace. Rename refuses while a live receipt exists.
+
+One window stays open: a writer that passed its "folder exists" check just before the
+folder went can still leave a marker. Delete clears its rows a second time at the very end,
+and doctor and prune catch anything after that. Agent history is kept on purpose: Claude's
+transcripts and Codex's sessions belong to those tools, and they're the only record of what
+the agent did.
+
 ### Prune only touches what it can prove is stale
 
 **Sessions.** `prune` kills only `sb/` sessions under the prefix of a project it could

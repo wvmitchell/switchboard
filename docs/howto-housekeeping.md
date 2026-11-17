@@ -149,6 +149,30 @@ off. It checks, with the fix inline for anything red:
   `session name:` line. See [session-name sync](explanation-session-name-sync.md#outcomes-and-doctor).
 - Sidebars still on old code after a failed reload, with the panes they're in.
 
+## Delete a workspace from a shell
+
+`switchboard delete` removes a workspace and everything switchboard kept for it. Preview
+with `-n`, which runs every check and changes nothing:
+
+```sh
+switchboard delete -n oauth-fix
+switchboard delete oauth-fix
+```
+
+It refuses rather than lose work, with one line saying why and what to do. The ones worth
+retrying:
+
+- **`[busy]`**: an agent is still working, a monitor is live, or someone is attached. Wait,
+  then retry.
+- **`[building]`**: its dispatch hasn't finished. Retry once it's ready.
+- **`[deleting]`**: another delete of it is running. Retry; a delete whose process died is
+  taken over automatically.
+- **`[remove-failed]`**: git refused. Retry once, then read git's message.
+- **`[partial]`**: the folder is gone but something was left. `switchboard prune` finishes
+  it.
+
+Every token is in [Reference: CLI](reference-cli.md#switchboard-delete-name--projectname---creation-id---force--n).
+
 ## Troubleshooting
 
 - **Moved from a clone to Homebrew and things half-work.** See
