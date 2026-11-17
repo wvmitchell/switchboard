@@ -525,6 +525,16 @@ module Switchboard
       assert Pr.for_project("proj").key?("a")
     end
 
+    # Value: protects=a worktree folder removed by hand doesn't stop pruning for the whole
+    # repo; fails_when=a missing folder reads as "can't tell"; why_new=strict history; seam=none
+    def test_refresh_still_prunes_with_a_worktree_folder_removed_by_hand
+      repo = branch_repo
+      FileUtils.rm_rf(path("wt"))
+      seed("proj", { "gone" => { "identifier" => "#1" } })
+      stub_fetch({}) { Pr.refresh("proj", repo, branch_limit: 10) }
+      refute Pr.for_project("proj").key?("gone")
+    end
+
     # Value: protects=one worktree's unreadable history never prunes its rows' badges;
     # fails_when=a failed reflog read counts as an empty history; why_new=strict branch_history;
     # seam=branch_history

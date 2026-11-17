@@ -226,8 +226,10 @@ module Switchboard
     end
 
     def test_branch_history_strict_is_nil_when_the_git_dir_cannot_be_read
+      FileUtils.mkdir_p(path("not-a-repo"))
       assert_nil Git.branch_history(path("not-a-repo"), strict: true)
       assert_equal [], Git.branch_history(path("not-a-repo"))
+      assert_equal [], Git.branch_history(path("removed-by-hand"), strict: true), "a missing folder has no rows"
     end
 
     # The Sidebar passes a per-process cache so a reload that finds the reflog
