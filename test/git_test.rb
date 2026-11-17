@@ -225,6 +225,11 @@ module Switchboard
       assert_equal "main", hist.first, "the most recent checkout target comes first"
     end
 
+    def test_branch_history_strict_is_nil_when_the_git_dir_cannot_be_read
+      assert_nil Git.branch_history(path("not-a-repo"), strict: true)
+      assert_equal [], Git.branch_history(path("not-a-repo"))
+    end
+
     # The Sidebar passes a per-process cache so a reload that finds the reflog
     # unchanged skips the rev-parse subprocess AND the re-parse. Prove the hit path
     # by poisoning the cached parse: an unchanged reflog must return the poison,

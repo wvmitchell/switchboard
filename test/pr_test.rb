@@ -509,11 +509,32 @@ module Switchboard
     # Value: protects=delete drops exactly its branches' badges; fails_when=forget drops the
     # repo identity or a neighbour; why_new=Pr.forget; seam=none
     def test_forget_drops_only_the_named_branches
+      repo = branch_repo
       seed("proj", { Pr::REPO_KEY => "o/r", "a" => nil, "b" => { "identifier" => "#2" } })
-      assert Pr.forget("proj", ["a"], "", branch_limit: 10)
+      assert Pr.forget("proj", ["a"], repo, branch_limit: 10)
       assert_equal [Pr::REPO_KEY, "b"], Pr.for_project("proj").keys
-      assert Pr.forget("proj", ["a"], "", branch_limit: 10), "already gone is success"
-      assert Pr.forget("nothing-cached", ["a"], "", branch_limit: 10)
+      assert Pr.forget("proj", ["a"], repo, branch_limit: 10), "already gone is success"
+      assert Pr.forget("nothing-cached", ["a"], repo, branch_limit: 10)
+    end
+
+    # Value: protects=a failed git read never costs a badge another workspace shows;
+    # fails_when=forget treats "can't tell" as "keep nothing"; why_new=fail-closed forget; seam=none
+    def test_forget_drops_nothing_when_git_cannot_say_what_renders
+      seed("proj", { "a" => nil })
+      assert Pr.forget("proj", ["a"], path("not-a-repo"), branch_limit: 10)
+      assert Pr.for_project("proj").key?("a")
+    end
+
+    # Value: protects=one worktree's unreadable history never prunes its rows' badges;
+    # fails_when=a failed reflog read counts as an empty history; why_new=strict branch_history;
+    # seam=branch_history
+    def test_refresh_prunes_nothing_when_a_history_cannot_be_read
+      repo = branch_repo
+      seed("proj", { "gone" => { "identifier" => "#1" } })
+      stub_method(Git, :branch_history, ->(*, strict: false, **) { strict ? nil : [] }) do
+        stub_fetch({}) { Pr.refresh("proj", repo, branch_limit: 10) }
+      end
+      assert Pr.for_project("proj").key?("gone")
     end
 
     # A branch deleted locally but visited in another workspace still renders there as a

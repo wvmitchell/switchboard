@@ -96,17 +96,23 @@ module Switchboard
       local = Git.local_branches(repo_path, strict: true)
       return nil if trees.nil? || local.nil?
 
-      local | rendered_branches(repo_path, limit: branch_limit, trees: trees)
+      rendered = rendered_branches(repo_path, limit: branch_limit, trees: trees, strict: true)
+      rendered && (local | rendered)
     end
 
     # Drop the badges of branches a delete just removed, except one another workspace
-    # still shows as a history row (refresh's `keep` rule). True once none is left to drop.
+    # still shows as a history row (refresh's `keep` rule). True once none is left to
+    # drop. When git can't say what still renders, nothing is dropped: the badges are
+    # inert once their rows are gone, and the next refresh that can read git prunes them.
     def forget(name, branches, repo_path, branch_limit:)
       return true if branches.empty? || !File.exist?(cache_file(name))
 
-      gone = branches
+      gone = []
       with_lock(name) do
-        gone = branches - (keep(repo_path, branch_limit) || [])
+        keep = keep(repo_path, branch_limit)
+        return true if keep.nil?
+
+        gone = branches - keep
         data = for_project(name)
         return true unless gone.any? { |b| data.key?(b) }
 
@@ -232,12 +238,15 @@ module Switchboard
     # for the rendered branches themselves (a `gh pr checkout`'d fork branch
     # should badge its fork PR); the trunk is the one name where collision is
     # likely and the row never shows.
-    def rendered_branches(repo_path, limit: nil, trees: Git.worktrees(repo_path))
+    # `strict:` gives nil when any worktree's history can't be read (refresh's prune).
+    def rendered_branches(repo_path, limit: nil, trees: Git.worktrees(repo_path), strict: false)
       # identical?, not string equality: git prints resolved paths, the config
       # may hold a symlinked spelling of the same checkout.
-      trees.reject { |w| w[:bare] || File.identical?(w[:path], repo_path) }.flat_map do |w|
-        Git.branch_history(w[:path], limit: limit) | [w[:branch]].compact
-      end.uniq
+      histories = trees.reject { |w| w[:bare] || File.identical?(w[:path], repo_path) }.map do |w|
+        history = Git.branch_history(w[:path], limit: limit, strict: strict)
+        history && (history | [w[:branch]].compact)
+      end
+      histories.include?(nil) ? nil : histories.flatten.uniq
     end
 
     def pr_entry(pr)

@@ -56,7 +56,10 @@ module Switchboard
       set_sidebar_flag(HOME, "on")
       ensure_home
       ensure_work_pane(HOME)
-      clients.each { |c| system("tmux", "-u", "switch-client", "-c", c, "-t", "=#{HOME}", out: File::NULL, err: File::NULL) }
+      # Asked again after home is up: a client that switched away meanwhile stays put.
+      (session_clients(target) || []).each do |c|
+        system("tmux", "-u", "switch-client", "-c", c, "-t", "=#{HOME}", out: File::NULL, err: File::NULL)
+      end
       poke(window_sidebar_pane(HOME))
     end
 

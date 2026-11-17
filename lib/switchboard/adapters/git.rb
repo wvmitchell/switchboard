@@ -405,14 +405,17 @@ module Switchboard
     # logs/HEAD mtime + limit: a new checkout appends to the reflog (bumping mtime)
     # and invalidates the entry. The git-dir is remembered too, and resolved again if
     # its reflog is gone: a new worktree can take a deleted one's path under another
-    # admin dir. cache nil ⇒ no memo (every call recomputes).
-    def branch_history(worktree, limit: nil, cache: nil)
+    # admin dir. cache nil ⇒ no memo (every call recomputes). `strict:` returns nil
+    # when the git dir can't be read, rather than an empty history.
+    def branch_history(worktree, limit: nil, cache: nil, strict: false)
       entry = cache && cache[worktree]
       entry = nil if entry && !File.exist?(File.join(entry[0], "logs", "HEAD"))
       # --absolute-git-dir, not --git-dir: the latter returns a relative ".git",
       # which would resolve logs/HEAD against the process cwd (one worktree) for
       # every row in the tree. Absolute makes it the worktree's own reflog.
       gitdir = entry ? entry[0] : capture(worktree, "rev-parse", "--absolute-git-dir").strip
+      return nil if strict && gitdir.empty?
+
       head_log = File.join(gitdir, "logs", "HEAD")
       return [] unless File.exist?(head_log)
 
