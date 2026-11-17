@@ -42,13 +42,14 @@ fast, and the per-worktree reflog parse is cached by mtime), and it buys
 correctness for free — the map is never out of date with the territory, because
 the territory *is* the map.
 
-### The PR cache never forgets a badge on its own
+### The PR cache keeps a badge as long as its branch
 
 gh's queries are windows, not the full history: the 200 most recently *updated* PRs
 (`--search sort:updated-desc`, falling back to the plain creation-ordered list if the
 search API fails), plus every open PR up to `OPEN_LIMIT`. A merged PR that's been quiet
 for a long time falls out of both. But its badge has to stay for as long as its row
-renders; you remove a workspace or a branch, never a badge.
+renders; you remove a workspace or a branch, never a badge. Once the branch is gone, so
+is the badge.
 
 So the cache is *sticky*: `Pr.refresh` merges each fetch onto the previous map instead of
 replacing it. Around that:
@@ -63,8 +64,14 @@ replacing it. Around that:
   that *wasn't* full is provably stale, so it's queried again.
 - **A reused project name starts fresh.** A `//repo` identity marker keeps a project name
   reused for a different repo from inheriting the old repo's badges.
-- **Writes are atomic.** Several sidebars refresh the same file, so the write goes through
-  `MarkerBlock.atomic_write`.
+- **Badges go with their branch.** Each write keeps only the badges of branches that
+  exist locally or render as a row, and `switchboard delete` drops the ones it deleted
+  unless another workspace still shows that branch in its history (`Pr.forget`). When git can't list the branches, nothing is dropped, so a failed read
+  can't empty the cache.
+- **Writes are atomic, and the last step is locked.** Several sidebars refresh the same
+  file, so the write goes through `MarkerBlock.atomic_write`. The final re-read, prune and
+  write run under a lock on the cache file, and the branch lists are read inside it, so a
+  refresh that fetched before a delete can't write the deleted branch's badge back.
 
 ## One data model, one front-end
 
@@ -426,8 +433,9 @@ refusal changes nothing. Then a **receipt** claims the workspace under the proje
 the row hides everywhere; the session closes; the checks that could have changed run again;
 git removes the folder unforced, so it refuses a file written after the re-check; and only
 once git no longer lists the worktree does delete forget the name, the branches (each at
-the sha pinned at preflight, after checking no other worktree uses it), the record and the
-markers. Forgetting waits for the folder because a removal that fails must leave a
+the sha pinned at preflight, after checking no other worktree uses it), their PR badges,
+the record and the markers. When a forced delete closes a session someone else is still
+attached to, they're moved to `sb/home` first rather than detached; `d` does the same. Forgetting waits for the folder because a removal that fails must leave a
 workspace that still works.
 
 The receipt is both the lock and the recovery record. It names the workspace, its owner

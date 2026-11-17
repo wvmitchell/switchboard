@@ -270,13 +270,15 @@ module Switchboard
       stub_method(Tmux, :session_for, ->(*) { removed ? nil : "sb/app/renamed" }) do
         stub_method(Tmux, :session_of, ->(*) { "sb/home" }) do
           stub_method(Tmux, :kill_session, ->(n) { killed << n; true }) do
-            stub_method(Git, :clean?, ->(*) { true }) do
-              stub_method(sb, :confirm, ->(*) { true }) { sb.send(:delete) }
+            stub_method(Tmux, :send_clients_home, ->(t) { killed << "home #{t}" }) do
+              stub_method(Git, :clean?, ->(*) { true }) do
+                stub_method(sb, :confirm, ->(*) { true }) { sb.send(:delete) }
+              end
             end
           end
         end
       end
-      assert_equal ["sb/app/renamed"], killed
+      assert_equal ["home =sb/app/renamed", "sb/app/renamed"], killed, "other clients go home before the kill"
     ensure
       ENV.delete("SWITCHBOARD_BIN")
     end
@@ -287,16 +289,17 @@ module Switchboard
       went_home = false
       killed = false
       reloaded = false
+      order = []
       sb.define_singleton_method(:reload) { |**| reloaded = true }
       stub_method(Git, :clean?, ->(*) { true }) do
         stub_method(Tmux, :session_for, ->(*) { "sb/app/a" }) do # found by its folder
           stub_method(Tmux, :session_of, ->(*) { "sb/app/a" }) do   # WE are that session
-            stub_method(Tmux, :go_home, -> { went_home = true }) do
-              stub_method(Tmux, :kill, ->(*) { killed = true }) do
-                stub_method(Process, :spawn, ->(*, **) { 1 }) do
-                  stub_method(Process, :detach, ->(*) {}) do
-                    stub_method(sb, :confirm, ->(*) { true }) do
-                      sb.send(:delete)
+            stub_method(Tmux, :go_home, -> { went_home = true; order << :home }) do
+              stub_method(Tmux, :send_clients_home, ->(t) { order << t }) do
+                stub_method(Tmux, :kill, ->(*) { killed = true; order << :kill }) do
+                  stub_method(Process, :spawn, ->(*, **) { 1 }) do
+                    stub_method(Process, :detach, ->(*) {}) do
+                      stub_method(sb, :confirm, ->(*) { true }) { sb.send(:delete) }
                     end
                   end
                 end
@@ -306,6 +309,7 @@ module Switchboard
         end
       end
       assert went_home, "falls back to home before killing the session we live in"
+      assert_equal [:home, "=sb/app/a", :kill], order, "then sends anyone else on it home, then kills it"
       assert killed, "then kills it"
       refute reloaded, "home + the reaper's broadcast drive the repaint, not this dying process"
     ensure

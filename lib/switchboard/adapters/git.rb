@@ -274,10 +274,13 @@ module Switchboard
       end.uniq
     end
 
-    # Every local branch, spelled the way git stores it. Empty when git can't say. Skips a
-    # name that isn't valid UTF-8, as visited_branches does.
-    def local_branches(repo)
-      lines = capture(repo, "for-each-ref", "--format=%(refname)", "refs/heads").each_line(chomp: true)
+    # Every local branch, spelled the way git stores it. Empty when git can't say (nil with
+    # `strict:`). Skips a name that isn't valid UTF-8, as visited_branches does.
+    def local_branches(repo, strict: false)
+      out = capture(repo, "for-each-ref", "--format=%(refname)", "refs/heads")
+      return nil if strict && !$?&.success?
+
+      lines = out.each_line(chomp: true)
       lines.select(&:valid_encoding?).map { |r| r.delete_prefix("refs/heads/") }
     end
 
@@ -402,14 +405,18 @@ module Switchboard
     # logs/HEAD mtime + limit: a new checkout appends to the reflog (bumping mtime)
     # and invalidates the entry. The git-dir is remembered too, and resolved again if
     # its reflog is gone: a new worktree can take a deleted one's path under another
-    # admin dir. cache nil ⇒ no memo (every call recomputes).
-    def branch_history(worktree, limit: nil, cache: nil)
+    # admin dir. cache nil ⇒ no memo (every call recomputes). `strict:` returns nil
+    # when an existing worktree's git dir can't be read, rather than an empty history;
+    # a folder removed by hand renders no rows, so its history is empty either way.
+    def branch_history(worktree, limit: nil, cache: nil, strict: false)
       entry = cache && cache[worktree]
       entry = nil if entry && !File.exist?(File.join(entry[0], "logs", "HEAD"))
       # --absolute-git-dir, not --git-dir: the latter returns a relative ".git",
       # which would resolve logs/HEAD against the process cwd (one worktree) for
       # every row in the tree. Absolute makes it the worktree's own reflog.
       gitdir = entry ? entry[0] : capture(worktree, "rev-parse", "--absolute-git-dir").strip
+      return nil if strict && gitdir.empty? && Dir.exist?(worktree)
+
       head_log = File.join(gitdir, "logs", "HEAD")
       return [] unless File.exist?(head_log)
 

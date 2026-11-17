@@ -207,8 +207,8 @@ scripts. With none registered it says how to add one.
 
 ### `switchboard refresh [name] [--poke PANE]`
 Re-fetch PR badges from `gh` and merge the result onto the on-disk cache (a
-cached badge is only ever updated, never dropped — it persists even after its
-PR falls out of gh's query windows, until the branch or workspace goes away).
+cached badge persists even after its PR falls out of gh's query windows, and is
+dropped only once its branch no longer exists locally or renders as a row).
 With a project name, just that project; otherwise all. Normally you don't run this — the sidebar
 refreshes badges automatically (on agent completion, on switch-in, and on an idle
 backstop). Run it to catch a PR you merged or closed *on GitHub* (which fires no
@@ -412,9 +412,9 @@ An interrupted delete leaves a receipt: the next `delete` of the same workspace 
 `switchboard prune`, once git no longer lists it) finishes it, and `doctor` names one that
 stopped while git still lists the workspace.
 
-Two limits remain until a follow-up release: a deleted branch's PR badge stays in the PR
-cache, and a `--force` delete detaches other clients attached to the session (an unforced
-one refuses `[busy]` first). After upgrading, run `switchboard reload-sidebars` before
+A `--force` delete moves anyone else attached to the session to `sb/home` before closing
+it, so they land back in switchboard instead of being detached (an unforced delete refuses
+`[busy]` while anyone is attached). The sidebar's `d` does the same. After upgrading, run `switchboard reload-sidebars` before
 relying on `--creation`: an older sidebar can still collect a `new` record you've looked at.
 
 #### delete: not-found

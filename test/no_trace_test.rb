@@ -37,6 +37,8 @@ module Switchboard
       [Monitoring.state_dir].each { |d| Dir.glob(File.join(d, "*")).each { |f| File.utime(Time.now - 7200, Time.now - 7200, f) } }
       Dir.glob(File.join(OffstageHold.state_dir, "*")).each { |f| File.delete(f) }
       OffstageHold.hold(@wt, pid: Process.pid)
+      MarkerBlock.atomic_write(Pr.cache_file("app"), JSON.dump(Pr::REPO_KEY => "o/app", "main" => nil,
+                                                                "trace-me" => { "identifier" => "#7" }))
       rec
     end
 
@@ -73,12 +75,14 @@ module Switchboard
         next true if keys.include?(File.basename(f))
 
         body = File.read(f).b
-        body.include?(@real.b) || body.include?(@wt.b) || (body.include?("trace-me".b) && f.include?("/.git/") && !f.end_with?("ORIG_HEAD", "/logs/HEAD"))
+        body.include?(@real.b) || body.include?(@wt.b) ||
+          (body.include?("trace-me".b) && (f == Pr.cache_file("app") || (f.include?("/.git/") && !f.end_with?("ORIG_HEAD", "/logs/HEAD"))))
       rescue StandardError
         false
       end
       assert_empty hits, "these still name the deleted workspace"
       assert_nil Creation.find(rec["id"])
+      assert_equal [Pr::REPO_KEY, "main"], Pr.for_project("app").keys, "only the deleted branch's badge goes"
       assert_equal 1, Dir.children(PendingDelete.state_dir).size, "the unrelated hide marker stays"
       refute_includes git(@repo, "worktree", "list"), "trace-me"
       refute_includes git(@repo, "branch", "--list"), "trace-me"

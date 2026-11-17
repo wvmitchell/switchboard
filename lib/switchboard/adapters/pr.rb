@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "fileutils"
 require "json"
 require "shellwords"
 require_relative "git"
@@ -48,9 +49,8 @@ module Switchboard
     # eventually falls out of both — but its branch row (worktree or reflog
     # history) can outlive that by months, and a badge must persist as long as
     # its row renders: you remove a workspace or a branch, never a badge. So a
-    # cached entry is only ever *updated* (a fresh row for the same head branch
-    # wins), never dropped; entries whose branch no longer renders anywhere are
-    # inert, ~100 bytes each, so the cache needs no GC. Rendered branches still
+    # cached entry is never dropped while its branch exists locally or renders;
+    # once the branch is gone, the write drops it (`keep`). Rendered branches still
     # missing after the merge get a targeted backfill query (below) — the
     # recovery path for a badge the windows lost before stickiness existed.
     # Returns the merged map, or nil when the fetch failed (gh unreachable /
@@ -73,10 +73,62 @@ module Switchboard
       repo = repo_slug(repo_path)
       data = previous_map(name, repo).merge(fresh)
       backfill(data, repo_path, fresh, branch_limit: branch_limit)
-      data = previous_map(name, repo).merge(data)
-      data[REPO_KEY] = repo if repo
-      MarkerBlock.atomic_write(cache_file(name), JSON.dump(data))
+      # The final re-read, prune and write hold the cache lock, and the branch sets are
+      # read inside it, so a refresh that fetched before a delete can't write its
+      # forgotten badge back (Pr.forget takes the same lock).
+      with_lock(name) do
+        data = previous_map(name, repo).merge(data)
+        keep = keep(repo_path, branch_limit)
+        data = data.select { |branch, _| branch == REPO_KEY || keep.include?(branch) } if keep
+        data[REPO_KEY] = repo if repo
+        MarkerBlock.atomic_write(cache_file(name), JSON.dump(data))
+      end
       data
+    end
+
+    # Branches whose badge is worth keeping: every local branch plus every rendered one
+    # (a reflog row can outlive its branch). nil when git couldn't say, and then nothing
+    # is pruned: a failed read must never empty the cache.
+    def keep(repo_path, branch_limit)
+      return nil if repo_path.to_s.empty? # `git -C ""` would read the cwd's repo
+
+      trees = Git.worktrees(repo_path, strict: true)
+      local = Git.local_branches(repo_path, strict: true)
+      return nil if trees.nil? || local.nil?
+
+      rendered = rendered_branches(repo_path, limit: branch_limit, trees: trees, strict: true)
+      rendered && (local | rendered)
+    end
+
+    # Drop the badges of branches a delete just removed, except one another workspace
+    # still shows as a history row (refresh's `keep` rule). True once none is left to
+    # drop. When git can't say what still renders, nothing is dropped: the badges are
+    # inert once their rows are gone, and the next refresh that can read git prunes them.
+    def forget(name, branches, repo_path, branch_limit:)
+      return true if branches.empty? || !File.exist?(cache_file(name))
+
+      gone = []
+      with_lock(name) do
+        keep = keep(repo_path, branch_limit)
+        return true if keep.nil?
+
+        gone = branches - keep
+        data = for_project(name)
+        return true unless gone.any? { |b| data.key?(b) }
+
+        MarkerBlock.atomic_write(cache_file(name), JSON.dump(data.except(*gone)))
+      end
+      for_project(name).keys.intersection(gone).empty?
+    rescue SystemCallError
+      false
+    end
+
+    def with_lock(name)
+      FileUtils.mkdir_p(cache_dir)
+      File.open("#{cache_file(name)}.lock", File::RDWR | File::CREAT, 0o644) do |lock|
+        lock.flock(File::LOCK_EX)
+        yield
+      end
     end
 
     # The previous cache as the sticky base — emptied when its recorded repo
@@ -186,12 +238,15 @@ module Switchboard
     # for the rendered branches themselves (a `gh pr checkout`'d fork branch
     # should badge its fork PR); the trunk is the one name where collision is
     # likely and the row never shows.
-    def rendered_branches(repo_path, limit: nil)
+    # `strict:` gives nil when any worktree's history can't be read (refresh's prune).
+    def rendered_branches(repo_path, limit: nil, trees: Git.worktrees(repo_path), strict: false)
       # identical?, not string equality: git prints resolved paths, the config
       # may hold a symlinked spelling of the same checkout.
-      Git.worktrees(repo_path).reject { |w| w[:bare] || File.identical?(w[:path], repo_path) }.flat_map do |w|
-        Git.branch_history(w[:path], limit: limit) | [w[:branch]].compact
-      end.uniq
+      histories = trees.reject { |w| w[:bare] || File.identical?(w[:path], repo_path) }.map do |w|
+        history = Git.branch_history(w[:path], limit: limit, strict: strict)
+        history && (history | [w[:branch]].compact)
+      end
+      histories.include?(nil) ? nil : histories.flatten.uniq
     end
 
     def pr_entry(pr)

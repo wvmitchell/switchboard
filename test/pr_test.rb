@@ -103,7 +103,7 @@ module Switchboard
       stub_fetch(data) { Pr.refresh("proj", "/whatever", branch_limit: 10) }
 
       assert_equal data, Pr.for_project("proj")
-      assert_equal [File.basename(Pr.cache_file("proj"))], Dir.children(@cache),
+      assert_equal [File.basename(Pr.cache_file("proj"))], Dir.children(@cache).reject { |c| c.end_with?(".lock") },
                    "no temp file left behind after the rename"
     end
 
@@ -469,6 +469,134 @@ module Switchboard
 
     def test_parse_pr_json_returns_the_parsed_array
       assert_equal [{ "number" => 7 }], Pr.parse_pr_json('[{"number":7}]')
+    end
+
+    # --- badges go with their branch ---
+
+    def branch_repo
+      repo = temp_git_repo("app")
+      git(repo, "branch", "kept-local")
+      git(repo, "branch", "deleted-soon")
+      wt = path("wt")
+      git(repo, "worktree", "add", "-q", "-b", "wt-branch", wt)
+      repo
+    end
+
+    # Value: protects=a deleted branch's badge doesn't come back; fails_when=refresh writes
+    # every merged key again; why_new=D5's prune; seam=fetch only (real git)
+    def test_refresh_drops_badges_of_branches_that_no_longer_exist
+      repo = branch_repo
+      badge = { "identifier" => "#1", "status" => "MERGED", "is_draft" => 0 }
+      seed("proj", { Pr::REPO_KEY => "o/r", "kept-local" => badge, "wt-branch" => badge, "gone" => badge })
+      git(repo, "branch", "-D", "deleted-soon")
+
+      stub_fetch({ "deleted-soon" => badge }) { Pr.refresh("proj", repo, branch_limit: 10) }
+
+      assert_equal [Pr::REPO_KEY, "kept-local", "wt-branch"].sort, Pr.for_project("proj").keys.sort
+    end
+
+    # Value: protects=a failed git read never empties the cache; fails_when=a nil listing
+    # reads as "no branches"; why_new=D5's fail-safe; seam=local_branches
+    def test_refresh_prunes_nothing_when_git_cannot_list_branches
+      repo = branch_repo
+      seed("proj", { "gone" => { "identifier" => "#1" } })
+      stub_method(Git, :local_branches, ->(*, **) {}) do
+        stub_fetch({}) { Pr.refresh("proj", repo, branch_limit: 10) }
+      end
+      assert Pr.for_project("proj").key?("gone")
+    end
+
+    # Value: protects=delete drops exactly its branches' badges; fails_when=forget drops the
+    # repo identity or a neighbour; why_new=Pr.forget; seam=none
+    def test_forget_drops_only_the_named_branches
+      repo = branch_repo
+      seed("proj", { Pr::REPO_KEY => "o/r", "a" => nil, "b" => { "identifier" => "#2" } })
+      assert Pr.forget("proj", ["a"], repo, branch_limit: 10)
+      assert_equal [Pr::REPO_KEY, "b"], Pr.for_project("proj").keys
+      assert Pr.forget("proj", ["a"], repo, branch_limit: 10), "already gone is success"
+      assert Pr.forget("nothing-cached", ["a"], repo, branch_limit: 10)
+    end
+
+    # Value: protects=a failed git read never costs a badge another workspace shows;
+    # fails_when=forget treats "can't tell" as "keep nothing"; why_new=fail-closed forget; seam=none
+    def test_forget_drops_nothing_when_git_cannot_say_what_renders
+      seed("proj", { "a" => nil })
+      assert Pr.forget("proj", ["a"], path("not-a-repo"), branch_limit: 10)
+      assert Pr.for_project("proj").key?("a")
+    end
+
+    # Value: protects=a worktree folder removed by hand doesn't stop pruning for the whole
+    # repo; fails_when=a missing folder reads as "can't tell"; why_new=strict history; seam=none
+    def test_refresh_still_prunes_with_a_worktree_folder_removed_by_hand
+      repo = branch_repo
+      FileUtils.rm_rf(path("wt"))
+      seed("proj", { "gone" => { "identifier" => "#1" } })
+      stub_fetch({}) { Pr.refresh("proj", repo, branch_limit: 10) }
+      refute Pr.for_project("proj").key?("gone")
+    end
+
+    # Value: protects=one worktree's unreadable history never prunes its rows' badges;
+    # fails_when=a failed reflog read counts as an empty history; why_new=strict branch_history;
+    # seam=branch_history
+    def test_refresh_prunes_nothing_when_a_history_cannot_be_read
+      repo = branch_repo
+      seed("proj", { "gone" => { "identifier" => "#1" } })
+      stub_method(Git, :branch_history, ->(*, strict: false, **) { strict ? nil : [] }) do
+        stub_fetch({}) { Pr.refresh("proj", repo, branch_limit: 10) }
+      end
+      assert Pr.for_project("proj").key?("gone")
+    end
+
+    # A branch deleted locally but visited in another workspace still renders there as a
+    # history row: switch a worktree onto it and away, then delete it.
+    def visit_and_delete(repo, branch)
+      wt = path("wt")
+      git(wt, "checkout", "-q", "-b", branch)
+      git(wt, "checkout", "-q", "wt-branch")
+      git(repo, "branch", "-D", branch)
+    end
+
+    # Value: protects=a history row keeps its badge after its branch is deleted; fails_when=keep
+    # drops the rendered half; why_new=every kept key in the prune test is also local; seam=none
+    def test_refresh_keeps_the_badge_of_a_branch_only_history_shows
+      repo = branch_repo
+      visit_and_delete(repo, "old-work")
+      seed("proj", { "old-work" => { "identifier" => "#3" } })
+      stub_fetch({}) { Pr.refresh("proj", repo, branch_limit: 10) }
+      assert Pr.for_project("proj").key?("old-work")
+    end
+
+    # Value: protects=delete doesn't blank a badge another workspace still shows; fails_when=forget
+    # drops every named branch; why_new=forget's keep rule; seam=none
+    def test_forget_keeps_a_branch_another_workspace_still_shows
+      repo = branch_repo
+      visit_and_delete(repo, "old-work")
+      git(repo, "branch", "-D", "deleted-soon")
+      seed("proj", { "old-work" => nil, "deleted-soon" => nil })
+      assert Pr.forget("proj", %w[old-work deleted-soon], repo, branch_limit: 10)
+      assert_equal ["old-work"], Pr.for_project("proj").keys
+    end
+
+    # Value: protects=a refresh that fetched before a delete can't write the badge back;
+    # fails_when=the branch lists are read before the lock; why_new=the race D5 closes;
+    # seam=backfill (runs the delete between fetch and write)
+    def test_a_delete_during_refresh_is_not_undone
+      repo = branch_repo
+      badge = { "identifier" => "#4" }
+      seed("proj", { "deleted-soon" => badge })
+      delete_branch = -> { git(repo, "branch", "-D", "deleted-soon") }
+      stub_method(Pr, :backfill, lambda { |*, **|
+        delete_branch.call
+        Pr.forget("proj", ["deleted-soon"], repo, branch_limit: 10)
+      }) do
+        stub_fetch({ "deleted-soon" => badge }) { Pr.refresh("proj", repo, branch_limit: 10) }
+      end
+      refute Pr.for_project("proj").key?("deleted-soon")
+    end
+
+    def test_local_branches_strict_is_nil_when_git_fails
+      assert_nil Git.local_branches(path("not-a-repo"), strict: true)
+      assert_equal [], Git.local_branches(path("not-a-repo"))
     end
 
     private

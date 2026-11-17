@@ -392,7 +392,10 @@ module Switchboard
     # Step 4: kill every session of the workspace by id, stop before the folder if one
     # survives, then give its sidebars a moment and TERM any that are still the same process.
     def close_session(t, wait: true)
-      t.sessions.each { |s| Tmux.kill_session_id(s[:id]) }
+      t.sessions.each do |s|
+        Tmux.send_clients_home(s[:id]) # only a forced delete gets here with someone attached
+        Tmux.kill_session_id(s[:id])
+      end
       left = Tmux.sessions_strict
       alive = left.nil? ? t.sessions : t.sessions.select { |s| left.any? { |l| l[:id] == s[:id] } }
       unless alive.empty?
@@ -482,6 +485,10 @@ module Switchboard
           again == :ok && !now.key?(real) ? removed << "name #{map[real].name}" : failed << "name #{map[real].name}"
         end
         branches(receipt, removed, kept, failed)
+        project = receipt["project"].to_s
+        unless project.empty? || Pr.forget(project, receipt["deleted"], receipt["repo"], branch_limit: Config.new.max_branch_history)
+          failed << "PR badges for #{receipt['deleted'].join(', ')}"
+        end
         stuck = Leftovers.clear_workspace(real, except: RESUME_EXCEPT)
         failed.concat(stuck.map { |f| "marker #{f}" })
         rec = receipt["record"] && Creation.find(receipt["record"])
