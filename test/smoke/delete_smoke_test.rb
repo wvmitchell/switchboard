@@ -62,6 +62,26 @@ module Switchboard
       Process.wait(pid) rescue nil
     end
 
+    # Value: protects=a human's --force with someone attached leaves them in switchboard;
+    # fails_when=the kill detaches the client; why_new=D6; seam=none
+    def test_a_forced_delete_sends_an_attached_client_home
+      sess, leaf, real = workspace
+      pty, pty_in, pid = PTY.spawn("tmux", "attach", "-t", sess)
+      wait_until("a client is on #{sess}") { tmux("list-clients", "-t", sess).lines.any? }
+
+      code, _out, err = delete(leaf, "--force")
+      assert_equal 0, code, err
+      refute session?(sess)
+      refute File.exist?(real)
+      wait_until("the client lands on #{Tmux::HOME}") do
+        tmux("list-clients", "-F", fmt("client_session")).lines.map(&:strip).include?(Tmux::HOME)
+      end
+      assert_nil Process.waitpid(pid, Process::WNOHANG), "the client is still attached, not detached"
+    ensure
+      [pty, pty_in].each { |io| io&.close rescue nil }
+      Process.wait(pid) rescue nil
+    end
+
     # Value: protects=an agent idle at its prompt (as Claude stays after the ◷ check) doesn't
     # block the monitor's delete, and one with no idle report does; fails_when=any live agent
     # reads as busy, or a hookless one doesn't; why_new=the strict scan; seam=none (a real

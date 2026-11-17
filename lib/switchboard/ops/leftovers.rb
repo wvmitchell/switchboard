@@ -22,7 +22,8 @@ module Switchboard
     TEMP_AGE = 3600 # a crashed writer's temp file this old, with a dead pid, is debris
 
     # Stores that hold nothing per workspace (or, for the PR cache, branch names that
-    # aren't paths). `reserve-*.lock` files in the creation dir outlive every record by design.
+    # aren't paths; delete drops its branches' badges itself with Pr.forget).
+    # `reserve-*.lock` files in the creation dir outlive every record by design.
     # delete-traces holds `delete`'s crash reports, dropped after TRACE_AGE.
     GLOBAL = %w[collapse branch_fold full_header width prs latest.json sounds sb-agent-hook delete-traces].freeze
     TRACE_AGE = 7 * 86_400

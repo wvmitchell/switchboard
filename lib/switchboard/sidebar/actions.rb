@@ -522,8 +522,10 @@ module Switchboard
         deleting_current = !current.nil? && current == session
         if deleting_current
           Tmux.go_home
+          Tmux.send_clients_home("=#{session}")
           Tmux.kill(worktree, session)
         else
+          Tmux.send_clients_home("=#{session}") if session
           Tmux.kill(worktree, session)
           reload(hooks_only: true)
         end

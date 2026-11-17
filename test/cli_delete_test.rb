@@ -90,6 +90,17 @@ module Switchboard
       assert_includes out, "removed: branch feat"
     end
 
+    # Value: protects=a badge the delete couldn't drop is reported and kept for prune;
+    # fails_when=Pr.forget's result is ignored; why_new=D5's forget step; seam=Pr.forget
+    def test_a_badge_that_cant_be_forgotten_is_partial
+      code = out = err = nil
+      stub_method(Pr, :forget, ->(*, **) { false }) { code, out, err = run_delete("feat") }
+      assert_equal 7, code, out
+      assert_match(/PR badges for feat/, err)
+      refute File.exist?(@wt), "the folder still goes"
+      refute_nil DeleteReceipt.read(@real), "the receipt stays so prune can finish"
+    end
+
     # Value: protects=a refusal changes nothing, and --force passes the 5-class only;
     # fails_when=a check runs after a write; seam=none
     def test_a_dirty_tree_is_refused_without_changing_anything_and_force_passes_it
@@ -273,10 +284,16 @@ module Switchboard
       calls = 0
       CLI.instance_variable_set(:@config, nil)
       code = nil
+      order = []
       quiet(clients: ["/dev/ttys009"]) do
-        stub_method(Tmux, :sessions_strict, -> { (calls += 1) == 1 ? [session] : [] }) { capture_io { code = CLI.delete(%w[feat --force]) } }
+        stub_method(Tmux, :sessions_strict, -> { (calls += 1) == 1 ? [session] : [] }) do
+          stub_method(Tmux, :send_clients_home, ->(id) { order << [:home, id] }) do
+            stub_method(Tmux, :kill_session_id, ->(id) { order << [:kill, id] }) { capture_io { code = CLI.delete(%w[feat --force]) } }
+          end
+        end
       end
       assert_equal 0, code, "a human's --force passes busy"
+      assert_equal [[:home, "$1"], [:kill, "$1"]], order, "the attached client goes home before the kill"
     end
 
     def test_inside_by_cwd

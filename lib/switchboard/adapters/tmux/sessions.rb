@@ -46,6 +46,20 @@ module Switchboard
       pin(sidebar)
     end
 
+    # Move every client on a session that's about to be killed to home, so a delete
+    # leaves them in switchboard rather than detached. Unlike go_home it never switches
+    # the caller's own client unless that client is on the session.
+    def send_clients_home(target)
+      clients = session_clients(target)
+      return if clients.nil? || clients.empty?
+
+      set_sidebar_flag(HOME, "on")
+      ensure_home
+      ensure_work_pane(HOME)
+      clients.each { |c| system("tmux", "-u", "switch-client", "-c", c, "-t", "=#{HOME}", out: File::NULL, err: File::NULL) }
+      poke(window_sidebar_pane(HOME))
+    end
+
     def ensure_home
       ensure_session(HOME, home_dir)
       ensure_sidebar(HOME)

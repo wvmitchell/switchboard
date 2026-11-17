@@ -274,10 +274,13 @@ module Switchboard
       end.uniq
     end
 
-    # Every local branch, spelled the way git stores it. Empty when git can't say. Skips a
-    # name that isn't valid UTF-8, as visited_branches does.
-    def local_branches(repo)
-      lines = capture(repo, "for-each-ref", "--format=%(refname)", "refs/heads").each_line(chomp: true)
+    # Every local branch, spelled the way git stores it. Empty when git can't say (nil with
+    # `strict:`). Skips a name that isn't valid UTF-8, as visited_branches does.
+    def local_branches(repo, strict: false)
+      out = capture(repo, "for-each-ref", "--format=%(refname)", "refs/heads")
+      return nil if strict && !$?&.success?
+
+      lines = out.each_line(chomp: true)
       lines.select(&:valid_encoding?).map { |r| r.delete_prefix("refs/heads/") }
     end
 
