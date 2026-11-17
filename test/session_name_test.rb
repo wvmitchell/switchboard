@@ -1429,7 +1429,9 @@ module Switchboard
           File.symlink("#{first}-2", first)
         end
       end
-      SessionName::Outcome.record("#{first}-2", :ceiling, "first-2")
+      # Seeded straight into the store: record refuses a folder that doesn't exist yet.
+      real = SessionName::Outcome.realpath("#{first}-2")
+      KeyedMarkerStore.write(SessionName::Outcome.dir, KeyedMarkerStore.key(real), [real, :ceiling, "first-2"].join("\t"))
       result, = with_fake(fake) { run_worker(first, "first") }
       assert_equal :superseded, result
       assert_equal ["ceiling"], SessionName::Outcome.all.map { |o| o[:kind] }, "the bridge didn't let us clear it"

@@ -370,7 +370,12 @@ called, so a renamed workspace's session is never taken for an orphan.
 
 It also forgets stored names for workspaces that are gone: a name whose folder has been
 missing for 30 days is dropped, reported as `dropped N stored name(s) for workspaces gone
-30 days`. This part runs even with no tmux server. See
+30 days`. This part runs even with no tmux server.
+
+Last, it clears files deleted workspaces left in switchboard's own stores (the markers,
+agent states and records `doctor` counts as leftovers), reported as
+`cleared N leftover file(s) from deleted workspaces (<store> N, …)`. This also runs with no
+tmux server, and a dry run reports `would clear` instead. See
 [How-to: housekeeping](howto-housekeeping.md).
 
 ### `switchboard quit`
@@ -398,7 +403,9 @@ sound resolution, orphaned sessions, stored workspace names (a name whose folder
 with the `rename` to run if the worktree looks like it moved; an unusable entry; a name
 that clashes and falls back to the folder name; a session or unpushed branch whose name
 disagrees with the workspace's; an unreadable names store; sidebars that don't read stored
-names, or a tmux that can't list its panes), the remote links (`⇅`) it sees (or a warning
+names, or a tmux that can't list its panes), files deleted workspaces left in its stores
+(counted once they're an hour old, with `prune` as the fix) and folders under the worktree
+root that git no longer lists, the remote links (`⇅`) it sees (or a warning
 when Claude is running but its session files are missing, none are in the shape
 switchboard reads, or every live one fails the start-time check, i.e. a Claude update
 moved or reshaped them), a `CLAUDE_CONFIG_DIR` that differs between your shell and tmux

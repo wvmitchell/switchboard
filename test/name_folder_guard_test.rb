@@ -22,6 +22,7 @@ module Switchboard
       "ops/doctor" => 5,               # the binary, a branch leaf, and the folder beside its name
       "ops/installer" => 1,            # a symlink's name
       "ops/isolated_server" => 2,      # socket dirs and the tmux binary
+      "ops/leftovers" => 5,            # store files named by a pid or a temp suffix, and .git
       "ops/registrar" => 1,            # a repo's default project name
       "ops/rename" => 4,               # folders that block a name, and "back to the folder name"
       "ops/sandbox" => 1,              # a sandbox file named after its checkout

@@ -537,6 +537,60 @@ module Switchboard
       refute_includes out, "trusted"
     end
 
+    # --- doctor_leftovers: files deleted workspaces left behind -------------------
+
+    def leftover_project
+      feat = names_project
+      gone = File.join(File.dirname(feat), "gone")
+      FileUtils.mkdir_p(gone)
+      Attention.mark(gone)
+      Monitoring.mark(gone)
+      FileUtils.rm_rf(gone)
+      [feat, gone]
+    end
+
+    def age_all(dir, by)
+      Dir.glob(File.join(dir, "*")).each { |f| File.utime(Time.now - by, Time.now - by, f) }
+    end
+
+    # Value: protects=doctor reports leftovers once settled and names stray folders, each with
+    # its fix; fails_when=a fresh leftover flaps the ✗, or a settled one goes unreported;
+    # why_new=new check; seam=none (real stores and a real worktree)
+    def test_doctor_reports_settled_leftovers_and_stray_folders
+      feat, = leftover_project
+      fresh = capture { Doctor.doctor_leftovers(Config.new) }
+      assert_includes fresh, "no leftovers from deleted workspaces", "younger than an hour: a sidebar may still GC it"
+
+      [Attention.state_dir, Monitoring.state_dir].each { |d| age_all(d, Leftovers::GRACE + 60) }
+      stray = File.join(File.dirname(feat), "old copy")
+      FileUtils.mkdir_p(stray)
+      out = capture { Doctor.doctor_leftovers(Config.new) }
+      assert_includes out, "2 leftover file(s) from deleted workspaces (attention 1, monitoring 1) — run `switchboard prune` to clear them"
+      assert_includes out, "#{File.realpath(stray)} is under the worktree root but isn't a workspace — if nothing in it is " \
+                           "needed, run `rm -rf #{Shellwords.escape(File.realpath(stray))}`"
+    end
+
+    # Value: protects=doctor never changes a file, leftovers and stale outcomes included;
+    # fails_when=any check GCs on read (Outcome.all used to); why_new=doctor is the read-only
+    # surface the monitor runs; seam=Pr.authenticated? (network)
+    def test_the_full_doctor_changes_no_file
+      leftover_project
+      gone_outcome = path("worktrees", "app", "was-here")
+      FileUtils.mkdir_p(gone_outcome)
+      SessionName::Outcome.record(gone_outcome, "ceiling", "x")
+      FileUtils.rm_rf(gone_outcome)
+      age_all(Attention.state_dir, Leftovers::GRACE + 60)
+      snapshot = lambda do
+        Dir.glob(path("**", "*"), File::FNM_DOTMATCH).reject { |f| File.basename(f).start_with?("reserve-") }
+           .to_h { |f| [f, File.file?(f) ? [File.mtime(f), File.read(f)] : :dir] }
+      end
+      before = snapshot.call
+      capture { run_doctor }
+      after = snapshot.call
+      assert_empty before.keys - after.keys, "doctor removed files"
+      assert_empty before.select { |f, v| after[f] != v }.keys, "doctor changed files"
+    end
+
     # --- doctor_names: stored workspace names ------------------------------------
 
     def names_project

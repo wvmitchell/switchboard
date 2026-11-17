@@ -378,6 +378,30 @@ global codex `[hooks]` block.
 **Hooks that are live, not just configured.** `doctor` reports whether those hooks are
 loaded in the *running* server. They go stale after a `git pull` until tmux reloads.
 
+**Leftovers from deleted workspaces.** Every store that keeps something per workspace (the
+bold, ∞, alert and ◷ markers, agent hook states, rename-sync outcomes and worker claims,
+hide markers, dispatch records) is a row in one registry, `Leftovers`. An entry is a
+leftover when the folder it belongs to is gone. It is also one when that folder sits inside
+a registered project's folder under the worktree root but isn't a worktree git lists: a
+half-removed tree that a late writer touched. That second rule runs only when every
+project's worktree listing was read in full, since a failed read must never make a live
+workspace look deleted, and it never applies outside the worktree root, where the global
+codex hook reports from folders switchboard doesn't own. Entries that carry a process id
+instead of a path (rename-sync worker claims and typing locks) are leftovers once that
+process is dead, and a crashed writer's temp file is one once it's an hour old and its
+writer is gone.
+
+Most of these heal on their own when a sidebar scans, so `doctor` counts only entries left
+over for more than an hour, by the file's modification time. A marker a sidebar is about to
+collect never flaps the ✗. When some remain, doctor shows one ✗ line with the count per
+store and points at `prune`. It also names folders under a project's worktree root that git
+no longer lists, with the `rm -rf` to run, and never removes them itself. Doctor reads these
+stores without collecting anything, so running it changes no file.
+
+The registry is enforced rather than trusted: a test reads every store location in `lib/`
+and fails until a new store is a `Leftovers` row or is listed as global (folds, width, the
+PR cache, sounds and the update cache hold nothing per workspace).
+
 **Orphaned sidebar processes.** A `switchboard sidebar` can outlive its pane. `doctor`
 finds them by comparing the number of running sidebar processes (`pgrep`) with the number
 of sidebar panes (`Tmux.sidebar_pane_count`). A straggler matters because tmux recycles
@@ -424,6 +448,12 @@ prune marks the entry with the time it noticed, and drops it once the folder has
 30 days. The wait gives `doctor` time to point at a worktree you moved by hand, so you can
 carry its name over. Prune only does this for verified projects, and does nothing when the
 store can't be read.
+
+**Leftovers.** `prune` removes every leftover the registry finds (see
+[What doctor checks beyond presence](#what-doctor-checks-beyond-presence)) and reports the
+count per store. A dispatch record goes by the same rule the sidebar's own collection uses,
+re-decided under its lock, so a record someone just acknowledged or that is still building
+stays. Names keep their 30-day rule above rather than this one.
 
 **Legacy rename bridges.** Older versions moved the folder on rename and left a symlink at
 the old path. Prune still removes those once they dangle (`Reconcile.reap_bridges`).

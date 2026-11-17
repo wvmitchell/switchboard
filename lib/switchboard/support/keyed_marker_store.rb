@@ -109,5 +109,17 @@ module Switchboard
       Set.new
     end
 
+    # [[file, content, mtime], …] of every fully-written marker, deleting nothing: the
+    # read-only twin of scan, for doctor and Leftovers.
+    def entries(dir)
+      Dir.glob(File.join(dir, "*")).filter_map do |file|
+        next if file.end_with?(".tmp") || !File.file?(file)
+
+        content = File.read(file).chomp
+        [file, content, File.mtime(file)] unless content.empty?
+      rescue StandardError
+        nil
+      end
+    end
   end
 end

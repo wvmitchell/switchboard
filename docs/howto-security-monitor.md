@@ -337,6 +337,8 @@ gh issue list -R wvmitchell/switchboard -L 100 --json number,title
 - `switchboard doctor 2>&1 | grep -v '✓'`, against the baselined warnings. Only a NEW
   warning is a finding; a known one the maintainer has chosen to live with (say, codex
   hooks not yet trusted in `/hooks`) stays in the baseline and isn't re-reported.
+- A "leftover file(s) from deleted workspaces" ✗ is never baselined: it's fixable. Raise
+  it once in the digest with its `switchboard prune` fix, and don't run `prune` yourself.
 
 ### 5. Agent dispatch
 

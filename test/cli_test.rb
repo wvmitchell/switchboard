@@ -610,6 +610,14 @@ module Switchboard
       refute_includes CLI.prune_summary(report.tap { |r| r.names = 0 }, [], false), "stored name"
     end
 
+    def test_prune_summary_reports_cleared_leftovers_by_store
+      counts = { attention: 2, agents: 1, names: 0 }
+      assert_includes CLI.prune_summary(report, [], false, counts),
+                      "cleared 3 leftover file(s) from deleted workspaces (attention 2, agents 1)"
+      assert_includes CLI.prune_summary(report, [], true, counts), "would clear 3 leftover file(s)"
+      refute_includes CLI.prune_summary(report, [], false, { attention: 0 }), "leftover"
+    end
+
     def test_prune_summary_distinguishes_unreachable_from_empty
       assert_equal "no tmux server — sessions not reconciled", CLI.prune_summary(report(reachable: false), [], false)
       assert_equal "no sb/ sessions found", CLI.prune_summary(report(sb_count: 0), [], false)
