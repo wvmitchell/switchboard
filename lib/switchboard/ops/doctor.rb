@@ -35,6 +35,7 @@ module Switchboard
       doctor_sounds(config)
       doctor_sessions(config)
       doctor_names(config)
+      doctor_leftovers(config)
       doctor_remote_links
       doctor_session_names
       doctor_orphan_sidebars
@@ -271,6 +272,25 @@ module Switchboard
       else
         puts row(false, "#{report.orphans.size} orphaned sb/ session(s) — run `switchboard prune` (--dry-run to preview)")
       end
+    end
+
+    # Files deleted workspaces left in switchboard's stores, counted once they're over an
+    # hour old (a sidebar scan may still be about to GC a fresher one), and folders under
+    # the worktree root git no longer lists. Both are fixable, so both are ✗.
+    def doctor_leftovers(config)
+      counts = Leftovers.settled(Leftovers.scan(config))
+      if counts.empty?
+        puts row(true, "no leftovers from deleted workspaces")
+      else
+        puts row(false, "#{counts.values.sum} leftover file(s) from deleted workspaces (#{Leftovers.breakdown(counts)}) — " \
+                        "run `switchboard prune` to clear them")
+      end
+      Leftovers.stray_folders(config).each do |dir|
+        puts row(false, "#{dir} is under the worktree root but isn't a workspace — if nothing in it is needed, " \
+                        "run `rm -rf #{Shellwords.escape(dir)}`")
+      end
+    rescue StandardError
+      nil
     end
 
     # Stored workspace names (Names). Info lines only, each with the command that fixes

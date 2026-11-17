@@ -349,7 +349,7 @@ module Switchboard
       dry = args.include?("--dry-run") || args.include?("-n")
       report = Reconcile.prune(config, dry_run: dry)
       reaped = Reconcile.reap_sidebars(dry_run: dry)
-      puts prune_summary(report, reaped, dry)
+      puts prune_summary(report, reaped, dry, Leftovers.clear(config, dry_run: dry))
     end
 
     # Format a reconcile report for a human. Distinguishes "couldn't reach tmux"
@@ -359,9 +359,9 @@ module Switchboard
     # is the orphaned-sidebar-process pids prune also cleared — a separate axis from
     # the session orphans (process-with-no-pane vs session-with-no-worktree), so it
     # gets its own appended line and never suppresses the session summary.
-    def prune_summary(report, reaped, dry)
-      [session_prune_summary(report, dry), sidebar_reap_summary(reaped, dry), names_prune_summary(report.names, dry)]
-        .compact.join("\n")
+    def prune_summary(report, reaped, dry, leftovers = {})
+      [session_prune_summary(report, dry), sidebar_reap_summary(reaped, dry), names_prune_summary(report.names, dry),
+       leftovers_prune_summary(leftovers, dry)].compact.join("\n")
     end
 
     def session_prune_summary(report, dry)
@@ -383,12 +383,19 @@ module Switchboard
       "#{dry ? 'would reap' : 'reaped'} #{reaped.size} orphaned sidebar process(es)"
     end
 
-    # What prune did (or, dry, would do) to Claude's transcript folders.
     # Stored names whose folder has been gone long enough to drop (see Reconcile.prune_names).
     def names_prune_summary(dropped, dry)
       return unless dropped&.positive?
 
       "#{dry ? 'would drop' : 'dropped'} #{dropped} stored name(s) for workspaces gone #{Names::MISSING_TTL / 86_400} days"
+    end
+
+    # Files deleted workspaces left in switchboard's stores (Leftovers), by store.
+    def leftovers_prune_summary(counts, dry)
+      counts = counts.reject { |_, n| n.zero? }
+      return if counts.empty?
+
+      "#{dry ? 'would clear' : 'cleared'} #{counts.values.sum} leftover file(s) from deleted workspaces (#{Leftovers.breakdown(counts)})"
     end
 
     # Tear down switchboard: kill every sb/ session, the one you're in last (so

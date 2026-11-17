@@ -10,6 +10,22 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
+## [0.73.0] — doctor and prune find what deleted workspaces left behind (2026-11-17)
+
+### Added
+- `switchboard doctor` reports files a deleted workspace left in switchboard's own stores (a
+  bold or ∞ marker, an agent's last state, a rename-sync note, a dispatch record), once
+  they're over an hour old, and points at `switchboard prune`. It also names folders under the
+  worktree root that git no longer lists as a workspace, with the `rm -rf` to run. A folder
+  that still holds any git checkout is never named.
+- `switchboard prune` clears those files and reports them by store:
+  `cleared 3 leftover file(s) from deleted workspaces (attention 1, agents 2)`.
+
+### Changed
+- `doctor` changes no file. Its rename-sync check used to delete notes for workspaces that
+  were gone; those are now leftovers `prune` clears.
+- A rename-sync worker that outlives its workspace no longer leaves a note behind for it.
+
 ## [0.72.2] — Plain check marks when output isn't a terminal (2026-11-16)
 
 ### Fixed

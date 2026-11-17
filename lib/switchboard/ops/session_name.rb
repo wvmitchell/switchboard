@@ -604,7 +604,10 @@ module Switchboard
       end
 
       # By an already-canonical path — the worker keys by the realpath it started with.
+      # A gone folder is refused, so a worker outliving its workspace can't re-seed one.
       def record_real(real, kind, name)
+        return unless Dir.exist?(real.to_s)
+
         KeyedMarkerStore.write(dir, KeyedMarkerStore.key(real), [real, kind, name].join("\t"))
       end
 
@@ -618,9 +621,10 @@ module Switchboard
         KeyedMarkerStore.delete(dir, KeyedMarkerStore.key(real))
       end
 
-      # [{ path:, kind:, name: }, …] for workspaces that still exist.
+      # [{ path:, kind:, name: }, …] for workspaces that still exist. Read-only: doctor
+      # calls it, and one whose folder is gone is a leftover prune clears.
       def all
-        KeyedMarkerStore.scan(dir) { |c| Dir.exist?(c.split("\t").first.to_s) }.map do |c|
+        KeyedMarkerStore.entries(dir).map { |_, c, _| c }.select { |c| Dir.exist?(c.split("\t").first.to_s) }.map do |c|
           path, kind, name = c.split("\t", 3)
           { path: path, kind: kind.to_s, name: name.to_s }
         end.sort_by { |o| o[:path] }
