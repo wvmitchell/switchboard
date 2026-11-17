@@ -10,6 +10,20 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
+## [0.75.0] — A delete takes its PR badges with it and sends other clients home (2026-11-17)
+
+### Changed
+- `switchboard delete` and the sidebar's `d` drop the PR badges of the branches they deleted,
+  unless another workspace still shows that branch in its history. This lifts 0.74.0's first
+  known limit.
+- `switchboard refresh` (and the sidebar's own refreshes) drop a cached badge once its branch
+  is gone: no longer a local branch and no longer shown as a history row. When git can't be
+  read, nothing is dropped. The final write takes a lock on the cache, so a refresh racing a
+  delete can't write a deleted branch's badge back.
+- A `--force` delete, and `d`, move anyone else attached to the session to `sb/home` before
+  closing it, so they land back in switchboard instead of being detached. This lifts 0.74.0's
+  second known limit.
+
 ## [0.74.0] — `switchboard delete`: remove a workspace from a shell, leaving nothing behind (2026-11-17)
 
 ### Added
