@@ -47,35 +47,36 @@ module Switchboard
     #     `idle`: the dialog was rejected (Esc fires no hook). Draw it resting and leave it
     #     out of the edge input, so it rings nothing. Only a dialog the session confirmed
     #     clears this way, so the session file can't hide one it never reported.
-    #   - a ◆ kept only by AgentState's stale-waiting extension, beside a readable session
-    #     that says otherwise: the session wins.
+    #   - a ◆ kept only by AgentState's stale-waiting extension, beside a session that
+    #     reads a recognized idle/busy/shell: the session wins. An unknown or missing
+    #     status is no evidence, so the ◆ stands.
     # A failed session read (nil) is no evidence: everything passes through unchanged.
     # Returns [agents, hook_states, confirmed], new objects.
     def merge_waiting(agents, hook_states, stale, sessions, confirmed)
       return [agents, hook_states, confirmed] if sessions.nil?
 
-      agents = agents.dup
+      merged = agents.dup
       effective = hook_states.dup
       kept = Set.new
       (agents.keys | sessions.keys | confirmed.to_a).each do |path|
-        recs = sessions[path]
+        recs = sessions.fetch(path, nil) # never sessions[path]: its default proc would add the key
         hook = hook_states[path]
         if ClaudeSessions.waiting?(recs)
-          agents[path] = :waiting
+          merged[path] = :waiting
           effective[path] = :waiting if effective.key?(path)
           kept << path
         elsif hook == :waiting && confirmed.include?(path)
           kept << path
           next unless ClaudeSessions.activity(recs) == :idle
 
-          agents[path] = :done
+          merged[path] = :done
           effective.delete(path)
-        elsif stale.key?(path) && recs && !recs.empty?
-          agents[path] = stale[path] || :done
+        elsif stale.key?(path) && ClaudeSessions.activity(recs)
+          merged[path] = stale[path] || :done
           effective.delete(path)
         end
       end
-      [agents, effective, kept]
+      [merged, effective, kept]
     rescue StandardError
       [agents, hook_states, confirmed]
     end

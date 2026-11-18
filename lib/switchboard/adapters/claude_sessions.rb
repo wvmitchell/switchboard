@@ -172,13 +172,15 @@ module Switchboard
     end
 
     # The off-screen warm gate's view of the ◷ and the ◆: sorted [cwd, offstage 0/1,
-    # waiting 0/1, alive 0/1, pid] for every session recorded in a tracked worktree. It
-    # moves when such a session starts or stops running background work or opens or
-    # leaves a dialog, not on churn that keeps it on the same side, and never for a
+    # waiting 0/1, settled idle 0/1, alive 0/1, pid] for every session recorded in a
+    # tracked worktree. It moves when such a session starts or stops running background
+    # work, opens or leaves a dialog, or its idle settles (nothing on disk changes then,
+    # and an Esc'd ◆ waits on it), not on churn that keeps it on the same side, and never for a
     # Claude outside switchboard. Stats only for unchanged files: `cache`
     # (owned by the caller) maps file => [[mtime, size, inode], record], like
     # RemoteLink.fingerprint.
     def fingerprint(cache, ws_paths)
+      now = Time.now
       roots = ws_paths.each_with_object({}) { |p, h| h[real(p).b] = p; h[p.to_s.b] ||= p }
       files = session_files
       cache.select! { |f, _| files.include?(f) }
@@ -190,7 +192,7 @@ module Switchboard
         next unless owner(r[:cwd].b, roots) || owner(real(r[:cwd]).b, roots)
 
         [r[:cwd], OFFSTAGE_STATUSES.include?(r[:status]) ? 1 : 0, r[:status] == WAITING_STATUS ? 1 : 0,
-         ProcessIdentity.alive?(r[:pid]) ? 1 : 0, r[:pid]]
+         settled_idle?(r, now) ? 1 : 0, ProcessIdentity.alive?(r[:pid]) ? 1 : 0, r[:pid]]
       rescue StandardError
         nil
       end.sort

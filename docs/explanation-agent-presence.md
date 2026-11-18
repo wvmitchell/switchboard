@@ -261,12 +261,15 @@ see.
 **For Codex and hook-only Claude** there is no session file to ask, so `AgentState`
 keeps a `waiting` report past its TTL for as long as the agent's process is still
 running in that worktree. When the agent is gone, so is the `◆`. Off screen, where the
-sidebar skips the process scan, a stale `◆` carries on only if the previous scan held it,
-so the last visible scan's liveness check carries forward and a dead agent's report
-can't stand there forever.
+sidebar skips the process scan, a stale `◆` carries on only if the previous scan held it.
+A dead agent's report can stand there until the next visible scan checks it, not
+forever. A sidebar that starts off screen has no previous scan, so it shows such a `◆`
+only once you look at it. Where a Claude session file disagrees with a stale report, it
+wins only when it reads a status switchboard recognizes; anything else is no evidence.
 
-The warm fingerprint counts `waiting` sessions, so a hidden sidebar re-renders when a
-dialog opens or closes and switching to it never flashes a stale `◆`.
+The warm fingerprint counts `waiting` sessions and marks when an `idle` has settled, so a
+hidden sidebar re-renders when a dialog opens or closes and again once an Esc'd dialog's
+idle settles. Switching to it doesn't flash a stale `◆`.
 
 ### Subagents don't move the main dot
 

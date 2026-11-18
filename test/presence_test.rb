@@ -128,6 +128,23 @@ module Switchboard
       assert_equal({ "/b" => :waiting }, hooks)
     end
 
+    # Value: protects=an undocumented session status can't erase a live ◆ (fail closed); fails_when=any non-empty session overrules the extension; why_new=the test above uses a recognized idle only; seam=none; no_claim=which statuses Claude adds later
+    def test_an_unrecognized_session_status_leaves_the_stale_waiting_standing
+      [{ status: "compacting", pid: 7 }, { pid: 7 }, fresh_idle].each do |rec|
+        agents, hooks, = Presence.merge_waiting({ "/a" => :waiting }, { "/a" => :waiting }, { "/a" => :done },
+                                                { "/a" => [rec] }, Set.new)
+        assert_equal :waiting, agents["/a"], "#{rec.inspect} is no evidence"
+        assert_equal({ "/a" => :waiting }, hooks)
+      end
+    end
+
+    # Value: protects=the merge never writes into the scan's shared sessions hash; fails_when=it reads sessions[path] through the default proc; why_new=ClaudeSessions.scan's hash keeps that proc; seam=none; no_claim=none beyond protects
+    def test_the_merge_leaves_the_sessions_hash_untouched
+      sessions = Hash.new { |h, k| h[k] = [] }
+      Presence.merge_waiting({ "/a" => :done }, { "/a" => :done }, {}, sessions, Set["/b"])
+      assert_empty sessions
+    end
+
     def test_a_failed_session_read_changes_nothing
       args = [{ "/a" => :done }, { "/a" => :done }, { "/a" => :done }, nil, Set["/a"]]
       assert_equal args.values_at(0, 1, 4), Presence.merge_waiting(*args)

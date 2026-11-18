@@ -305,6 +305,20 @@ module Switchboard
       refute_equal waiting, sb.send(:warm_fingerprint), "/rc on does"
     end
 
+    # Value: protects=a hidden pane redraws once an Esc'd dialog's idle settles, so its ◆ can rest; fails_when=the fingerprint drops the settled-idle bit; why_new=nothing on disk changes when the idle settles; seam=none; no_claim=real Claude timing
+    def test_the_warm_fingerprint_moves_when_a_session_s_idle_settles
+      a = real_dir("a")
+      FileUtils.mkdir_p(RemoteLink.sessions_dir)
+      t0 = Time.now
+      File.write(File.join(RemoteLink.sessions_dir, "1.json"),
+                 JSON.generate({ "pid" => 1, "cwd" => a, "sessionId" => "s", "status" => "idle",
+                                 "statusUpdatedAt" => (t0.to_f * 1000).to_i }))
+      sb = sidebar(nodes: [ws("a", path: a)])
+      fresh = sb.send(:warm_fingerprint)
+      settled = stub_method(Time, :now, -> { t0 + ClaudeSessions::SETTLE + 1 }) { sb.send(:warm_fingerprint) }
+      refute_equal fresh, settled
+    end
+
     # Value: protects=hidden panes never wake for a Claude outside switchboard; fails_when=the
     # offstage term drops its tracked-worktree filter; why_new=the ◷ term is new; seam=none;
     # no_claim=real Claude files
