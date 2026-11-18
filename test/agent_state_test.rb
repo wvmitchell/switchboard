@@ -99,25 +99,35 @@ module Switchboard
       assert_equal({ wt => :done }, a.stale_waiting, "the process fallback's verdict rides along for Presence")
     end
 
-    # Value: protects=an off-screen frame keeps the ◆ the switch-in scan will show; fails_when=hooks_only skips the stale-waiting branch; why_new=no hooks_only TTL test; seam=none; no_claim=real tmux
-    def test_off_screen_a_stale_waiting_report_is_trusted
+    # Value: protects=an off-screen frame keeps the ◆ the switch-in scan will show, and never a dead agent's; fails_when=hooks_only skips the stale-waiting branch or trusts a report no scan held; why_new=no hooks_only TTL test; seam=none; no_claim=real tmux
+    def test_off_screen_a_stale_waiting_report_carries_on_only_if_the_last_scan_held_it
       wt = worktree
       write_hook("waiting", wt, epoch: Time.now.to_i - (AgentState::PRESENCE_TTL + 60))
       a = AgentState.new
       stub_method(Agents, :active, ->(_paths) { flunk "hooks_only never runs the process scan" }) do
+        assert_empty a.scan([wt], hooks_only: true), "nothing vouched for this agent: no ◆"
+      end
+      with_agent(wt) { a.scan([wt]) }
+      stub_method(Agents, :active, ->(_paths) { flunk "hooks_only never runs the process scan" }) do
         assert_equal({ wt => :waiting }, a.scan([wt], hooks_only: true))
+        assert_equal({ wt => :waiting }, a.scan([wt], hooks_only: true), "and keeps carrying while off screen")
       end
       assert_equal({ wt => nil }, a.stale_waiting, "no fallback was computed off screen")
+      no_processes { a.scan([wt]) }
+      assert_empty a.scan([wt], hooks_only: true), "a visible scan that found no agent ends it"
     end
 
-    # Value: protects=a prompt open over a weekend still shows ◆; fails_when=read_hooks age-deletes waiting lines again; why_new=the GC test covers a done report only; seam=none; no_claim=Agents.active (stubbed)
+    # Value: protects=a prompt open over a weekend still shows ◆, and an abandoned one is reaped in a week; fails_when=read_hooks age-deletes waiting lines at STALE_GC or never; why_new=the GC test covers a done report only; seam=none; no_claim=Agents.active (stubbed)
     def test_a_waiting_report_survives_the_age_gc
       wt = worktree
       write_hook("waiting", wt, name: "weekend", epoch: Time.now.to_i - (AgentState::STALE_GC + 3600))
       file = File.join(dir, "weekend")
       with_agent(wt) { assert_equal({ wt => :waiting }, AgentState.new.scan([wt])) }
       no_processes { assert_empty AgentState.new.scan([wt]), "no agent: nothing drawn" }
-      assert File.exist?(file), "only a later report or the folder going removes it"
+      assert File.exist?(file), "a waiting report outlives STALE_GC"
+      write_hook("waiting", wt, name: "weekend", epoch: Time.now.to_i - (AgentState::WAITING_GC + 3600))
+      no_processes { AgentState.new.scan([wt]) }
+      refute File.exist?(file), "but not WAITING_GC, so an abandoned prompt doesn't stay forever"
     end
 
     def test_deepest_cwd_at_or_under_the_worktree_wins

@@ -32,6 +32,7 @@ module Switchboard
     STATES = %w[thinking done waiting].freeze
     PRESENCE_TTL = 900 # seconds a hook report counts as a live agent
     STALE_GC = 86_400 # seconds; a still-existing-dir state file older than this is reaped (global codex hook hygiene)
+    WAITING_GC = 7 * STALE_GC # a `waiting` report's own cap: a prompt open over a weekend survives
     STATIC_MIN_AGE = 2.0 # seconds a work pane must hold identical content before a :static
                          # verdict — below REFRESH, above a rapid poke/reload rescan gap, so a
                          # sub-second re-scan can't misread a still-animating pane as idle
@@ -110,9 +111,9 @@ module Switchboard
         elsif state
           out[wt] = hook_states[wt] = state
         elsif latest_hook(wt, hooks)&.first == :waiting &&
-              (hooks_only || (process ||= Agents.active(worktree_paths)).include?(wt))
-          # A prompt left open past the TTL. Off screen (hooks_only) the report is trusted
-          # and the next visible scan checks the agent is still there.
+              (hooks_only ? @last_hook_states[wt] == :waiting : (process ||= Agents.active(worktree_paths)).include?(wt))
+          # A prompt left open past the TTL. Off screen (hooks_only) it carries on only
+          # if the previous scan held it, so a dead agent's report can't stand there forever.
           stale[wt] = hooks_only ? nil : activity(wt, panes ||= Tmux.work_panes)
           out[wt] = hook_states[wt] = :waiting
         elsif !hooks_only && (process ||= Agents.active(worktree_paths)).include?(wt)
@@ -160,9 +161,9 @@ module Switchboard
         # just switchboard worktrees), so an existing-dir file long past use would linger
         # forever on the dir-exists GC alone. Drop anything older than STALE_GC. `age >`
         # (not `.abs`) so a future-epoch/backward-clock file isn't reaped as stale. A
-        # `waiting` report is kept: a prompt left open over a weekend is still unanswered,
-        # and liveness (scan) decides whether it draws.
-        if age > STALE_GC && state != "waiting"
+        # `waiting` report gets WAITING_GC: a prompt left open over a weekend is still
+        # unanswered, and liveness (scan) decides whether it draws.
+        if age > (state == "waiting" ? WAITING_GC : STALE_GC)
           File.delete(file)
           next
         end

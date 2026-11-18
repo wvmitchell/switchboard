@@ -148,8 +148,8 @@ opposite sides of that:
   `AgentState` only renders tracked worktrees, so the block firing for non-switchboard
   codex sessions is inert. Those sessions do leave stray state files that the
   "directory still exists" GC alone would keep forever, so an age-based GC
-  (`AgentState::STALE_GC`) reaps them. A `waiting` file is spared that GC, since an
-  unanswered prompt can be older than a day; it still goes with its directory.
+  (`AgentState::STALE_GC`) reaps them. A `waiting` file gets a week instead
+  (`WAITING_GC`), since an unanswered prompt can be older than a day.
 
 Because the codex block lives in your personal global config, switchboard writes
 it **only with your consent** (`Installer`'s `step_codex_hooks`). `switchboard install`
@@ -261,7 +261,9 @@ see.
 **For Codex and hook-only Claude** there is no session file to ask, so `AgentState`
 keeps a `waiting` report past its TTL for as long as the agent's process is still
 running in that worktree. When the agent is gone, so is the `◆`. Off screen, where the
-sidebar skips the process scan, the report is trusted as it stands.
+sidebar skips the process scan, a stale `◆` carries on only if the previous scan held it,
+so the last visible scan's liveness check carries forward and a dead agent's report
+can't stand there forever.
 
 The warm fingerprint counts `waiting` sessions, so a hidden sidebar re-renders when a
 dialog opens or closes and switching to it never flashes a stale `◆`.
