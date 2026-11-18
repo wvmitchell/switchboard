@@ -55,7 +55,8 @@ count, the header draws the strongest state among the rows it hides: `◆` over 
 `✘` over an unviewed `●`, each in its row's color. Unlike the count, the glyph isn't
 stored on the clone. `fold_state` works it out every frame from the hidden rows'
 `render_state`, `@attention` and `unseen_failure?`, the same live state each row's own
-dot reads. The tree is rebuilt only every few scans, so a stored glyph would lag a new
+dot reads. Like the rows, it skips the bold of the workspace you're in, since you're
+already looking at it. The tree is rebuilt only every few scans, so a stored glyph would lag a new
 prompt by up to 15 seconds and linger after you'd viewed the row. The header `◆` doesn't
 blink. `pulsing?` only scans visible rows, and a blinking header would keep a folded
 sidebar on the pulse cadence for as long as a prompt sat open.
