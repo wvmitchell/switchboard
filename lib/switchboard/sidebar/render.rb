@@ -744,6 +744,49 @@ module Switchboard
         node.folded.to_i.positive? ? " (#{node.folded})" : ""
       end
 
+      # The steady glyph after a folded project's count: the strongest state among the
+      # workspaces the fold hides, worked out every frame like a row's own dot, so it
+      # comes and goes with them. ◆ (a row waits on you) > ✘ (an unseen failure) > ●
+      # (an unviewed finish); working and resting rows add nothing. Bare here, colored
+      # by FOLD_COLORED.
+      FOLD_GLYPHS = { waiting: "◆", failed: "✘", attention: "●" }.freeze
+      FOLD_COLORED = { waiting: WANTS_ON, failed: FAILED, attention: DONE }.freeze
+
+      def fold_glyph_cue(node)
+        state = fold_state(node)
+        state ? " #{FOLD_GLYPHS[state]}" : ""
+      end
+
+      def fold_state(node)
+        return nil unless node.folded.to_i.positive?
+
+        best = nil
+        @nodes.each do |n|
+          next unless n.kind == "ws" && n.project == node.project && !@pending_delete.include?(n.path)
+
+          state = render_state(n.path)
+          return :waiting if state == :waiting
+
+          bold = n.path != @current_path && @attention.include?(n.path) # rows never bold the current workspace
+          if unseen_failure?(n.path) || (state == :failed && bold)
+            best = :failed
+          elsif best.nil? && bold
+            best = :attention
+          end
+        end
+        best
+      end
+
+      # The header cues fit_plain kept in `text`: the count and glyph, the glyph alone (a
+      # narrow pane drops the count first: the glyph is the reason to unfold), or none.
+      def proj_kept(node, text)
+        glyph = fold_glyph_cue(node)
+        full = kept_cues(text, proj_cue(node) + glyph)
+        return full unless full.empty?
+
+        glyph.empty? ? "" : kept_cues(text, glyph)
+      end
+
       # " ⇅" on a workspace with a live /remote-control link (" ⇅2" for several), right
       # after the name and before any ▸N, folded or expanded. Workspace rows only: the
       # link belongs to the worktree, so a branch row never carries it.
@@ -760,13 +803,13 @@ module Switchboard
       end
 
       # A row's plain parts: [prefix, name, trailing cues]. ws: pointer + glyph, then the
-      # link and fold cues; proj: the fold glyph, then the (N) count.
+      # link and fold cues; proj: the ▸/▾ fold mark, then the (N) count and fold glyph.
       def ws_parts(node, name = shown(node.name))
         ["#{pointer(node.path)} #{ws_glyph(node.path)} ", name, link_cue(node) + fold_cue(node)]
       end
 
       def proj_parts(node, name = shown(node.project))
-        ["#{folded?(node.project) ? '▸' : '▾'} ", name, proj_cue(node)]
+        ["#{folded?(node.project) ? '▸' : '▾'} ", name, proj_cue(node) + fold_glyph_cue(node)]
       end
 
       # The one rule both draw paths (fit_plain, colored) and both cue-bearing row kinds
@@ -799,6 +842,9 @@ module Switchboard
 
         prefix, name, cues = parts
         name_cols, kept = cue_budget(width, columns(prefix), cues)
+        if kept.empty? && node.kind == "proj" && !(glyph = fold_glyph_cue(node)).empty?
+          name_cols, kept = cue_budget(width, columns(prefix), glyph) # the count goes first
+        end
         return fit_columns(prefix + name, width) if name_cols < 1 || kept.empty?
 
         "#{prefix}#{fit_columns(name, name_cols)}#{kept}"
@@ -821,9 +867,12 @@ module Switchboard
       def colored(node, text, current: false)
         case node.kind
         when "proj"
-          # The bold name, then the dim (N) only if fit_plain kept it in `text`.
-          kept = kept_cues(text, proj_cue(node))
-          cue = kept.empty? ? "" : "\e[2m#{kept}\e[0m"
+          # The bold name, then the dim (N) and the fold glyph, each only if fit_plain kept it.
+          kept = proj_kept(node, text)
+          state = fold_state(node)
+          glyph = state && kept.end_with?(" #{FOLD_GLYPHS[state]}") ? " #{FOLD_GLYPHS[state]}" : ""
+          count = kept.delete_suffix(glyph)
+          cue = (count.empty? ? "" : "\e[2m#{count}\e[0m") + (glyph.empty? ? "" : " #{FOLD_COLORED[state]}")
           "\e[1m#{mark_search(text.delete_suffix(kept), name_spans(node, text), "\e[1m")}\e[0m#{cue}"
         when "ws"
           dot = sparkling?(node.path) ? SPARKLE_COLORED[(@pulse / 2) % SPARKLE_COLORED.size] : dot_for(render_state(node.path))
@@ -865,8 +914,8 @@ module Switchboard
 
         parts = node.kind == "ws" ? ws_parts(node) : proj_parts(node)
         prefix = parts.first
-        cues = parts.last
-        name = text[prefix.length...(text.length - kept_cues(text, cues).length)].to_s
+        kept = node.kind == "proj" ? proj_kept(node, text) : kept_cues(text, parts.last)
+        name = text[prefix.length...(text.length - kept.length)].to_s
         @search.spans(name).map { |at, length| [at + prefix.length, length] }
       end
 

@@ -23,7 +23,8 @@ act on what you see here, see [Reference: keybindings](reference-keybindings.md)
    ● api-rework                         expanded ↓ — its own diff + PR move
      ├ spike                    #61       down onto the branch-history rows
      └●main-path        +9      #74     ● before a branch = checked out now
- ▸ personal-site (4)             ← folded project (children hidden, dim count)
+ ▸ personal-site (4) ◆           ← folded project (children hidden, dim count,
+                                    and what's waiting inside)
 
  nav · ? help                    ← footer (one line; ? opens the full map)
 ```
@@ -62,7 +63,11 @@ Three row kinds, indented by depth:
 - **Project header** — `▾ name` when expanded, `▸ name` when folded (its
   workspaces hidden). Rendered **bold**. A folded header adds a dim `(N)`: the
   number of workspace rows unfolding would show, a failed dispatch's row included.
-  An empty project shows no count. `↵` on it folds/unfolds; `n` creates a
+  An empty project shows no count. After the count comes the strongest thing a hidden
+  row wants from you, drawn in that row's color: `◆` (one is waiting on you), else `✘`
+  (a failure you haven't seen), else `●` (a finish you haven't viewed). Working and
+  resting rows add nothing. It doesn't blink, and it goes the moment the row it stands
+  for does. A narrow pane drops the count before the glyph. `↵` on it folds/unfolds; `n` creates a
   workspace in it. The fold is shared on disk and durable across restarts.
 - **Workspace row** — one per worktree git reports, minus the project's primary
   (trunk) checkout, which is never a switch target. This is the row you act on.

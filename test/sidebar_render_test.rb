@@ -187,6 +187,101 @@ module Switchboard
       assert_includes line, "(3)"
     end
 
+    # --- folded project: the glyph of what its fold hides -----------------------
+
+    # A folded "app" hiding a and b (and a "lib" project with c), with the given per-row
+    # state; the header clone counts 2.
+    def fold_sb(agents: {}, attention: [], creation_for: {})
+      nodes = [proj("app"), ws("a"), ws("b"), proj("lib"), ws("c", project: "lib")]
+      sb = sidebar(nodes: nodes, collapsed: ["app"], agents: agents, attention: attention)
+      sb.instance_variable_set(:@creation_for, creation_for)
+      sb
+    end
+
+    # Value: protects=a fold shows the strongest thing its hidden rows want from you; fails_when=precedence flips or a working/resting row lights the header; why_new=the header had no state cue; seam=none; no_claim=real agent scans
+    def test_a_folded_header_shows_the_strongest_hidden_state
+      a = wt("a")
+      b = wt("b")
+      cases = [
+        [{ agents: { a => :waiting }, attention: [b] }, "◆"],
+        [{ agents: { a => :waiting }, creation_for: { b => { "state" => "failed" } } }, "◆"],
+        [{ attention: [b], creation_for: { a => { "state" => "failed" } } }, "✘"],
+        [{ attention: [a], creation_for: { a => { "state" => "failed", "acked" => true } } }, "✘"],
+        [{ agents: { wt("c") => :waiting }, attention: [wt("c")] }, nil],
+        [{ agents: { a => :thinking }, creation_for: { b => { "state" => "failed" } } }, "✘"],
+        [{ agents: { a => :done }, attention: [a] }, "●"],
+        [{ agents: { a => :thinking, b => :done } }, nil],
+        [{ agents: { a => :offstage }, creation_for: { b => { "state" => "failed", "acked" => true } } }, nil]
+      ]
+      cases.each do |state, glyph|
+        out = fold_sb(**state).send(:plain, folded_proj("app", 2))
+        assert_equal glyph ? "▸ app (2) #{glyph}" : "▸ app (2)", out, state.inspect
+      end
+    end
+
+    # Value: protects=the header glyph is the row's own color, steady (no pulse), and the bare shape survives the cursor bar; fails_when=it blinks, loses its color or is dimmed with the count; why_new=new cue; seam=none; no_claim=a real terminal
+    def test_a_folded_header_glyph_is_colored_and_steady
+      sb = fold_sb(agents: { wt("a") => :waiting })
+      node = folded_proj("app", 2)
+      want = "\e[1m▸ app\e[0m\e[2m (2)\e[0m #{Sidebar::WANTS_ON}"
+      [0, Sidebar::BLINK_PERIOD].each do |pulse|
+        sb.instance_variable_set(:@pulse, pulse)
+        assert_equal want, sb.send(:colored, node, "▸ app (2) ◆"), "steady at pulse #{pulse}"
+      end
+      assert_includes sb.send(:line, node, true, 20), "◆", "the bare glyph keeps its shape under the cursor bar"
+    end
+
+    # Value: protects=a narrow pane gives up the count before the glyph, and plain/colored stay one width; fails_when=the cues drop as one unit or colored overruns; why_new=the header had one cue; seam=none; no_claim=none beyond protects
+    def test_a_narrow_pane_drops_the_count_before_the_glyph
+      sb = fold_sb(agents: { wt("a") => :waiting })
+      node = folded_proj("app", 2)
+      assert_equal "▸ app (2) ◆", sb.send(:fit_plain, node, 11)
+      assert_equal "▸ a… ◆", sb.send(:fit_plain, node, 6), "no room for the count: the glyph stays"
+      assert_equal "▸ a…", sb.send(:fit_plain, node, 4), "no name column left: both drop"
+      (3..24).each do |w|
+        text = sb.send(:fit_plain, node, w)
+        assert_equal text, strip_ansi(sb.send(:colored, node, text)), "width #{w}: colored == plain"
+        assert_operator sb.send(:columns, text), :<=, w, "width #{w}: inside the pane"
+      end
+    end
+
+    # Value: protects=the glyph follows the rows every frame: viewing clears it, an expanded or revealed header never shows it; fails_when=the glyph is cached or drawn without a fold clone; why_new=D3 per-frame rule; seam=none; no_claim=the scan cadence
+    def test_the_folded_header_glyph_follows_its_rows_every_frame
+      sb = fold_sb(attention: [wt("b")])
+      node = folded_proj("app", 2)
+      assert_equal "▸ app (2) ●", sb.send(:plain, node)
+      sb.instance_variable_get(:@attention).delete(wt("b"))
+      assert_equal "▸ app (2)", sb.send(:plain, node), "viewed: gone the same frame"
+      sb.instance_variable_get(:@attention) << wt("b")
+      assert_equal "▸ app (2) ●", sb.send(:plain, node), "a new finish brings it back the same frame"
+      assert_equal "▸ app", sb.send(:plain, proj("app")), "no fold clone: no glyph"
+    end
+
+    # Value: protects=the header never asks you to view the workspace you're in, and its warm frame matches the switch-in frame; fails_when=fold_state counts the current workspace's bold; why_new=rows skip it, the header didn't; seam=none; no_claim=which sidebar wrote the mark
+    def test_the_current_workspace_lights_no_fold_glyph_for_its_bold
+      sb = fold_sb(attention: [wt("a")])
+      sb.instance_variable_set(:@current_path, wt("a"))
+      assert_equal "▸ app (2)", sb.send(:plain, folded_proj("app", 2))
+      sb.instance_variable_set(:@agents, { wt("a") => :waiting })
+      assert_equal "▸ app (2) ◆", sb.send(:plain, folded_proj("app", 2)), "a prompt still shows"
+    end
+
+    # Value: protects=a workspace being deleted never lights its folded header; fails_when=fold_state drops the pending-delete skip the (N) count already applies; why_new=the filter is new; seam=none; no_claim=the delete flow
+    def test_a_row_being_deleted_lights_no_fold_glyph
+      sb = fold_sb(agents: { wt("a") => :waiting })
+      sb.instance_variable_get(:@pending_delete) << wt("a")
+      assert_equal "▸ app (2)", sb.send(:plain, folded_proj("app", 2))
+    end
+
+    # Value: protects=a search never marks the fold glyph; fails_when=name_spans reads the glyph as name; why_new=new cue beside the count; seam=none; no_claim=Search's own matching
+    def test_a_search_never_marks_the_fold_glyph
+      sb = fold_sb(agents: { wt("a") => :waiting })
+      search = sb.instance_variable_get(:@search)
+      search.define_singleton_method(:spans) { |text| text.empty? ? [] : [[0, text.length]] }
+      assert_equal [[2, 3]], sb.send(:name_spans, folded_proj("app", 2), "▸ app (2) ◆"), "only the name"
+      assert_equal [[2, 2]], sb.send(:name_spans, folded_proj("app", 2), "▸ a… ◆"), "count dropped: still only the name"
+    end
+
     # D4: names are measured in terminal columns, so a wide (CJK) name and its cues
     # stay inside the pane — focused (the padded bar) and not (padded to the badge).
     def test_a_wide_project_name_and_its_count_fit_the_pane
