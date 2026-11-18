@@ -10,6 +10,21 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
+## [0.76.0] — A waiting ◆ stays until you answer it (2026-11-18)
+
+### Changed
+- A magenta `◆` no longer fades into a plain bold `●` while the question is still open.
+  For Claude, the sidebar now reads Claude's own session status, so a background subagent
+  finishing a tool call during a permission dialog can't overwrite the `◆`. That overwrite
+  no longer plays a chime or bolds the workspace either; the real finish after you answer
+  still does.
+- A permission prompt left open longer than 15 minutes keeps its `◆` as long as the agent
+  is still running, for Codex and hook-only Claude too. A crashed agent's `◆` doesn't
+  linger: a hidden sidebar drops it at its next visible scan, and an abandoned prompt's
+  report is cleaned up after a week.
+- Rejecting a Claude dialog with Esc settles the row to a resting `●` about two seconds
+  later, with no chime, in hidden sidebars as well as the one you're looking at.
+
 ## [0.75.0] — A delete takes its PR badges with it and sends other clients home (2026-11-17)
 
 ### Changed
