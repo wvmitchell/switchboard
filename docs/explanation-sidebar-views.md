@@ -49,6 +49,17 @@ on-disk state is needed. The count is what unfolding would show: in-flight and f
 dispatch rows count, a workspace being deleted and every branch row don't. A project a
 search is showing isn't folded as drawn, so its header carries no count and reads `▾`.
 
+Folding used to hide the one thing worth unfolding for: a `◆` or a bold name inside
+went out of sight, and the chime gave no hint which project it came from. So after the
+count, the header draws the strongest state among the rows it hides: `◆` over an unseen
+`✘` over an unviewed `●`, each in its row's color. Unlike the count, the glyph isn't
+stored on the clone. `fold_state` works it out every frame from the hidden rows'
+`render_state`, `@attention` and `unseen_failure?`, the same live state each row's own
+dot reads. The tree is rebuilt only every few scans, so a stored glyph would lag a new
+prompt by up to 15 seconds and linger after you'd viewed the row. The header `◆` doesn't
+blink. `pulsing?` only scans visible rows, and a blinking header would keep a folded
+sidebar on the pulse cadence for as long as a prompt sat open.
+
 `collapsed` cleans up a fold whose project is no longer configured, but only when it's
 handed a non-empty project list. The key is a name, not a path it could check, so a
 config that's briefly empty or fails to load can't wipe your folds.
@@ -107,8 +118,10 @@ The dim `▸N` cue (`fold_cue`) trails the folded workspace's name in both `plai
 same visible width, which the `line` and right-region alignment depend on.
 
 That rule lives in one place, `cue_budget`, shared by workspace rows (the `⇅` and `▸N`
-cues) and project headers (the `(N)` count). A long name gives up name columns, never
-its cues; only when not even one name column would remain do the cues drop. Only
+cues) and project headers (the `(N)` count and fold glyph). A long name gives up name
+columns, never its cues; only when not even one name column would remain do the cues
+drop. A header gets one extra step: if the count and glyph don't fit, it tries the glyph
+alone, since the glyph is the reason to unfold and the count isn't. Only
 `fit_plain` applies it. `colored` doesn't decide again: it reads `fit_plain`'s decision
 back off the plain text (`kept_cues`, which checks whether the text still ends with the
 cues). Working it out a second time from the text's width would get one case wrong: a
