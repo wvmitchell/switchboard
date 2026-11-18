@@ -10,6 +10,17 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
+## [0.77.0] — A folded project shows what's waiting inside it (2026-11-18)
+
+### Added
+- A folded project header now shows, after its dim `(N)` count, the strongest thing its
+  hidden workspaces want from you: `▸ switchboard (5) ◆`. A `◆` (a prompt is waiting) wins
+  over a `✘` (a failure you haven't seen), which wins over a `●` (a finish you haven't
+  viewed). Each one is drawn in its row's color. Working and resting rows add nothing.
+- The glyph follows the hidden rows every frame. It appears within one scan of a new
+  prompt and goes the moment you answer or view it. It doesn't blink, it never counts the
+  workspace you're already in, and a narrow pane drops the count before the glyph.
+
 ## [0.76.0] — A waiting ◆ stays until you answer it (2026-11-18)
 
 ### Changed
