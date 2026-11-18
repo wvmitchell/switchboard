@@ -206,6 +206,7 @@ module Switchboard
         [{ agents: { a => :waiting }, attention: [b] }, "◆"],
         [{ agents: { a => :waiting }, creation_for: { b => { "state" => "failed" } } }, "◆"],
         [{ attention: [b], creation_for: { a => { "state" => "failed" } } }, "✘"],
+        [{ attention: [a], creation_for: { a => { "state" => "failed", "acked" => true } } }, "✘"],
         [{ agents: { wt("c") => :waiting }, attention: [wt("c")] }, nil],
         [{ agents: { a => :thinking }, creation_for: { b => { "state" => "failed" } } }, "✘"],
         [{ agents: { a => :done }, attention: [a] }, "●"],
@@ -252,7 +253,15 @@ module Switchboard
       sb.instance_variable_get(:@attention).delete(wt("b"))
       assert_equal "▸ app (2)", sb.send(:plain, node), "viewed: gone the same frame"
       sb.instance_variable_get(:@attention) << wt("b")
-      assert_equal "▸ app", fold_sb(attention: [wt("b")]).send(:plain, proj("app")), "no fold clone: no glyph"
+      assert_equal "▸ app (2) ●", sb.send(:plain, node), "a new finish brings it back the same frame"
+      assert_equal "▸ app", sb.send(:plain, proj("app")), "no fold clone: no glyph"
+    end
+
+    # Value: protects=a workspace being deleted never lights its folded header; fails_when=fold_state drops the pending-delete skip the (N) count already applies; why_new=the filter is new; seam=none; no_claim=the delete flow
+    def test_a_row_being_deleted_lights_no_fold_glyph
+      sb = fold_sb(agents: { wt("a") => :waiting })
+      sb.instance_variable_get(:@pending_delete) << wt("a")
+      assert_equal "▸ app (2)", sb.send(:plain, folded_proj("app", 2))
     end
 
     # Value: protects=a search never marks the fold glyph; fails_when=name_spans reads the glyph as name; why_new=new cue beside the count; seam=none; no_claim=Search's own matching
