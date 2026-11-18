@@ -732,6 +732,15 @@ safe today; each is narrow).
   `Render#colored` (the `@attention.include?` / `unseen_failure?` branch) and the
   collapsed-header clone in `Sidebar::Rows#visible_tree`, which can tally the hidden
   rows' attention the same way it tallies the `(N)` count. **Priority:** P3.
+- **A finished turn should bold even in the workspace you left on screen.** *What:* treat
+  the current workspace as unviewed for bold when the tmux client has been idle past a
+  threshold. *Why:* "seen" today means "on screen", so a turn that finishes in the
+  workspace you walked away from never goes bold. A prompt keeps its ◆ until answered, so
+  only plain finished turns are affected. *Pros:* catches walk-away finishes. *Cons:* a
+  new idle threshold to tune, and a false bold when you were reading without typing.
+  *Start in:* `Edges#viewing?` and the view clear in `Sidebar#locate`; tmux's
+  `#{client_activity}`. *Depends on:* the ◆ lasting until it's answered.
+  **Priority:** P3.
 
 ## Sidebar search follow-ups
 

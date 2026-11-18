@@ -92,7 +92,7 @@ module Switchboard
       sb = sidebar(nodes: [ws("a", path: a), ws("b", path: b)])
       sb.instance_variable_get(:@edges).instance_variable_set(:@prev_hook_states, { a => :thinking, b => :thinking })
       states = { a => :done, b => :done }
-      as = Struct.new(:last_hook_states).new(states)
+      as = Struct.new(:last_hook_states, :stale_waiting).new(states, {})
       as.define_singleton_method(:scan) { |_paths, hooks_only: false| states }
       sb.instance_variable_set(:@agent_state, as)
       Monitoring.mark(a)
@@ -115,7 +115,7 @@ module Switchboard
       sb = sidebar(nodes: [ws("a", project: "app", path: a)])
       sb.instance_variable_get(:@edges).instance_variable_set(:@prev_hook_states, { a => :thinking })
       states = { a => :done } # a completion edge, but...
-      as = Struct.new(:last_hook_states).new(states)
+      as = Struct.new(:last_hook_states, :stale_waiting).new(states, {})
       as.define_singleton_method(:scan) { |_paths, hooks_only: false| states }
       sb.instance_variable_set(:@agent_state, as)
       Monitoring.mark(a) # ...monitored, so the :done is suppressed (no completion sound)
@@ -135,7 +135,7 @@ module Switchboard
       sb = sidebar(nodes: [ws("a", path: a)])
       sb.instance_variable_get(:@edges).instance_variable_set(:@prev_hook_states, { a => :thinking })
       states = { a => :done }
-      as = Struct.new(:last_hook_states).new(states)
+      as = Struct.new(:last_hook_states, :stale_waiting).new(states, {})
       as.define_singleton_method(:scan) { |_paths, hooks_only: false| states }
       sb.instance_variable_set(:@agent_state, as)
       recounts = 0
@@ -150,15 +150,15 @@ module Switchboard
     # Records each Edges#on_scan call's keywords and returns no edges.
     def spy_on_scan(sb)
       calls = []
-      sb.instance_variable_get(:@edges).define_singleton_method(:on_scan) do |_states, **kw|
-        calls << kw
+      sb.instance_variable_get(:@edges).define_singleton_method(:on_scan) do |states, **kw|
+        calls << kw.merge(states: states)
         []
       end
       calls
     end
 
     def stub_agent_state(sb, &scan)
-      as = Struct.new(:last_hook_states).new({})
+      as = Struct.new(:last_hook_states, :stale_waiting).new({}, {})
       as.define_singleton_method(:scan, &scan)
       sb.instance_variable_set(:@agent_state, as)
     end
@@ -170,14 +170,19 @@ module Switchboard
       sb = sidebar(nodes: [ws("a", path: a)])
       stub_agent_state(sb) { |*, **| {} }
       calls = spy_on_scan(sb)
-      snap = Presence::Snapshot.new(agents: { a => :thinking }, sessions: { a => [] }, offstage: { a => 1 }, handoff: { a => 2 },
+      snap = Presence::Snapshot.new(agents: { a => :thinking }, hook_states: { a => :waiting }, confirmed: Set["/confirmed"],
+                                    sessions: { a => [] }, offstage: { a => 1 }, handoff: { a => 2 },
                                     idle: Set[a], fresh: Set["/fresh"], monitoring: Set["/monitored"], notify: { a => 3 })
       links = nil
-      stub_method(Presence, :scan, ->(*, **) { snap }) do
+      passed = []
+      stub_method(Presence, :scan, ->(*, confirmed:, **) { passed << confirmed; snap }) do
         stub_method(Presence, :links, ->(_paths, **kw) { links = kw; {} }) do
+          sb.send(:refresh_agents, refresh_prs: false)
           sb.send(:refresh_agents, refresh_prs: false)
         end
       end
+      assert_equal [Set.new, snap.confirmed], passed, "confirmed carries from one scan into the next"
+      assert_equal snap.hook_states, calls.first[:states], "the edge tracker diffs the merged hook states"
       assert_equal snap.agents, sb.instance_variable_get(:@agents)
       assert_equal snap.fresh, sb.instance_variable_get(:@session_fresh)
       assert_equal snap.handoff, sb.instance_variable_get(:@offstage_raw)
@@ -198,9 +203,10 @@ module Switchboard
       sb = sidebar(nodes: [ws("a", path: real_dir("a"))])
       stub_agent_state(sb) { |*, **| {} }
       seen = []
-      stub_method(Presence, :scan, lambda { |_paths, agent_state:, hooks_only:, cheap:|
+      stub_method(Presence, :scan, lambda { |_paths, agent_state:, hooks_only:, cheap:, confirmed:|
         seen << [hooks_only, cheap]
-        Presence::Snapshot.new(agents: {}, offstage: {}, handoff: {}, idle: Set.new, fresh: Set.new, monitoring: Set.new, notify: {})
+        Presence::Snapshot.new(agents: {}, hook_states: {}, confirmed: confirmed, offstage: {}, handoff: {}, idle: Set.new,
+                               fresh: Set.new, monitoring: Set.new, notify: {})
       }) do
         stub_method(Presence, :links, ->(*, **) { {} }) do
           sb.instance_variable_set(:@visible, true)

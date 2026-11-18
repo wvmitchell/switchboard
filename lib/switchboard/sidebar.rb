@@ -100,6 +100,7 @@ module Switchboard
       @links = {}          # worktree path => [RemoteLink::Link] — live /remote-control links (⇅)
       @link_fp_cache = {}  # session file => [[mtime, size, ino], record]: the warm gate's stamp-gated parse
       @session_fp_cache = {} # ...the same for ClaudeSessions.fingerprint (◷)
+      @waiting_confirmed = Set.new # paths whose ◆ a Claude session confirmed (Presence.merge_waiting)
       @pending_delete = Set.new # worktree paths being deleted right now — hidden from the
                            # tree while a detached daemon runs `git worktree remove` off the
                            # input loop (shared PendingDelete marker, hydrated every rebuild)
@@ -464,8 +465,10 @@ module Switchboard
     def refresh_agents(announce_sounds: true, refresh_prs: true, hooks_only: false)
       finished = false # set on both normal exits; a signal or exit propagating leaves it false
       ws_paths = @nodes.select { |n| n.kind == "ws" }.map(&:path)
-      scan = Presence.scan(ws_paths, agent_state: @agent_state, hooks_only: hooks_only, cheap: !@visible)
+      scan = Presence.scan(ws_paths, agent_state: @agent_state, hooks_only: hooks_only, cheap: !@visible,
+                                     confirmed: @waiting_confirmed)
       @agents = scan.agents
+      @waiting_confirmed = scan.confirmed
       @session_fresh = scan.fresh
       @offstage_raw = scan.handoff
       @offstage = settled_offstage(scan.offstage)      # what ◷ draws: the hook's done has settled
@@ -473,7 +476,7 @@ module Switchboard
       index_creations(Creation.all)                    # BEFORE on_scan: a dispatch owns its first turn (D16)
       # T1: the edge fanout (marks, sounds, sparkles, PR spawns) lives in Edges;
       # it returns the edge list so the diff-count refresh can ride the same edge.
-      edges = @edges.on_scan(@agent_state.last_hook_states,
+      edges = @edges.on_scan(scan.hook_states,
                              monitoring: @monitoring, nodes: @nodes, config: @config,
                              current_path: @current_path, notify_pending: scan.notify,
                              first_turn: first_turn_paths, offstage: scan.handoff, idle: scan.idle, sessions_ok: !scan.sessions.nil?,

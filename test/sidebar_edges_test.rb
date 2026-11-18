@@ -26,6 +26,24 @@ module Switchboard
                 announce_sounds: announce_sounds, refresh_prs: refresh_prs)
     end
 
+    # The live-probe sequence (2.1.327): a background subagent's tool call writes `done`
+    # over an open dialog, then you approve and the turn finishes inside one scan.
+    # Value: protects=the overwrite rings nothing and the real finish rings once; fails_when=the edge tracker diffs raw hook states or the merge drops the session override; why_new=no test drives merge and edges together; seam=none; no_claim=real scan timing
+    def test_a_dialog_overwritten_by_a_subagent_rings_only_its_real_finish
+      e = edges
+      confirmed = Set.new
+      steps = [[{ "/a" => :thinking }, "busy"], [{ "/a" => :waiting }, "waiting"],
+               [{ "/a" => :done }, "waiting"], [{ "/a" => :done }, "idle"]]
+      fired = stub_method(Sound, :play, ->(*, **) {}) do
+        steps.map do |raw, status|
+          sessions = { "/a" => [{ status: status, pid: 7, status_at: Time.now.to_f * 1000 }] }
+          _, hooks, confirmed = Presence.merge_waiting(raw, raw, {}, sessions, confirmed)
+          scan(e, hooks)
+        end
+      end
+      assert_equal [[], ["/a"], [], ["/a"]], fired, "the dialog rings, the overwrite doesn't, the finish does"
+    end
+
     # --- completion_edges: a worktree newly at a resting state (issue #19) ----
 
     def test_thinking_to_done_is_an_edge

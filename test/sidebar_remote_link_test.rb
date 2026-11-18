@@ -233,7 +233,7 @@ module Switchboard
       a = real_dir("a")
       sb = sidebar(nodes: [ws("a", path: a)])
       states = { a => :thinking }
-      as = Struct.new(:last_hook_states).new(states)
+      as = Struct.new(:last_hook_states, :stale_waiting).new(states, {})
       as.define_singleton_method(:scan) { |_paths, hooks_only: false| states }
       sb.instance_variable_set(:@agent_state, as)
       stub_method(RemoteLink, :scan, ->(*, **) { raise "Claude changed its format" }) do
@@ -251,7 +251,7 @@ module Switchboard
     def test_only_a_hidden_pane_asks_for_the_cheap_link_scan
       a = real_dir("a")
       sb = sidebar(nodes: [ws("a", path: a)])
-      as = Struct.new(:last_hook_states).new({})
+      as = Struct.new(:last_hook_states, :stale_waiting).new({}, {})
       as.define_singleton_method(:scan) { |_paths, hooks_only: false| {} }
       sb.instance_variable_set(:@agent_state, as)
       seen = []
@@ -273,7 +273,7 @@ module Switchboard
                                "procStart" => ProcessIdentity.start_of(Process.pid), "status" => "busy",
                                "bridgeSessionId" => "session_live"))
       sb = sidebar(nodes: [ws("a", path: a)])
-      as = Struct.new(:last_hook_states).new({})
+      as = Struct.new(:last_hook_states, :stale_waiting).new({}, {})
       as.define_singleton_method(:scan) { |_paths, hooks_only: false| {} }
       sb.instance_variable_set(:@agent_state, as)
       stub_method(Agents, :cwds_of, ->(*) { {} }) { sb.send(:refresh_agents, refresh_prs: false) }
@@ -299,9 +299,10 @@ module Switchboard
       idle = sb.send(:warm_fingerprint)
       refute_equal base, idle, "a tracked session leaving background work wakes a hidden pane (its ◷ ends)"
       write.call("status" => "waiting")
-      assert_equal idle, sb.send(:warm_fingerprint), "idle → waiting stays on the same side: no wake"
+      waiting = sb.send(:warm_fingerprint)
+      refute_equal idle, waiting, "a dialog opening wakes a hidden pane (its ◆ is the session's)"
       write.call("status" => "waiting", "bridgeSessionId" => "session_on")
-      refute_equal idle, sb.send(:warm_fingerprint), "/rc on does"
+      refute_equal waiting, sb.send(:warm_fingerprint), "/rc on does"
     end
 
     # Value: protects=hidden panes never wake for a Claude outside switchboard; fails_when=the
