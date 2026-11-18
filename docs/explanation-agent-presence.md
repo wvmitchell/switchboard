@@ -856,7 +856,8 @@ A 3-second scan lands in those windows about 1% of the time. So both edges wait 
 Nothing on disk changes when a `done` settles, so a hidden pane learns about it from a
 per-file "settled" bit in the warm fingerprint's hook term (`hook_fingerprint`).
 `ClaudeSessions.fingerprint` also moves when a *tracked* session crosses between offstage
-and not, never for a Claude outside switchboard.
+and not, opens or leaves a permission dialog, or its `idle` settles
+([how long the ◆ lasts](#how-long-the--lasts)), never for a Claude outside switchboard.
 
 ### Holding the chime
 

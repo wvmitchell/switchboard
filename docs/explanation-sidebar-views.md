@@ -279,9 +279,9 @@ press would only delay you, and `Tab` remains the way to the normal keys. Two ki
 match still stop. A project header does, so `↵` `↵` can't write a fold every window shares. A
 workspace waiting on a prompt (`◆`) does too, because the old `↵` `↵` habit would land the
 second press on that prompt, and a blind `↵` on a Claude permission prompt approves the tool
-call. That check reads the hook reports the last scan saw, and it keeps stopping after a
-prompt left open has lost its `◆` to the report's 15-minute expiry, or a scan has failed, until
-the report is cleaned up a day later. A
+call. That check reads the hook reports the last scan saw, so it keeps stopping after a row
+has lost its `◆` (its agent exited, or Claude's session file shows the dialog closed) or a
+scan has failed, until the report is replaced or cleaned up a week later. A
 prompt that appeared a moment ago isn't covered, and neither is an agent without hooks, which
 never reports one. The footer says `↵ open` only when `↵` will open the row.
 

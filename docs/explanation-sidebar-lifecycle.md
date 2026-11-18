@@ -130,8 +130,8 @@ directories, plus:
 
 - the full-header, branch-fold and width marker files;
 - the config file's mtime (`Config.path`);
-- the set of remote links and of tracked sessions with background work
-  (`RemoteLink.fingerprint`, `ClaudeSessions.fingerprint`);
+- the set of remote links, and of tracked sessions with background work, an open
+  permission dialog or a settled idle (`RemoteLink.fingerprint`, `ClaudeSessions.fingerprint`);
 - the update line's cache and the installed `version.rb` (`UpdateCue#fingerprint`);
 - each tracked worktree's `logs/HEAD` mtime.
 
