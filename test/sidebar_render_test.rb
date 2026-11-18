@@ -257,6 +257,15 @@ module Switchboard
       assert_equal "▸ app", sb.send(:plain, proj("app")), "no fold clone: no glyph"
     end
 
+    # Value: protects=the header never asks you to view the workspace you're in, and its warm frame matches the switch-in frame; fails_when=fold_state counts the current workspace's bold; why_new=rows skip it, the header didn't; seam=none; no_claim=which sidebar wrote the mark
+    def test_the_current_workspace_lights_no_fold_glyph_for_its_bold
+      sb = fold_sb(attention: [wt("a")])
+      sb.instance_variable_set(:@current_path, wt("a"))
+      assert_equal "▸ app (2)", sb.send(:plain, folded_proj("app", 2))
+      sb.instance_variable_set(:@agents, { wt("a") => :waiting })
+      assert_equal "▸ app (2) ◆", sb.send(:plain, folded_proj("app", 2)), "a prompt still shows"
+    end
+
     # Value: protects=a workspace being deleted never lights its folded header; fails_when=fold_state drops the pending-delete skip the (N) count already applies; why_new=the filter is new; seam=none; no_claim=the delete flow
     def test_a_row_being_deleted_lights_no_fold_glyph
       sb = fold_sb(agents: { wt("a") => :waiting })

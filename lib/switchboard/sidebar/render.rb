@@ -767,9 +767,10 @@ module Switchboard
           state = render_state(n.path)
           return :waiting if state == :waiting
 
-          if unseen_failure?(n.path) || (state == :failed && @attention.include?(n.path))
+          bold = n.path != @current_path && @attention.include?(n.path) # rows never bold the current workspace
+          if unseen_failure?(n.path) || (state == :failed && bold)
             best = :failed
-          elsif best.nil? && @attention.include?(n.path)
+          elsif best.nil? && bold
             best = :attention
           end
         end
