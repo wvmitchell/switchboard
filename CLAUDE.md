@@ -111,7 +111,8 @@ tracks these lines; update them when you re-verify one.
   0.163.0** (v0.51.1): payload fields, linked-worktree delivery, the nesting-guard env, and
   a silent PermissionRequest hook leaving the prompt to the user. **codex-cli 0.164.0**
   (v0.55.2), **0.165.0** (v0.60.7) and **0.167.0** (v0.66.12) re-passed the real-Codex smoke only: linked-worktree
-  delivery, hook ordering, untrusted-block silence.
+  delivery, hook ordering, untrusted-block silence. On 0.167.0 an open approval held
+  `waiting` with no later hook overwriting it (checked live).
 - **Codex is global:** Codex (verified 0.142 through 0.167) doesn't load a *linked*
   worktree's own hooks, so switchboard writes one `[hooks]` block into
   `~/.codex/config.toml`. An empty `CODEX_HOME` means `~/.codex` to Codex (checked live on
@@ -120,7 +121,9 @@ tracks these lines; update them when you re-verify one.
   verified live on Claude Code 2.1.308 (`doctor`'s canary still clean on 2.1.319).
 - **◷ sessions-file `status`:** last verified live against **Claude Code 2.1.308–2.1.310**
   (v0.56.0), re-checked live on 2.1.311–2.1.312, 2.1.314, 2.1.316, 2.1.318 and 2.1.319 (a background
-  agent's hand-off held its chime).
+  agent's hand-off held its chime). Its `waiting` status (an open permission dialog, which a
+  subagent's hook can't overwrite; idle within a second of an Esc) verified live on
+  2.1.327.
 - **History is keyed by the cwd** (why rename never moves a folder): Claude stores
   transcripts under its encoded real cwd, and `codex resume` filters by the recorded real
   cwd; both read it with `getcwd`, so a symlinked launch path keys by the target. Verified

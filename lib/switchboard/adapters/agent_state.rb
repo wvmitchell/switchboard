@@ -25,10 +25,14 @@ module Switchboard
   # Returns Hash<worktree_path, :thinking|:done|:waiting>; absent = idle (no dot).
   # A hook report counts only while fresh (PRESENCE_TTL) so a closed agent's last
   # state ages out; the process scan covers a still-running idle agent past that.
+  # The one exception is :waiting: an open prompt is unanswered however old, so a stale
+  # :waiting stands while its agent lives (`stale_waiting`; Presence may overrule it
+  # with a Claude session's own status).
   class AgentState
     STATES = %w[thinking done waiting].freeze
     PRESENCE_TTL = 900 # seconds a hook report counts as a live agent
     STALE_GC = 86_400 # seconds; a still-existing-dir state file older than this is reaped (global codex hook hygiene)
+    WAITING_GC = 7 * STALE_GC # a `waiting` report's own cap: a prompt open over a weekend survives
     STATIC_MIN_AGE = 2.0 # seconds a work pane must hold identical content before a :static
                          # verdict — below REFRESH, above a rapid poke/reload rescan gap, so a
                          # sub-second re-scan can't misread a still-animating pane as idle
@@ -44,11 +48,18 @@ module Switchboard
     # blind second ↵ on a permission prompt approves it. A stale report costs one keypress.
     attr_reader :last_waiting
 
+    # Paths drawn :waiting only because their stale :waiting report outlived the TTL while
+    # the agent lives, each with what the process fallback would have drawn instead (nil
+    # when the scan was hooks_only). Presence demotes them where a readable Claude
+    # session says otherwise.
+    attr_reader :stale_waiting
+
     def initialize
       @seen = {} # pane_id => [last capture hash, monotonic when that content first appeared]
       @last_hook_states = {}
       @last_hook_ages = {}
       @last_waiting = Set.new
+      @stale_waiting = {}
     end
 
     # Where the reporter drops <state>\t<cwd>\t<epoch> files. Resolved from ENV on
@@ -85,6 +96,7 @@ module Switchboard
       panes = nil
       hook_states = {} # the hook-only subset, stashed for last_hook_states
       hook_ages = {}
+      stale = {}
       states = worktree_paths.each_with_object({}) do |wt, out|
         state, age = fresh_hook(wt, hooks)
         hook_ages[wt] = age if state
@@ -98,12 +110,19 @@ module Switchboard
           out[wt] = :done
         elsif state
           out[wt] = hook_states[wt] = state
+        elsif latest_hook(wt, hooks)&.first == :waiting &&
+              (hooks_only ? @last_hook_states[wt] == :waiting : (process ||= Agents.active(worktree_paths)).include?(wt))
+          # A prompt left open past the TTL. Off screen (hooks_only) it carries on only
+          # if the previous scan held it, so a dead agent's report can't stand there forever.
+          stale[wt] = hooks_only ? nil : activity(wt, panes ||= Tmux.work_panes)
+          out[wt] = hook_states[wt] = :waiting
         elsif !hooks_only && (process ||= Agents.active(worktree_paths)).include?(wt)
           out[wt] = activity(wt, panes ||= Tmux.work_panes)
         end
       end
       @last_hook_states = hook_states
       @last_hook_ages = hook_ages
+      @stale_waiting = stale
       @last_waiting = worktree_paths.select { |wt| latest_hook(wt, hooks)&.first == :waiting }.to_set
       states
     end
@@ -141,8 +160,10 @@ module Switchboard
         # Age-based GC: the global codex hook reports from EVERY dir codex runs in (not
         # just switchboard worktrees), so an existing-dir file long past use would linger
         # forever on the dir-exists GC alone. Drop anything older than STALE_GC. `age >`
-        # (not `.abs`) so a future-epoch/backward-clock file isn't reaped as stale.
-        if age > STALE_GC
+        # (not `.abs`) so a future-epoch/backward-clock file isn't reaped as stale. A
+        # `waiting` report gets WAITING_GC: a prompt left open over a weekend is still
+        # unanswered, and liveness (scan) decides whether it draws.
+        if age > (state == "waiting" ? WAITING_GC : STALE_GC)
           File.delete(file)
           next
         end

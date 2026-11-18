@@ -264,7 +264,7 @@ module Switchboard
       sb, = reloading(visible: false)
       sb.instance_variable_set(:@nodes, [proj("app"), ws("a", path: a)])
       sb.instance_variable_get(:@edges).restore_baseline(hook_states: { a => :thinking }, notify: {}) # left mid-turn
-      as = Struct.new(:last_hook_states).new({ a => :done })                                          # finished while away
+      as = Struct.new(:last_hook_states, :stale_waiting).new({ a => :done }, {})                                          # finished while away
       as.define_singleton_method(:scan) { |_paths, hooks_only: false| { a => :done } }
       sb.instance_variable_set(:@agent_state, as)
       %i[rebuild locate refresh_diffs].each { |m| sb.define_singleton_method(m) { |*| nil } }
@@ -611,7 +611,7 @@ module Switchboard
       a = real_dir("a")
       sb = sidebar(nodes: [ws("a", path: a)])
       states = { a => :done }
-      as = Struct.new(:last_hook_states).new(states)
+      as = Struct.new(:last_hook_states, :stale_waiting).new(states, {})
       as.define_singleton_method(:scan) { |_paths, hooks_only: false| states }
       sb.instance_variable_set(:@agent_state, as)
       sb.instance_variable_set(:@visible, true)
@@ -1179,7 +1179,7 @@ module Switchboard
       a = real_dir("a")
       t = Time.at(1_000, 123_456_789, :nsec)
       scan = lambda do |sb, notify|
-        as = Struct.new(:last_hook_states).new({}) # nothing hooked: the baseline stays {}
+        as = Struct.new(:last_hook_states, :stale_waiting).new({}, {}) # nothing hooked: the baseline stays {}
         as.define_singleton_method(:scan) { |_paths, hooks_only: false| {} }
         sb.instance_variable_set(:@agent_state, as)
         sb.instance_variable_set(:@visible, true)

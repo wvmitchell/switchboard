@@ -69,18 +69,65 @@ module Switchboard
       no_processes { assert_empty AgentState.new.scan([wt]) }
     end
 
-    # Value: protects=a permission prompt left open past the TTL still stops the one-press search open; fails_when=last_waiting applies PRESENCE_TTL or reads anything but the latest report; why_new=the TTL drops the ◆ itself; seam=none; no_claim=a prompt no hook reported
+    # Value: protects=a permission prompt left open past the TTL still stops the one-press search open; fails_when=last_waiting applies PRESENCE_TTL or reads anything but the latest report; why_new=a gone agent's ◆ ages out, its last prompt doesn't; seam=none; no_claim=a prompt no hook reported
     def test_a_waiting_report_counts_as_waiting_past_the_ttl_until_a_later_report
       wt = worktree
       write_hook("waiting", wt, epoch: Time.now.to_i - (AgentState::PRESENCE_TTL + 60))
       a = AgentState.new
       no_processes do
-        refute_equal :waiting, a.scan([wt])[wt], "the ◆ has aged out"
+        refute_equal :waiting, a.scan([wt])[wt], "no agent left: the ◆ ages out"
         assert_equal Set[wt], a.last_waiting
         write_hook("done", wt)
         a.scan([wt])
       end
       assert_empty a.last_waiting, "a later report is the answer"
+    end
+
+    def with_agent(wt, &blk)
+      stub_method(Agents, :active, ->(_paths) { Set[wt] }) do
+        stub_method(Tmux, :work_panes, -> { {} }, &blk)
+      end
+    end
+
+    # Value: protects=an open prompt keeps its ◆ past the TTL while its agent lives; fails_when=fresh_hook's TTL applies to :waiting again or the edge input drops it; why_new=the test above covers only a gone agent; seam=none; no_claim=Agents.active's pgrep/lsof (stubbed)
+    def test_a_stale_waiting_report_stays_waiting_while_its_agent_lives
+      wt = worktree
+      write_hook("waiting", wt, epoch: Time.now.to_i - (AgentState::PRESENCE_TTL + 60))
+      a = AgentState.new
+      with_agent(wt) { assert_equal({ wt => :waiting }, a.scan([wt])) }
+      assert_equal({ wt => :waiting }, a.last_hook_states, "answering it still ends in a normal done edge")
+      assert_equal({ wt => :done }, a.stale_waiting, "the process fallback's verdict rides along for Presence")
+    end
+
+    # Value: protects=an off-screen frame keeps the ◆ the switch-in scan will show, and never a dead agent's; fails_when=hooks_only skips the stale-waiting branch or trusts a report no scan held; why_new=no hooks_only TTL test; seam=none; no_claim=real tmux
+    def test_off_screen_a_stale_waiting_report_carries_on_only_if_the_last_scan_held_it
+      wt = worktree
+      write_hook("waiting", wt, epoch: Time.now.to_i - (AgentState::PRESENCE_TTL + 60))
+      a = AgentState.new
+      stub_method(Agents, :active, ->(_paths) { flunk "hooks_only never runs the process scan" }) do
+        assert_empty a.scan([wt], hooks_only: true), "nothing vouched for this agent: no ◆"
+      end
+      with_agent(wt) { a.scan([wt]) }
+      stub_method(Agents, :active, ->(_paths) { flunk "hooks_only never runs the process scan" }) do
+        assert_equal({ wt => :waiting }, a.scan([wt], hooks_only: true))
+        assert_equal({ wt => :waiting }, a.scan([wt], hooks_only: true), "and keeps carrying while off screen")
+      end
+      assert_equal({ wt => nil }, a.stale_waiting, "no fallback was computed off screen")
+      no_processes { a.scan([wt]) }
+      assert_empty a.scan([wt], hooks_only: true), "a visible scan that found no agent ends it"
+    end
+
+    # Value: protects=a prompt open over a weekend still shows ◆, and an abandoned one is reaped in a week; fails_when=read_hooks age-deletes waiting lines at STALE_GC or never; why_new=the GC test covers a done report only; seam=none; no_claim=Agents.active (stubbed)
+    def test_a_waiting_report_survives_the_age_gc
+      wt = worktree
+      write_hook("waiting", wt, name: "weekend", epoch: Time.now.to_i - (AgentState::STALE_GC + 3600))
+      file = File.join(dir, "weekend")
+      with_agent(wt) { assert_equal({ wt => :waiting }, AgentState.new.scan([wt])) }
+      no_processes { assert_empty AgentState.new.scan([wt]), "no agent: nothing drawn" }
+      assert File.exist?(file), "a waiting report outlives STALE_GC"
+      write_hook("waiting", wt, name: "weekend", epoch: Time.now.to_i - (AgentState::WAITING_GC + 3600))
+      no_processes { AgentState.new.scan([wt]) }
+      refute File.exist?(file), "but not WAITING_GC, so an abandoned prompt doesn't stay forever"
     end
 
     def test_deepest_cwd_at_or_under_the_worktree_wins

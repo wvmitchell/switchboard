@@ -9,6 +9,8 @@ module Switchboard
     def agent_state(result = {}, &block)
       Object.new.tap do |as|
         as.define_singleton_method(:scan, &(block || ->(_paths, hooks_only: false) { result }))
+        as.define_singleton_method(:last_hook_states) { result }
+        as.define_singleton_method(:stale_waiting) { {} }
       end
     end
 
@@ -68,6 +70,86 @@ module Switchboard
     # Value: protects=handoff names the busy session beside a shell one; fails_when=handoff reuses
     # the first offstage pid; why_new=every other row has one record, so that survived; seam=none;
     # no_claim=real session files (literal records)
+    # --- merge_waiting: a Claude session's `waiting` is the ◆'s evidence ------------------
+    def waiting_rec = { status: "waiting", pid: 7 }
+    def settled_idle = { status: "idle", pid: 7, status_at: (Time.now.to_f - ClaudeSessions::SETTLE - 5) * 1000 }
+    def fresh_idle = { status: "idle", pid: 7, status_at: Time.now.to_f * 1000 }
+
+    # Value: protects=a subagent's tool call can't turn an open dialog into a bold ● and a false chime; fails_when=the hook file wins over the session; why_new=Presence had no merge; seam=none; no_claim=real sessions-file semantics (live probe, 2.1.327)
+    def test_a_session_at_a_dialog_overrules_a_hook_overwritten_to_done
+      agents, hooks, confirmed = Presence.merge_waiting({ "/a" => :done }, { "/a" => :done }, {},
+                                                        { "/a" => [waiting_rec] }, Set.new)
+      assert_equal({ "/a" => :waiting }, agents)
+      assert_equal({ "/a" => :waiting }, hooks, "the edge tracker sees a steady waiting: no edge, baseline stays waiting")
+      assert_equal Set["/a"], confirmed
+    end
+
+    def test_an_unhooked_claude_at_a_dialog_draws_waiting_but_feeds_no_edge
+      agents, hooks, = Presence.merge_waiting({}, {}, {}, { "/a" => [waiting_rec] }, Set.new)
+      assert_equal({ "/a" => :waiting }, agents)
+      assert_empty hooks
+    end
+
+    # Value: protects=a rejected prompt's ◆ goes when its session settles idle, with no chime; fails_when=the confirmed rule is dropped or the path stays in the edge input; why_new=no Esc case existed; seam=none; no_claim=real Esc timing (live probe)
+    def test_a_confirmed_dialog_rejected_with_esc_rests_without_an_edge
+      agents, hooks, confirmed = Presence.merge_waiting({ "/a" => :waiting }, { "/a" => :waiting }, {},
+                                                        { "/a" => [settled_idle] }, Set["/a"])
+      assert_equal({ "/a" => :done }, agents)
+      assert_empty hooks, "left out of the edge input: a waiting→done here would chime for a reject"
+      assert_equal Set["/a"], confirmed, "stays cleared until the hook leaves waiting"
+    end
+
+    # Value: protects=the sessions file can't hide a dialog it never reported; fails_when=the clear skips the confirmed check; why_new=pins D9's fail-visible guard; seam=none; no_claim=which dialogs Claude reports as waiting
+    def test_an_unconfirmed_waiting_beside_an_idle_session_keeps_its_diamond
+      agents, hooks, confirmed = Presence.merge_waiting({ "/a" => :waiting }, { "/a" => :waiting }, {},
+                                                        { "/a" => [settled_idle] }, Set.new)
+      assert_equal({ "/a" => :waiting }, agents)
+      assert_equal({ "/a" => :waiting }, hooks)
+      assert_empty confirmed
+    end
+
+    def test_a_confirmed_dialog_waits_for_a_settled_idle
+      agents, = Presence.merge_waiting({ "/a" => :waiting }, { "/a" => :waiting }, {}, { "/a" => [fresh_idle] }, Set["/a"])
+      assert_equal({ "/a" => :waiting }, agents, "an idle inside the 2s race window is no evidence yet")
+    end
+
+    def test_confirmed_ends_when_the_hook_moves_on
+      _, _, confirmed = Presence.merge_waiting({ "/a" => :thinking }, { "/a" => :thinking }, {},
+                                               { "/a" => [{ status: "busy", pid: 7 }] }, Set["/a"])
+      assert_empty confirmed, "the next prompt starts fresh"
+    end
+
+    # Value: protects=Claude with a readable session gets no TTL extension (D2); fails_when=a stale ◆ ignores the session; why_new=stale_waiting is new; seam=none; no_claim=none beyond protects
+    def test_a_readable_session_overrules_the_stale_waiting_extension
+      agents, hooks, = Presence.merge_waiting({ "/a" => :waiting, "/b" => :waiting }, { "/a" => :waiting, "/b" => :waiting },
+                                              { "/a" => :done, "/b" => nil }, { "/a" => [settled_idle] }, Set.new)
+      assert_equal :done, agents["/a"], "a session that says otherwise wins"
+      assert_equal :waiting, agents["/b"], "no session (Codex): the extension stands"
+      assert_equal({ "/b" => :waiting }, hooks)
+    end
+
+    # Value: protects=an undocumented session status can't erase a live ◆ (fail closed); fails_when=any non-empty session overrules the extension; why_new=the test above uses a recognized idle only; seam=none; no_claim=which statuses Claude adds later
+    def test_an_unrecognized_session_status_leaves_the_stale_waiting_standing
+      [{ status: "compacting", pid: 7 }, { pid: 7 }, fresh_idle].each do |rec|
+        agents, hooks, = Presence.merge_waiting({ "/a" => :waiting }, { "/a" => :waiting }, { "/a" => :done },
+                                                { "/a" => [rec] }, Set.new)
+        assert_equal :waiting, agents["/a"], "#{rec.inspect} is no evidence"
+        assert_equal({ "/a" => :waiting }, hooks)
+      end
+    end
+
+    # Value: protects=the merge never writes into the scan's shared sessions hash; fails_when=it reads sessions[path] through the default proc; why_new=ClaudeSessions.scan's hash keeps that proc; seam=none; no_claim=none beyond protects
+    def test_the_merge_leaves_the_sessions_hash_untouched
+      sessions = Hash.new { |h, k| h[k] = [] }
+      Presence.merge_waiting({ "/a" => :done }, { "/a" => :done }, {}, sessions, Set["/b"])
+      assert_empty sessions
+    end
+
+    def test_a_failed_session_read_changes_nothing
+      args = [{ "/a" => :done }, { "/a" => :done }, { "/a" => :done }, nil, Set["/a"]]
+      assert_equal args.values_at(0, 1, 4), Presence.merge_waiting(*args)
+    end
+
     def test_session_evidence_sorts_each_session_state
       now = Time.at(1_000)
       at = ->(secs_ago) { (now.to_f - secs_ago) * 1000 }

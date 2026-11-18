@@ -76,7 +76,10 @@ interrupted (Esc fires no `Stop`), so the dot rests as `done`, silently.
 The flip side of trusting a fresh file: a report counts only while fresh
 (`PRESENCE_TTL`, 900s). After that it ages out, so a closed agent's last state
 doesn't linger as a phantom live agent. The `.abs` on the age means a backward
-clock step (a future epoch) still ages out rather than reading as eternally fresh.
+clock step (a future epoch) still ages out rather than reading as eternally fresh. One
+report is the exception: a `waiting` stays as long as its agent is alive, because a
+question you haven't answered doesn't stop needing you after 15 minutes
+([how long the ◆ lasts](#how-long-the--lasts)).
 
 ### 2. Process/activity — coarse, zero-config
 
@@ -145,7 +148,8 @@ opposite sides of that:
   `AgentState` only renders tracked worktrees, so the block firing for non-switchboard
   codex sessions is inert. Those sessions do leave stray state files that the
   "directory still exists" GC alone would keep forever, so an age-based GC
-  (`AgentState::STALE_GC`) reaps them.
+  (`AgentState::STALE_GC`) reaps them. A `waiting` file gets a week instead
+  (`WAITING_GC`), since an unanswered prompt can be older than a day.
 
 Because the codex block lives in your personal global config, switchboard writes
 it **only with your consent** (`Installer`'s `step_codex_hooks`). `switchboard install`
@@ -221,9 +225,7 @@ the right way.
 
 Both agents report `waiting` on `PermissionRequest`, the moment the prompt opens; the
 reporter prints nothing, and a silent hook leaves the answer to you. Claude also keeps
-`Notification` (`notify` mode) for elicitation, `agent_needs_input` and idle. Its
-accepted cost is a dot that stays magenta until an approved tool finishes (or, after an
-Esc rejection, until the next prompt).
+`Notification` (`notify` mode) for elicitation, `agent_needs_input` and idle.
 
 `PermissionRequest` has one side effect in Claude: [its docs](https://code.claude.com/docs/en/permission-modes#why-the-critical-path-removal-prompt-stays-on)
 list any such hook as switching off `CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS`, so in a
@@ -233,6 +235,41 @@ worktree's hooks puts the entry back if you remove it.
 Codex has no `Notification` event, so `PermissionRequest` is its only `waiting` signal.
 The magenta dot shows whenever Codex blocks on you for approval, which is best-effort: a
 session command that bypasses *all* approvals suppresses it.
+
+### How long the ◆ lasts
+
+A `◆` you haven't answered should stay a `◆`. Two things used to wear it down: the
+report aged out like any other after `PRESENCE_TTL`, and a background subagent working
+while the dialog was open could overwrite the hook file with `done` (its next tool call,
+[below](#subagents-dont-move-the-main-dot)). Either way the row slid into a plain bold
+`●` that no longer said "this is waiting on you".
+
+**For Claude, the session file is the evidence.** While a permission dialog is open,
+Claude's own `~/.claude/sessions/<pid>.json` reads `status: "waiting"`, and nothing a
+subagent does changes that. So `Presence.merge_waiting` draws `◆` for any worktree whose
+session reads `waiting`, whatever the hook file says. It hands the edge tracker
+`waiting` too, so the subagent's `done` rings nothing and bolds nothing, and the real
+finish after you approve still rings once. Like every read of that file, it fails closed:
+a session file it can't read changes nothing.
+
+**Rejecting with Esc fires no hook,** so the hook file keeps saying `waiting` while
+Claude sits idle. When the session file confirmed the dialog and every session now reads
+a settled `idle`, the `◆` rests as `●`, silently, about two seconds after the Esc. Only a
+dialog the session file reported clears this way, so it can never hide a `◆` it didn't
+see.
+
+**For Codex and hook-only Claude** there is no session file to ask, so `AgentState`
+keeps a `waiting` report past its TTL for as long as the agent's process is still
+running in that worktree. When the agent is gone, so is the `◆`. Off screen, where the
+sidebar skips the process scan, a stale `◆` carries on only if the previous scan held it.
+A dead agent's report can stand there until the next visible scan checks it, not
+forever. A sidebar that starts off screen has no previous scan, so it shows such a `◆`
+only once you look at it. Where a Claude session file disagrees with a stale report, it
+wins only when it reads a status switchboard recognizes; anything else is no evidence.
+
+The warm fingerprint counts `waiting` sessions and marks when an `idle` has settled, so a
+hidden sidebar re-renders when a dialog opens or closes and again once an Esc'd dialog's
+idle settles. Switching to it doesn't flash a stale `◆`.
 
 ### Subagents don't move the main dot
 
@@ -250,7 +287,8 @@ exceptions:
 - **A subagent's `PermissionRequest` still reports `waiting`,** since it wants you.
 - **Its next `PostToolUse` or `PostToolUseFailure` writes `done` when the file reads
   `waiting`,** so an approved subagent prompt can't leave the dot stuck magenta. That
-  `done` is a hand-off, so it shows as ◷ (below).
+  `done` is a hand-off, so it shows as ◷ (below). When it's the main agent's dialog
+  that's open, the session file keeps the `◆` ([above](#how-long-the--lasts)).
 
 `report_stop_state` passes `in: File::NULL` for the same reason the reporter checks
 stdin.
@@ -818,7 +856,8 @@ A 3-second scan lands in those windows about 1% of the time. So both edges wait 
 Nothing on disk changes when a `done` settles, so a hidden pane learns about it from a
 per-file "settled" bit in the warm fingerprint's hook term (`hook_fingerprint`).
 `ClaudeSessions.fingerprint` also moves when a *tracked* session crosses between offstage
-and not, never for a Claude outside switchboard.
+and not, opens or leaves a permission dialog, or its `idle` settles
+([how long the ◆ lasts](#how-long-the--lasts)), never for a Claude outside switchboard.
 
 ### Holding the chime
 

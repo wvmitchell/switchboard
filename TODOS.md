@@ -528,14 +528,11 @@ safe today; each is narrow).
   Codex grows the same. *Context:* rerun the T0 probe harness (a throwaway tmux + real
   claude, `DISABLE_UPDATES`) dumping the field's values for a background agent, a
   background Bash and a Monitor.
-- **Reporter v6 attribution gaps (both reproduced at ship QA).** (a) `field agent_id`
-  matches an `agent_id` key nested in a main-agent tool's `tool_input` (the sed match is
-  greedy, last wins), so that `thinking` refresh is dropped; fix by matching only
-  top-level keys once a probe confirms Claude's payload key order (does `agent_id` precede
-  `tool_input`?). (b) A background subagent's `PostToolUse` turns a MAIN agent's open
-  `waiting` into `done` (no owner on the state line); fix with a 4th `owner` field
-  (`main` or the agent_id) that `AgentState` tolerates, cleared only by its owner. Neither
-  is a regression: v5 wrote `thinking` over the main `◆` on every subagent tool call.
+- **Reporter v6 attribution gap (reproduced at ship QA).** `field agent_id` matches an
+  `agent_id` key nested in a main-agent tool's `tool_input` (the sed match is greedy, last
+  wins), so that `thinking` refresh is dropped; fix by matching only top-level keys once a
+  probe confirms Claude's payload key order (does `agent_id` precede `tool_input`?). Not a
+  regression: v5 wrote `thinking` over the main `◆` on every subagent tool call.
 - **A matured hold bolds only on an on-screen claim.** *What:* a hold that matures with no
   follow-up turn (pid gone, settled idle) while no sidebar is on screen leaves no bold,
   then chimes late on return. *Why kept:* an off-screen pane can't tell what you're
@@ -732,6 +729,15 @@ safe today; each is narrow).
   `Render#colored` (the `@attention.include?` / `unseen_failure?` branch) and the
   collapsed-header clone in `Sidebar::Rows#visible_tree`, which can tally the hidden
   rows' attention the same way it tallies the `(N)` count. **Priority:** P3.
+- **A finished turn should bold even in the workspace you left on screen.** *What:* treat
+  the current workspace as unviewed for bold when the tmux client has been idle past a
+  threshold. *Why:* "seen" today means "on screen", so a turn that finishes in the
+  workspace you walked away from never goes bold. A prompt keeps its ◆ until answered, so
+  only plain finished turns are affected. *Pros:* catches walk-away finishes. *Cons:* a
+  new idle threshold to tune, and a false bold when you were reading without typing.
+  *Start in:* `Edges#viewing?` and the view clear in `Sidebar#locate`; tmux's
+  `#{client_activity}`. *Depends on:* the ◆ lasting until it's answered.
+  **Priority:** P3.
 
 ## Sidebar search follow-ups
 

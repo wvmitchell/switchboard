@@ -165,7 +165,7 @@ module Switchboard
     # up); why_new=TODOS item (2) had no test; seam=none; no_claim=real session files (stubbed)
     def test_links_refresh_and_the_overlay_closes_even_when_the_dot_scan_raises
       sb = open(linked)
-      as = Struct.new(:last_hook_states).new({})
+      as = Struct.new(:last_hook_states, :stale_waiting).new({}, {})
       as.define_singleton_method(:scan) { |*, **| raise "hook dir vanished" }
       sb.instance_variable_set(:@agent_state, as)
       stub_method(RemoteLink, :scan, ->(*, **) { {} }) do
@@ -310,7 +310,7 @@ module Switchboard
     # poke test stubbed the reload; seam=none (stubs reload's heavy rebuild); no_claim=real tmux
     def test_a_switch_back_poke_closes_the_overlay_when_its_link_ended
       sb = open(linked)
-      as = Struct.new(:last_hook_states).new({})
+      as = Struct.new(:last_hook_states, :stale_waiting).new({}, {})
       as.define_singleton_method(:scan) { |*, **| {} }
       sb.instance_variable_set(:@agent_state, as)
       stub_method(Tmux, :visible?, ->(*) { true }) do
@@ -355,7 +355,7 @@ module Switchboard
     # why_new=red team, ship of v0.54.0; seam=none; no_claim=real SIGTERM delivery
     def test_a_propagating_signal_skips_the_link_refresh
       sb = open(linked)
-      as = Struct.new(:last_hook_states).new({})
+      as = Struct.new(:last_hook_states, :stale_waiting).new({}, {})
       as.define_singleton_method(:scan) { |*, **| raise Interrupt }
       sb.instance_variable_set(:@agent_state, as)
       scans = 0
@@ -444,7 +444,7 @@ module Switchboard
     # team, ship of v0.54.0; seam=none; no_claim=real signal delivery (covered by the signal test)
     def test_the_link_refresh_runs_when_called_from_inside_a_rescue
       sb = open(linked)
-      as = Struct.new(:last_hook_states).new({})
+      as = Struct.new(:last_hook_states, :stale_waiting).new({}, {})
       as.define_singleton_method(:scan) { |*, **| {} }
       sb.instance_variable_set(:@agent_state, as)
       scans = 0

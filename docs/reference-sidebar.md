@@ -90,7 +90,7 @@ they follow your light/dark background).
 |-------|-------|-------|--------|
 | _(blank)_ | — | no agent / idle | — |
 | `⠹` | blue | **thinking** — working a turn | braille spinner cycles |
-| `◆` / `◇` | magenta | **waiting** — blocked on a permission prompt or question | blinks filled/hollow |
+| `◆` / `◇` | magenta | **waiting** — blocked on a permission prompt or question; stays until you answer it | blinks filled/hollow |
 | `●` | green | **done** — finished its turn (your move) | steady |
 | `◷` | blue | **background** — the turn ended, but work it started (a background agent, shell or monitor) is still running | steady |
 | `✦` / `✧` | bright green | **just completed** — the completion sparkle | shimmers for ~3s, then settles to the steady `●` |

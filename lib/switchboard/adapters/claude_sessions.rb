@@ -32,6 +32,11 @@ module Switchboard
     # the chime rings at the Stop as before and only the ◷ says work is still running.
     HANDOFF_STATUS = "busy"
 
+    # `status` while a permission dialog is open (probed live on 2.1.310 and 2.1.327). It
+    # holds through a background subagent's tool calls, which overwrite the hook file, so
+    # it's the ◆'s evidence for Claude (Presence).
+    WAITING_STATUS = "waiting"
+
     # Claude writes `done` 13-29ms BEFORE `idle` on a normal turn end, and a finished
     # background agent reads `idle` for ~15ms before its follow-up turn reads `busy`
     # again. A 3s scan lands in those windows ~1% of the time, so both edges wait this
@@ -161,13 +166,21 @@ module Switchboard
       :idle if sessions.all? { |r| settled_idle?(r, now) }
     end
 
-    # The off-screen warm gate's view of the ◷: sorted [cwd, offstage 0/1, alive 0/1, pid]
-    # for every session recorded in a tracked worktree. It moves when such a session starts
-    # or stops running background work, not on churn that keeps it on the same side, and
-    # never for a Claude outside switchboard. Stats only for unchanged files: `cache`
+    # Does any of a worktree's live sessions have a permission dialog open?
+    def waiting?(sessions)
+      !sessions.nil? && sessions.any? { |r| r[:status] == WAITING_STATUS }
+    end
+
+    # The off-screen warm gate's view of the ◷ and the ◆: sorted [cwd, offstage 0/1,
+    # waiting 0/1, settled idle 0/1, alive 0/1, pid] for every session recorded in a
+    # tracked worktree. It moves when such a session starts or stops running background
+    # work, opens or leaves a dialog, or its idle settles (nothing on disk changes then,
+    # and an Esc'd ◆ waits on it), not on churn that keeps it on the same side, and never for a
+    # Claude outside switchboard. Stats only for unchanged files: `cache`
     # (owned by the caller) maps file => [[mtime, size, inode], record], like
     # RemoteLink.fingerprint.
     def fingerprint(cache, ws_paths)
+      now = Time.now
       roots = ws_paths.each_with_object({}) { |p, h| h[real(p).b] = p; h[p.to_s.b] ||= p }
       files = session_files
       cache.select! { |f, _| files.include?(f) }
@@ -178,7 +191,8 @@ module Switchboard
         r = cache[f][1] or next
         next unless owner(r[:cwd].b, roots) || owner(real(r[:cwd]).b, roots)
 
-        [r[:cwd], OFFSTAGE_STATUSES.include?(r[:status]) ? 1 : 0, ProcessIdentity.alive?(r[:pid]) ? 1 : 0, r[:pid]]
+        [r[:cwd], OFFSTAGE_STATUSES.include?(r[:status]) ? 1 : 0, r[:status] == WAITING_STATUS ? 1 : 0,
+         settled_idle?(r, now) ? 1 : 0, ProcessIdentity.alive?(r[:pid]) ? 1 : 0, r[:pid]]
       rescue StandardError
         nil
       end.sort
