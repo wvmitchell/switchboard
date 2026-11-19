@@ -14,6 +14,7 @@ module Switchboard
     PATTERN = /File\.basename\(|\.folder_name\b/
 
     ALLOWED = {
+      "adapters/agents" => 1,          # a ps command name, to tell an agent CLI from a helper
       "adapters/claude_sessions" => 1, # a process's argv[0]
       "adapters/hook_file" => 1,       # a hook script's own file name
       "cli" => 1,                      # `switchboard path` also accepts a folder name

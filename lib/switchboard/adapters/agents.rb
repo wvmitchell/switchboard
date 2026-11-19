@@ -22,21 +22,22 @@ module Switchboard
       end.to_set
     end
 
-    # Strict, for deciding what to destroy: the cwd of every live agent process, with no pid
-    # cap; nil when the process scan or the cwd lookup failed (a failed scan can't say
-    # nobody is there).
-    def scan
+    # Strict, for deciding what to destroy: { pid => cwd } for every live process that
+    # mentions an agent CLI, with no pid cap; nil when the process scan or the cwd lookup
+    # failed (a failed scan can't say nobody is there). Pids, not just cwds, so delete can
+    # tell an agent from the helpers it started and check when it started.
+    def scan_pids
       out = IO.popen(["pgrep", "-f", CLIS.join("|")], err: File::NULL, &:read)
       return nil unless [0, 1].include?($?.exitstatus) # 1 is "no match"
 
       pids = out.split.map(&:to_i).select(&:positive?) - [Process.pid]
-      return [] if pids.empty?
-
-      found = cwds_of_strict(pids)
-      found && (found.values + tmux_cwds)
+      pids.empty? ? {} : cwds_of_strict(pids)
     rescue StandardError
       nil
     end
+
+    # Is this ps command name (macOS prints a full path) an agent CLI itself?
+    def cli?(comm) = CLIS.include?(File.basename(comm.to_s))
 
     # Like cwds_of, but nil on failure. A pid that exited between pgrep and lsof just has
     # no line, which lsof reports with a non-zero status: that's only a failure when lsof

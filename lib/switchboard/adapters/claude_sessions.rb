@@ -44,6 +44,10 @@ module Switchboard
     # `idle`.
     SETTLE = 2
 
+    # Every `status` Claude writes (probed live on 2.1.310 and 2.1.327). for_pids treats any
+    # other value as an unreadable session.
+    STATUSES = (%w[idle] + OFFSTAGE_STATUSES + [WAITING_STATUS]).freeze
+
     module_function
 
     # A test/override seam first (keeps the suite off the real ~/.claude), then
@@ -133,6 +137,22 @@ module Switchboard
     rescue StandardError
       nil
     end
+
+    # { pid => record } for exactly these Claude pids, read from each one's own file, or
+    # nil for a pid whose session can't be read: no file, a shape or `status` we don't
+    # recognize, or a record from an earlier process that had the same pid. Stricter than
+    # `scan` for delete, where a missing session would hide an open dialog: "can't tell" is
+    # never "no session".
+    def for_pids(pids)
+      dir = sessions_dir
+      pids.to_h do |pid|
+        r = record(read_json(File.join(dir, "#{pid}.json")))
+        ok = r && r[:pid] == pid && STATUSES.include?(r[:status]) && ProcessIdentity.same?(pid, r[:proc_start])
+        [pid, ok ? r : nil]
+      end
+    end
+
+    def session_file?(pid) = File.exist?(File.join(sessions_dir, "#{pid}.json"))
 
     # By executable name, argv[0] or the script node runs: plenty of processes merely
     # mention ~/.claude in their arguments.

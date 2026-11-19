@@ -295,7 +295,7 @@ workspace waiting on a prompt (`◆`) does too, because the old `↵` `↵` habi
 second press on that prompt, and a blind `↵` on a Claude permission prompt approves the tool
 call. That check reads the hook reports the last scan saw, so it keeps stopping after a row
 has lost its `◆` (its agent exited, or Claude's session file shows the dialog closed) or a
-scan has failed, until the report is replaced or cleaned up a week later. A
+scan has failed, until the report is replaced or goes with its workspace. A
 prompt that appeared a moment ago isn't covered, and neither is an agent without hooks, which
 never reports one. The footer says `↵ open` only when `↵` will open the row.
 

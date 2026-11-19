@@ -31,8 +31,8 @@ module Switchboard
   class AgentState
     STATES = %w[thinking done waiting].freeze
     PRESENCE_TTL = 900 # seconds a hook report counts as a live agent
-    STALE_GC = 86_400 # seconds; a still-existing-dir state file older than this is reaped (global codex hook hygiene)
-    WAITING_GC = 7 * STALE_GC # a `waiting` report's own cap: a prompt open over a weekend survives
+    STALE_GC = 86_400 # seconds; an untracked dir's report older than this is reaped (global codex hook hygiene)
+    KEPT = %w[done waiting].freeze # what a tracked worktree keeps past STALE_GC
     STATIC_MIN_AGE = 2.0 # seconds a work pane must hold identical content before a :static
                          # verdict — below REFRESH, above a rapid poke/reload rescan gap, so a
                          # sub-second re-scan can't misread a still-animating pane as idle
@@ -54,7 +54,11 @@ module Switchboard
     # session says otherwise.
     attr_reader :stale_waiting
 
-    def initialize
+    # keep_roots: dirs whose reports are kept like a tracked worktree's even when absent from
+    # a scan's paths (the config's worktree root), so a project whose tree failed to build
+    # for one scan doesn't lose its old reports.
+    def initialize(keep_roots: -> { [] })
+      @keep_roots = keep_roots
       @seen = {} # pane_id => [last capture hash, monotonic when that content first appeared]
       @last_hook_states = {}
       @last_hook_ages = {}
@@ -91,7 +95,7 @@ module Switchboard
     # warm-render path passes it so an off-screen sidebar stays cheap; hook-less /
     # activity-based dots just defer their freshness to the next visible scan.
     def scan(worktree_paths, hooks_only: false)
-      hooks = read_hooks
+      hooks = read_hooks(worktree_paths + @keep_roots.call)
       process = nil # Agents.active, fetched lazily (skipped entirely if all hooked / hooks_only)
       panes = nil
       hook_states = {} # the hook-only subset, stashed for last_hook_states
@@ -144,8 +148,9 @@ module Switchboard
     # kept: a rename leaves a bridge symlink (old -> new) so a running agent's
     # frozen project dir keeps resolving, which aliases its stale pre-move file
     # and its fresh post-move file onto the same worktree.
-    def read_hooks
+    def read_hooks(worktree_paths = [])
       now = Time.now.to_i
+      tracked = nil # canonicalized only when a report is old enough to need it
       Dir.glob(File.join(state_dir, "*")).each_with_object({}) do |file, h|
         state, cwd, epoch = File.read(file).chomp.split("\t", 3)
         next unless state && cwd && epoch && STATES.include?(state)
@@ -159,11 +164,13 @@ module Switchboard
         age = now - epoch.to_i
         # Age-based GC: the global codex hook reports from EVERY dir codex runs in (not
         # just switchboard worktrees), so an existing-dir file long past use would linger
-        # forever on the dir-exists GC alone. Drop anything older than STALE_GC. `age >`
-        # (not `.abs`) so a future-epoch/backward-clock file isn't reaped as stale. A
-        # `waiting` report gets WAITING_GC: a prompt left open over a weekend is still
-        # unanswered, and liveness (scan) decides whether it draws.
-        if age > (state == "waiting" ? WAITING_GC : STALE_GC)
+        # forever on the dir-exists GC alone. Drop an untracked dir's report older than
+        # STALE_GC. `age >` (not `.abs`) so a future-epoch/backward-clock file isn't reaped
+        # as stale. A tracked worktree's (or kept root's) `done` or `waiting` has no age limit
+        # (a killed agent's `thinking` still goes): a prompt left open over a
+        # weekend is still unanswered, delete trusts an idle agent's `done` however old, and
+        # the file goes with its folder or when delete clears it.
+        if age > STALE_GC && (!KEPT.include?(state) || (tracked ||= worktree_paths.map { |wt| real(wt) }).none? { |wt| under?(key, wt) })
           File.delete(file)
           next
         end
@@ -176,8 +183,8 @@ module Switchboard
       {}
     end
 
-    # Deepest hook cwd at or under the worktree wins (agent launched in a subdir),
-    # but only if its report is still fresh: [state, age in seconds], or nil. Keys are already canonicalized
+    # The freshest hook cwd at or under the worktree wins (deepest on a tie: an agent
+    # launched in a subdir), but only if its report is still fresh: [state, age in seconds], or nil. Keys are already canonicalized
     # (read_hooks), so we only canonicalize the worktree — a symlinked worktree
     # root still matches the hook's physical `pwd -P`.
     def fresh_hook(worktree, hooks)
@@ -187,7 +194,9 @@ module Switchboard
 
     def latest_hook(worktree, hooks)
       wt = real(worktree)
-      cwd = hooks.keys.select { |c| under?(c, wt) }.max_by(&:length)
+      # The freshest report, the deepest on a tie: a kept report from a subdir the agent
+      # left must not outrank a newer one from where it runs now.
+      cwd = hooks.keys.select { |c| under?(c, wt) }.max_by { |c| [-hooks[c][1], c.length] }
       cwd && hooks[cwd]
     end
 

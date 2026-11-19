@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "time"
+
 module Switchboard
   # "Is this still the same process?" — a pid alone can't say, because the OS recycles
   # pids. A pid PLUS its start time is a strong identity: a dead pid has no start time,
@@ -20,6 +22,15 @@ module Switchboard
                err: File::NULL, &:read).to_s.strip
     rescue StandardError
       ""
+    end
+
+    # start_of as epoch seconds, or nil when it can't be read. `lstart` has one-second
+    # resolution, so compare it only with whole seconds.
+    def start_epoch(pid)
+      stamp = start_of(pid)
+      stamp.empty? ? nil : Time.strptime("#{stamp} UTC", "%a %b %e %H:%M:%S %Y %Z").to_i
+    rescue ArgumentError
+      nil
     end
 
     # Is `pid` still the process that was started at `started`? A missing token can't

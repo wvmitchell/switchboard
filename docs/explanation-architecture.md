@@ -428,7 +428,11 @@ fails until a new store is a row or is declared global.
 The order is what makes it safe to run unattended. Every check runs before anything
 changes: the target must be a workspace, not where the caller is, not still building or
 being deleted, clean, with every commit on its base or a remote, and with nobody using it
-(an agent thinking, a hookless agent process, a live ∞ or ◷, another attached client). A
+(an agent thinking, a hookless agent process, a live ∞ or ◷, another attached client). An
+agent counts as idle when its newest hook report is `done` and was written after the agent
+started, however old: Claude and Codex both report `done` when they start and at the end of
+every turn ([agent presence](explanation-agent-presence.md)), so an older one belongs to a
+previous agent. Claude's own session file can still veto that, never grant it. A
 refusal changes nothing. Then a **receipt** claims the workspace under the project lock and
 the row hides everywhere; the session closes; the checks that could have changed run again;
 git removes the folder unforced, so it refuses a file written after the re-check; and only

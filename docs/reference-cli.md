@@ -463,7 +463,7 @@ relying on `--creation`: an older sidebar can still collect a `new` record you'v
 `[branches-unknown]`, exit 5. It can't tell which branches are its own, or git couldn't count their commits. Fix: ask a human. With `--force` the workspace goes and every branch stays.
 
 #### delete: busy
-`[busy]`, exit 5. Someone may still be using it: an agent thinking or waiting, a live agent process with no fresh idle report, a live ∞ monitor, a ◷ hold, or another tmux client attached. A failed process scan counts as busy. An agent idle at its prompt doesn't. Fix: wait for it and retry at the next check, or ask a human.
+`[busy]`, exit 5. Someone may still be using it: an agent thinking or waiting, a live agent process with no idle report since it started, a Claude session with a dialog open, background work still running, or an idle only a moment old (found by its command line or session file, however it was launched), a live ∞ monitor, a ◷ hold, or another tmux client attached. A process scan that fails, or a Claude session it can't read, counts as busy. An agent idle at its prompt doesn't, however long ago it finished: the newest hook report is `done` and was written after every agent in it started (an agent a wrapper script restarted counts on its own). An agent whose hooks never report (Codex with its global block untrusted, or Claude with hooks off) has no such report, so it needs `--force`. Fix: wait for it and retry at the next check, or ask a human.
 
 #### delete: remove-failed
 `[remove-failed]`, exit 6. Git refused or failed, or the folder's removal couldn't be confirmed. The session is closed. Fix: retry the same command once; fails again, ask a human with git's message.

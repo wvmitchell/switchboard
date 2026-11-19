@@ -84,7 +84,7 @@ module Switchboard
 
     # Value: protects=an agent idle at its prompt (as Claude stays after the ◷ check) doesn't
     # block the monitor's delete, and one with no idle report does; fails_when=any live agent
-    # reads as busy, or a hookless one doesn't; why_new=the strict scan; seam=none (a real
+    # reads as busy, or a hookless one, or one older than the agent, doesn't; why_new=the strict scan; seam=none (a real
     # process whose argv names claude, and a real hook file)
     def test_an_idle_agent_does_not_block_and_a_hookless_one_does
       sess, leaf, real = workspace
@@ -93,9 +93,14 @@ module Switchboard
 
       code, _out, err = delete(leaf)
       assert_equal 5, code, err
-      assert_match(/no fresh idle state/, err)
+      assert_match(/no idle report since it started/, err)
 
       FileUtils.mkdir_p(AgentState.state_dir)
+      File.write(File.join(AgentState.state_dir, "1"), "done\t#{real}\t#{Time.now.to_i - 3600}\n")
+      code, _out, err = delete(leaf)
+      assert_equal 5, code, "a `done` from before the agent started (read from the real ps) can't vouch for it"
+      assert_match(/no idle report since it started/, err)
+
       File.write(File.join(AgentState.state_dir, "1"), "done\t#{real}\t#{Time.now.to_i}\n")
       code, _out, err = delete(leaf)
       assert_equal 0, code, err
