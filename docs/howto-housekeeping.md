@@ -130,7 +130,9 @@ off. It checks, with the fix inline for anything red:
 - Orphaned `sb/` sessions (points you at `prune`).
 - Files deleted workspaces left in switchboard's stores, once they're over an hour old
   (points you at `prune`), and folders under the worktree root that git no longer lists as
-  a workspace (with the `rm -rf` to run; switchboard never removes a folder for you).
+  a workspace (with the `rm -rf` to run; switchboard never removes a folder for you). A
+  folder a delete left files in says so, and after the `rm -rf`, `prune` finishes that
+  delete.
 - Stored workspace names: a name whose folder is gone (with the `rename` command to run if
   a worktree on the same branch looks like where it moved), an entry file that can't be
   used, a name that clashes with another workspace's and so shows the folder name, and a
@@ -169,7 +171,12 @@ retrying:
   taken over automatically.
 - **`[remove-failed]`**: git refused. Retry once, then read git's message.
 - **`[partial]`**: the folder is gone but something was left. `switchboard prune` finishes
-  it.
+  it, except files git left in the folder: remove those yourself (doctor names the
+  `rm -rf`), then prune.
+
+On success the report has one line for each line `-n` printed. `already gone:` means the
+plan named it but it was gone before the delete reached it (a branch you deleted, a
+session that had exited, or what an interrupted delete had already done): nothing to do.
 
 Every token is in [Reference: CLI](reference-cli.md#switchboard-delete-name--projectname---creation-id---force--n).
 

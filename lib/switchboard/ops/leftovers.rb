@@ -78,14 +78,41 @@ module Switchboard
     end
 
     # Delete's own pass: every entry that belongs to the workspace at `real`, whatever its
-    # age, except the rows delete settles itself. Returns the files it couldn't remove.
-    def clear_workspace(real, except: [])
-      ctx = Context.new(projects: [], listed: nil, roots: [], now: Time.now)
-      (dirs.keys - except - %i[session_locks names]).flat_map do |row|
-        mine = items(row, ctx).select { |i| owned?(i, real) }
+    # age, except the rows delete settles itself. Typing locks carry only a pid, so only the
+    # locks of `pids` (agents delete proved gone) are touched, each under its flock and only
+    # while its pid is still dead (a pid alive again is a new owner's, and so is its lock).
+    # Returns [{ row => removed count }, files it couldn't remove].
+    def clear_workspace(real, except: [], pids: [])
+      removed = Hash.new(0)
+      stuck = (dirs.keys - except - %i[session_locks names]).flat_map do |row|
+        mine = owned(row, real)
         mine.each { |i| File.delete(i.file) rescue nil }
-        mine.map(&:file).select { |f| File.exist?(f) }
+        left = mine.map(&:file).select { |f| File.exist?(f) }
+        removed[row] += mine.size - left.size
+        left
       end
+      pids.each do |pid|
+        lock = SessionName::Claude.lock_path(pid)
+        next unless File.exist?(lock)
+
+        if SessionName::Claude.drop_lock(pid)
+          removed[:session_locks] += 1
+        elsif !ProcessIdentity.alive?(pid)
+          stuck << lock
+        end
+      end
+      [removed.reject { |_, n| n.zero? }, stuck]
+    end
+
+    # Read-only: { row => count } of the entries clear_workspace would remove for `real`
+    # (the dry run's markers line), never the rows in `except`.
+    def owned_by(real, except: [])
+      (dirs.keys - except - %i[session_locks names]).to_h { |row| [row, owned(row, real).size] }.reject { |_, n| n.zero? }
+    end
+
+    def owned(row, real)
+      ctx = Context.new(projects: [], listed: nil, roots: [], now: Time.now)
+      items(row, ctx).select { |i| owned?(i, real) }
     end
 
     # Worker claims carry only a pid, so theirs is found by the key of the realpath.
@@ -103,6 +130,24 @@ module Switchboard
       return [] unless ctx.listed
 
       DeleteReceipt.all.reject { |r| DeleteReceipt.owner_alive?(r) }.select { |r| ctx.listed.include?(r["real"]) }
+    end
+
+    # The folders of dead deletes git no longer lists but that still hold files: prune can't
+    # finish those receipts until the files go. Doctor advises rm -rf for these, so each must
+    # be provably not a checkout: its own repo (registered or not) decides, as resume does.
+    def files_left(config)
+      ctx = context(config, Time.now)
+      return [] unless ctx.listed
+
+      DeleteReceipt.all.reject { |r| DeleteReceipt.owner_alive?(r) || ctx.listed.include?(r["real"]) }.filter_map do |r|
+        path = r["path"].to_s
+        next unless File.exist?(path) && !holds_a_checkout?(path)
+
+        trees = Git.worktrees(r["repo"].to_s, strict: true)
+        next if trees.nil? || trees.any? { |w| Paths.real_or_self(w[:path]) == r["real"] || w[:path] == path }
+
+        path
+      end
     end
 
     def sweep_traces(now)
@@ -234,8 +279,10 @@ module Switchboard
       when :pending_delete then ctx.now - item.mtime > PendingDelete::TTL
       when :session_owner, :session_locks then !ProcessIdentity.alive?(item.pid)
       when :creation then creation_leftover?(item.rec, ctx)
-      # A dead owner's delete whose workspace git no longer lists: prune finishes it.
-      when :delete_receipt then !ctx.listed.nil? && !DeleteReceipt.owner_alive?(item.rec) && !ctx.listed.include?(item.path)
+      # A dead owner's delete whose workspace git no longer lists: prune finishes it, unless
+      # files are left in its folder (doctor names those; they're the user's to remove).
+      when :delete_receipt
+        !ctx.listed.nil? && !DeleteReceipt.owner_alive?(item.rec) && !ctx.listed.include?(item.path) && !File.exist?(item.rec["path"].to_s)
       else orphaned?(item.path, ctx)
       end
     end
@@ -314,6 +361,8 @@ module Switchboard
       if item.rec
         live = ->(r) { Creation.owner_alive?(r, now, ProcessIdentity.method(:same?)) }
         Creation.delete(item.rec["id"], wait: false) { |cur| Creation.drop?(cur, item.projects, live) }
+      elsif item.row == :session_locks && item.pid
+        SessionName::Claude.drop_lock(item.pid)
       else
         File.delete(item.file)
       end

@@ -17,7 +17,7 @@ module Switchboard
     TOKEN_FILE = "switchboard-creation"
     DOCS = "reference-cli.md#delete-"
     MAX_DETAIL = 20
-    SIDEBAR_WAIT = 2.0
+    POST_CLOSE_WAIT = 5.0 # for the session's sidebars and agents to exit after the kill (SIGHUP takes a moment)
     RESUME_EXCEPT = %i[pending_delete delete_receipt creation names].freeze
 
     EXIT = {
@@ -39,7 +39,17 @@ module Switchboard
     # Everything preflight learned, captured before anything goes (the realpath stops
     # resolving once the folder is gone).
     Target = Struct.new(:project, :repo, :base, :path, :real, :name, :rec, :branches, :sessions,
-                        :sidebars, :head, :force, keyword_init: true)
+                        :sidebars, :head, :force, :agents, :stored_name, :markers, :ignored, keyword_init: true)
+
+    # What forget settled, each a list of subjects ("name x", "branch y", "record z"):
+    # removed now, kept on purpose, already gone before this run reached it, or failed.
+    # markers: { row => count } removed across both passes; locks_kept: agent pids whose
+    # typing lock stayed because the agent may still be running.
+    Forgot = Struct.new(:removed, :kept, :gone, :failed, :markers, :locks_kept, keyword_init: true)
+
+    # How the run before forget went: the folder (:removed, or :gone for a resumed delete)
+    # and each session by name (:removed, or :gone when it had exited before the kill).
+    Ran = Struct.new(:folder, :sessions, keyword_init: true)
 
     module_function
 
@@ -205,7 +215,23 @@ module Switchboard
       end
 
       t.branches = WorkspaceBranches.plan(t.repo, t.path, t.base, gc: false)
-      safety(t)
+      refusal = safety(t)
+      return refusal if refusal
+
+      facts(t)
+      nil
+    end
+
+    # The facts the plan, the receipt and the report all render from, read at preflight in
+    # both modes: the stored name, the markers delete will clear, and the ignored files.
+    def facts(t)
+      status, map = Names.read_all
+      t.stored_name = status == :ok ? map[t.real]&.name : nil
+      t.markers = Leftovers.owned_by(t.real, except: RESUME_EXCEPT)
+      locks = (t.agents || []).count { |pid, _| File.exist?(SessionName::Claude.lock_path(pid)) }
+      t.markers[:session_locks] = locks if locks.positive? # the real run drops them once their agents exit
+      ignored = Git.ignored_paths(t.path) - [".claude/settings.local.json"] # switchboard's own hook wiring
+      t.ignored = { "count" => ignored.size, "first" => ignored.first(10) }
     end
 
     # The checks --force covers (7–9). Run at preflight and again once the session is closed.
@@ -261,9 +287,10 @@ module Switchboard
       hooks = hook_states(t.real)
       newest = hooks.max_by { |_, _, epoch| epoch }
       agents = Agents.scan_pids
-      reasons = if agents.nil? then ["couldn't scan for running agents"]
-                else agent_reasons(agents.select { |_, cwd| under?(Paths.real_or_self(cwd), t.real) }.keys, newest)
-                end
+      mine = agents&.select { |_, cwd| under?(Paths.real_or_self(cwd), t.real) }&.keys
+      # Each with its start time, so forget can prove it gone before dropping its typing lock.
+      t.agents ||= (mine || []).filter_map { |pid| (start = ProcessIdentity.start_of(pid)).empty? ? nil : [pid, start] }
+      reasons = mine.nil? ? ["couldn't scan for running agents"] : agent_reasons(mine, newest)
       reasons << "∞ monitoring is live" if monitoring?(t.real)
       reasons << "a ◷ hold waits on background work" if KeyedMarkerStore.entries(OffstageHold.state_dir).any? { |_, c, _| c.split("\t").first == t.real }
       t.sessions.each do |s|
@@ -380,6 +407,7 @@ module Switchboard
       closed = close_session(t)
       return abandon(t, closed) if closed.is_a?(Result)
 
+      receipt["sessions_gone"] = closed[:gone]
       advance(receipt, "session_closed")
       t.sessions = [] # gone now: the re-check asks only about what could still write
       again = safety(t)
@@ -391,7 +419,7 @@ module Switchboard
       removed = remove_folder(t, receipt)
       return removed if removed.is_a?(Result)
 
-      finish(receipt, residue: removed)
+      finish(receipt, residue: removed, folder: :removed)
     ensure
       old&.each { |sig, handler| trap(sig, handler || "DEFAULT") }
     end
@@ -415,12 +443,20 @@ module Switchboard
           "path" => t.path, "real" => t.real, "project" => t.project, "repo" => t.repo, "name" => t.name,
           "record" => t.rec&.dig("id"), "token" => t.rec&.dig("token"), "server" => Creation.current_server,
           "branches" => (t.branches || []).map { |e| "#{e.sha}:#{e.name}" }, "phase" => "claimed", "deleted" => []
-        }.merge(DeleteReceipt.owner)
+        }.merge(receipt_facts(t)).merge(DeleteReceipt.owner)
+        # A dead delete's agents are dead to this preflight too, which would forget their locks.
+        receipt["agents"] = (receipt["agents"] + Array(cur&.dig("agents"))).uniq if cur
         next refuse("failed", "couldn't write the delete receipt in #{DeleteReceipt.dir}", fix: "check that folder's permissions, then retry") unless DeleteReceipt.write(receipt)
 
         PendingDelete.mark(t.path)
         receipt
       end
+    end
+
+    # Facts, never rendered lines: a resumed delete (maybe newer code) renders them again.
+    def receipt_facts(t)
+      { "sessions" => t.sessions.map { |s| s[:name] }, "agents" => t.agents || [], "branches_known" => !t.branches.nil?,
+        "stored_name" => t.stored_name, "markers" => t.markers.transform_keys(&:to_s), "ignored" => t.ignored }
     end
 
     def advance(receipt, phase)
@@ -436,8 +472,12 @@ module Switchboard
     end
 
     # Step 4: kill every session of the workspace by id, stop before the folder if one
-    # survives, then give its sidebars a moment and TERM any that are still the same process.
+    # survives, then give its sidebars and agents one shared moment to exit and TERM any
+    # sidebar that's still the same process. Returns { gone: names that had exited before
+    # the kill }, or the refusal.
     def close_session(t, wait: true)
+      before = Tmux.sessions_strict
+      gone = before ? t.sessions.reject { |s| before.any? { |b| b[:id] == s[:id] } }.map { |s| s[:name] } : []
       t.sessions.each do |s|
         Tmux.send_clients_home(s[:id]) # only a forced delete gets here with someone attached
         Tmux.kill_session_id(s[:id])
@@ -449,16 +489,17 @@ module Switchboard
                       changed: "its record is acknowledged; the folder was not touched",
                       fix: "`tmux kill-session -t =#{alive.first[:name]}`, then retry")
       end
-      return true unless wait
+      return { gone: gone } unless wait
 
-      deadline = Time.now + SIDEBAR_WAIT
-      sleep 0.1 while Time.now < deadline && t.sidebars.any? { |pid, start| ProcessIdentity.same?(pid, start) }
+      waiting = t.sidebars + (t.agents || [])
+      deadline = Time.now + POST_CLOSE_WAIT
+      sleep 0.1 while Time.now < deadline && waiting.any? { |pid, start| ProcessIdentity.same?(pid, start) }
       t.sidebars.each do |pid, start|
         Process.kill("TERM", pid) if pid != Process.pid && ProcessIdentity.same?(pid, start)
       rescue StandardError
         nil
       end
-      true
+      { gone: gone }
     end
 
     # Step 5. Unforced, git itself refuses a file written after the re-check. Returns the
@@ -490,10 +531,10 @@ module Switchboard
                                                                                   details: err.to_s.lines(chomp: true)))
       end
       advance(receipt, "removed")
-      return [] unless File.exist?(t.path)
-
-      ["#{t.path} (git no longer lists it, but files are left: `rm -rf #{Shellwords.escape(t.path)}`)"]
+      File.exist?(t.path) ? [residue_line(t.path)] : []
     end
+
+    def residue_line(path) = "#{path} (git no longer lists it, but files are left: `rm -rf #{Shellwords.escape(path)}`)"
 
     # A folder gone by hand while git still lists it: `worktree prune` is repo-wide, so only
     # this tree's own admin dir goes, once its gitdir proves it ours.
@@ -515,79 +556,106 @@ module Switchboard
 
     # Step 6, from the receipt alone, so a resumed delete and prune use it too. Only runs
     # once git no longer lists the workspace. Each step is independent: a failure is
-    # collected, not fatal, and keeps the receipt for the next try.
+    # collected, not fatal, and keeps the receipt for the next try. Returns a Forgot.
     def forget(receipt)
       real = receipt["real"]
-      removed = []
-      kept = []
-      failed = []
+      out = Forgot.new(removed: [], kept: [], gone: [], failed: [], markers: Hash.new(0), locks_kept: [])
+      locks = dead_agents(receipt, out)
       Creation.with_project_lock(receipt["project"]) do
         status, map = Names.read_all
         if status != :ok
-          failed << "name (the names store #{map} can't be read)"
+          out.failed << "name (the names store #{map} can't be read)"
         elsif map[real]
           Names.delete(real)
           again, now = Names.read_all
-          again == :ok && !now.key?(real) ? removed << "name #{map[real].name}" : failed << "name #{map[real].name}"
+          again == :ok && !now.key?(real) ? out.removed << "name #{map[real].name}" : out.failed << "name #{map[real].name}"
+        elsif receipt["stored_name"]
+          out.gone << "name #{receipt['stored_name']}"
         end
-        branches(receipt, removed, kept, failed)
+        branches(receipt, out)
         project = receipt["project"].to_s
         unless project.empty? || Pr.forget(project, receipt["deleted"], receipt["repo"], branch_limit: Config.new.max_branch_history)
-          failed << "PR badges for #{receipt['deleted'].join(', ')}"
+          out.failed << "PR badges for #{receipt['deleted'].join(', ')}"
         end
-        stuck = Leftovers.clear_workspace(real, except: RESUME_EXCEPT)
-        failed.concat(stuck.map { |f| "marker #{f}" })
+        clear_markers(real, locks, out)
         rec = receipt["record"] && Creation.find(receipt["record"])
         if rec
           Creation.delete(rec["id"])
-          Creation.find(rec["id"]) ? failed << "record #{rec['id']}" : removed << "record #{rec['id']}"
+          Creation.find(rec["id"]) ? out.failed << "record #{rec['id']}" : out.removed << "record #{rec['id']}"
+        elsif receipt["record"]
+          out.gone << "record #{receipt['record']}"
         end
       end
-      late = Leftovers.clear_workspace(real, except: RESUME_EXCEPT) # a writer past its check just before the folder went
-      failed.concat(late.map { |f| "marker #{f}" })
-      [removed, kept, failed]
+      clear_markers(real, [], out) # a writer past its check just before the folder went
+      out
+    end
+
+    def clear_markers(real, pids, out)
+      counts, stuck = Leftovers.clear_workspace(real, except: RESUME_EXCEPT, pids: pids)
+      counts.each { |row, n| out.markers[row] += n }
+      out.failed.concat(stuck.map { |f| "marker #{f}" })
+    end
+
+    # The recorded agents whose typing lock may go: each provably not that process any more,
+    # and dead (a pid alive again is a new owner's, and so is its lock). One that may still be
+    # running keeps its lock, for doctor and prune to catch once it exits.
+    def dead_agents(receipt, out)
+      dead = []
+      maybe = []
+      Array(receipt["agents"]).each do |pid, start|
+        next unless pid.is_a?(Integer) && pid.positive?
+
+        if ProcessIdentity.identity(pid, start) != :different then maybe << pid
+        elsif !ProcessIdentity.alive?(pid) then dead << pid
+        end
+      end
+      out.locks_kept.concat(maybe.uniq.select { |pid| File.exist?(SessionName::Claude.lock_path(pid)) })
+      (dead - maybe).uniq
     end
 
     # Each planned branch, deleted at its pinned sha after a fresh check that no worktree
     # has it checked out or is rebasing it (update-ref lacks branch -D's guard). Appended to
-    # the receipt as it goes.
-    def branches(receipt, removed, kept, failed)
+    # the receipt as it goes. One a dead delete already took, or that's gone, is `gone`.
+    def branches(receipt, out)
       receipt["branches"].each do |pair|
         sha, name = pair.split(":", 2)
-        next if receipt["deleted"].include?(name)
+        next out.gone << "branch #{name}" if receipt["deleted"].include?(name)
 
         tip = Git.rev_parse(receipt["repo"], "refs/heads/#{name}")
         if tip.nil?
           receipt["deleted"] << name
+          out.gone << "branch #{name}"
           next
         end
         trees = Git.worktrees(receipt["repo"], strict: true)
         rebasing = Git.rebasing_branches(receipt["repo"])
         if trees.nil? || rebasing.nil?
-          failed << "branch #{name} (couldn't check whether it's in use)"
+          out.failed << "branch #{name} (couldn't check whether it's in use)"
         elsif trees.any? { |w| w[:branch] == name } || rebasing.include?(name)
-          kept << "branch #{name} (another workspace uses it)"
+          out.kept << "branch #{name} (another workspace uses it)"
         elsif tip != sha
-          kept << "branch #{name} (it moved since the check)"
+          out.kept << "branch #{name} (it moved since the check)"
         elsif Git.delete_branch_at(receipt["repo"], name, sha)
-          removed << "branch #{name}"
+          out.removed << "branch #{name}"
           receipt["deleted"] << name
           DeleteReceipt.write(receipt)
         else
-          failed << "branch #{name}"
+          out.failed << "branch #{name}"
         end
       end
     end
 
     # Finish a delete whose folder git no longer lists: forget, un-hide, and drop the
     # receipt unless something failed. `residue`: files git left behind, never removed here.
-    def finish(receipt, residue: [])
-      removed, kept, failed = forget(receipt)
+    # folder: :removed by this run, :gone (a resumed delete found it gone), or :left (git no
+    # longer lists it, but files are).
+    def finish(receipt, residue: [], folder: :gone)
+      out = forget(receipt)
       PendingDelete.clear(receipt["path"])
-      failed.concat(residue)
-      DeleteReceipt.delete(receipt["real"]) if failed.empty?
+      out.failed.concat(residue)
+      DeleteReceipt.delete(receipt["real"]) if out.failed.empty?
       Tmux.broadcast_warm
-      report(receipt, removed, kept, failed)
+      report(receipt, out, folder)
     end
 
     # A dead owner's receipt whose folder git no longer lists: take it over under the lock,
@@ -609,18 +677,96 @@ module Switchboard
       end
       return refuse("deleting", "another delete of #{receipt['path']} took it over", fix: "retry at the next check") unless taken
 
-      finish(taken)
+      # Files git left behind stay [partial], as on the first run, until they really go.
+      left = File.exist?(taken["path"].to_s) ? [residue_line(taken["path"])] : []
+      finish(taken, residue: left, folder: left.empty? ? :gone : :left)
     end
 
-    def report(receipt, removed, kept, failed)
-      lines = ["removed: folder #{receipt['path']}", *removed.map { |r| "removed: #{r}" }, *kept.map { |k| "kept: #{k}" }]
-      history = claude_history(receipt["real"])
-      lines << "kept: history #{history} (Claude's own)" if history
-      return Result.new(lines: lines) if failed.empty?
+    # The sessions gone before this run reached them. A dead delete that never got to close
+    # them (phase claimed) leaves tmux to say; one it can't confirm closed is kept.
+    def sessions_gone(receipt, folder)
+      return Array(receipt["sessions_gone"]) if folder == :removed
 
-      Result.new(token: "partial", what: "#{receipt['path']} is gone, but #{failed.size} item(s) were left",
+      names = Array(receipt["sessions"])
+      return names unless receipt["phase"] == "claimed"
+
+      live = Tmux.sessions_strict
+      live ? names - live.map { |s| s[:name] } : []
+    end
+
+    # One line per subject the plan named. A failed one is under [partial] instead.
+    def report(receipt, out, folder)
+      lines = subject_lines(receipt, Ran.new(folder: folder, sessions: sessions_gone(receipt, folder)), out)
+      return Result.new(lines: lines) if out.failed.empty?
+
+      Result.new(token: "partial", what: "#{receipt['path']} is gone, but #{out.failed.size} item(s) were left",
                  changed: "the folder is removed", fix: "`switchboard prune` finishes it, or remove each item below",
-                 details: failed, lines: lines)
+                 details: out.failed, lines: lines)
+    end
+
+    # The dry run (ran nil) and the report, rendered from the same facts: the receipt, or
+    # the target's facts in receipt form. An older receipt without a fact skips its line.
+    def subject_lines(f, ran = nil, out = nil, marks: {})
+      dry = ran.nil?
+      settled = lambda do |subject|
+        next "would remove: #{subject}" if dry
+        next "removed: #{subject}" if out.removed.include?(subject)
+        next "already gone: #{subject}" if out.gone.include?(subject)
+
+        kept = out.kept.find { |k| k.start_with?("#{subject} (") }
+        kept && "kept: #{kept}"
+      end
+      verb = dry ? "would remove" : { removed: "removed", gone: "already gone", left: "kept" }.fetch(ran.folder)
+      lines = ["#{verb}: folder #{f['path']}#{' (files are left)' if !dry && ran.folder == :left}"]
+      if f.key?("sessions")
+        lines << "no session" if f["sessions"].empty?
+        f["sessions"].each do |name|
+          lines << (if dry then "would remove: session #{name}"
+                    elsif ran.sessions.include?(name) then "already gone: session #{name}"
+                    elsif ran.folder == :removed then "removed: session #{name}"
+                    else "kept: session #{name} (not confirmed closed)"
+                    end)
+        end
+      end
+      if f["branches_known"] == false
+        lines << "#{dry ? 'would keep' : 'kept'}: every branch (which are its own can't be told)"
+      else
+        f["branches"].each do |pair|
+          name = pair.split(":", 2).last
+          lines << (dry ? "would remove: branch #{name} #{marks[name] ? '✓' : '!'}" : settled.call("branch #{name}"))
+        end
+      end
+      lines << settled.call("record #{f['record']}") if f["record"]
+      # The name forget actually removed wins over the one preflight read (an older receipt
+      # has none; a name set or changed in between is still reported).
+      removed_names = dry ? [] : out.removed.grep(/\Aname /).map { |r| "removed: #{r}" }
+      if f.key?("stored_name") && (removed_names.empty? || removed_names == ["removed: name #{f['stored_name']}"])
+        lines << (f["stored_name"] ? settled.call("name #{f['stored_name']}") : "no stored name")
+      else
+        lines.concat(removed_names)
+      end
+      lines.concat(marker_lines(f, out, dry)) if f.key?("markers")
+      (out&.locks_kept || []).each { |pid| lines << "kept: session lock #{pid} (its Claude is still running)" }
+      ignored = f["ignored"]
+      if ignored && ignored["count"].positive?
+        more = ignored["count"] > ignored["first"].size ? ", … #{ignored['count'] - ignored['first'].size} more" : ""
+        lines << "#{verb}: ignored files git doesn't track (#{ignored['first'].join(', ')}#{more})"
+      end
+      history = claude_history(f["real"])
+      lines << "#{dry ? 'would keep' : 'kept'}: history #{history} (Claude's own)" if history
+      lines.compact
+    end
+
+    # What a marker count reads as: the plan's, or what both passes actually removed (a hook
+    # that wrote in between can make them differ). A planned typing lock that wasn't dropped
+    # is never "already gone": it was kept (its own line says so) or is a new owner's now.
+    def marker_lines(f, out, dry)
+      planned = f["markers"].transform_keys(&:to_sym)
+      return [planned.empty? ? "no markers" : "would remove: markers (#{Leftovers.breakdown(planned)})"] if dry
+      return ["removed: markers (#{Leftovers.breakdown(out.markers)})"] if out.markers.any?
+
+      gone = planned.except(:session_locks)
+      [gone.empty? ? "no markers" : "already gone: markers (#{Leftovers.breakdown(gone)})"]
     end
 
     # Claude's transcript folder for this path, if there is one. Kept: it's Claude's.
@@ -632,21 +778,9 @@ module Switchboard
     end
 
     def plan_lines(t)
-      lines = ["would remove: folder #{t.path}"]
-      t.sessions.each { |s| lines << "would remove: session #{s[:name]}" }
-      lines << "no session" if t.sessions.empty?
-      (t.branches || []).each { |e| lines << "would remove: branch #{e.name} #{e.merged ? '✓' : '!'}" }
-      lines << "would keep: every branch (which are its own can't be told)" if t.branches.nil?
-      lines << "would remove: record #{t.rec['id']}" if t.rec
-      lines << "would remove: its name and every marker switchboard keeps for it"
-      ignored = Git.ignored_paths(t.path) - [".claude/settings.local.json"] # switchboard's own hook wiring
-      unless ignored.empty?
-        shown = ignored.first(10).join(", ")
-        lines << "would remove: ignored files git doesn't track (#{shown}#{ignored.size > 10 ? ", … #{ignored.size - 10} more" : ''})"
-      end
-      history = claude_history(t.real)
-      lines << "would keep: history #{history} (Claude's own)" if history
-      lines
+      f = receipt_facts(t).merge("path" => t.path, "real" => t.real, "record" => t.rec&.dig("id"),
+                                 "branches" => (t.branches || []).map { |e| "#{e.sha}:#{e.name}" })
+      subject_lines(f, marks: (t.branches || []).to_h { |e| [e.name, e.merged] })
     end
 
     # --- results ------------------------------------------------------------------

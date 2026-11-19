@@ -10,6 +10,32 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
+## [0.80.0] — Delete reports everything its plan promised (2026-11-19)
+
+### Changed
+- `switchboard delete`'s report now has one line for every line of its `-n` plan, in the
+  same order: the folder, each session, each branch, the record, the stored name, the
+  markers (a count per store), any ignored files, and Claude's history. Each line says
+  `removed:`, `kept:` (with why), or the new `already gone:` (named in the plan but gone
+  before the delete reached it, such as a branch deleted by hand or what an interrupted
+  delete had already done). `no session`, `no stored name` and `no markers` read the same in
+  both. Every line the report printed before keeps its exact text, except that a resumed
+  delete now says `already gone: folder` instead of `removed: folder`. When finishing
+  an interrupted delete, a session the dead run never closed reads `kept:` unless tmux no
+  longer lists it, and a folder whose files are left stays `[partial]`
+  (doctor names the `rm -rf`, and prune finishes it once they're gone).
+- The dry run lists the stored name and the markers on their own lines instead of the
+  combined "its name and every marker" line.
+
+### Fixed
+- `switchboard delete` now removes its Claude agents' rename-sync typing locks instead of
+  leaving them for `prune` (doctor flagged them within the hour). It records the
+  workspace's agents at preflight, waits up to 5 seconds after closing the session for them
+  to exit, and drops a lock only once its agent is provably gone. An agent that may still be running keeps its
+  lock, with a `kept: session lock` line. Locks are now only ever unlinked while holding
+  them, by delete, prune or the worker's own sweep, so a worker typing for a reused pid
+  never loses its lock.
+
 ## [0.79.0] — `/` searches only what's on screen (2026-11-19)
 
 ### Changed

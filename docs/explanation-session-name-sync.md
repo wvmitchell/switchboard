@@ -240,7 +240,9 @@ glyphs, used here in its stricter form:
   `.git` between the cwd and the root, as `claude --worktree` creates) belongs to that
   worktree.
 
-A per-pid flock keeps two workers from typing into the same session.
+A per-pid flock keeps two workers from typing into the same session. A lock file is
+unlinked only while holding that flock (by the sweep, delete or prune), so a worker typing
+for a reused pid keeps its lock and no second worker can start beside it.
 
 ## The latest rename wins
 

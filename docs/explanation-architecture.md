@@ -438,16 +438,25 @@ the row hides everywhere; the session closes; the checks that could have changed
 git removes the folder unforced, so it refuses a file written after the re-check; and only
 once git no longer lists the worktree does delete forget the name, the branches (each at
 the sha pinned at preflight, after checking no other worktree uses it), their PR badges,
-the record and the markers. When a forced delete closes a session someone else is still
+the record and the markers. The typing locks of rename-sync workers carry only a Claude's
+pid, not a path, so `switchboard delete` records the workspace's agents (with their start times) at
+preflight, waits a moment after closing the session for them to exit, and removes a lock
+only once its pid is provably not that agent any more, and only while holding the lock, so
+a worker typing for a reused pid keeps it. When a forced delete closes a session someone else is still
 attached to, they're moved to `sb/home` first rather than detached; `d` does the same. Forgetting waits for the folder because a removal that fails must leave a
 workspace that still works.
 
 The receipt is both the lock and the recovery record. It names the workspace, its owner
 process, the pinned branch plan and the branches already deleted, and it's rewritten before
-each destructive step. If the delete dies, the next one decides from what git lists now,
+each destructive step. It also stores the facts the report is built from (the sessions,
+agents, stored name, marker counts and ignored files), never rendered lines, so the dry
+run, the report and a resumed delete's report print the same subjects one for one, a
+resumed one marking what the dead delete had already done as `already gone:`. If the delete dies, the next one decides from what git lists now,
 not from the phase it stored: still listed means every check runs again, gone means the
-forget step finishes from the receipt. Prune finishes those too, and doctor names one that
-stopped while git still lists its workspace. Rename refuses while a live receipt exists.
+forget step finishes from the receipt. Prune finishes those too, but only once no files are
+left in the folder: files git left behind are yours, so doctor names that folder with the
+`rm -rf` to run, and prune waits. Doctor also names a delete that stopped while git still
+lists its workspace. Rename refuses while a live receipt exists.
 
 One window stays open: a writer that passed its "folder exists" check just before the
 folder went can still leave a marker. Delete clears its rows a second time at the very end,
