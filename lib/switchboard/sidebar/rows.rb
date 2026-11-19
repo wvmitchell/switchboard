@@ -80,7 +80,8 @@ module Switchboard
       end
 
       # Visible rows: all nodes, minus the children of folded projects. A search hides no row and
-      # changes no fold. A scan can move rows under a search's cursor, so it stays on its row by identity (normal-tree callers use keep_cursor).
+      # changes no fold. A scan can move rows under a search's cursor, so it stays on its row by
+      # identity (normal-tree callers use keep_cursor).
       def recompute_rows
         here = [row_key(current), current.project] if @search.active? && current
         @rows = visible_tree
