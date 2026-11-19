@@ -739,7 +739,7 @@ module Switchboard
 
       # The dim " (N)" trailing a folded project's name: the N workspace rows its fold
       # hides (`folded` on the visible_tree clone). Nothing for an empty fold, nor for
-      # an expanded or revealed header (no clone there).
+      # an expanded header (no clone there).
       def proj_cue(node)
         node.folded.to_i.positive? ? " (#{node.folded})" : ""
       end

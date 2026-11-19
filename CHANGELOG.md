@@ -10,6 +10,18 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
+## [0.79.0] — `/` searches only what's on screen (2026-11-19)
+
+### Changed
+- The `/` search now matches only rows you can see. A workspace inside a folded project is
+  no longer found, and the project no longer unfolds to show it, so `/` stays a quick way
+  to jump to a row in view and leaves your folds alone. A folded project's header still
+  matches its own name.
+- `Esc` no longer leaves a folded project open after a search, since a search never opens
+  one.
+- To search inside a folded project, end the search, press `↵` on the project's header to
+  unfold it, then `/` again. (`↵` on a header during a search only ends the search.)
+
 ## [0.78.0] — An idle agent no longer blocks a delete (2026-11-18)
 
 ### Changed

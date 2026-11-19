@@ -131,10 +131,10 @@ What it matches:
   characters can be typed into the query. Branch names, task notes and PR numbers aren't
   searched. Once the search is on, `j` and `k` still reach a branch row, and `o` there opens
   its PR.
-- **Across the whole tree.** A project with a match inside unfolds while the search is on, in
-  this sidebar only. When the search ends it folds again, except the project your cursor is
-  in, which stays open until you fold it, press `Esc` on a search elsewhere or leave the
-  pane. Your shared folds never change.
+- **Only what's on screen.** A folded project's workspaces aren't searched, though its
+  header still matches its own name, and a search never changes your folds. To search inside
+  a folded project, end the search, unfold the project with `↵` on its header, then search
+  again.
 
 With no matches left, say because a workspace was renamed, the search stays on and `n`/`N`
 do nothing until you press `Esc`, so `n` can't turn into new workspace behind your back.

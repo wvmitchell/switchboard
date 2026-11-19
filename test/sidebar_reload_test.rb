@@ -199,7 +199,7 @@ module Switchboard
       sb = sidebar(nodes: [proj("app"), ws("a"), ws("b")], current_path: "/wt/a", cursor: 2)
       sb.instance_variable_set(:@resume_cursor, { "kind" => "ws", "project" => "app", "path" => "/wt/gone", "branch" => nil })
       sb.send(:restore_resumed_cursor)
-      assert_equal "proj", current_node(sb).kind, "a row a search was showing, or one just deleted"
+      assert_equal "proj", current_node(sb).kind, "a row just deleted"
     end
 
     def test_a_vanished_cursor_row_with_no_header_falls_back_to_the_current_workspace
@@ -210,7 +210,9 @@ module Switchboard
       assert_equal "a", current_node(sb).name
     end
 
-    def test_a_row_only_a_search_was_showing_comes_back_on_its_header_after_a_reload
+    # An older sidebar's search could show a folded project's rows, so its resume payload can
+    # carry a cursor inside one.
+    def test_an_older_sidebars_cursor_inside_a_folded_project_lands_on_its_header
       sb = sidebar(nodes: [proj("app"), proj("api"), ws("oauth", project: "api")], collapsed: ["api"], cursor: 0)
       sb.instance_variable_set(:@resume_cursor, { "kind" => "ws", "project" => "api", "path" => "/wt/oauth", "branch" => nil })
       sb.send(:restore_resumed_cursor)
