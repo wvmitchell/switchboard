@@ -101,6 +101,10 @@ module Switchboard
       assert_equal 5, code, "a `done` from before the agent started (read from the real ps) can't vouch for it"
       assert_match(/no idle report since it started/, err)
 
+      # A report from the agent's own start second reads busy (a tie), so a fast runner could
+      # land here inside it: write the fresh `done` once the clock is past that second.
+      start = ProcessIdentity.start_epoch(`pgrep -f claude-stand-in`.split.first.to_i) or flunk "no start time"
+      wait_until("a second past the agent's start") { Time.now.to_i > start }
       File.write(File.join(AgentState.state_dir, "1"), "done\t#{real}\t#{Time.now.to_i}\n")
       code, _out, err = delete(leaf)
       assert_equal 0, code, err
