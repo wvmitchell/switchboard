@@ -169,7 +169,12 @@ retrying:
   taken over automatically.
 - **`[remove-failed]`**: git refused. Retry once, then read git's message.
 - **`[partial]`**: the folder is gone but something was left. `switchboard prune` finishes
-  it.
+  it, except files git left in the folder: remove those yourself (doctor names the
+  `rm -rf`), then prune.
+
+On success the report has one line for each line `-n` printed. `already gone:` means the
+plan named it but it was gone before the delete reached it (a branch you deleted, a
+session that had exited, or what an interrupted delete had already done): nothing to do.
 
 Every token is in [Reference: CLI](reference-cli.md#switchboard-delete-name--projectname---creation-id---force--n).
 

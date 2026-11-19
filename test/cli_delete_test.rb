@@ -17,6 +17,11 @@ module Switchboard
       write_config
     end
 
+    # The workspace again, after a test deleted it.
+    def setup_workspace_again
+      git(@repo, "worktree", "add", "-q", "-b", "feat", @wt)
+    end
+
     def write_config(projects = [{ "name" => "app", "path" => @repo }])
       File.write(Config.path, YAML.dump("worktree_root" => path("worktrees"), "base" => "main", "projects" => projects))
     end
@@ -200,7 +205,7 @@ module Switchboard
       refute listed?
       code, out, = run_delete("old")
       assert_equal 0, code
-      assert_includes out, "removed: folder #{other}"
+      assert_includes out, "already gone: folder #{other}", "the dead delete removed it"
       assert_nil DeleteReceipt.read(other)
     end
 
@@ -444,6 +449,328 @@ module Switchboard
       assert_includes out, "would remove: branch feat"
       assert_equal before, state_snapshot
       assert File.exist?(marker)
+    end
+
+    # The real run with one session that closes when killed.
+    def run_with_session(*args, session: { id: "$1", name: "sb/app/feat", path: @wt }, on_kill: -> {}, **stubs)
+      killed = false
+      CLI.instance_variable_set(:@config, nil)
+      code = out = err = nil
+      quiet(**stubs) do
+        stub_method(Tmux, :sessions_strict, -> { killed ? [] : [session] }) do
+          stub_method(Tmux, :send_clients_home, ->(_id) {}) do
+            stub_method(Tmux, :kill_session_id, ->(_id) { killed = true and on_kill.call }) do
+              out, err = capture_io { code = CLI.delete(args) }
+            end
+          end
+        end
+      end
+      [code, out, err]
+    end
+
+    def subjects(out) = out.lines.map { |l| l.chomp.sub(/\A(would remove|would keep|removed|kept|already gone): /, "").sub(/ [✓!]\z/, "") }
+
+    def ignore_build_output
+      File.open(File.join(@repo, ".git", "info", "exclude"), "a") { |f| f.puts "build/" }
+      FileUtils.mkdir_p(File.join(@wt, "build"))
+      File.write(File.join(@wt, "build", "app.o"), "x")
+    end
+
+    # Value: protects=a script reading the report can tell removed from skipped: every line
+    # the dry run promised gets exactly one line after; fails_when=plan and report drift (a
+    # subject printed by one only); why_new=the two were written separately and had
+    # drifted; seam=tmux; no_claim=a real tmux session
+    def test_the_report_has_one_line_for_every_line_of_the_plan
+      Names.write(@real, "my-feat", project: "app", branch: "feat")
+      Attention.mark(@wt)
+      Notify.mark(@wt)
+      write_agent("done")
+      record
+      ignore_build_output
+      history = File.join(ClaudeSessions.claude_root, "projects", @real.gsub(/[^a-zA-Z0-9]/, "-"))
+      FileUtils.mkdir_p(history)
+      session = { id: "$1", name: "sb/app/feat", path: @wt }
+
+      code, dry, err = run_delete("my-feat", "-n", sessions: [session])
+      assert_equal 0, code, err
+      assert_includes dry, "would remove: session sb/app/feat"
+      assert_includes dry, "would remove: name my-feat"
+      assert_includes dry, "would remove: markers (attention 1, notify 1, agents 1)"
+      assert_includes dry, "would remove: ignored files git doesn't track (build/)"
+
+      code, real, err = run_with_session("my-feat")
+      assert_equal 0, code, err
+      assert_equal subjects(dry), subjects(real)
+      assert_includes real, "removed: session sb/app/feat"
+      assert_includes real, "removed: markers (attention 1, notify 1, agents 1)"
+      assert_includes real, "removed: ignored files git doesn't track (build/)"
+    end
+
+    # Value: protects=the documented success lines keep their exact text (scripts parse
+    # them); fails_when=a documented line changes wording; why_new=the report was rebuilt
+    # from the subject list; seam=tmux; no_claim=the shared-branch kept line (workspace_branches_test)
+    def test_the_documented_report_lines_keep_their_text
+      doc = File.read(File.expand_path("../docs/reference-cli.md", __dir__))
+      example = doc[/On success it prints stable lines a script can read.*?```\n(.*?)```/m, 1].lines.map(&:chomp)
+      kinds = example.filter_map { |l| l[/\A[a-z ]+: \w+/] }.uniq - ["kept: branch"]
+      Names.write(@real, "my-feat", project: "app", branch: "feat")
+      Attention.mark(@wt)
+      record
+      FileUtils.mkdir_p(File.join(ClaudeSessions.claude_root, "projects", @real.gsub(/[^a-zA-Z0-9]/, "-")))
+      code, out, err = run_with_session("my-feat")
+      assert_equal 0, code, err
+      kinds.each { |k| assert out.lines.any? { |l| l.start_with?("#{k} ") }, "#{k} (documented) is missing from:\n#{out}" }
+      assert_includes example, "removed: session sb/app/quiet-otter", "the doc shows the session line"
+      assert(example.any? { |l| l.start_with?("removed: markers (") }, "the doc shows the markers line")
+    end
+
+    # Value: protects=no session and no stored name read the same in both; fails_when=an
+    # empty subject is printed by one run only; why_new=parity; seam=tmux
+    def test_an_absent_subject_reads_the_same_in_both
+      _, dry, = run_delete("feat", "-n")
+      _, real, = run_delete("feat")
+      ["no session", "no stored name", "no markers"].each do |line|
+        assert_includes dry.lines.map(&:chomp), line
+        assert_includes real.lines.map(&:chomp), line
+      end
+    end
+
+    # Value: protects=a resumed delete reports what the dead one did as already gone, from
+    # the receipt's facts; fails_when=resume renders from what's left on disk only;
+    # why_new=receipt facts (D7/D14); seam=none
+    def test_a_resumed_delete_reports_what_was_already_gone
+      receipt = live_receipt(pid: dead_pid, phase: "session_closed")
+      DeleteReceipt.write(receipt.merge("sessions" => ["sb/app/feat"], "agents" => [], "branches_known" => true,
+                                        "stored_name" => "my-feat", "markers" => { "attention" => 1 },
+                                        "ignored" => { "count" => 0, "first" => [] }).merge(DeleteReceipt.owner(dead_pid)))
+      git(@repo, "worktree", "remove", @wt)
+      git(@repo, "branch", "-D", "feat")
+      code, out, err = run_delete("feat")
+      assert_equal 0, code, err
+      %W[folder\ #{@wt} session\ sb/app/feat branch\ feat name\ my-feat markers\ (attention\ 1)].each do |subject|
+        assert_includes out.lines.map(&:chomp), "already gone: #{subject}"
+      end
+    end
+
+    # Value: protects=a deleted workspace's Claude typing lock goes once that Claude is
+    # provably gone, a live one's stays and says so, and nobody else's is touched;
+    # fails_when=locks are dropped by pid without the identity check, or not at all;
+    # why_new=locks carry no path; seam=tmux, scan_pids (the agent is a real child)
+    def test_a_dead_agents_typing_lock_goes_and_a_live_ones_stays
+      write_agent("done")
+      FileUtils.mkdir_p(SessionName::Claude.locks_dir)
+      agent = Process.spawn("sleep", "30")
+      stranger = dead_pid
+      [agent, stranger].each { |pid| File.write(SessionName::Claude.lock_path(pid), "") }
+      stop = -> { Process.kill("KILL", agent) and Process.wait(agent) }
+      _, dry, = run_delete("feat", "-n", agents: { agent => @real })
+      code, out, err = run_with_session("feat", agents: { agent => @real }, on_kill: stop)
+      assert_equal 0, code, err
+      refute File.exist?(SessionName::Claude.lock_path(agent)), "its agent died with the session"
+      assert File.exist?(SessionName::Claude.lock_path(stranger)), "an unrelated dead pid's lock is prune's job"
+      assert_includes dry, "would remove: markers (agents 1, session locks 1)", "the plan counts the lock too"
+      assert_includes out, "removed: markers (agents 1, session locks 1)"
+
+      setup_workspace_again
+      write_agent("done")
+      me = Process.pid
+      File.write(SessionName::Claude.lock_path(me), "")
+      code, out, err = stub_method(ProcessIdentity, :same?, ->(*) { false }) do # skip the post-close wait
+        run_with_session("feat", agents: { me => @real })
+      end
+      assert_equal 0, code, err
+      assert File.exist?(SessionName::Claude.lock_path(me))
+      assert_includes out, "kept: session lock #{me} (its Claude is still running)"
+    end
+
+    # Value: protects=a delete that died after closing the session still drops its dead
+    # agents' locks when retried; fails_when=claim overwrites the dead owner's agents;
+    # why_new=outside voice O5; seam=tmux
+    def test_a_takeover_keeps_the_dead_deletes_agents
+      agent = Process.spawn("sleep", "30")
+      start = ProcessIdentity.start_of(agent)
+      Process.kill("KILL", agent)
+      Process.wait(agent)
+      FileUtils.mkdir_p(SessionName::Claude.locks_dir)
+      File.write(SessionName::Claude.lock_path(agent), "")
+      receipt = live_receipt(pid: dead_pid, phase: "session_closed")
+      DeleteReceipt.write(receipt.merge("agents" => [[agent, start]]).merge(DeleteReceipt.owner(dead_pid)))
+      code, _out, err = run_delete("feat")
+      assert_equal 0, code, err
+      refute File.exist?(SessionName::Claude.lock_path(agent))
+    end
+
+    # Value: protects=a recorded pid that's alive again belongs to a new owner, whose typing
+    # lock delete never touches; fails_when=the identity check alone (:different) decides;
+    # why_new=pre-landing review (pid reuse); seam=none (this process stands in for the new owner)
+    def test_a_reused_pids_lock_is_its_new_owners
+      FileUtils.mkdir_p(SessionName::Claude.locks_dir)
+      File.write(SessionName::Claude.lock_path(Process.pid), "")
+      receipt = live_receipt(pid: dead_pid, phase: "session_closed")
+      DeleteReceipt.write(receipt.merge("agents" => [[Process.pid, "not-this-process"], ["../x", "0"]]).merge(DeleteReceipt.owner(dead_pid)))
+      git(@repo, "worktree", "remove", @wt)
+      code, out, err = run_delete("feat")
+      assert_equal 0, code, err
+      assert File.exist?(SessionName::Claude.lock_path(Process.pid))
+      refute_includes out, "session lock"
+      refute_includes out, "session locks"
+    end
+
+    # Value: protects=the name forget removed is reported even when it changed after the
+    # plan read it; fails_when=the report renders only the planned name and drops the line;
+    # why_new=pre-landing review; seam=none
+    def test_a_name_changed_after_the_plan_is_still_reported
+      Names.write(@real, "new-name", project: "app", branch: "feat")
+      receipt = live_receipt(pid: dead_pid, phase: "removed")
+      DeleteReceipt.write(receipt.merge("stored_name" => "old-name").merge(DeleteReceipt.owner(dead_pid)))
+      git(@repo, "worktree", "remove", @wt)
+      code, out, err = run_delete("feat")
+      assert_equal 0, code, err
+      assert_includes out.lines.map(&:chomp), "removed: name new-name"
+      refute_includes out, "old-name"
+    end
+
+    # Value: protects=a resumed delete whose dead run never closed its sessions doesn't call
+    # an open one gone; fails_when=resume reads every session as already gone; why_new=state
+    # matrix claimed x resume; seam=tmux
+    def test_a_resume_before_the_session_closed_asks_tmux
+      receipt = live_receipt(pid: dead_pid, phase: "claimed")
+      DeleteReceipt.write(receipt.merge("sessions" => %w[sb/app/feat sb/app/feat-2]).merge(DeleteReceipt.owner(dead_pid)))
+      git(@repo, "worktree", "remove", @wt)
+      code, out, err = run_delete("feat", sessions: [{ id: "$1", name: "sb/app/feat", path: @wt }])
+      assert_equal 0, code, err
+      lines = out.lines.map(&:chomp)
+      assert_includes lines, "kept: session sb/app/feat (not confirmed closed)"
+      assert_includes lines, "already gone: session sb/app/feat-2"
+    end
+
+    # Value: protects=files git left behind stay reported until they go, on every resume;
+    # fails_when=resume reads a folder git doesn't list as gone and drops the receipt;
+    # why_new=pre-landing review (red team); seam=none
+    def test_a_resume_with_files_left_stays_partial
+      live_receipt(pid: dead_pid, phase: "removed")
+      git(@repo, "worktree", "remove", @wt)
+      FileUtils.mkdir_p(@wt)
+      File.write(File.join(@wt, "left.o"), "x")
+      code, out, err = run_delete("feat")
+      assert_equal 7, code, err
+      assert_match(/\A\[partial\]/, err)
+      assert_includes err, "files are left: `rm -rf"
+      assert_includes out.lines.map(&:chomp), "kept: folder #{@wt} (files are left)"
+      refute_includes out, "already gone: folder"
+      refute_nil DeleteReceipt.read(@real), "kept until the files go"
+
+      DeleteReceipt.write(DeleteReceipt.read(@real).merge(DeleteReceipt.owner(dead_pid))) # that delete has exited
+      doctor = capture_io { Doctor.doctor_leftovers(Config.new) }.first
+      assert_includes doctor, "#{@wt} still has files a delete left"
+      assert_empty Leftovers.scan(Config.new)[:delete_receipt], "prune can't finish it yet, so it isn't prune's to count"
+      FileUtils.rm_rf(@wt)
+      quiet { assert_equal 1, Leftovers.clear(Config.new)[:delete_receipt] }
+      assert_nil DeleteReceipt.read(@real)
+    end
+
+    # Value: protects=doctor never advises rm -rf on a folder that's still a checkout: one its
+    # own (unregistered) repo still lists, or one holding a live .git; fails_when=files_left
+    # trusts the registered listings or skips the checkout guard; why_new=adversarial + Codex
+    # (data safety); seam=none
+    def test_doctor_never_advises_removing_a_checkout
+      live_receipt(pid: dead_pid, phase: "removed")
+      write_config([]) # its repo isn't registered: only its own listing can tell
+      File.delete(File.join(@wt, ".git")) # git still lists it, though no .git marks it a checkout
+      doctor = capture_io { Doctor.doctor_leftovers(Config.new) }.first
+      refute_includes doctor, "files a delete left", "its own repo still lists it"
+
+      write_config
+      FileUtils.rm_rf(@wt)
+      git(@repo, "worktree", "prune")
+      FileUtils.mkdir_p(@wt)
+      git(@wt, "init", "-q") # a clone made at the same path since
+      doctor = capture_io { Doctor.doctor_leftovers(Config.new) }.first
+      refute_includes doctor, "files a delete left", "it holds a checkout"
+    end
+
+    # Value: protects=a typing lock the plan counted but the run kept is never "already
+    # gone"; fails_when=the markers line counts kept locks as gone; why_new=fix-check; seam=tmux
+    def test_a_kept_lock_is_not_an_already_gone_marker
+      FileUtils.mkdir_p(SessionName::Claude.locks_dir)
+      me = Process.pid
+      File.write(SessionName::Claude.lock_path(me), "")
+      code, out, err = stub_method(ProcessIdentity, :same?, ->(*) { false }) do # skip the post-close wait
+        run_with_session("feat", "--force", agents: { me => @real })
+      end
+      assert_equal 0, code, err
+      lines = out.lines.map(&:chomp)
+      assert_includes lines, "kept: session lock #{me} (its Claude is still running)"
+      assert_includes lines, "no markers"
+      refute_includes out, "already gone: markers"
+    end
+
+    # Value: protects=a session that exited between the check and the kill reads "already
+    # gone", not "removed"; fails_when=close_session's gone list is dropped or matched on the
+    # wrong key; why_new=sessions_gone is new and no test closes on an exited session;
+    # seam=tmux; no_claim=a real tmux session
+    def test_a_session_that_exited_before_the_kill_reads_already_gone
+      session = { id: "$1", name: "sb/app/feat", path: @wt }
+      exited = false
+      CLI.instance_variable_set(:@config, nil)
+      code = out = err = nil
+      quiet do
+        stub_method(Tmux, :sessions_strict, -> { exited ? [] : [session] }) do
+          stub_method(Tmux, :session_panes, ->(_id) { exited = true and [] }) do # read once, at preflight
+            stub_method(Tmux, :send_clients_home, ->(_id) {}) do
+              out, err = capture_io { code = CLI.delete(["feat"]) }
+            end
+          end
+        end
+      end
+      assert_equal 0, code, err
+      assert_includes out.lines.map(&:chomp), "already gone: session sb/app/feat"
+      refute_includes out, "removed: session"
+    end
+
+    # Value: protects=a receipt written before the facts existed still resumes and reports
+    # its name; fails_when=resume needs a fact key or drops the out.removed name fallback;
+    # why_new=receipts cross versions; other resume tests carry facts; seam=none
+    def test_a_receipt_without_facts_still_reports_its_name
+      Names.write(@real, "my-feat", project: "app", branch: "feat")
+      DeleteReceipt.write(live_receipt(pid: dead_pid, phase: "removed").merge(DeleteReceipt.owner(dead_pid)))
+      git(@repo, "worktree", "remove", @wt)
+      code, out, err = run_delete("feat")
+      assert_equal 0, code, err
+      lines = out.lines.map(&:chomp)
+      assert_includes lines, "already gone: folder #{@wt}"
+      assert_includes lines, "removed: name my-feat"
+      assert_includes lines, "removed: branch feat"
+      %w[no\ session no\ stored\ name no\ markers].each { |l| refute_includes lines, l, "an old receipt can't tell" }
+      assert_nil Names.read_all[1][@real]
+    end
+
+    # Value: protects=a forced delete whose own branches can't be told keeps every branch,
+    # and both runs say so; fails_when=the real report omits the kept line or a branch goes;
+    # why_new=only the dry run printed it before; seam=WorkspaceBranches.plan (nil = unknown)
+    def test_unknown_branches_are_kept_and_both_runs_say_so
+      code = dry = real = err = nil
+      stub_method(WorkspaceBranches, :plan, ->(*, **) {}) do
+        code, dry, err = run_delete("feat", "-n", "--force")
+        assert_equal 0, code, err
+        code, real, err = run_delete("feat", "--force")
+      end
+      assert_equal 0, code, err
+      assert_includes dry, "would keep: every branch (which are its own can't be told)"
+      assert_includes real, "kept: every branch (which are its own can't be told)"
+      assert_includes git(@repo, "branch", "--list"), "feat"
+    end
+
+    # Value: protects=more than ten ignored files show ten and a count, the same in both
+    # runs; fails_when=the receipt form's count or first list is miscomputed; why_new=the
+    # overflow line moved into subject_lines untested; seam=none
+    def test_many_ignored_files_show_ten_and_a_count_in_both
+      File.open(File.join(@repo, ".git", "info", "exclude"), "a") { |f| f.puts "*.o" }
+      12.times { |i| File.write(File.join(@wt, format("f%02d.o", i)), "x") }
+      _, dry, = run_delete("feat", "-n")
+      code, real, err = run_delete("feat")
+      assert_equal 0, code, err
+      [dry, real].each { |out| assert_match(/: ignored files git doesn't track \((f\d\d\.o, ){9}f\d\d\.o, … 2 more\)$/, out) }
     end
 
     def live_receipt(pid: Process.pid, phase: "claimed")

@@ -361,8 +361,9 @@ workspace it dispatched, so it refuses anything that could lose work.
   file written after that.
 - **`--force`** is for a human: it overrides `[dirty]`, `[unpushed]`, `[branches-unknown]`
   and `[busy]` (exit 5) and nothing else.
-- **`-n` / `--dry-run`** runs every check and prints the plan (session, folder, branches
-  with ✓ or !, record, history kept), and exits as the real run would. It changes nothing.
+- **`-n` / `--dry-run`** runs every check and prints the plan (folder, session, branches
+  with ✓ or !, record, stored name, markers, ignored files, history kept), and exits as
+  the real run would. It changes nothing.
 - **Ignored files go with the folder**, as with `git worktree remove`: build output, a
   `.env`, notes in a gitignored folder. `-n` lists them first.
 - **Agent history stays.** Claude's transcripts and Codex's sessions aren't switchboard's,
@@ -372,12 +373,31 @@ On success it prints stable lines a script can read, and exits 0:
 
 ```
 removed: folder /Users/you/worktrees/app/quiet-otter
-removed: name oauth-fix
+removed: session sb/app/quiet-otter
 removed: branch oauth-fix
-removed: record 20261116135217-a1b2c3
 kept: branch shared-fix (another workspace uses it)
+removed: record 20261116135217-a1b2c3
+removed: name oauth-fix
+removed: markers (attention 1, agents 1, session locks 1)
 kept: history /Users/you/.claude/projects/-Users-you-worktrees-app-quiet-otter (Claude's own)
 ```
+
+The report has one line for every line of the dry run's plan, in the same order: the
+folder, each session, each branch, the record, the stored name, the markers (a count per
+store), any ignored files, and Claude's history. Each line starts with one prefix:
+
+- `removed:` this run removed it.
+- `kept:` left on purpose, with the reason in parentheses: a branch another workspace
+  uses or that moved since the check, Claude's history, the typing lock of a Claude
+  that may still be running, or, when finishing an interrupted delete, a session it can't
+  confirm closed or a folder git no longer lists but whose files are left.
+- `already gone:` the plan named it, but it was gone before this run reached it: a branch
+  someone deleted, a session that had exited, or anything an interrupted delete finished
+  before this one took over.
+- `no session`, `no stored name`, `no markers`: there was nothing of that kind, in the
+  plan and the report alike.
+
+Anything that failed isn't a line here: it's listed under `[partial]`.
 
 Every failure is one stderr line, `[token] <what>; changed: <none or what>; fix: <what to
 do> (reference-cli.md#delete-<token>)`, then up to 20 indented detail lines. Exit 5 is the

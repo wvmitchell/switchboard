@@ -472,24 +472,45 @@ module Switchboard
       # running it when another worker holds it. Never waits. Locks of dead pids are
       # swept first, so the dir can't grow without bound.
       def locked(pid)
-        dir = File.join(Outcome.dir, ".locks")
+        dir = locks_dir
         FileUtils.mkdir_p(dir)
         sweep_locks(dir)
-        File.open(File.join(dir, pid.to_s), File::RDWR | File::CREAT, 0o600) do |f|
+        File.open(lock_path(pid), File::RDWR | File::CREAT, 0o600) do |f|
           return nil unless f.flock(File::LOCK_EX | File::LOCK_NB)
 
           yield
         end
       end
 
-      def sweep_locks(dir)
-        Dir.children(dir).each do |f|
-          next if !f.match?(/\A\d+\z/) || ProcessIdentity.alive?(f.to_i)
+      def locks_dir = File.join(Outcome.dir, ".locks")
+      def lock_path(pid) = File.join(locks_dir, pid.to_s)
 
-          File.delete(File.join(dir, f))
-        rescue StandardError
+      def sweep_locks(dir = locks_dir)
+        # A live pid's lock is never taken, even for a moment: its worker's non-blocking
+        # flock would fail and skip its one Enter.
+        Dir.children(dir).each do |f|
+          drop_lock(f.to_i) if f.match?(/\A\d+\z/) && !ProcessIdentity.alive?(f.to_i)
+        rescue StandardError # one bad name (a number no pid can be) never stops the sweep
           nil
         end
+      end
+
+      # Unlink `pid`'s lock only while holding it, and only once `gone` (by default: the pid
+      # is dead) still holds: a recycled pid's new worker may hold the lock and be typing, and
+      # a plain unlink would let a second worker create a fresh file and type beside it.
+      # True when the file is gone.
+      def drop_lock(pid, gone: -> { !ProcessIdentity.alive?(pid) })
+        path = lock_path(pid)
+        File.open(path, File::RDWR) do |f|
+          return false unless f.flock(File::LOCK_EX | File::LOCK_NB) && gone.call
+
+          File.delete(path)
+        end
+        true
+      rescue Errno::ENOENT
+        true
+      rescue StandardError
+        false
       end
     end
 

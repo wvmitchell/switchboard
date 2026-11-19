@@ -1152,6 +1152,37 @@ module Switchboard
       assert File.exist?(File.join(dir, Process.pid.to_s))
     end
 
+    # Value: protects=at most one worker types per session: a lock someone holds is never
+    # unlinked, even for a pid that looks dead; fails_when=sweep or drop_lock unlinks without
+    # the flock; why_new=a recycled pid's new worker could otherwise type beside a second
+    # one; seam=none; no_claim=a second process holding it (same-process flock stands in)
+    def test_a_lock_someone_holds_is_never_unlinked
+      dir = SessionName::Claude.locks_dir
+      FileUtils.mkdir_p(dir)
+      dead = 2**22 + 12_346
+      path = SessionName::Claude.lock_path(dead)
+      File.open(path, File::RDWR | File::CREAT) do |held|
+        held.flock(File::LOCK_EX)
+        refute SessionName::Claude.drop_lock(dead)
+        SessionName::Claude.sweep_locks
+        assert File.exist?(path), "held, so it stays"
+      end
+      assert SessionName::Claude.drop_lock(dead)
+      refute File.exist?(path), "released and dead: it goes"
+    end
+
+    # Value: protects=one lock named with a number no pid can be never stops the sweep (every
+    # rename attempt sweeps first); fails_when=sweep_locks loses its per-entry rescue;
+    # why_new=outside voice (RangeError); seam=none
+    def test_a_bad_lock_name_never_stops_the_sweep
+      FileUtils.mkdir_p(SessionName::Claude.locks_dir)
+      File.write(File.join(SessionName::Claude.locks_dir, "9" * 30), "")
+      dead = 2**22 + 12_347
+      File.write(SessionName::Claude.lock_path(dead), "")
+      SessionName::Claude.sweep_locks
+      refute File.exist?(SessionName::Claude.lock_path(dead)), "the sweep went on past the bad name"
+    end
+
     def test_owner_claims_keep_the_newest_and_sweep_dead_workers
       dest = ws
       old = SessionName::Owner.claim(dest)

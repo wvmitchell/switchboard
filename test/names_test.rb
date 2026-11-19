@@ -131,5 +131,18 @@ module Switchboard
       refute File.exist?(wt)
       assert_empty Names.read_all.last
     end
+
+    # Value: protects=the reaper keeps its receipt when forget left something, so prune can
+    # finish it; fails_when=remove! reads forget's result by position again and takes `gone`
+    # for failures; why_new=forget now returns four outcomes; seam=Deletion.forget
+    def test_the_reaper_keeps_its_receipt_when_forget_leaves_something
+      repo = temp_git_repo("app")
+      wt = path("wts", "app", "feat")
+      git(repo, "worktree", "add", "-q", "-b", "feat", wt)
+      real = File.realpath(wt)
+      left = Deletion::Forgot.new(removed: [], kept: [], gone: ["name x"], failed: ["marker y"])
+      stub_method(Deletion, :forget, ->(_r) { left }) { Workspaces.remove!(repo, wt, "feat") }
+      refute_nil DeleteReceipt.read(real), "a failure keeps the receipt"
+    end
   end
 end
