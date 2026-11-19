@@ -110,7 +110,8 @@ where it was. To find a renamed workspace's folder from a shell, run
 [How-to: manage projects](howto-manage-projects.md#rename-a-workspace).
 
 That's the core loop: `n` makes work, `↵` switches between it. (Once you've got a
-pile of workspaces, press `/` and type a few letters of a name to find it. With one
+pile of workspaces, press `/` and type a few letters of a name in an unfolded project
+to jump to it. With one
 match, `↵` switches right away. With more, `↵` keeps the matches highlighted, `n` and
 `N` step through them, `↵` again switches, and `Esc` ends the search.)
 

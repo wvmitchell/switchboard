@@ -3,15 +3,13 @@
 module Switchboard
   class Sidebar
     # The / search (docs/explanation-sidebar-views.md#vim-style-search): whether one is being
-    # typed or is committed, its query, where it started, and the project it leaves unfolded.
+    # typed or is committed, its query and where it started.
     # Per-process and never on disk: a search is something you're doing now, not a view
     # preference. The rows and the cursor stay with the sidebar, which asks this what matches.
     class Search
       attr_reader :query, :origin
-      attr_accessor :sticky # the one project a finished search leaves open in this sidebar
 
       def initialize
-        @sticky = nil
         clear
       end
 

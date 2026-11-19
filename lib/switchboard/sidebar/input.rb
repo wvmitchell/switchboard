@@ -276,7 +276,6 @@ module Switchboard
       # ↵: collapse/expand a project header, or switch to a workspace/branch.
       def enter(node = current)
         return unless node
-        return release_sticky if node.kind == "proj" && node.project == @search.sticky
         return toggle_collapse(node.project) if node.kind == "proj"
         return enter_dispatch(node) if dispatch_pending?(node)
 
@@ -553,8 +552,7 @@ module Switchboard
         end
       end
 
-      # ↵ on a row. Grab it first: ending the search can re-fold the rows and move what's under
-      # the cursor. A header only ends the search, so ↵↵ on a match can't write a shared fold.
+      # ↵ on a row. A header only ends the search, so ↵↵ on a match can't write a shared fold.
       # A dispatch you can't switch into yet goes nowhere, so the search stays.
       def open_from_search
         node = current
@@ -564,23 +562,11 @@ module Switchboard
         enter(node) if node && node.kind != "proj"
       end
 
-      # The one way a search ends. A row inside a project collapsed on disk stays on screen
-      # (the sticky project) unless the pane is leaving, so the cursor keeps its row and any
-      # earlier sticky project folds again. Nothing here writes the shared fold store.
-      def end_search(to_origin: false, leave_open: true)
+      # The one way a search ends. It never changes which rows are drawn, and nothing here
+      # writes the shared fold store.
+      def end_search(to_origin: false)
         restore_cursor(*@search.origin) if to_origin && @search.origin
-        row = current
         @search.clear
-        held_open = leave_open && row && row.kind != "proj" && @collapsed.include?(row.project)
-        @search.sticky = held_open ? row.project : nil
-        recompute_rows
-        restore_cursor(row_key(row), row.project) if row
-      end
-
-      # ↵ on the sticky project's header folds it here, with no disk write: it's still folded
-      # everywhere else, and toggling would unfold it for every window.
-      def release_sticky
-        @search.sticky = nil
         recompute_rows
       end
     end
