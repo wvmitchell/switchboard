@@ -453,8 +453,10 @@ agents, stored name, marker counts and ignored files), never rendered lines, so 
 run, the report and a resumed delete's report print the same subjects one for one, a
 resumed one marking what the dead delete had already done as `already gone:`. If the delete dies, the next one decides from what git lists now,
 not from the phase it stored: still listed means every check runs again, gone means the
-forget step finishes from the receipt. Prune finishes those too, and doctor names one that
-stopped while git still lists its workspace. Rename refuses while a live receipt exists.
+forget step finishes from the receipt. Prune finishes those too, but only once no files are
+left in the folder: files git left behind are yours, so doctor names that folder with the
+`rm -rf` to run, and prune waits. Doctor also names a delete that stopped while git still
+lists its workspace. Rename refuses while a live receipt exists.
 
 One window stays open: a writer that passed its "folder exists" check just before the
 folder went can still leave a marker. Delete clears its rows a second time at the very end,

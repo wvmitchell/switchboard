@@ -130,7 +130,9 @@ off. It checks, with the fix inline for anything red:
 - Orphaned `sb/` sessions (points you at `prune`).
 - Files deleted workspaces left in switchboard's stores, once they're over an hour old
   (points you at `prune`), and folders under the worktree root that git no longer lists as
-  a workspace (with the `rm -rf` to run; switchboard never removes a folder for you).
+  a workspace (with the `rm -rf` to run; switchboard never removes a folder for you). A
+  folder a delete left files in says so, and after the `rm -rf`, `prune` finishes that
+  delete.
 - Stored workspace names: a name whose folder is gone (with the `rename` command to run if
   a worktree on the same branch looks like where it moved), an entry file that can't be
   used, a name that clashes with another workspace's and so shows the folder name, and a

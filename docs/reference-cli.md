@@ -388,7 +388,8 @@ store), any ignored files, and Claude's history. Each line starts with one prefi
 
 - `removed:` this run removed it.
 - `kept:` left on purpose, with the reason in parentheses: a branch another workspace
-  uses or that moved since the check, Claude's history, the typing lock of a Claude
+  uses or that moved since the check, every branch when a `--force` delete can't tell
+  which are its own, Claude's history, the typing lock of a Claude
   that may still be running, or, when finishing an interrupted delete, a session it can't
   confirm closed or a folder git no longer lists but whose files are left.
 - `already gone:` the plan named it, but it was gone before this run reached it: a branch
@@ -429,8 +430,10 @@ do> (reference-cli.md#delete-<token>)`, then up to 20 indented detail lines. Exi
 | [`[failed]`](#delete-failed) | 70 |
 
 An interrupted delete leaves a receipt: the next `delete` of the same workspace (or
-`switchboard prune`, once git no longer lists it) finishes it, and `doctor` names one that
-stopped while git still lists the workspace.
+`switchboard prune`, once git no longer lists it and no files are left in its folder)
+finishes it, and `doctor` names one that stopped while git still lists the workspace. Files
+git left in the folder are yours to remove: `doctor` names that folder with the `rm -rf`
+to run, then `switchboard prune`.
 
 A `--force` delete moves anyone else attached to the session to `sb/home` before closing
 it, so they land back in switchboard instead of being detached (an unforced delete refuses
@@ -489,7 +492,7 @@ relying on `--creation`: an older sidebar can still collect a `new` record you'v
 `[remove-failed]`, exit 6. Git refused or failed, or the folder's removal couldn't be confirmed. The session is closed. Fix: retry the same command once; fails again, ask a human with git's message.
 
 #### delete: partial
-`[partial]`, exit 7. The folder is gone but something listed below was left. The receipt is kept. Fix: `switchboard prune` finishes it, or remove each item.
+`[partial]`, exit 7. The folder is gone but something listed below was left. The receipt is kept. Fix: `switchboard prune` finishes it, or remove each item. Files git left in the folder come first: remove them with the `rm -rf` their line names, then prune.
 
 #### delete: session-alive
 `[session-alive]`, exit 8. Its session didn't close. The record is acknowledged; the folder wasn't touched. Fix: `tmux kill-session -t =<name>`, then retry.
@@ -569,7 +572,8 @@ that clashes and falls back to the folder name; a session or unpushed branch who
 disagrees with the workspace's; an unreadable names store; sidebars that don't read stored
 names, or a tmux that can't list its panes), files deleted workspaces left in its stores
 (counted once they're an hour old, with `prune` as the fix) and folders under the worktree
-root that git no longer lists, the remote links (`⇅`) it sees (or a warning
+root that git no longer lists (one a delete left files in says so, with the `rm -rf` and
+then `prune`), the remote links (`⇅`) it sees (or a warning
 when Claude is running but its session files are missing, none are in the shape
 switchboard reads, or every live one fails the start-time check, i.e. a Claude update
 moved or reshaped them), a `CLAUDE_CONFIG_DIR` that differs between your shell and tmux
