@@ -220,8 +220,10 @@ Re-verifying one doesn't advance the others.
     background agent reads `idle` for about 15 ms before its follow-up turn reads
     `busy`. The settle logic depends on those windows staying short.
 
-  An entry that touches any of these is a drift finding even when the grep terms only
-  half match.
+  `switchboard delete` reads the same `status` (a `waiting`, `busy` or `shell` refuses
+  `[busy]`, and so does a value it doesn't know), so a moved contract can also make the
+  throwaway's delete refuse. An entry that touches any of these is a drift finding even
+  when the grep terms only half match.
 
   The terms from `rename` on cover the session-name sync. It depends on how Claude
   draws its screen, which no changelog promises to keep. What it relies on:
@@ -274,7 +276,8 @@ Re-verifying one doesn't advance the others.
     Keep the `id:` that `switchboard new` printed: the `delete:` line under it is the
     command that removes the throwaway. Once the check is over, run that line. If it
     refuses `[building]`, `[deleting]`, `[busy]` or `[tmux-unknown]`, retry it once at the
-    next check; any other refusal, or a second one, goes in the digest as printed. Never
+    next check: once the throwaway's agent is idle its delete passes, however long ago it
+    finished. Any other refusal, or a second one, goes in the digest as printed. Never
     add `--force`.
   - **Session-name sync**: rename a workspace that has an idle Claude session with the
     sidebar's `r`, then keep the pane in view without typing. Within a few seconds the

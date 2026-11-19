@@ -34,6 +34,17 @@ module Switchboard
       end
     end
 
+    def test_start_epoch_is_whole_seconds_and_nil_when_unreadable
+      epoch = ProcessIdentity.start_epoch(Process.pid)
+      assert_kind_of Integer, epoch
+      assert_in_delta Time.now.to_i, epoch, 3600
+      assert_nil ProcessIdentity.start_epoch(DEAD)
+      stub_method(ProcessIdentity, :start_of, ->(*) { "garbage" }) { assert_nil ProcessIdentity.start_epoch(1) }
+      stub_method(ProcessIdentity, :start_of, ->(*) { "Tue Nov 10 16:39:45 2026" }) do
+        assert_equal Time.utc(2026, 11, 10, 16, 39, 45).to_i, ProcessIdentity.start_epoch(1), "lstart is read as UTC, as start_of pins"
+      end
+    end
+
     def test_a_missing_token_fails_closed
       refute ProcessIdentity.same?(Process.pid, "")
       refute ProcessIdentity.same?(nil, "anything")

@@ -10,6 +10,30 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
+## [0.78.0] — An idle agent no longer blocks a delete (2026-11-18)
+
+### Changed
+- `switchboard delete` no longer refuses `[busy]` just because a
+  workspace's agent finished more than 15 minutes ago. An agent counts as idle when its
+  newest hook report is `done` and was written after the agent started, however old that
+  report is. An agent whose hooks never report still needs `--force`.
+- Delete now also reads Claude's own session for each running Claude, found by its
+  command line or session file even when it runs under `node` or a wrapper like `npx`. An
+  open permission dialog, background work Claude started (a background agent or shell),
+  an idle only a moment old, or a session it can't read refuses `[busy]`, even when the
+  hook says `done`. An agent a wrapper script restarted is judged by its own start time.
+- An MCP server or hook command an agent starts after its last report no longer makes the
+  workspace read busy: only the agents themselves are judged, not the helpers under them.
+- The sidebar no longer deletes a tracked workspace's hook report after 24 hours, so the
+  report delete relies on stays until the folder goes. Anything under the config's
+  worktree root is kept too, even on a scan where git briefly fails to list that project.
+  Only `done` and `waiting` are kept: a killed agent's `thinking` still goes after a day,
+  and the sidebar now draws a workspace's freshest report rather than its deepest
+  folder's. Reports from directories
+  switchboard doesn't track are still cleaned up after a day. An agent that went idle more
+  than a day before you upgrade has lost its report, so its workspace reads busy until the
+  agent finishes another turn.
+
 ## [0.77.0] — A folded project shows what's waiting inside it (2026-11-18)
 
 ### Added

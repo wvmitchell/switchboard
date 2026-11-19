@@ -57,7 +57,7 @@ module Switchboard
       refute_empty Dir.children(AgentState.state_dir), "precondition: the real reporter wrote a hook file"
       code = nil
       stub_method(Tmux, :sessions_strict, -> { [] }) do
-        stub_method(Agents, :scan, -> { [] }) do
+        stub_method(Agents, :scan_pids, -> { {} }) do
           stub_method(Tmux, :broadcast_warm, ->(**) {}) do
             stub_method(Deletion, :busy, ->(_t) { nil }) do # the seeded ◷ hold is a live busy signal
               code = Deletion.run(Config.new, name: "renamed-trace").exit_code

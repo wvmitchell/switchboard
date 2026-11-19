@@ -148,8 +148,14 @@ opposite sides of that:
   `AgentState` only renders tracked worktrees, so the block firing for non-switchboard
   codex sessions is inert. Those sessions do leave stray state files that the
   "directory still exists" GC alone would keep forever, so an age-based GC
-  (`AgentState::STALE_GC`) reaps them. A `waiting` file gets a week instead
-  (`WAITING_GC`), since an unanswered prompt can be older than a day.
+  (`AgentState::STALE_GC`) reaps them after a day. A tracked worktree's own `done` or
+  `waiting` never ages out, and neither does one under the config's worktree root, so a
+  project whose tree fails to build for one scan keeps its reports. (A `thinking` left by
+  a killed agent still goes after a day, and the sidebar draws the freshest report, so a
+  kept one from a subfolder the agent left can't outrank a newer one.) They're kept
+  because an unanswered prompt can be older than a day, and `switchboard delete` reads an
+  idle agent's last `done` however old. A report goes with its folder, or when delete
+  clears it.
 
 Because the codex block lives in your personal global config, switchboard writes
 it **only with your consent** (`Installer`'s `step_codex_hooks`). `switchboard install`

@@ -117,17 +117,47 @@ module Switchboard
       assert_empty a.scan([wt], hooks_only: true), "a visible scan that found no agent ends it"
     end
 
-    # Value: protects=a prompt open over a weekend still shows ◆, and an abandoned one is reaped in a week; fails_when=read_hooks age-deletes waiting lines at STALE_GC or never; why_new=the GC test covers a done report only; seam=none; no_claim=Agents.active (stubbed)
-    def test_a_waiting_report_survives_the_age_gc
+    # Value: protects=a prompt open over a weekend still shows ◆, and an idle agent's
+    # `done` is still there for delete days later; fails_when=read_hooks age-deletes a
+    # tracked worktree's report; why_new=delete trusts a `done` of any age; seam=none;
+    # no_claim=Agents.active (stubbed)
+    def test_a_tracked_worktrees_report_never_ages_out
       wt = worktree
-      write_hook("waiting", wt, name: "weekend", epoch: Time.now.to_i - (AgentState::STALE_GC + 3600))
+      write_hook("waiting", wt, name: "weekend", epoch: Time.now.to_i - (8 * AgentState::STALE_GC))
       file = File.join(dir, "weekend")
       with_agent(wt) { assert_equal({ wt => :waiting }, AgentState.new.scan([wt])) }
       no_processes { assert_empty AgentState.new.scan([wt]), "no agent: nothing drawn" }
-      assert File.exist?(file), "a waiting report outlives STALE_GC"
-      write_hook("waiting", wt, name: "weekend", epoch: Time.now.to_i - (AgentState::WAITING_GC + 3600))
+      assert File.exist?(file), "a tracked worktree's report outlives STALE_GC"
+      no_processes { AgentState.new.scan([]) }
+      refute File.exist?(file), "the same report from an untracked dir is reaped"
+    end
+
+    # Value: protects=a project whose tree failed to build for one scan keeps its old
+    # reports; fails_when=keep_roots stops reaching read_hooks; why_new=the sidebar's scan
+    # paths come from git, which can blink; seam=keep_roots (the sidebar passes its config);
+    # no_claim=the sidebar's config wiring
+    def test_a_report_under_a_kept_root_survives_a_scan_that_misses_it
+      wt = worktree
+      write_hook("done", wt, name: "old", epoch: Time.now.to_i - (2 * AgentState::STALE_GC))
+      no_processes { AgentState.new(keep_roots: -> { [File.dirname(wt)] }).scan([]) }
+      assert File.exist?(File.join(dir, "old")), "its root is the config's, so it stays"
+    end
+
+    # Value: protects=a killed agent's `thinking` still ages out in a tracked worktree, and a
+    # kept report from a subdir the agent left doesn't outrank a newer one; fails_when=KEPT
+    # stops gating the exemption, or latest_hook goes back to deepest-wins; why_new=reports
+    # are now kept indefinitely; seam=none; no_claim=Agents.active (stubbed)
+    def test_only_an_answer_or_an_idle_report_is_kept_and_the_freshest_wins
+      wt = worktree
+      write_hook("thinking", wt, name: "killed", epoch: Time.now.to_i - (2 * AgentState::STALE_GC))
       no_processes { AgentState.new.scan([wt]) }
-      refute File.exist?(file), "but not WAITING_GC, so an abandoned prompt doesn't stay forever"
+      refute File.exist?(File.join(dir, "killed")), "a stale thinking is reaped even when tracked"
+
+      sub = File.join(wt, "sub")
+      FileUtils.mkdir_p(sub)
+      write_hook("waiting", File.realpath(sub), name: "left", epoch: Time.now.to_i - (8 * AgentState::STALE_GC))
+      write_hook("done", wt, name: "now")
+      with_agent(wt) { assert_equal({ wt => :done }, AgentState.new.scan([wt])) }
     end
 
     def test_deepest_cwd_at_or_under_the_worktree_wins
@@ -168,13 +198,14 @@ module Switchboard
 
     # Age GC (the global codex hook writes a file per dir codex runs in): a file whose dir
     # STILL exists but is older than STALE_GC is reaped, so non-switchboard dirs don't pile
-    # up forever on the dir-exists GC alone.
+    # up forever on the dir-exists GC alone. Only an untracked dir's: a workspace's ages out
+    # with its folder instead.
     def test_a_stale_file_whose_dir_still_exists_is_reaped
-      wt = worktree
-      write_hook("done", wt, name: "old", epoch: Time.now.to_i - (AgentState::STALE_GC + 60))
+      stray = worktree("elsewhere")
+      write_hook("done", stray, name: "old", epoch: Time.now.to_i - (AgentState::STALE_GC + 60))
       file = File.join(dir, "old")
-      no_processes { AgentState.new.scan([wt]) }
-      refute File.exist?(file), "a dir-exists file past STALE_GC is deleted"
+      no_processes { AgentState.new.scan([worktree]) }
+      refute File.exist?(file), "an untracked dir-exists file past STALE_GC is deleted"
     end
 
     # The carve-out: `age >` (not `.abs`) means a FUTURE-epoch / backward-clock file is not

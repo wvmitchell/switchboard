@@ -21,13 +21,24 @@ module Switchboard
       File.write(Config.path, YAML.dump("worktree_root" => path("worktrees"), "base" => "main", "projects" => projects))
     end
 
-    # No tmux server, no agents, unless a test says otherwise.
-    def quiet(sessions: [], agents: [], clients: [], &blk)
+    # No tmux server, no agents, unless a test says otherwise. `agents` is { pid => cwd };
+    # each pid is a top-level `codex` started a week ago unless `procs`/`started` say otherwise.
+    # procs: false is a ps that failed; commands defaults to each process's ps name.
+    def quiet(sessions: [], agents: {}, clients: [], procs: nil, started: nil, commands: nil, &blk)
+      procs = agents&.to_h { |pid, _| [pid, { ppid: 1, uid: Process.uid, tty: "??", comm: "codex" }] } if procs.nil?
+      commands ||= ->(pids) { pids.to_h { |pid| [pid, [procs && procs.dig(pid, :comm)].compact] } }
+      started ||= ->(_pid) { Time.now.to_i - (7 * 86_400) }
       stub_method(Tmux, :sessions_strict, -> { sessions }) do
         stub_method(Tmux, :session_panes, ->(_id) { [] }) do
           stub_method(Tmux, :session_clients, ->(_id) { clients }) do
             stub_method(Tmux, :kill_session_id, ->(_id) { true }) do
-              stub_method(Agents, :scan, -> { agents }) { stub_method(Tmux, :broadcast_warm, ->(**) {}, &blk) }
+              stub_method(Agents, :scan_pids, -> { agents }) do
+                stub_method(Processes, :table, -> { procs || nil }) do
+                  stub_method(Processes, :commands, commands) do
+                    stub_method(ProcessIdentity, :start_epoch, started) { stub_method(Tmux, :broadcast_warm, ->(**) {}, &blk) }
+                  end
+                end
+              end
             end
           end
         end
@@ -267,17 +278,19 @@ module Switchboard
 
     # Value: protects=an agent still working, or a person attached, isn't deleted from under
     # them, while an idle agent doesn't block the monitor; fails_when=any busy signal is
-    # dropped or an idle one counts; why_new=new check; seam=Agents.scan, tmux clients
+    # dropped or an idle one counts; why_new=new check; seam=Agents.scan_pids, tmux clients
     def test_busy_signals
       write_agent("thinking")
       assert_match(/\A\[busy\] .*an agent is thinking/, run_delete("feat")[2])
 
       write_agent("done")
-      assert_equal 0, run_delete("feat", "-n", agents: [@real]).first, "an idle agent at its prompt isn't busy"
+      assert_equal 0, run_delete("feat", "-n", agents: { 4242 => @real }).first, "an idle agent at its prompt isn't busy"
 
       FileUtils.rm_rf(AgentState.state_dir)
-      assert_match(/no fresh idle state/, run_delete("feat", agents: [File.join(@real, "sub")])[2])
+      assert_match(/no idle report since it started/, run_delete("feat", agents: { 4242 => File.join(@real, "sub") })[2])
       assert_match(/couldn't scan/, run_delete("feat", agents: nil)[2])
+      elsewhere = File.join(File.dirname(@real), "elsewhere")
+      assert_equal 0, run_delete("feat", "-n", agents: { 4242 => elsewhere }).first, "an agent in another workspace"
 
       session = { id: "$1", name: "sb/app/feat", path: @wt }
       assert_match(/client \/dev\/ttys009 attached/, run_delete("feat", sessions: [session], clients: ["/dev/ttys009"])[2])
@@ -294,6 +307,120 @@ module Switchboard
       end
       assert_equal 0, code, "a human's --force passes busy"
       assert_equal [[:home, "$1"], [:kill, "$1"]], order, "the attached client goes home before the kill"
+    end
+
+    # Value: protects=an agent idle for hours can be deleted without --force, while one that
+    # never reported since it started, or a report from before it, can't vouch; fails_when=the
+    # 15-minute limit returns, or the start-time comparison is dropped; why_new=the old rule
+    # refused every idle agent past PRESENCE_TTL; seam=scan_pids, Processes.table,
+    # start_epoch; no_claim=real hook delivery
+    def test_an_idle_report_counts_at_any_age_once_written_since_the_agent_started
+      agent = { 4242 => @real }
+      write_agent("done", age: 7200)
+      assert_equal 0, run_delete("feat", "-n", agents: agent).first, "idle two hours ago, started before that"
+      write_agent("done", age: 2 * 86_400)
+      stub_method(Agents, :active, ->(_) { Set.new }) { AgentState.new.scan([@wt]) } # a sidebar's hook GC runs first
+      assert_equal 0, run_delete("feat", "-n", agents: agent).first, "idle two days ago, past the sidebar's 24-hour GC"
+
+      code, _, err = run_delete("feat", "-n", agents: agent, started: ->(_) { Time.now.to_i - 60 })
+      assert_equal 5, code, "a `done` from before the agent started is a previous agent's (both hooks write one at SessionStart)"
+      assert_match(/no idle report since it started/, err)
+
+      %w[thinking waiting].each do |state|
+        write_agent(state, age: 7200)
+        assert_match(/an agent is #{state}/, run_delete("feat", "-n", agents: agent)[2], "a stale #{state} with its agent alive")
+        assert_equal 0, run_delete("feat", "-n").first, "a stale #{state} whose agent is gone"
+      end
+    end
+
+    # Value: protects=a scan that can't finish never reads as idle; fails_when=a nil table
+    # or start time is treated as none; why_new=new reads; seam=Processes.table, start_epoch
+    def test_a_process_read_that_fails_reads_busy
+      write_agent("done", age: 7200)
+      agent = { 4242 => @real }
+      assert_match(/couldn't read which processes/, run_delete("feat", "-n", agents: agent, procs: false)[2])
+      gone = stub_method(ProcessIdentity, :alive?, ->(_) { false }) { run_delete("feat", "-n", agents: agent, procs: {}) }
+      assert_equal 0, gone.first, "a pid that exited between pgrep and ps"
+      assert_match(/couldn't read the agents' command lines/, run_delete("feat", "-n", agents: agent, commands: ->(_) {})[2])
+      assert_match(/couldn't read when its agent started/, run_delete("feat", "-n", agents: agent, started: ->(_) {})[2])
+      orphan = { 4242 => { ppid: 1, uid: 0, tty: "??", comm: "codex" }, 4300 => { ppid: 4999, uid: 0, tty: "??", comm: "node" } }
+      assert_match(/couldn't read which processes/, run_delete("feat", "-n", agents: agent.merge(4300 => @real), procs: orphan)[2],
+                   "an ancestry the table can't finish")
+    end
+
+    # Value: protects=an MCP server or hook command the agent starts after its `done` doesn't
+    # make it busy; fails_when=roots look only at the direct parent, or helpers count as
+    # agents; why_new=pgrep's pattern also matches helpers (measured: npm exec
+    # @playwright/mcp under claude); seam=scan_pids, Processes.table, start_epoch
+    def test_helpers_started_after_the_idle_report_dont_count
+      write_agent("done", age: 7200)
+      week = Time.now.to_i - (7 * 86_400)
+      started = ->(pid) { pid == 4242 ? week : Time.now.to_i - 10 }
+      agents = { 4242 => @real, 4300 => @real }
+      direct = { 4242 => { ppid: 1, uid: 0, tty: "??", comm: "codex" }, 4300 => { ppid: 4242, uid: 0, tty: "??", comm: "node" } }
+      assert_equal 0, run_delete("feat", "-n", agents: agents, procs: direct, started: started).first
+      wrapped = direct.merge(4250 => { ppid: 4242, uid: 0, tty: "??", comm: "sh" }, 4300 => { ppid: 4250, uid: 0, tty: "??", comm: "node" })
+      assert_equal 0, run_delete("feat", "-n", agents: agents, procs: wrapped, started: started).first, "through an unmatched sh"
+      two = { 4242 => direct[4242], 4243 => { ppid: 1, uid: 0, tty: "??", comm: "codex" } }
+      both = ->(pid) { pid == 4242 ? week : Time.now.to_i - 60 }
+      code, _, err = run_delete("feat", "-n", agents: { 4242 => @real, 4243 => @real }, procs: two, started: both)
+      assert_equal 5, code, "a second agent started after the done"
+      assert_match(/no idle report since it started/, err)
+
+      # A wrapper loop that matched pgrep is the root, but the agent it restarted is judged too.
+      loop = { 4242 => { ppid: 1, uid: 0, tty: "??", comm: "sh" }, 4243 => { ppid: 4242, uid: 0, tty: "??", comm: "/opt/bin/codex" } }
+      code, = run_delete("feat", "-n", agents: { 4242 => @real, 4243 => @real }, procs: loop, started: both)
+      assert_equal 5, code, "an agent a wrapper restarted after the done"
+
+      tie = Time.now.to_i - 3600
+      File.write(File.join(AgentState.state_dir, @real.sum.to_s), "done\t#{@real}\t#{tie}\n")
+      assert_equal 5, run_delete("feat", "-n", agents: { 4242 => @real }, procs: direct.slice(4242), started: ->(_) { tie }).first,
+                   "a report from the second the agent started could be its predecessor's"
+    end
+
+    # Value: protects=no delete under an open dialog or Claude's background work, and an
+    # unreadable session never reads as none; fails_when=a veto is removed, or the strict
+    # read falls back to "no session"; why_new=new vetoes; seam=scan_pids, Processes.table
+    # (the session file and its pid are real); no_claim=live Claude status values. A node-run
+    # or wrapper-launched Claude is still found by its session file.
+    def test_claudes_own_session_can_veto_an_idle_report
+      write_agent("done", age: 7200)
+      pid = Process.pid
+      run = -> { run_delete("feat", "-n", agents: { pid => @real }, procs: { pid => { ppid: 1, uid: 0, tty: "ttys001", comm: "claude" } }) }
+      assert_match(/couldn't read Claude's session for pid #{pid}/, run.call[2], "no session file")
+
+      FileUtils.mkdir_p(ENV["SWITCHBOARD_CLAUDE_SESSIONS_DIR"])
+      session = ->(**f) do
+        data = { "pid" => pid, "cwd" => @real, "procStart" => ProcessIdentity.start_of(pid), "status" => "idle",
+                 "statusUpdatedAt" => (Time.now.to_f * 1000) - 60_000 }.merge(f.transform_keys(&:to_s))
+        File.write(File.join(ENV["SWITCHBOARD_CLAUDE_SESSIONS_DIR"], "#{pid}.json"), JSON.dump(data))
+      end
+      session.call
+      assert_equal 0, run.call.first, "an idle session agrees with the hook"
+      session.call(statusUpdatedAt: Time.now.to_f * 1000)
+      assert_match(/went idle a moment ago/, run.call[2], "an idle too fresh to trust")
+      session.call(status: "waiting")
+      assert_match(/has a dialog open/, run.call[2])
+      %w[busy shell].each do |status|
+        session.call(status: status)
+        assert_match(/still running background work/, run.call[2])
+      end
+      session.call(status: "thinking-ish")
+      assert_match(/couldn't read Claude's session/, run.call[2], "a status we don't know")
+      session.call(procStart: "Mon Jan  1 00:00:00 1990")
+      assert_match(/couldn't read Claude's session/, run.call[2], "an earlier process's record")
+
+      # A Claude ps doesn't name (npm's node) or that a wrapper started is found by its file.
+      session.call(status: "waiting")
+      node = run_delete("feat", "-n", agents: { pid => @real }, procs: { pid => { ppid: 1, uid: 0, tty: "ttys001", comm: "node" } })
+      assert_match(/has a dialog open/, node[2], "run by node")
+      wrapped = { 4242 => { ppid: 1, uid: 0, tty: "ttys001", comm: "npx" }, pid => { ppid: 4242, uid: 0, tty: "ttys001", comm: "claude" } }
+      assert_match(/has a dialog open/, run_delete("feat", "-n", agents: { 4242 => @real, pid => @real }, procs: wrapped)[2], "under npx")
+      File.delete(File.join(ENV["SWITCHBOARD_CLAUDE_SESSIONS_DIR"], "#{pid}.json"))
+      by_argv = ->(pids) { pids.to_h { |p| [p, %w[node /usr/local/bin/claude]] } }
+      code, _, err = run_delete("feat", "-n", agents: { pid => @real }, procs: { pid => { ppid: 1, uid: 0, tty: "ttys001", comm: "node" } }, commands: by_argv)
+      assert_equal 5, code, "a node-run Claude found by its command line, with no session file"
+      assert_match(/couldn't read Claude's session/, err)
     end
 
     def test_inside_by_cwd
@@ -400,7 +527,7 @@ module Switchboard
         stub_method(Tmux, :session_panes, ->(_id) { [] }) do
           stub_method(Tmux, :session_clients, ->(_id) { [] }) do
             stub_method(Tmux, :kill_session_id, write) do
-              stub_method(Agents, :scan, -> { [] }) do
+              stub_method(Agents, :scan_pids, -> { {} }) do
                 _out, err = capture_io { code = CLI.delete(["feat"]) }
               end
             end

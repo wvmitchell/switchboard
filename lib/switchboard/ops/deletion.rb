@@ -258,18 +258,12 @@ module Switchboard
 
     # Every reason someone may still be using it, or nil. A scan that fails counts as busy.
     def busy(t)
-      reasons = []
       hooks = hook_states(t.real)
       newest = hooks.max_by { |_, _, epoch| epoch }
-      fresh = newest && Time.now.to_i - newest[2] <= AgentState::PRESENCE_TTL
-      reasons << "an agent is #{newest[0]} in #{newest[1]}" if fresh && newest[0] != "done"
-
-      cwds = Agents.scan
-      if cwds.nil?
-        reasons << "couldn't scan for running agents"
-      elsif cwds.any? { |c| under?(Paths.real_or_self(c), t.real) } && !(fresh && newest[0] == "done")
-        reasons << "an agent process runs in it with no fresh idle state"
-      end
+      agents = Agents.scan_pids
+      reasons = if agents.nil? then ["couldn't scan for running agents"]
+                else agent_reasons(agents.select { |_, cwd| under?(Paths.real_or_self(cwd), t.real) }.keys, newest)
+                end
       reasons << "∞ monitoring is live" if monitoring?(t.real)
       reasons << "a ◷ hold waits on background work" if KeyedMarkerStore.entries(OffstageHold.state_dir).any? { |_, c, _| c.split("\t").first == t.real }
       t.sessions.each do |s|
@@ -277,6 +271,58 @@ module Switchboard
         reasons << (clients ? "client #{clients.join(', ')} attached to #{s[:name]}" : "tmux couldn't list #{s[:name]}'s clients") if clients.nil? || clients.any?
       end
       reasons.empty? ? nil : reasons
+    end
+
+    # Is the agent in the tree idle? With none running, only a fresh working report
+    # counts (it may run in a pane pgrep doesn't name). With one running, the newest
+    # report must be `done` and written after every agent started: both Claude and Codex
+    # report `done` at startup and at every turn's end, so an older one (or one from the
+    # same second) is a previous agent's. Claude's own session can still say it isn't idle.
+    def agent_reasons(pids, newest)
+      working = newest && newest[0] != "done" ? ["an agent is #{newest[0]} in #{newest[1]}"] : []
+      table = Processes.table unless pids.empty? || working.any?
+      pids = pids.select { |pid| table.key?(pid) || ProcessIdentity.alive?(pid) } if table # gone since pgrep
+      if pids.empty?
+        fresh = newest && Time.now.to_i - newest[2] <= AgentState::PRESENCE_TTL
+        return fresh ? working : []
+      end
+      return working if working.any?
+
+      roots = table && Processes.roots(pids, table)
+      return ["couldn't read which processes are the agents"] if roots.nil?
+
+      # The roots, plus any agent CLI under one: a wrapper loop (`sh -c 'while …; do codex; done'`)
+      # can be the root of an agent it restarted after the last report.
+      judged = roots | pids.select { |pid| Agents.cli?(table[pid][:comm]) }
+      starts = judged.map { |pid| ProcessIdentity.start_epoch(pid) }
+      return ["couldn't read when its agent started"] if starts.include?(nil)
+      return ["an agent runs in it with no idle report since it started"] unless newest && starts.all? { |s| newest[2] > s }
+
+      argv = Processes.commands(pids)
+      return ["couldn't read the agents' command lines"] if argv.nil?
+
+      claude_reasons(pids.select { |pid| claude?(pid, table, argv) })
+    end
+
+    # By ps name or command line (npm's runs as `node …/claude`), or by its session file
+    # wherever it sits (under npx or a shell).
+    def claude?(pid, table, argv)
+      ClaudeSessions.claude_command?([table[pid][:comm]]) || ClaudeSessions.claude_command?(argv.fetch(pid, [])) ||
+        ClaudeSessions.session_file?(pid)
+    end
+
+    # A Claude session vetoes a `done`, never grants one: an open dialog or background work
+    # it started outlives the turn's hook, a session we can't read can't vouch either, and an
+    # `idle` too fresh to trust may be the moment before a background result's next turn.
+    def claude_reasons(pids)
+      now = Time.now
+      ClaudeSessions.for_pids(pids).filter_map do |pid, r|
+        if r.nil? then "couldn't read Claude's session for pid #{pid}"
+        elsif r[:status] == ClaudeSessions::WAITING_STATUS then "a Claude session in it has a dialog open"
+        elsif ClaudeSessions::OFFSTAGE_STATUSES.include?(r[:status]) then "a ◷ Claude session is still running background work"
+        elsif !ClaudeSessions.settled_idle?(r, now) then "a Claude session in it went idle a moment ago"
+        end
+      end
     end
 
     # [state, cwd, epoch] for every hook report at or under `real`, read without collecting.

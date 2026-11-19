@@ -106,7 +106,7 @@ module Switchboard
                            # input loop (shared PendingDelete marker, hydrated every rebuild)
       @creation_for = {}   # ws row path => its background-dispatch record (◌/✘ glyph, task
                            # label, rings); hydrated each rebuild and re-read each scan
-      @agent_state = AgentState.new
+      @agent_state = AgentState.new(keep_roots: -> { [@config.worktree_root] })
       @collapsed = Set.new # collapsed project names; hydrated from the shared
                            # on-disk store (Collapse) on every rebuild, so all
                            # windows' sidebars fold the same and a respawn keeps it
