@@ -5,7 +5,7 @@ require_relative "support/sidebar_case"
 
 module Switchboard
   # The / search: Sidebar::Search's state and matching, the keys over the real dispatch, what
-  # it reveals, the cursor rules, its lifetime, and how matches draw. White-box via SidebarCase.
+  # it can see, the cursor rules, its lifetime, and how matches draw. White-box via SidebarCase.
   class SidebarSearchTest < SidebarCase
     # --- Sidebar::Search -------------------------------------------------------
 
@@ -103,7 +103,7 @@ module Switchboard
       sb.send(:handle, "/\r")
       refute active?(sb)
       assert_equal "beta", current_node(sb).name
-      assert_equal rows, rows_of(sb).size, "no reveal"
+      assert_equal rows, rows_of(sb).size, "the fold stays"
       assert_creates(sb)
     end
 
@@ -236,15 +236,6 @@ module Switchboard
       assert_equal "oauth", current_node(sb).name, "the origin is where the new search started"
     end
 
-    def test_a_new_search_keeps_a_revealed_origin_row_on_screen
-      sb = committed(tree(collapsed: ["api"]), "oauth")
-      sb.send(:dispatch, "/")
-      assert_equal 7, rows_of(sb).size, "the old reveal ends, and the origin row stays"
-      assert_equal "oauth", current_node(sb).name
-      sb.send(:handle, "zzz\e")
-      assert_equal "oauth", current_node(sb).name, "and Esc can come back to it"
-    end
-
     def test_the_new_search_key_is_the_bound_one_and_n_shadows_it
       sb = committed(sidebar_with_keys(filter: "s"), "x")
       sb.send(:dispatch, "s")
@@ -259,14 +250,6 @@ module Switchboard
     end
 
     # --- ↵ during a committed search -------------------------------------------
-
-    def test_enter_opens_the_highlighted_row_even_when_ending_the_search_moves_the_rows
-      sb = committed(tree(collapsed: ["api"]), "oauth")
-      opened = nil
-      stub_method(sb, :switch, ->(node) { opened = node.name }) { sb.send(:dispatch, "\r") }
-      assert_equal "oauth", opened
-      refute active?(sb)
-    end
 
     def test_enter_opens_a_branch_row
       nodes = [proj("app"), expanded_ws("feature"), br("wip-branch", active: true), ws("other")]
@@ -306,25 +289,65 @@ module Switchboard
       assert_includes Collapse.collapsed, "app"
     end
 
-    # --- what a search reveals -------------------------------------------------
+    # --- what a search can see -------------------------------------------------
 
-    def test_a_child_match_reveals_its_folded_project_and_esc_from_typing_refolds_it
-      sb = tree(collapsed: ["api"])
-      assert_equal 5, rows_of(sb).size
+    # Value: protects=a fold hides rows from the search as it hides them from you; fails_when=a folded project's children count as matches again; why_new=replaces the reveal; seam=none; no_claim=none beyond protects
+    def test_a_folded_projects_children_never_match
+      sb = tree(cursor: 3, collapsed: ["api"])
       sb.send(:handle, "/oauth")
-      assert_equal 7, rows_of(sb).size
-      assert_equal "oauth", current_node(sb).name
+      assert_empty hits(sb)
+      assert_equal 5, rows_of(sb).size, "api stays folded"
+      assert_equal "beta", current_node(sb).name
       header = rows_of(sb).find { |n| n.project == "api" }
-      assert_equal "▾ api", sb.send(:plain, header), "reads expanded, with no count"
-      assert_nil header.folded
+      assert_equal "▸ api (2)", sb.send(:plain, header)
+      assert_equal ["/oauth · no matches"], sb.send(:footer)
       sb.send(:dispatch, "\e")
       assert_equal 5, rows_of(sb).size
     end
 
-    def test_a_header_matching_only_by_its_own_name_reveals_nothing
+    def test_a_folded_header_still_matches_its_own_name
       sb = committed(tree(collapsed: ["api"]), "api")
+      assert search(sb).committed?
+      assert_equal [4], hits(sb)
       assert_equal 5, rows_of(sb).size
-      assert_equal "api", current_node(sb).project
+      assert_equal %w[proj api], [current_node(sb).kind, current_node(sb).project]
+    end
+
+    # Value: protects=↵ only ever opens a row you can see; fails_when=a folded project's child counts toward the lone match; why_new=the old test opened the hidden row; seam=none; no_claim=switch mechanics
+    def test_enter_on_a_query_only_a_folded_project_holds_opens_nothing
+      sb = tree(cursor: 3, collapsed: ["api"])
+      stub_method(sb, :switch, ->(_) { flunk "nothing on screen matches" }) { sb.send(:handle, "/oauth\r") }
+      refute active?(sb)
+      assert_equal "beta", current_node(sb).name
+      assert_equal 5, rows_of(sb).size
+    end
+
+    # Value: protects=the lone-match ↵ counts only drawn rows; fails_when=hidden matches join the hits; why_new=no test mixed a visible and a folded match; seam=none; no_claim=switch mechanics
+    def test_a_match_in_view_opens_on_one_press_beside_a_folded_one
+      sb = tree(collapsed: ["api"])
+      sb.send(:handle, "/th")
+      assert_equal 1, hits(sb).size, "auth-fix, not the folded oauth"
+      opened = nil
+      stub_method(sb, :switch, ->(node) { opened = node.name }) { sb.send(:handle, "\r") }
+      assert_equal "auth-fix", opened
+    end
+
+    # Value: protects=another window's fold neither ends the search nor hands n to new workspace, and its unfold brings the match back; fails_when=a recompute ends the search or still matches folded rows; why_new=no peer-fold test without the reveal; seam=@collapsed written in process; no_claim=real peer sidebars and the fold store
+    def test_another_windows_fold_drops_its_matches_and_keeps_the_search
+      sb = committed(tree, "oauth")
+      collapsed = sb.instance_variable_get(:@collapsed)
+      collapsed << "api"
+      sb.send(:recompute_rows)
+      assert search(sb).committed?
+      assert_empty hits(sb)
+      assert_equal %w[proj api], [current_node(sb).kind, current_node(sb).project]
+      stub_method(sb, :create, -> { flunk "n is still next match" }) { sb.send(:dispatch, "n") }
+
+      collapsed.delete("api")
+      sb.send(:recompute_rows)
+      assert_equal 1, hits(sb).size
+      sb.send(:dispatch, "n")
+      assert_equal "oauth", current_node(sb).name
     end
 
     def test_only_project_and_workspace_names_match
@@ -340,22 +363,12 @@ module Switchboard
       assert_equal [0], hits(sb), "and its project's name doesn't match its rows"
     end
 
-    def test_rows_being_deleted_and_branch_rows_reveal_nothing
-      nodes = [proj("app"), expanded_ws("feature", path: "/wt/f"), br("wip", active: true).tap { _1[:path] = "/wt/f" }, ws("gone", path: "/wt/g")]
-      sb = sidebar(nodes: nodes, collapsed: ["app"])
+    def test_a_row_being_deleted_is_never_a_match
+      sb = sidebar(nodes: [proj("app"), ws("feature"), ws("gone", path: "/wt/g")])
       sb.instance_variable_set(:@pending_delete, Set.new(["/wt/g"]))
+      sb.send(:recompute_rows)
       sb.send(:handle, "/gone")
       assert_empty hits(sb)
-      assert_equal 1, rows_of(sb).size, "a row being deleted reveals nothing"
-      sb.send(:dispatch, "\e")
-
-      [false, true].each do |fold_branches|
-        sb.instance_variable_set(:@fold_branches, fold_branches)
-        sb.send(:handle, "/wip")
-        assert_empty hits(sb)
-        assert_equal 1, rows_of(sb).size, "a branch row reveals nothing, fold_branches=#{fold_branches}"
-        sb.send(:dispatch, "\e")
-      end
     end
 
     # --- zero matches: only a key gives n back ---------------------------------
@@ -492,77 +505,6 @@ module Switchboard
       assert_equal "oauth", current_node(sb).name
     end
 
-    # --- the sticky project ----------------------------------------------------
-
-    def test_esc_keeps_the_cursors_folded_project_open
-      sb = committed(tree(collapsed: ["api"]), "oauth")
-      sb.send(:dispatch, "\e")
-      assert_equal "api", search(sb).sticky
-      assert_equal "oauth", current_node(sb).name
-      assert_equal 7, rows_of(sb).size
-      sb.send(:dispatch, "k")
-      assert_equal "api", search(sb).sticky, "moving away doesn't end it"
-    end
-
-    def test_only_the_cursors_folded_project_stays_open
-      sb = tree(collapsed: %w[api])
-      sb.send(:handle, "/oauth\t\e")
-      assert_equal "api", search(sb).sticky
-      sb.send(:handle, "g") # to the top, in the unfolded project
-      sb.send(:handle, "/alpha\t\e")
-      assert_nil search(sb).sticky, "the next clear elsewhere folds it again"
-      assert_equal 5, rows_of(sb).size
-    end
-
-    # Value: protects=Esc on a branch row of a revealed project keeps that row on screen; fails_when=only a workspace row holds its project open; why_new=the sticky tests only Esc on a workspace row; seam=none; no_claim=none beyond protects
-    def test_esc_on_a_branch_row_keeps_its_folded_project_open
-      nodes = [proj("app"), expanded_ws("feature", path: "/wt/f"), br("wip", active: true).tap { _1[:path] = "/wt/f" }]
-      sb = committed(sidebar(nodes: nodes, collapsed: ["app"]), "feature")
-      sb.send(:dispatch, "j")
-      sb.send(:dispatch, "\e")
-      assert_equal "app", search(sb).sticky
-      assert_equal "wip", current_node(sb).branch
-    end
-
-    def test_esc_on_a_header_leaves_nothing_open
-      sb = committed(tree(collapsed: ["api"]), "api")
-      sb.send(:dispatch, "\e")
-      assert_nil search(sb).sticky
-    end
-
-    def test_enter_on_the_sticky_header_folds_here_with_no_disk_write
-      sb = committed(tree(collapsed: ["api"]), "oauth")
-      sb.send(:dispatch, "\e")
-      sb.send(:dispatch, "k")
-      sb.send(:dispatch, "k")
-      assert_equal "proj", current_node(sb).kind
-      stub_method(Collapse, :expand, ->(*) { flunk "no shared write" }) do
-        stub_method(Collapse, :collapse, ->(*) { flunk "no shared write" }) { sb.send(:dispatch, "\r") }
-      end
-      assert_nil search(sb).sticky
-      assert_equal 5, rows_of(sb).size
-      assert_equal "proj", current_node(sb).kind
-    end
-
-    def test_another_window_unfolding_the_sticky_project_drops_it
-      sb = sidebar_with_config({ "projects" => [{ "name" => "app", "path" => path("no-repo") }] })
-      Collapse.collapse("app")
-      search(sb).sticky = "app"
-      sb.send(:rebuild)
-      assert_equal "app", search(sb).sticky, "still folded on disk: it stays"
-
-      Collapse.expand("app")
-      sb.send(:rebuild)
-      assert_nil search(sb).sticky, "another window unfolded it: not ours to hold"
-    end
-
-    def test_a_sticky_project_that_is_no_longer_configured_goes
-      sb = sidebar_with_config({ "projects" => [{ "name" => "app", "path" => path("no-repo") }] })
-      search(sb).sticky = "gone"
-      sb.send(:rebuild)
-      assert_nil search(sb).sticky
-    end
-
     # --- lifetime --------------------------------------------------------------
 
     def test_a_search_never_writes_the_shared_folds
@@ -570,9 +512,11 @@ module Switchboard
       before = Collapse.collapsed
       stub_method(Collapse, :collapse, ->(*) { flunk "no shared write" }) do
         stub_method(Collapse, :expand, ->(*) { flunk "no shared write" }) do
-          sb.send(:handle, "/oauth\tnN\e")
+          sb.send(:handle, "/th\tnN\e")
           sb.send(:handle, "/oauth")
           sb.send(:dispatch, "\e")
+          sb.send(:handle, "/api\r")
+          sb.send(:dispatch, "\r") # ↵ on a header during a search only ends it
         end
       end
       assert_equal before, Collapse.collapsed
@@ -585,7 +529,7 @@ module Switchboard
         tick: ->(sb) { stub_method(Tmux, :window_panes, ->(*) { 2 }) { sb.send(:tick) } }
       }
       samples.each do |name, sample|
-        sb = committed(tree(collapsed: ["api"]), "oauth")
+        sb = committed(tree, "oauth")
         sb.instance_variable_set(:@visible, true)
         renders = 0
         stub_method(sb, :owns_pane?, -> { true }) do
@@ -598,16 +542,15 @@ module Switchboard
           end
         end
         refute active?(sb), "#{name} ended it"
-        assert_nil search(sb).sticky, "#{name} left nothing open"
         assert_equal 1, renders, "#{name} repainted the hidden pane once"
-        assert_equal 5, rows_of(sb).size, "#{name} re-folded"
-        assert_equal %w[proj api], [current_node(sb).kind, current_node(sb).project], "#{name} kept to the row's project"
+        assert_equal 7, rows_of(sb).size, "#{name} left the rows alone"
+        assert_equal "oauth", current_node(sb).name, "#{name} kept the cursor's row"
       end
     end
 
     # Value: protects=a failed tmux query never ends a search under your hands; fails_when=end_search_if_hidden trusts the sample alone; why_new=a misread would hand n back; seam=none; no_claim=tmux failure rates
     def test_a_failed_visibility_read_keeps_the_search_on
-      sb = committed(tree(collapsed: ["api"]), "oauth")
+      sb = committed(tree, "oauth")
       stub_method(sb, :render, -> { flunk "nothing changed" }) do
         stub_method(Tmux, :visible?, ->(*) { false }) do
           stub_method(Tmux, :hidden?, ->(*) { false }) { sb.send(:recheck_visibility) }
@@ -634,7 +577,7 @@ module Switchboard
     def test_the_frame_left_behind_matches_one_that_never_searched
       [true, false].each do |prewarm|
         File.write(Config.path, YAML.dump({ "prewarm" => prewarm }))
-        sb = committed(tree(collapsed: ["api"]), "oauth")
+        sb = committed(tree(collapsed: ["api"]), "api") # the folded header matches its own name
         sb.send(:handle, "g") # back at the top, where a fresh frame's cursor sits
         fresh = tree(collapsed: ["api"])
         [sb, fresh].each do |s|
@@ -725,21 +668,6 @@ module Switchboard
       sb.send(:recompute_rows)
       assert sb.send(:dispatch, "\r")
       refute active?(sb)
-    end
-
-    # Value: protects=a project left open by Esc folds again off screen, with one repaint; fails_when=the sticky check goes from end_search_if_hidden; why_new=hidden tests started from a live search; seam=none; no_claim=which sampler fires
-    def test_a_hidden_pane_refolds_a_sticky_project
-      sb = committed(tree(collapsed: ["api"]), "oauth")
-      sb.send(:dispatch, "\e")
-      assert_equal "api", search(sb).sticky
-      sb.instance_variable_set(:@visible, true)
-      renders = 0
-      stub_method(sb, :render, -> { renders += 1 }) do
-        hidden_pane { sb.send(:recheck_visibility) }
-      end
-      assert_nil search(sb).sticky
-      assert_equal 5, rows_of(sb).size
-      assert_equal 1, renders
     end
 
     # Value: protects=count_indicator: false applies to the search footer; fails_when=the setting check goes from search_footer_tail; why_new=the footer test used the default; seam=none; no_claim=the normal footer
@@ -868,14 +796,6 @@ module Switchboard
         refute active?(sb)
         assert_creates(sb)
       end
-    end
-
-    # Value: protects=the row opened is the match even when ending the search re-folds its project; fails_when=enter_search stops grabbing the node first; why_new=the committed path had this test, typing didn't; seam=none; no_claim=none beyond protects
-    def test_enter_on_a_lone_workspace_in_a_folded_project_opens_that_row
-      sb = tree(collapsed: ["api"])
-      opened = nil
-      stub_method(sb, :switch, ->(node) { opened = node.name }) { sb.send(:handle, "/oauth\r") }
-      assert_equal "oauth", opened
     end
 
     # Value: protects=two enters on a lone header can't write a shared fold; fails_when=the workspace check goes from sole_workspace_match?; why_new=no header case reached enter while typing; seam=none; no_claim=peers reading the fold store
