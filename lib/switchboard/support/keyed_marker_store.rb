@@ -56,13 +56,27 @@ module Switchboard
     # the new one, never a torn read. Degrades to nil on any I/O failure (the bold/fold
     # just doesn't persist) rather than crashing the paint.
     def write(dir, key, content)
+      write!(dir, key, content).nil? ? 0 : nil
+    end
+
+    # The same write, for a caller that tells the user when it fails: nil on success, or
+    # why it didn't happen (`reason`). A failed write leaves no temp file behind.
+    def write!(dir, key, content)
       FileUtils.mkdir_p(dir)
       file = File.join(dir, key)
       tmp = "#{file}.#{Process.pid}.tmp"
       File.write(tmp, content)
       File.rename(tmp, file) # atomic on the same fs
-    rescue StandardError
       nil
+    rescue StandardError => e
+      FileUtils.rm_f(tmp) if tmp
+      reason(e)
+    end
+
+    # An error as a short phrase for a message: Errno's "Permission denied @ rb_sysopen -
+    # /path" loses everything after the "@", since the caller names the path itself.
+    def reason(error)
+      error.message.sub(/ @ .*\z/m, "")
     end
 
     # Delete a marker. Idempotent — a missing file is a quiet no-op (rescued), so a

@@ -5,7 +5,8 @@ module Switchboard
   # (git truth). Its folder never moves; what it's CALLED is the stored name for its
   # realpath (Names), else the folder name. Anything shown, matched or typed uses
   # display_name; folder_name is only for paths on disk (test/name_folder_guard_test.rb).
-  Worktree = Struct.new(:project, :path, :branch, :dirty, :pr, :base, :primary, keyword_init: true) do
+  # `rank` orders it in its project, highest first (Order); nil on the main checkout.
+  Worktree = Struct.new(:project, :path, :branch, :dirty, :pr, :base, :primary, :rank, keyword_init: true) do
     def folder_name
       File.basename(path)
     end
@@ -58,7 +59,7 @@ module Switchboard
     end
 
     def projects
-      @projects ||= @config.projects.filter_map do |row|
+      @projects ||= ProjectOrder.sort(@config.projects).filter_map do |row|
         next unless Dir.exist?(row["path"])
 
         Project.new(
@@ -84,7 +85,8 @@ module Switchboard
       prs = Pr.for_project(project["name"])
       @prs[project["name"]] = prs # this project's branch->PR map, under its own key
 
-      Git.worktrees(project["path"]).reject { |w| w[:bare] }.map do |w|
+      listed = Git.worktrees(project["path"])
+      trees = listed.reject { |w| w[:bare] }.map do |w|
         branch = w[:branch] || Git.current_branch(w[:path])
         Worktree.new(
           project: project["name"],
@@ -96,6 +98,31 @@ module Switchboard
           primary: w[:path] == project["path"]
         )
       end
+      # git lists the main checkout first, so it stays first by position: `primary` is a
+      # string compare that a trailing slash or a symlinked root defeats.
+      main = listed.first
+      head, rest = trees.partition { |t| main && !main[:bare] && t.path == main[:path] }
+      head.each { |t| t.primary = true }
+      head + ranked(rest)
+    end
+
+    # Newest first (Order), ties by realpath so every sidebar agrees. real_or_self, never
+    # real_or_nil: a pruned worktree has no realpath, and nil can't compare with a String.
+    def ranked(trees)
+      ranks = order_ranks
+      keyed = trees.map do |t|
+        real = Paths.real_or_self(t.path)
+        t.rank = ranks[real] || Git.created_at(t.path) || 0.0
+        [t, real]
+      end
+      keyed.sort_by { |t, real| [-t.rank, real] }.map(&:first)
+    rescue StandardError
+      trees
+    end
+
+    # One scan per Model, not one per project.
+    def order_ranks
+      @order_ranks ||= Order.ranks
     end
   end
 end

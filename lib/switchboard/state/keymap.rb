@@ -50,7 +50,9 @@ module Switchboard
       mk.call(:quit,               "q"),
       # New actions go LAST: an earlier default beats a later override, so a default
       # added mid-list would take its key from anyone who had already remapped to it.
-      mk.call(:phone_link,         "p")
+      mk.call(:phone_link,         "p"),
+      mk.call(:move_row_down,      "J"),
+      mk.call(:move_row_up,        "K")
     ].freeze
 
     DEFAULTS = ACTIONS.to_h { |a| [a.name, a.default] }.freeze
@@ -142,6 +144,7 @@ module Switchboard
         [k[:phone_link], "its phone link (QR)"],
         [k[:rename], "rename workspace"],
         [k[:delete], "delete · remove"],
+        ["#{k[:move_row_down]} #{k[:move_row_up]}", "move it down · up (a count)"],
         ["", "anywhere"],
         [k[:edit_config], "edit settings"],
         [k[:refresh_prs], "refresh PR badges"],

@@ -37,6 +37,7 @@ module Switchboard
       Notify.mark(real)
       OffstageHold.hold(real, pid: Process.pid)
       SessionName::Outcome.record_real(real, "ceiling", "x")
+      Order.set(real, 1.0)
     end
 
     # Writers refuse a missing folder, so a deleted workspace's markers are seeded the way
@@ -80,7 +81,7 @@ module Switchboard
       seed_markers(@live)
       write_agent(@live)
       seed_gone
-      %i[attention monitoring notify offstage_hold session_outcome agents].each do |row|
+      %i[attention monitoring notify offstage_hold session_outcome agents order].each do |row|
         assert_equal [@gone], found(row), row.to_s
       end
     end
