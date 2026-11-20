@@ -313,7 +313,7 @@ module Switchboard
       ENV["SWITCHBOARD_BIN"] = "/new/bin/switchboard"
       out = stub_method(Installer, :installed_bin?, -> { true }) { Dir.chdir(repo) { capture { Doctor.doctor_hooks(Config.new) } } }
       assert_includes out, "claude hooks here (app) are out of date — `switchboard upgrade`", "the primary reads as its project"
-      refute_includes out, "claude hooks here: "
+      refute_match(/claude hooks here[^:\n]*: /, out, "not the current-hooks row, labelled or not")
     end
 
     # Value: protects=the "hooks here" rows say which workspace "here" is, by the name the
