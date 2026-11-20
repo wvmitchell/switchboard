@@ -71,6 +71,14 @@ module Switchboard
       value unless value.to_s.empty?
     end
 
+    # A path as a person would type it: under $HOME, `~`-relative.
+    def home_relative(path)
+      home = Dir.home
+      path.to_s == home || path.to_s.start_with?("#{home}/") ? "~#{path.to_s.delete_prefix(home)}" : path.to_s
+    rescue ArgumentError
+      path.to_s
+    end
+
     # `~` expands from $HOME, BINARY under a C locale, so the encoding is set last.
     def utf8(path) = path.dup.force_encoding(Encoding::UTF_8)
   end

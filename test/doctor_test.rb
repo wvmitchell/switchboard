@@ -312,8 +312,18 @@ module Switchboard
       AgentHooks.enable(repo)
       ENV["SWITCHBOARD_BIN"] = "/new/bin/switchboard"
       out = stub_method(Installer, :installed_bin?, -> { true }) { Dir.chdir(repo) { capture { Doctor.doctor_hooks(Config.new) } } }
-      assert_includes out, "claude hooks here are out of date — `switchboard upgrade`"
+      assert_includes out, "claude hooks here (app) are out of date — `switchboard upgrade`", "the primary reads as its project"
       refute_includes out, "claude hooks here: "
+    end
+
+    # Value: protects=the "hooks here" rows say which workspace "here" is, by the name the
+    # sidebar shows, not its folder; fails_when=the label goes or reads the folder;
+    # why_new=item 5 (folders keep their birth names); seam=none (real worktree, real names)
+    def test_doctor_hooks_names_the_workspace_here
+      feat = names_project
+      Names.write(feat, "oauth-fix", project: "app", branch: "feat")
+      out = Dir.chdir(feat) { capture { Doctor.doctor_hooks(Config.new) } }
+      assert_includes out, "claude hooks off here (app/oauth-fix) — `switchboard enable-hooks`"
     end
 
     # Value: protects=doctor giving a usable fix for a broken settings file instead of the
@@ -537,6 +547,18 @@ module Switchboard
       refute_includes out, "trusted"
     end
 
+    # Value: protects=doctor still reports hooks (unlabelled) when the workspace tree can't be
+    # built; fails_when=workspace_index stops rescuing, so one bad project kills every
+    # doctor row; why_new=every hooks test builds a healthy tree; seam=Model.new (stubbed to
+    # raise); no_claim=which real failures make Model raise
+    def test_doctor_hooks_without_a_workspace_tree_reports_unlabelled
+      feat = names_project
+      out = stub_method(Model, :new, ->(*, **) { raise "boom" }) do
+        Dir.chdir(feat) { capture { Doctor.doctor_hooks(Config.new) } }
+      end
+      assert_includes out, "claude hooks off here — `switchboard enable-hooks`"
+    end
+
     # --- doctor_leftovers: files deleted workspaces left behind -------------------
 
     def leftover_project
@@ -566,7 +588,7 @@ module Switchboard
       FileUtils.mkdir_p(stray)
       out = capture { Doctor.doctor_leftovers(Config.new) }
       assert_includes out, "2 leftover file(s) from deleted workspaces (attention 1, monitoring 1) — run `switchboard prune` to clear them"
-      assert_includes out, "#{File.realpath(stray)} is under the worktree root but isn't a workspace — if nothing in it is " \
+      assert_includes out, "#{File.realpath(stray)}: a folder no workspace owns (git doesn't list it, so it has no name) — if nothing in it is " \
                            "needed, run `rm -rf #{Shellwords.escape(File.realpath(stray))}`"
     end
 
@@ -587,7 +609,7 @@ module Switchboard
           end
         end
       end
-      assert_includes out, "#{real} is under the worktree root but isn't a workspace — process 4242 (puma) is still " \
+      assert_includes out, "#{real}: a folder no workspace owns (git doesn't list it, so it has no name) — process 4242 (puma) is still " \
                            "running in it: stop it first (`kill 4242`), then if nothing in it is needed, run `rm -rf"
     end
 
@@ -653,7 +675,7 @@ module Switchboard
       File.write(File.join(Names.dir, "junk"), "not\tan\tentry\n")
       out = stub_method(Rename, :stale_peers, -> { ["%9"] }) { capture { Doctor.doctor_names(Config.new) } }
 
-      assert_includes out, "name `old-work` was for #{File.join(parent, 'gone')}, which is gone; it looks like it moved to #{feat}: " \
+      assert_includes out, "app/old-work: its folder #{File.join(parent, 'gone')} is gone; it looks like it moved to app/feat (#{Paths.home_relative(feat)}): " \
                            "run `cd #{Shellwords.escape(feat)} && switchboard rename old-work`"
       assert_includes out, "unusable stored name #{File.join(Names.dir, 'junk')}"
       assert_includes out, "1 sidebar(s) running code that doesn't know stored names (pane %9)"
@@ -672,12 +694,12 @@ module Switchboard
         end
       end
       out = doctor.call([{ name: "sb/app/oauth-fix", created: 1, path: feat }])
-      assert_includes out, "#{feat}: its session is called `oauth-fix` but it has no stored name; " \
+      assert_includes out, "app/feat (#{Paths.home_relative(feat)}): its session is called `oauth-fix` but it has no stored name; " \
                            "to keep it, run `cd #{Shellwords.escape(feat)} && switchboard rename oauth-fix`"
 
       git(feat, "branch", "-m", "feat", "oauth-fix")
       out = doctor.call([])
-      assert_includes out, "#{feat}: branch `oauth-fix` doesn't match its name `feat`; if a rename was interrupted, " \
+      assert_includes out, "app/feat (#{Paths.home_relative(feat)}): branch `oauth-fix` doesn't match its name `feat`; if a rename was interrupted, " \
                            "run `cd #{Shellwords.escape(feat)} && switchboard rename oauth-fix`"
     end
 
@@ -691,10 +713,26 @@ module Switchboard
       FileUtils.mkdir_p(File.join(File.dirname(feat), "taken.name"))
       Names.write(feat, "taken-name", project: "app", branch: "feat")
       out = stub_method(Rename, :stale_peers, -> { [] }) { capture { Doctor.doctor_names(Config.new) } }
-      assert_includes out, "`taken-name` (#{feat}) clashes with another workspace in that folder"
+      assert_includes out, "app/feat (#{Paths.home_relative(feat)}): its stored name `taken-name` clashes with another workspace in that folder",
+                      "a clash shows the folder name, so the label does too"
 
       out = stub_method(Names, :read_all, -> { [:error, "/n", "EACCES"] }) { capture { Doctor.doctor_names(Config.new) } }
       assert_includes out, "names store /n: EACCES — renames are refused until it's readable"
+    end
+
+    # Value: protects=a gone entry with no project (or none recorded) still reads as its name,
+    # and with nothing to have moved to, points at the manual rename; fails_when=the empty-
+    # project guard goes (`/old-work: ...`) or the unmoved hint is dropped; why_new=the
+    # problem test above only has a project and a moved match; seam=Names (real files);
+    # no_claim=how an entry came to lack a project
+    def test_doctor_names_a_gone_entry_without_a_project_by_its_name
+      feat = names_project
+      gone = File.join(File.dirname(feat), "gone")
+      Names.write(gone, "old-work", project: "")
+      out = stub_method(Rename, :stale_peers, -> { [] }) { capture { Doctor.doctor_names(Config.new) } }
+      assert_includes out, "  #{Marks.note} old-work: its folder #{gone} is gone; " \
+                           "if you moved it, run `cd <its new folder> && switchboard rename old-work`"
+      refute_includes out, "/old-work:"
     end
 
     def test_doctor_names_is_silent_when_every_name_is_in_order
@@ -1148,7 +1186,18 @@ module Switchboard
       out = capture { Doctor.doctor_session_names }
       assert_includes out, "session name: #{File.realpath(ws)}"
       assert_includes out, "text may be left in the prompt"
-      assert_includes out, "clear that prompt, then retry with `switchboard rename named`"
+      assert_includes out, "clear that prompt, then retry with `cd #{Shellwords.escape(File.realpath(ws))} && switchboard rename named`"
+    end
+
+    # Value: protects=a session-name failure leads with the name the sidebar shows, the
+    # folder after it; fails_when=doctor_session_names prints the bare folder;
+    # why_new=item 5 (a renamed workspace's folder keeps its birth name); seam=none
+    def test_a_session_name_failure_names_the_workspace
+      feat = names_project
+      Names.write(feat, "oauth-fix", project: "app", branch: "feat")
+      SessionName::Outcome.record(feat, :failed_send, "oauth-fix")
+      out = capture { Doctor.doctor_session_names }
+      assert_includes out, "session name: app/oauth-fix (#{Paths.home_relative(feat)}) — "
     end
 
     def test_doctor_session_names_flags_status_values_it_doesnt_know_and_is_silent_otherwise
