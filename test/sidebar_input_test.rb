@@ -467,7 +467,8 @@ module Switchboard
 
       stream = "\e[O\e[O\e[O".b # the old fixed read sliced this mid-sequence
       sb.send(:handle, stream[0, 8]) # first read leaves a partial behind (the frame holds `\e[`)
-      refute sb.send(:reexec_allowed?), "partial carried"
+      refute sb.instance_variable_get(:@paste_frame).idle?, "the frame holds the split \\e[ for the next read"
+      assert_empty sb.instance_variable_get(:@pending), "...instead of @pending"
       sb.send(:handle, stream[8..]) # the remaining byte completes the carried sequence
 
       refute opened, "the reassembled sequence is focus-out, never open_repo"

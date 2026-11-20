@@ -382,6 +382,40 @@ module Switchboard
       end
     end
 
+    # --- task prompt text ------------------------------------------------------
+
+    # Value: protects=a task pasted from Slack keeps its smart quotes and accents; fails_when=edit_items stops passing keep_high for the task prompt, so add_pasted drops every non-ASCII byte; why_new=the C1 test passes either way and the non-ASCII test types char by char, never pastes; seam=none; no_claim=a real terminal's encoding
+    def test_a_task_paste_keeps_non_ascii_text
+      sb = three_rows
+      result = nil
+      stub_method(sb, :draw_prompt, ->(*, **) {}) do
+        with_reads(sb, "\e[200~fix the café “quote”\e[201~", "\r") { result = sb.send(:prompt_line, "task", task: true) }
+      end
+      assert_equal "fix the café “quote”", result
+    end
+
+    # Value: protects=a C1 control whose two bytes land in different reads never reaches the drawn line; fails_when=drop_c1 runs on each item's bytes instead of the whole buffer; why_new=the C1 test sends the pair in one read; seam=none; no_claim=what a terminal does with a drawn C1
+    def test_a_c1_control_split_across_paste_reads_never_reaches_the_drawn_task_line
+      sb = three_rows
+      draws = []
+      result = nil
+      stub_method(sb, :draw_prompt, ->(_l, text, **) { draws << text.dup }) do
+        with_reads(sb, "\e[200~a\xC2".b, "\x9Bb\e[201~".b, "\r") { result = sb.send(:prompt_line, "task", task: true) }
+      end
+      assert_equal "ab", result
+      draws.each { |d| refute_includes d.b, "\xC2\x9B".b }
+    end
+
+    # Value: protects=a ↵ typed right behind a multi-line paste, in the same read, submits; fails_when=typed_enter is judged on the whole read instead of the key string after the end marker, so the pasted newline makes the ↵ fold; why_new=every other paste test sends its ↵ as its own read; seam=none; no_claim=how often a terminal batches them
+    def test_an_enter_in_the_same_read_as_a_multi_line_paste_submits
+      sb = three_rows
+      result = nil
+      stub_method(sb, :draw_prompt, ->(*, **) {}) do
+        with_reads(sb, "\e[200~one\ntwo\e[201~\r") { |left| result = sb.send(:prompt_line, "task", task: true); assert_empty left }
+      end
+      assert_equal "one two", result
+    end
+
     private
 
     def three_rows = sidebar(nodes: [proj("app"), ws("a"), ws("b"), ws("c")], cursor: 1)

@@ -26,6 +26,7 @@ refer to the project's earlier, private repository; the public tracker starts at
 - F1 to F4 no longer act as `P`, `Q`, `R` and `S` in the tree (F3 refreshed PRs) or type a
   letter into a prompt. Refresh is still `R`. A modified arrow such as Ctrl-← drops whole in
   a prompt instead of leaking `;5D` into a name.
+
 ## [0.81.0] — Workspaces list newest first, and J/K move them (2026-11-20)
 
 ### Added
