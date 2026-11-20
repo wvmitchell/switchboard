@@ -362,15 +362,13 @@ workspace it dispatched, so it refuses anything that could lose work.
   `--force`. The last three are re-checked after its session closes, and git itself refuses a
   file written after that.
 - **`--force`** is for a human: it overrides `[dirty]`, `[unpushed]`, `[branches-unknown]`
-  and `[busy]` (exit 5) and nothing else. Once the session is closed it stops each process
-  still running in the folder that has no terminal, is yours, and is the same process the
-  check saw (TERM, then KILL after 5 seconds), and reports it as `stopped: process <pid>
-  (<name>)`. It never signals a process with a terminal (someone's shell in the folder) or
-  another user's: those refuse [`[process-alive]`](#delete-process-alive).
+  and `[busy]` (exit 5) and nothing else. It never signals a process outside the session:
+  one running in the folder (a dev server, someone's shell) refuses
+  [`[process-alive]`](#delete-process-alive) even forced, named with its pid, so you stop
+  it and retry.
 - **`-n` / `--dry-run`** runs every check and prints the plan (folder, session, branches
   with ✓ or !, record, stored name, markers, ignored files, history kept), and exits as
-  the real run would. With `--force` it also lists each process it would stop (`would stop:`)
-  or refuse over (`would refuse:`). It changes nothing.
+  the real run would. It changes nothing.
 - **Ignored files go with the folder**, as with `git worktree remove`: build output, a
   `.env`, notes in a gitignored folder. `-n` lists them first.
 - **Agent history stays.** Claude's transcripts and Codex's sessions aren't switchboard's,
@@ -506,7 +504,7 @@ relying on `--creation`: an older sidebar can still collect a `new` record you'v
 `[session-alive]`, exit 8. Its session didn't close. The record is acknowledged; the folder wasn't touched. Fix: `tmux kill-session -t =<name>`, then retry.
 
 #### delete: process-alive
-`[process-alive]`, exit 8. A forced delete closed the session, but a process it won't stop is still running in the folder: one with a terminal, another user's, one with child processes outside the folder (an editor or a launcher), one it couldn't confirm is the process the check saw, or one that outlived KILL. A failed process scan refuses the same way. The session, if it had one, is closed; the folder wasn't touched. Fix: close that terminal or `cd` out of the folder, or stop the process, then retry.
+`[process-alive]`, exit 8. A forced delete found a process still running in the folder outside its session; delete never signals one. Seen before anything changed, nothing changed. Seen once the session was closed (it outlived the session's SIGHUP), the session is closed and the folder wasn't touched. A process scan that fails refuses the same way. An agent session (an agent with a terminal) running there is left alone, as an unforced delete leaves it. Fix: stop the process (or close that terminal, or `cd` out of the folder), then retry.
 
 #### delete: changed-during-delete
 `[changed-during-delete]`, exit 8. The re-check after its session closed found new changes, commits or a busy signal, or git refused an unforced removal. The session is closed and the record acknowledged; the workspace still shows. Fix: open it to see what changed (`claude --continue` there resumes the agent), then retry or ask a human.

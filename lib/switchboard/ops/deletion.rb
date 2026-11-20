@@ -18,7 +18,6 @@ module Switchboard
     DOCS = "reference-cli.md#delete-"
     MAX_DETAIL = 20
     POST_CLOSE_WAIT = 5.0 # for the session's sidebars and agents to exit after the kill (SIGHUP takes a moment)
-    STOP_WAIT = 5.0 # a forced delete's TERM, before KILL
     RESUME_EXCEPT = %i[pending_delete delete_receipt creation names].freeze
 
     EXIT = {
@@ -86,7 +85,7 @@ module Switchboard
       target.force = force
       refusal = preflight(target)
       return refusal if refusal
-      return dry_result(target) if dry_run
+      return Result.new(lines: plan_lines(target)) if dry_run
 
       execute(target)
     rescue StandardError => e
@@ -220,6 +219,10 @@ module Switchboard
       t.branches = WorkspaceBranches.plan(t.repo, t.path, t.base, gc: false)
       refusal = safety(t)
       return refusal if refusal
+      # A forced delete never signals anything outside its session: one already running in
+      # the folder (busy, which --force overrides, named it) stops it here, before anything.
+      return refuse_alive(t, ["couldn't check for processes running in it"], changed: "none") if t.force && t.escaped.nil?
+      return refuse_alive(t, t.escaped.map { |p| process_line(p) }, changed: "none") if t.force && t.escaped.any?
 
       facts(t)
       nil
@@ -338,7 +341,7 @@ module Switchboard
     # Processes running in the tree that won't go with the session: not under one of its
     # panes (the kill's SIGHUP reaches those) and not an agent judged above or its helpers.
     # Preflight's answer is kept: the pane processes are what the post-close wait waits on,
-    # and the rest are what a forced delete may stop.
+    # and the rest are what a forced delete refuses over (nil: the scan failed).
     def process_reasons(t, table, agents)
       procs = table && Processes.in_tree(t.real, table: table)
       return ["couldn't check for processes running in it"] if procs.nil?
@@ -437,10 +440,8 @@ module Switchboard
       return abandon(t, changed_head(t)) if !t.force && !token_ok?(t)
 
       if t.force
-        stopped = stop_detached(t)
-        return abandon(t, stopped) if stopped.is_a?(Result)
-
-        receipt["stopped"] = stopped
+        left = left_running(t)
+        return abandon(t, left) if left
       end
       removed = remove_folder(t, receipt)
       return removed if removed.is_a?(Result)
@@ -482,8 +483,7 @@ module Switchboard
     # Facts, never rendered lines: a resumed delete (maybe newer code) renders them again.
     def receipt_facts(t)
       { "sessions" => t.sessions.map { |s| s[:name] }, "agents" => t.agents || [], "branches_known" => !t.branches.nil?,
-        "stored_name" => t.stored_name, "markers" => t.markers.transform_keys(&:to_s), "ignored" => t.ignored,
-        "escaped" => (t.escaped || []).map { |p| p.transform_keys(&:to_s).except("start") } }
+        "stored_name" => t.stored_name, "markers" => t.markers.transform_keys(&:to_s), "ignored" => t.ignored }
     end
 
     def advance(receipt, phase)
@@ -529,76 +529,30 @@ module Switchboard
       { gone: gone }
     end
 
-    # Forced only (a human's call): stop each process still in the tree that has no terminal,
-    # is ours, is the very process preflight saw (pid and start time), and has nothing in its
-    # process tree outside the folder (a launcher or editor carries work elsewhere). One with
-    # a terminal belongs to a person and is never signalled; it, another user's, one with
-    # work elsewhere, or one that outlives KILL refuses with the folder untouched. Every
-    # refusal is decided before the first signal. An agent session (an agent with a
-    # terminal) and its helpers that have one are left running, as an unforced delete
-    # leaves them. Returns the stopped lines, or that refusal.
-    def stop_detached(t)
-      seen = (t.escaped || []).map { |p| [p[:pid], p[:start]] } + (t.pane_procs || [])
+    # Forced only: the session is closed, and anything still running in the folder (one
+    # that outlived its SIGHUP) stops the delete before the folder, named. An unforced one
+    # already refused through busy. An agent session (an agent with a terminal) and its
+    # helpers that have one are left running, as an unforced delete leaves them.
+    def left_running(t)
+      table = Processes.table
+      procs = table && Processes.in_tree(t.real, table: table)
+      return refuse_alive(t, ["couldn't check for processes still running in it"]) if procs.nil?
+
       agents = (t.agents || []).select { |pid, start| ProcessIdentity.same?(pid, start) }.map(&:first)
-      stopped = []
-      2.times do # stop what's there, then look again for anything that started meanwhile
-        table = Processes.table
-        procs = table && Processes.in_tree(t.real, table: table)
-        return refuse_alive(t, ["couldn't check for processes still running in it"]) if procs.nil?
-
-        inside = procs.map { |p| p[:pid] }
-        sessions = agents.select { |pid| table[pid] && !Processes.detached?(table[pid]) }
-        procs.reject! { |p| !Processes.detached?(p) && Processes.subtree?(p[:pid], sessions, table) }
-        elsewhere = ->(p) { Processes.descendants(p[:pid], table).any? { |pid| !inside.include?(pid) } }
-        blocked = procs.reject { |p| stoppable?(p) && seen.include?([p[:pid], p[:start]]) && !elsewhere.call(p) }
-        if blocked.any?
-          lines = blocked.map { |p| process_line(p, (", runs processes outside it" if stoppable?(p) && elsewhere.call(p))) }
-          return refuse_alive(t, lines + stopped.map { |x| "stopped: #{x}" })
-        end
-
-        failed = procs.reject { |p| stop_process(p, t.real) && stopped << "process #{p[:pid]} (#{p[:comm]})" }
-        return refuse_alive(t, failed.map { |p| process_line(p) } + stopped.map { |x| "stopped: #{x}" }) if failed.any?
-        return stopped if procs.empty?
-      end
-      stopped
+      sessions = agents.select { |pid| table[pid] && !Processes.detached?(table[pid]) }
+      procs.reject! { |p| !Processes.detached?(p) && Processes.subtree?(p[:pid], sessions, table) }
+      procs.empty? ? nil : refuse_alive(t, procs.map { |p| process_line(p) })
     end
 
-    def stoppable?(p) = Processes.detached?(p) && p[:uid] == Process.uid
-
-    def process_line(p, why = nil)
-      why ||= if !Processes.detached?(p) then ", has a terminal" elsif p[:uid] != Process.uid then ", another user's" end
+    def process_line(p)
+      why = if !Processes.detached?(p) then ", has a terminal" elsif p[:uid] != Process.uid then ", another user's" end
       "process #{p[:pid]} (#{p[:comm]}#{why})"
     end
 
-    def refuse_alive(t, lines)
-      refuse("process-alive", "#{lines.first} is still running in #{t.name}",
-             changed: "#{t.name}'s session is closed if it had one; the folder was not touched",
-             fix: "close that terminal or `cd` out of the folder, or stop the process, then retry", details: lines.drop(1))
-    end
-
-    # Identity first (a recycled pid is never signalled), then its cwd read again, then TERM,
-    # and KILL only if it's still the same process after STOP_WAIT. True once it's gone.
-    def stop_process(p, real)
-      return false unless ProcessIdentity.same?(p[:pid], p[:start])
-
-      cwd = Processes.cwd_of(p[:pid])
-      return false unless cwd && under?(Paths.real_or_self(cwd), real)
-
-      Process.kill("TERM", p[:pid])
-      return true if exits_within?(p, STOP_WAIT)
-
-      Process.kill("KILL", p[:pid])
-      exits_within?(p, 1.0)
-    rescue Errno::ESRCH
-      true
-    rescue StandardError
-      false
-    end
-
-    def exits_within?(p, secs)
-      deadline = Time.now + secs
-      sleep 0.1 while Time.now < deadline && ProcessIdentity.same?(p[:pid], p[:start])
-      !ProcessIdentity.same?(p[:pid], p[:start])
+    # Delete never signals a process outside its session: the person stops it.
+    def refuse_alive(t, lines, changed: "#{t.name}'s session is closed if it had one; the folder was not touched")
+      refuse("process-alive", "#{lines.first} is still running in #{t.name}", changed: changed, details: lines.drop(1),
+                                                                              fix: "stop it (or close that terminal, or `cd` out of the folder), then retry")
     end
 
     # Step 5. Unforced, git itself refuses a file written after the re-check. Returns the
@@ -827,14 +781,6 @@ module Switchboard
                     end)
         end
       end
-      if dry
-        Array(f["escaped"]).each do |p|
-          p = p.transform_keys(&:to_sym)
-          lines << (stoppable?(p) ? "would stop: process #{p[:pid]} (#{p[:comm]})" : "would refuse: #{process_line(p)}")
-        end
-      else
-        Array(f["stopped"]).each { |x| lines << "stopped: #{x}" }
-      end
       if f["branches_known"] == false
         lines << "#{dry ? 'would keep' : 'kept'}: every branch (which are its own can't be told)"
       else
@@ -882,19 +828,6 @@ module Switchboard
       File.directory?(dir) ? dir : nil
     rescue StandardError
       nil
-    end
-
-    # The plan, and the refusal a forced real run would end in when a process it may not stop
-    # is running in the tree (an unforced one already refused busy).
-    def dry_result(t)
-      lines = plan_lines(t)
-      held = (t.escaped || []).reject { |p| stoppable?(p) }
-      return Result.new(lines: lines) if held.empty?
-
-      refuse_alive(t, held.map { |p| process_line(p) }).tap do |r|
-        r.changed = "none"
-        r.lines = lines
-      end
     end
 
     def plan_lines(t)

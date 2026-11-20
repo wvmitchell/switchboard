@@ -85,7 +85,7 @@ module Switchboard
 
       # The kernel reports resolved paths, so no realpath (which can hang on a dead mount).
       hits = cwds.select { |_, cwd| cwd == real || cwd.start_with?("#{real}/") }.keys
-      hits -= ancestors(Process.pid, table) << Process.pid
+      hits -= [Process.pid] # an ancestor still counts: a shell in the folder that ran this is someone's
       # A tmux server keeps the folder it was started in, but holds no file there and
       # carries every session on it: never a process of the workspace's.
       hits.reject! { |pid| tmux?(table[pid]) }
@@ -95,40 +95,20 @@ module Switchboard
         return nil if row.nil? && ProcessIdentity.alive?(pid)
 
         start = row && ProcessIdentity.start_of(pid)
-        next if start.nil? || start.empty? # exited since the scan
+        if start.nil? || start.empty?
+          next unless ProcessIdentity.alive?(pid) # exited since the scan
+
+          return nil # running, but who it is can't be read
+        end
 
         { pid: pid, start: start, comm: File.basename(row[:comm]), tty: row[:tty], uid: row[:uid] }
       end
     end
 
-    def tmux?(row) = row && File.basename(row[:comm].to_s).start_with?("tmux")
+    def tmux?(row) = row && (File.basename(row[:comm].to_s) == "tmux" || row[:comm].to_s.start_with?("tmux: "))
 
     # A process with no controlling terminal (`??` on macOS, `?` on Linux).
     def detached?(row) = %w[?? ?].include?(row[:tty])
-
-    # Every process below `pid` in the table.
-    def descendants(pid, table)
-      kids = table.each_with_object(Hash.new { |h, k| h[k] = [] }) { |(child, row), h| h[row[:ppid]] << child }
-      found = []
-      queue = kids[pid].dup
-      while (cur = queue.shift) && found.size < 10_000
-        next if found.include?(cur)
-
-        found << cur
-        queue.concat(kids[cur])
-      end
-      found
-    end
-
-    def ancestors(pid, table)
-      up = []
-      cur = table.dig(pid, :ppid)
-      while cur && cur > 1 && !up.include?(cur) && up.size < 64
-        up << cur
-        cur = table.dig(cur, :ppid)
-      end
-      up
-    end
 
     # { pid => cwd } for every process this user can read, or nil when that can't be
     # trusted complete: this process must be there at its own cwd, and every process of
@@ -140,15 +120,6 @@ module Switchboard
 
       missing = table.select { |pid, row| row[:uid] == Process.uid && !found.key?(pid) }.keys
       missing.all? { |pid| !ProcessIdentity.alive?(pid) || zombie?(pid) || hidden?(pid) } ? found : nil
-    rescue StandardError
-      nil
-    end
-
-    # One process's working folder, read again just before it's signalled; nil if unknown.
-    def cwd_of(pid)
-      return File.readlink("/proc/#{pid}/cwd") if File.directory?("/proc/self")
-
-      lsof_cwds(["-p", pid.to_s])&.dig(pid)
     rescue StandardError
       nil
     end

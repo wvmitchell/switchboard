@@ -10,19 +10,16 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
-## [0.81.0] — Delete stops what it left running in the folder (2026-11-20)
+## [0.81.0] — Delete refuses while something still runs in the folder (2026-11-20)
 
 ### Added
 - `switchboard delete` now finds every process whose working folder is in the workspace,
   not only its tmux session. A dev server left running in the background used to survive
-  the delete and write the folder back. Now an unforced delete refuses `[busy]` and names
-  it (`process 4242 (puma) runs in it outside its tmux session`). A forced delete stops it
-  once the session is closed, if it has no terminal, is yours, and is still the process
-  the check saw (and has no child processes outside the folder), and reports `stopped:
-  process 4242 (puma)`. A tmux server started in the folder, and an agent session with a
-  terminal, are left alone. It never signals a process with a terminal or another user's,
-  and refuses the new `[process-alive]` (exit 8) over one with the folder untouched. `-n
-  --force` lists what it would stop or refuse over.
+  the delete and write the folder back. Now delete refuses and names it, `[busy]` when
+  unforced and the new `[process-alive]` (exit 8) when forced, because delete never signals
+  anything outside its session. You stop it (`kill 4242`) and retry. A process under the
+  session's panes still goes with the session, an agent session with a terminal is left
+  running, and a tmux server started in the folder is ignored.
 - `doctor` names a process still running in a folder it suggests removing, with the `kill`
   to run first, so the folder doesn't come straight back.
 

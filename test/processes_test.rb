@@ -139,23 +139,29 @@ module Switchboard
     # self exclusion or the nil goes; why_new=only a real child is tested; seam=none
     def test_in_tree_matches_the_folder_only_and_skips_itself
       me = Process.pid
-      table = { me => { ppid: Process.ppid, uid: Process.uid, tty: "??", comm: "ruby" },
+      shell = Process.ppid
+      table = { me => { ppid: shell, uid: Process.uid, tty: "??", comm: "ruby" },
+                shell => { ppid: 1, uid: Process.uid, tty: "ttys001", comm: "zsh" },
                 50_001 => { ppid: 1, uid: Process.uid, tty: "??", comm: "/usr/bin/node" },
                 50_002 => { ppid: 1, uid: Process.uid, tty: "??", comm: "sibling" },
-                50_003 => { ppid: 1, uid: Process.uid, tty: "??", comm: "gone" } }
-      cwds = { me => "/wt/a", Process.ppid => "/wt/a", 50_001 => "/wt/a/src", 50_002 => "/wt/ab", 50_003 => "/wt/a" }
+                50_003 => { ppid: 1, uid: Process.uid, tty: "??", comm: "gone" },
+                50_005 => { ppid: 1, uid: Process.uid, tty: "??", comm: "tmuxp" } }
+      cwds = { me => "/wt/a", shell => "/wt/a", 50_001 => "/wt/a/src", 50_002 => "/wt/ab", 50_003 => "/wt/a", 50_005 => "/wt/a" }
       stub_method(ProcessIdentity, :start_of, ->(pid) { pid == 50_003 ? "" : "s#{pid}" }) do
-        assert_equal [{ pid: 50_001, start: "s50001", comm: "node", tty: "??", uid: Process.uid }],
-                     Processes.in_tree("/wt/a", table: table, cwds: cwds)
-        assert_nil Processes.in_tree("/wt/a", table: table, cwds: nil), "no cwd scan"
-
-        stub_method(Processes, :table, -> { table }) do
-          stub_method(ProcessIdentity, :alive?, ->(_pid) { true }) do
-            assert_nil Processes.in_tree("/wt/a", table: table, cwds: cwds.merge(50_004 => "/wt/a")), "live but unlisted"
+        stub_method(ProcessIdentity, :alive?, ->(pid) { pid != 50_003 }) do
+          found = Processes.in_tree("/wt/a", table: table, cwds: cwds).map { |p| p[:pid] }
+          assert_equal [shell, 50_001, 50_005].sort, found.sort, "not itself; the shell that ran it still counts; not a sibling prefix; a tmux-named tool isn't tmux"
+          assert_nil Processes.in_tree("/wt/a", table: table, cwds: nil), "no cwd scan"
+        end
+        stub_method(ProcessIdentity, :alive?, ->(_pid) { true }) do
+          assert_nil Processes.in_tree("/wt/a", table: table, cwds: cwds), "running, but its start time can't be read"
+          stub_method(Processes, :table, -> { table }) do
+            assert_nil Processes.in_tree("/wt/a", table: table, cwds: cwds.except(50_003).merge(50_004 => "/wt/a")), "live but unlisted"
           end
         end
       end
     end
+
     # Value: protects=a tmux server whose start folder is the tree is never a process of the
     # workspace's (it carries every session); fails_when=the tmux exclusion goes; why_new=red
     # team (a forced delete could stop the developer's server); seam=cwds, table

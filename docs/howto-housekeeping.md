@@ -167,8 +167,8 @@ retrying:
 - **`[busy]`**: an agent is still working, a monitor is live, someone is attached, or a
   process left running in the folder (a dev server) is named. Wait, or stop that process,
   then retry.
-- **`[process-alive]`**: a forced delete found a process it won't stop, such as a shell in
-  another window that's `cd`'d into the folder. Close it or `cd` out, then retry.
+- **`[process-alive]`**: even a forced delete never stops a process running in the folder
+  (a dev server, a shell in another window that's `cd`'d into it). Stop it, then retry.
 - **`[building]`**: its dispatch hasn't finished. Retry once it's ready.
 - **`[deleting]`**: another delete of it is running. Retry; a delete whose process died is
   taken over automatically.
