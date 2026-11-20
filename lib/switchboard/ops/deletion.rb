@@ -530,12 +530,13 @@ module Switchboard
     end
 
     # Forced only (a human's call): stop each process still in the tree that has no terminal,
-    # is ours, is the very process preflight saw (pid and start time), and has no child
-    # outside the tree (a launcher or editor main process carries work elsewhere). One with
+    # is ours, is the very process preflight saw (pid and start time), and has nothing in its
+    # process tree outside the folder (a launcher or editor carries work elsewhere). One with
     # a terminal belongs to a person and is never signalled; it, another user's, one with
-    # children elsewhere, or one that outlives KILL refuses with the folder untouched. An
-    # agent judged idle, and its helpers, are left running, as an unforced delete leaves
-    # them. Returns the stopped lines, or that refusal.
+    # work elsewhere, or one that outlives KILL refuses with the folder untouched. Every
+    # refusal is decided before the first signal. An agent session (an agent with a
+    # terminal) and its helpers that have one are left running, as an unforced delete
+    # leaves them. Returns the stopped lines, or that refusal.
     def stop_detached(t)
       seen = (t.escaped || []).map { |p| [p[:pid], p[:start]] } + (t.pane_procs || [])
       agents = (t.agents || []).select { |pid, start| ProcessIdentity.same?(pid, start) }.map(&:first)
@@ -545,14 +546,18 @@ module Switchboard
         procs = table && Processes.in_tree(t.real, table: table)
         return refuse_alive(t, ["couldn't check for processes still running in it"]) if procs.nil?
 
-        procs.reject! { |p| Processes.subtree?(p[:pid], agents, table) }
         inside = procs.map { |p| p[:pid] }
-        elsewhere = ->(p) { table.any? { |pid, row| row[:ppid] == p[:pid] && !inside.include?(pid) } }
-        left = procs.reject do |p|
-          stoppable?(p) && seen.include?([p[:pid], p[:start]]) && !elsewhere.call(p) &&
-            stop_process(p, t.real) && stopped << "process #{p[:pid]} (#{p[:comm]})"
+        sessions = agents.select { |pid| table[pid] && !Processes.detached?(table[pid]) }
+        procs.reject! { |p| !Processes.detached?(p) && Processes.subtree?(p[:pid], sessions, table) }
+        elsewhere = ->(p) { Processes.descendants(p[:pid], table).any? { |pid| !inside.include?(pid) } }
+        blocked = procs.reject { |p| stoppable?(p) && seen.include?([p[:pid], p[:start]]) && !elsewhere.call(p) }
+        if blocked.any?
+          lines = blocked.map { |p| process_line(p, (", runs processes outside it" if stoppable?(p) && elsewhere.call(p))) }
+          return refuse_alive(t, lines + stopped.map { |x| "stopped: #{x}" })
         end
-        return refuse_alive(t, left.map { |p| process_line(p, (", runs processes outside it" if elsewhere.call(p))) }) if left.any?
+
+        failed = procs.reject { |p| stop_process(p, t.real) && stopped << "process #{p[:pid]} (#{p[:comm]})" }
+        return refuse_alive(t, failed.map { |p| process_line(p) } + stopped.map { |x| "stopped: #{x}" }) if failed.any?
         return stopped if procs.empty?
       end
       stopped

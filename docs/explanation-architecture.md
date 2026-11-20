@@ -462,13 +462,13 @@ Closing the session isn't enough on its own. A dev server started in the backgro
 (`nohup`, a daemon) leaves the session's process tree, keeps running in the folder, and
 writes it back after the delete. So `switchboard delete` looks for every process whose
 working folder is in the tree. One under the session's panes goes with the session, an
-agent judged idle is left alone, and a tmux server started there is ignored (it carries
-every session). Any other blocks an unforced delete by name. A forced one, a human's call,
-stops it only if it has no terminal, is yours, has no child processes outside the folder,
-and is still the process the check saw, read again just before the signal. A process with
-a terminal is someone's shell, so even a forced delete stops before the folder and says
-so. Doctor names a process still running in a folder it would have you remove, since
-removing the folder first only gets it re-created.
+agent session (an agent with a terminal) is left running, and a tmux server started there
+is ignored (it carries every session). Any other blocks an unforced delete by name. A
+forced one, a human's call, stops it only if it has no terminal, is yours, has no child
+processes outside the folder, and is still the process the check saw, read again just
+before the signal. A process with a terminal is someone's shell, so even a forced delete
+stops before the folder and says so. Doctor names a process still running in a folder it
+would have you remove, since removing the folder first only gets it re-created.
 
 One window stays open: a writer that passed its "folder exists" check just before the
 folder went can still leave a marker. Delete clears its rows a second time at the very end,

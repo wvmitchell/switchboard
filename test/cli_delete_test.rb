@@ -795,6 +795,17 @@ module Switchboard
       refute_includes PendingDelete.live_paths, @wt, "the row shows again"
     end
 
+    # Value: protects=a stoppable process gets no signal when another one in the folder will
+    # refuse the delete anyway; fails_when=signals go out before every refusal is decided;
+    # why_new=red team pass 2; seam=Process.kill
+    def test_nothing_is_stopped_when_another_process_refuses
+      log = []
+      code, _out, err = run_forced_with([puma, puma(pid: 777, comm: "zsh", tty: "ttys004")], log)
+      assert_equal 8, code, err
+      assert_match(/process 777 \(zsh, has a terminal\)/, err)
+      assert(log.none? { |e| e[0].is_a?(String) }, "the dev server wasn't stopped for a delete that can't finish")
+    end
+
     # Value: protects=a recycled pid (another start time) is never signalled; fails_when=the
     # identity check goes or follows the signal; why_new=item 1; seam=Process.kill
     def test_a_recycled_pid_is_never_signalled
@@ -826,11 +837,50 @@ module Switchboard
       write_agent("done")
       agent = Process.spawn("sleep", "30")
       log = []
-      code, _out, err = run_forced_with([puma(pid: agent, comm: "codex")], log, agents: { agent => @real })
+      session = { agent => { ppid: 1, uid: Process.uid, tty: "ttys003", comm: "codex" } } # someone's terminal
+      code, _out, err = run_forced_with([puma(pid: agent, comm: "codex", tty: "ttys003")], log, agents: { agent => @real }, procs: session)
       assert_equal 0, code, err
       assert(log.none? { |e| e[0].is_a?(String) }, "the agent was not signalled")
     ensure
       Process.kill("KILL", agent) && Process.wait(agent) if agent
+    end
+
+    # Value: protects=a detached process the agent scan matched only by its command line (a
+    # dev server under a path containing "claude") is not exempted as an agent: a forced
+    # delete refuses over it rather than removing the folder under it unreported;
+    # fails_when=every scan hit is exempt; why_new=red team pass 2; seam=scan_pids (a real child)
+    def test_a_detached_look_alike_agent_is_not_left_alone
+      write_agent("done")
+      server = Process.spawn("sleep", "30")
+      log = []
+      code, _out, err = run_forced_with([puma(pid: server, comm: "node")], log, agents: { server => @real })
+      assert_equal 8, code, err
+      assert_match(/\A\[process-alive\] process #{server} \(node\)/, err)
+      assert(log.none? { |e| e[0].is_a?(String) }, "nothing signalled")
+      assert Dir.exist?(@wt)
+
+      # A shell someone opened under it is no agent session's helper either: it refuses.
+      table = { server => { ppid: 1, uid: Process.uid, tty: "??", comm: "node" }, 6000 => { ppid: server, uid: Process.uid, tty: "ttys002", comm: "zsh" } }
+      code, _out, err = run_forced_with([puma(pid: 6000, comm: "zsh", tty: "ttys002")], [], agents: { server => @real }, procs: table)
+      assert_equal 8, code, err
+      assert_match(/process 6000 \(zsh, has a terminal\)/, err)
+    ensure
+      Process.kill("KILL", server) && Process.wait(server) if server
+    end
+
+    # Value: protects=no signal is sent until every process in the folder is cleared to stop:
+    # a launcher whose grandchild runs elsewhere gets nothing, though its direct child is in
+    # the folder; fails_when=only direct children are checked, or signals go out while
+    # refusals are still being decided; why_new=red team pass 2; seam=ps, Process.kill
+    def test_a_launcher_with_work_further_down_gets_no_signal
+      table = { 4242 => { ppid: 1, uid: Process.uid, tty: "??", comm: "code" },
+                4300 => { ppid: 4242, uid: Process.uid, tty: "??", comm: "ptyhost" },
+                5000 => { ppid: 4300, uid: Process.uid, tty: "ttys009", comm: "zsh" } }
+      log = []
+      code, _out, err = run_forced_with([puma(comm: "code"), puma(pid: 4300, comm: "ptyhost")], log, procs: table)
+      assert_equal 8, code, err
+      assert_match(/process 4242 \(code, runs processes outside it\)/, err)
+      assert(log.none? { |e| e[0].is_a?(String) }, "no signal before every refusal was decided")
     end
 
     # Value: protects=a scan that fails once the session is closed refuses with the folder

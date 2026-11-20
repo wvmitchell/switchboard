@@ -106,6 +106,20 @@ module Switchboard
     # A process with no controlling terminal (`??` on macOS, `?` on Linux).
     def detached?(row) = %w[?? ?].include?(row[:tty])
 
+    # Every process below `pid` in the table.
+    def descendants(pid, table)
+      kids = table.each_with_object(Hash.new { |h, k| h[k] = [] }) { |(child, row), h| h[row[:ppid]] << child }
+      found = []
+      queue = kids[pid].dup
+      while (cur = queue.shift) && found.size < 10_000
+        next if found.include?(cur)
+
+        found << cur
+        queue.concat(kids[cur])
+      end
+      found
+    end
+
     def ancestors(pid, table)
       up = []
       cur = table.dig(pid, :ppid)

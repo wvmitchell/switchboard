@@ -19,10 +19,10 @@ refer to the project's earlier, private repository; the public tracker starts at
   it (`process 4242 (puma) runs in it outside its tmux session`). A forced delete stops it
   once the session is closed, if it has no terminal, is yours, and is still the process
   the check saw (and has no child processes outside the folder), and reports `stopped:
-  process 4242 (puma)`. A tmux server started in the folder, and an agent judged idle, are
-  left alone. It never signals a process with a terminal or another user's, and refuses
-  the new `[process-alive]` (exit 8) over one with the folder untouched. `-n --force`
-  lists what it would stop or refuse over.
+  process 4242 (puma)`. A tmux server started in the folder, and an agent session with a
+  terminal, are left alone. It never signals a process with a terminal or another user's,
+  and refuses the new `[process-alive]` (exit 8) over one with the folder untouched. `-n
+  --force` lists what it would stop or refuse over.
 - `doctor` names a process still running in a folder it suggests removing, with the `kill`
   to run first, so the folder doesn't come straight back.
 
