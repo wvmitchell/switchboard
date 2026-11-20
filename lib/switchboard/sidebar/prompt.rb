@@ -178,10 +178,15 @@ module Switchboard
       end
 
       # C1 controls (U+0080-U+009F, `C2 80`-`C2 9F` in UTF-8) act on the terminal when the
-      # line is drawn. Run on the whole (binary) buffer, so a pair split across reads still
-      # goes, and until none is left: removing one can splice its neighbours into another.
+      # line is drawn. Run on the whole buffer, so a pair split across reads still goes, and
+      # as a stack, so removing one pair can't splice its neighbours into another (one linear
+      # pass, where stripping a pair at a time is quadratic on a nested run).
       def drop_c1(buf)
-        nil while buf.gsub!(C1_PAIR, "")
+        return unless buf.force_encoding(Encoding::BINARY).match?(C1_PAIR)
+
+        kept = []
+        buf.each_byte { |b| b.between?(0x80, 0x9F) && kept.last == 0xC2 ? kept.pop : kept << b }
+        buf.replace(kept.pack("C*"))
       end
 
       def fold_space(buf)

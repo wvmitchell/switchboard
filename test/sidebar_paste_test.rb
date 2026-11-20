@@ -441,6 +441,17 @@ module Switchboard
       assert_equal ["a" * 1007], tasks, "Ctrl-← stayed whole: no 5D in the task"
     end
 
+    # Value: protects=a deeply nested C1 run in a task paste strips in one linear pass instead of freezing the sidebar; fails_when=drop_c1 strips one nesting level per pass; why_new=the nested-pair test nests one level; seam=none; no_claim=wall-clock on a loaded CI box (bound is ~5x the old cost's floor)
+    def test_a_deeply_nested_c1_run_strips_without_freezing_the_prompt
+      buf = ("a" + ("\xC2" * 20_000) + ("\x85" * 20_000) + "b").b
+      sb = three_rows
+      started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      sb.send(:drop_c1, buf)
+      elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
+      assert_equal "ab", buf
+      assert_operator elapsed, :<, 2, "one level per pass took ~9s here" # gstack-timing-ok: quadratic vs linear differ ~1000x; 2s leaves CI headroom
+    end
+
     private
 
     def three_rows = sidebar(nodes: [proj("app"), ws("a"), ws("b"), ws("c")], cursor: 1)
