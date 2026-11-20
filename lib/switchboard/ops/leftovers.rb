@@ -25,7 +25,7 @@ module Switchboard
     # aren't paths; delete drops its branches' badges itself with Pr.forget).
     # `reserve-*.lock` files in the creation dir outlive every record by design.
     # delete-traces holds `delete`'s crash reports, dropped after TRACE_AGE.
-    GLOBAL = %w[collapse branch_fold full_header width prs latest.json sounds sb-agent-hook delete-traces].freeze
+    GLOBAL = %w[collapse branch_fold full_header width project_order prs latest.json sounds sb-agent-hook delete-traces].freeze
     TRACE_AGE = 7 * 86_400
 
     # file: the entry's file; path: the folder it belongs to (nil for pid-keyed rows);
@@ -51,6 +51,7 @@ module Switchboard
         monitoring: Monitoring.state_dir,
         notify: Notify.state_dir,
         offstage_hold: OffstageHold.state_dir,
+        order: Order.state_dir,
         agents: AgentState.state_dir,
         session_outcome: SessionName::Outcome.dir,
         session_owner: SessionName::Owner.dir,
@@ -161,7 +162,7 @@ module Switchboard
     def items(row, ctx)
       dir = dirs.fetch(row)
       case row
-      when :attention, :notify, :session_outcome, :offstage_hold
+      when :attention, :notify, :session_outcome, :offstage_hold, :order
         markers(row, dir) { |content| content.split("\t").first }
       when :monitoring then markers(row, dir) { |content| Monitoring.decode(content).first }
       when :agents then agent_items(dir)

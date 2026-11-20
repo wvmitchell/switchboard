@@ -226,6 +226,26 @@ module Switchboard
       $?&.success? && !out.empty? ? out : nil
     end
 
+    # When git created this linked worktree, in epoch seconds, or nil (a main checkout,
+    # whose .git is a directory, or anything unreadable). A file read and a stat, never a
+    # subprocess: the sidebar sorts by this on every rebuild and hooks build the same Model.
+    # The admin dir's birthtime, else its `commondir`, which `worktree add` writes once (the
+    # dir's own mtime moves with every HEAD update).
+    def created_at(worktree)
+      dotgit = File.join(worktree, ".git")
+      return nil unless File.file?(dotgit)
+
+      line = File.read(dotgit, 4096, encoding: Encoding::UTF_8).scrub[/\Agitdir:[ \t]*(.+?)[ \t]*$/, 1] or return nil
+      admin = File.expand_path(line, worktree) # a relative gitdir (worktree.useRelativePaths)
+      begin
+        File.birthtime(admin).to_f
+      rescue NotImplementedError
+        File.mtime(File.join(admin, "commondir")).to_f
+      end
+    rescue StandardError, NotImplementedError
+      nil
+    end
+
     # `git status --porcelain` lines, or nil when status failed.
     def status_lines(worktree)
       out = capture(worktree, "--no-optional-locks", "status", "--porcelain", "--untracked-files=normal", "--ignore-submodules=none")
