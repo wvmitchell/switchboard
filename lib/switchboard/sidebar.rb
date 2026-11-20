@@ -331,13 +331,13 @@ module Switchboard
         # sidebar was on screen then, so replaying them is the duplicate-sound bug.
         # A poke switch-in never reaches here — it already set @visible=true in
         # reload_and_refresh, so `reappeared` is false and we don't reload twice.
-        reload(announce_sounds: false)
+        reload_in_place(announce_sounds: false)
       elsif visible
         pin_if_resized
         @ticks += 1
         if @ticks >= TREE_TICKS
           @ticks = 0
-          reload
+          reload_in_place
         else
           refresh_agents
         end
@@ -551,6 +551,15 @@ module Switchboard
       @offstage_raw.key?(path) || @session_fresh.include?(path)
     end
 
+    # A background reload that keeps the selection on its row: rows reorder under you when
+    # another pane moves one (J/K), and n or d act on whatever the cursor is on. Not while a
+    # hot reload's cursor is waiting to be restored, which reload itself places.
+    def reload_in_place(**opts)
+      return reload(**opts) if @resume_cursor
+
+      keep_cursor { reload(**opts) }
+    end
+
     # announce_sounds: false on a catch-up scan (a sidebar waking from off-screen,
     # or the session-switch poke) — re-baseline + refresh PRs without ringing for
     # completions another sidebar already announced. Defaults true: continuous
@@ -608,6 +617,8 @@ module Switchboard
        dir_fingerprint(Creation.state_dir),    # background dispatches (◌ rows, ✘, ready)
        dir_fingerprint(Pr.cache_dir),          # PR badges
        dir_fingerprint(Collapse.state_dir),    # shared project folds (the originally-missed case)
+       dir_fingerprint(Order.state_dir),       # a J/K move in another pane (backstop for its broadcast)
+       file_fingerprint(ProjectOrder.path),
        file_fingerprint(FullHeader.marker),    # full-header toggle
        file_fingerprint(BranchFold.marker),    # branch-fold toggle
        file_fingerprint(Width.state_file),     # sidebar width

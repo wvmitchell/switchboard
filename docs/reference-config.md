@@ -385,6 +385,8 @@ top level does nothing`) and names the parent it belongs under.
 | `open_pr` | `o` | `help` | `?` |
 | | | `quit` | `q` |
 | | | `phone_link` | `p` |
+| | | `move_row_down` | `J` |
+| | | `move_row_up` | `K` |
 
 Each value is a **single printable character** (`0x20`–`0x7E`). That rule reserves
 every structural key for free — `↵`, `Esc`, `Backspace`, the arrows, the resize
@@ -526,6 +528,8 @@ Everything switchboard writes, and how to redirect it. State dirs follow XDG.
 | Held `◷` chimes (waiting on a background agent) | `$XDG_STATE_HOME/switchboard/offstage_hold` → `~/.local/state/switchboard/offstage_hold` | `$SWITCHBOARD_OFFSTAGE_HOLD_DIR` |
 | In-flight delete markers | `$XDG_STATE_HOME/switchboard/pending-delete` → `~/.local/state/switchboard/pending-delete` | `$SWITCHBOARD_PENDING_DELETE_DIR` |
 | Project-collapse folds | `$XDG_STATE_HOME/switchboard/collapse` → `~/.local/state/switchboard/collapse` | `$SWITCHBOARD_COLLAPSE_DIR` |
+| Moved workspaces (`J`/`K`) | `$XDG_STATE_HOME/switchboard/order` → `~/.local/state/switchboard/order` | `$SWITCHBOARD_ORDER_DIR` |
+| Project order (`J`/`K` on a header) | `$XDG_STATE_HOME/switchboard/project_order` → `~/.local/state/switchboard/project_order` | `$SWITCHBOARD_PROJECT_ORDER_FILE` (a file path) |
 | Full-header toggle (`H`) | `$XDG_STATE_HOME/switchboard/full_header` → `~/.local/state/switchboard/full_header` | `$SWITCHBOARD_FULL_HEADER_FILE` (a file path) |
 | Branch-fold toggle (`z`) | `$XDG_STATE_HOME/switchboard/branch_fold` → `~/.local/state/switchboard/branch_fold` | `$SWITCHBOARD_BRANCH_FOLD_FILE` (a file path) |
 | Sidebar width (`←`/`→`) | `$XDG_STATE_HOME/switchboard/width` → `~/.local/state/switchboard/width` | `$SWITCHBOARD_WIDTH_FILE` (a file path) |
