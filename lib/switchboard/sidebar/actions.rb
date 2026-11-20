@@ -117,12 +117,13 @@ module Switchboard
       end
 
       # The pane is leaving, so what's queued was aimed at a sidebar you can no longer see, and n ↵
-      # there would build a real workspace. tmux pokes aren't keys, so they still run.
+      # there would build a real workspace. tmux pokes aren't keys, so they still run. A paste
+      # goes silently: the pane is leaving, so no notice.
       def drop_queued_keys
         @typeahead = @typeahead.to_a.select { |key| Input::POKE_BYTES.include?(key) }
         loop do
-          tokens, @pending = Input.tokenize(@pending + $stdin.read_nonblock(Input::READ_BYTES))
-          @typeahead.concat(tokens.select { |key| Input::POKE_BYTES.include?(key) })
+          items = input_items($stdin.read_nonblock(Input::READ_BYTES))
+          @typeahead.concat(items.select { |key| Input::POKE_BYTES.include?(key) })
         end
       rescue IO::WaitReadable, IOError, SystemCallError
         nil

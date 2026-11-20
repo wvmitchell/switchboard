@@ -62,7 +62,11 @@ From the sidebar: highlight the project (or any row in it) and press `n`. The
 bottom row asks for a **task** — `myapp task ›` — not a name: type what the agent
 should do and press `↵`, or press `↵` on an empty line for a bare workspace. `Esc`
 cancels. A long task scrolls as you type, and a pasted multi-line task lands as one
-line.
+line: in a prompt a paste is text, and only a `↵` you press submits. To paste a task,
+press `n` first. A paste into the tree itself is dropped, and a notice says so. This
+covers tmux's `prefix ]` and your terminal's own paste; tmux's pane-menu Paste
+(`prefix >`) isn't bracketed, so it arrives as typed keys
+([Reference: the sidebar § Pasting](reference-sidebar.md#pasting)).
 
 You stay where you are. Switchboard builds the workspace in the background: it
 fetches the base ref, cuts a new branch, creates the worktree under

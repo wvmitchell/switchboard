@@ -240,8 +240,8 @@ module Switchboard
       assert sb.send(:blank_input?, ""), "...and an empty result cancels"
     end
 
-    # Value: protects=the task prompt fences pastes (bracketed paste on, then off even on cancel) and drops input in flight after its ↵; fails_when=the drain or the ensure-off is dropped, so trailing paste bytes (`d`…`y`) reach the tree as keys or the pane stays in paste mode; why_new=paste tests call edit_buffer directly, never prompt_line's wrapper; seam=none; no_claim=terminal-side paste handling
-    def test_the_task_prompt_fences_pastes_and_drains_what_followed_its_enter
+    # Value: protects=the task prompt drops input in flight after its ↵ and leaves paste mode alone (setup owns it); fails_when=the drain is dropped, so trailing paste bytes (`d`…`y`) reach the tree as keys, or the prompt turns bracketing off under the tree; why_new=paste tests call edit_buffer directly, never prompt_line's wrapper; seam=none; no_claim=terminal-side paste handling
+    def test_the_task_prompt_drains_what_followed_its_enter_and_never_toggles_paste_mode
       sb = sidebar
       r, w = IO.pipe
       w.write("dy") # the tail of an unbracketed paste, already in flight behind the ↵
@@ -255,19 +255,35 @@ module Switchboard
       end
       assert_equal "fix it", result
       assert_raises(IO::WaitReadable, "nothing left for the tree to read as keys") { r.read_nonblock(16) }
-      assert_includes out, "\e[?2004h", "pastes arrive fenced"
-      assert_includes out, "\e[?2004l", "paste mode is switched back off"
-      assert_operator out.index("\e[?2004h"), :<, out.index("\e[?2004l"), "...after it was switched on"
-
-      cancel = capture_stdout do
-        stub_method(sb, :draw_prompt, ->(*, **) {}) do
-          stub_method(sb, :read_prompt_key, -> { "\e" }) { sb.send(:prompt_line, "app task", task: true) }
-        end
-      end
-      assert_includes cancel, "\e[?2004l", "Esc leaves paste mode too"
+      refute_includes out, "\e[?2004", "bracketing stays on for the whole session"
     ensure
       r&.close
       w&.close
+    end
+
+    # A stdin stand-in for setup/teardown, which switch the terminal's modes.
+    class FakeTty
+      def raw! = nil
+      def cooked! = nil
+    end
+
+    # Value: protects=bracketed paste is on before the first render and off at teardown, for a fresh and a hot-reloaded sidebar alike; fails_when=setup stops printing ?2004h (or prints it only on a cold start), so a paste is keys again; why_new=the task prompt used to own the toggle; seam=none; no_claim=a real terminal honoring the mode
+    def test_setup_turns_bracketed_paste_on_and_teardown_off
+      [nil, { cursor: nil }].each do |resume|
+        sb = Sidebar.new
+        sb.instance_variable_get(:@reloader).instance_variable_set(:@resume, resume)
+        out = capture_stdout { with_stdin(FakeTty.new) { sb.send(:setup) } }
+        assert_includes out, "\e[?2004h", "resumed: #{!resume.nil?}"
+        off = capture_stdout { with_stdin(FakeTty.new) { sb.send(:teardown) } }
+        assert_includes off, "\e[?2004l"
+      end
+    end
+
+    # Value: protects=the mode is on before anything is drawn; fails_when=run renders before setup; why_new=new; seam=none; no_claim=none beyond protects
+    def test_setup_runs_before_the_first_render
+      src = File.read(File.expand_path("../lib/switchboard/sidebar.rb", __dir__))
+      body = src[/    def run\b.*?\n    end\n/m]
+      assert_operator body.index("setup"), :<, body.index("render"), "?2004h is printed before the first render"
     end
 
     def test_read_prompt_key_returns_nil_on_a_dead_pane

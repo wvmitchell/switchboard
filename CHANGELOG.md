@@ -10,6 +10,23 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
+## [0.80.1] — A paste is never keys in the sidebar (2026-11-20)
+
+### Fixed
+- A bracketed paste into the sidebar no longer runs as keystrokes anywhere. The sidebar
+  turns bracketed paste on for its whole life (it used to, only while the `n` task prompt
+  was open), so a paste into the tree is dropped with a notice to press `n` first instead of
+  firing its letters (`d` … `y`, `q` … `y`, `e`, `o`, moves). A `/` search being typed takes a
+  paste as query text, and a `y/N` confirm or the `a` menu reads one as no. This covers
+  tmux's `prefix ]` and your terminal's own paste; tmux's pane-menu Paste (`prefix >`) isn't
+  bracketed and still arrives as typed keys. A paste whose end marker is lost ends after 5
+  seconds without input, and a notice says so when one stays open.
+- A pasted newline no longer submits any prompt: the rename and `a` prompts now fold it to a
+  space, as the task prompt did. Press `↵` to submit.
+- F1 to F4 no longer act as `P`, `Q`, `R` and `S` in the tree (F3 refreshed PRs) or type a
+  letter into a prompt. Refresh is still `R`. A modified arrow such as Ctrl-← drops whole in
+  a prompt instead of leaking `;5D` into a name.
+
 ## [0.80.0] — Delete reports everything its plan promised (2026-11-19)
 
 ### Changed

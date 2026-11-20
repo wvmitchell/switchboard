@@ -140,7 +140,7 @@ tracks these lines; update them when you re-verify one.
 - Every file starts with `# frozen_string_literal: true`.
 - Stateless helpers are `module_function` modules (`ClaudeHook`, `CodexHook`,
   `MarkerBlock`, `Tmux`, `Installer`, …); only `Model`, `Config`, `Sidebar` (with its
-  `Edges`, `UpdateCue` and `Reloader` collaborators) and `AgentState` are classes (they
+  `Edges`, `UpdateCue`, `Reloader`, `Search` and `PasteFrame` collaborators) and `AgentState` are classes (they
   hold state).
 - One stateful class may split across **concern files** when it outgrows a
   single one (`Sidebar` + `lib/switchboard/sidebar/*`): nested modules

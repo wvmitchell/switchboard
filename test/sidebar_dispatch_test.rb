@@ -495,27 +495,25 @@ module Switchboard
     def test_a_bracketed_paste_across_reads_never_submits_or_acts
       sb = sidebar
       buf = String.new
-      paste = { on: false }
       ["\e[200~fix the d", "eploy\n", "then say y and q\n", "\e[201~"].each do |chunk|
-        assert_equal :edit, sb.send(:edit_buffer, chunk, buf, fold_newlines: true, paste: paste), chunk.inspect
+        assert_equal :edit, sb.send(:edit_buffer, chunk, buf, fold_newlines: true), chunk.inspect
       end
-      refute paste[:on]
+      assert sb.instance_variable_get(:@paste_frame).idle?
       assert_equal "fix the deploy then say y and q ", buf
-      assert_equal :submit, sb.send(:edit_buffer, "\r", buf, fold_newlines: true, paste: paste), "a real ↵ after it"
+      assert_equal :submit, sb.send(:edit_buffer, "\r", buf, fold_newlines: true), "a real ↵ after it"
     end
 
     # Value: protects=a paste whose start/end marker straddles two reads still ends, so the next ↵ submits; fails_when=edit_buffer matches only a whole marker per read, leaving paste mode on and swallowing ↵/Esc/^C; why_new=the across-reads test keeps each marker whole; seam=none; no_claim=a real terminal's read sizes
     def test_a_paste_marker_split_across_reads_still_ends_the_paste
       sb = sidebar
       buf = String.new
-      paste = { on: false }
       ["\e[20", "0~fix the thing\e[2", "01~"].each do |chunk|
-        assert_equal :edit, sb.send(:edit_buffer, chunk, buf, fold_newlines: true, paste: paste), chunk.inspect
+        assert_equal :edit, sb.send(:edit_buffer, chunk, buf, fold_newlines: true), chunk.inspect
       end
-      refute paste[:on]
+      assert sb.instance_variable_get(:@paste_frame).idle?
       assert_equal "fix the thing", buf
-      assert_equal :submit, sb.send(:edit_buffer, "\r", buf, fold_newlines: true, paste: paste)
-      assert_equal :cancel, sb.send(:edit_buffer, "\e", +"", fold_newlines: true, paste: { on: false }),
+      assert_equal :submit, sb.send(:edit_buffer, "\r", buf, fold_newlines: true)
+      assert_equal :cancel, sb.send(:edit_buffer, "\e", +"", fold_newlines: true),
                    "a lone Esc is never held back as a marker start"
     end
 
@@ -614,9 +612,9 @@ module Switchboard
     def test_the_task_prompt_keeps_non_ascii_text_and_backspaces_whole_characters
       sb = sidebar
       buf = String.new
-      "fix the café “quote” 修正".b.each_char { |c| sb.send(:edit_buffer, c, buf, fold_newlines: true, paste: {on: false}) }
+      "fix the café “quote” 修正".b.each_char { |c| sb.send(:edit_buffer, c, buf, fold_newlines: true) }
       assert_equal "fix the café “quote” 修正", sb.send(:display_text, buf, true)
-      sb.send(:edit_buffer, "\x7F", buf, fold_newlines: true, paste: {on: false})
+      sb.send(:edit_buffer, "\x7F", buf, fold_newlines: true)
       assert_equal "fix the café “quote” 修", sb.send(:display_text, buf, true)
     end
 
