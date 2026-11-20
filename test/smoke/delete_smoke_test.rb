@@ -116,6 +116,37 @@ module Switchboard
       puts format("\n  delete with a live agent took %.2fs (post-close wait cap %.0fs)", took, Deletion::POST_CLOSE_WAIT)
     end
 
+    # Value: protects=a process that escaped the session (a daemonized dev server) blocks an
+    # unforced delete by name, and a forced one too, unsignalled, until someone stops it;
+    # then the delete finishes; fails_when=the real scan misses it (lsof on a Mac, /proc on
+    # Linux) or --force signals it; why_new=item 1, D7; seam=none (our own daemon, on
+    # SmokeCase's isolated server)
+    def test_a_process_that_escaped_the_session_blocks_until_stopped
+      sess, leaf, real = workspace
+      tmux!("send-keys", "-t", work_pane_id(sess), "ruby -e 'Process.daemon(true); sleep' -- escaped-stand-in", "Enter")
+      pid = nil
+      wait_until("the escaped process runs on its own") do # the daemon, once its parent has exited
+        pid = (Processes.in_tree(real) || []).find { |p| p[:comm] == "ruby" && Processes.detached?(p) }&.dig(:pid)
+      end
+
+      code, _out, err = delete(leaf)
+      assert_equal 5, code, err
+      assert_match(/process #{pid} \(ruby\) runs in it outside its tmux session/, err)
+      code, _out, err = delete(leaf, "--force")
+      assert_equal 8, code, err
+      assert_match(/\A\[process-alive\] process #{pid} \(ruby\)/, err)
+      assert alive?(pid), "never signalled"
+      assert File.exist?(real), "nothing changed"
+
+      Process.kill("KILL", pid)
+      wait_until("it is gone") { !alive?(pid) }
+      code, _out, err = delete(leaf)
+      assert_equal 0, code, err
+      refute File.exist?(real)
+    ensure
+      Process.kill("KILL", pid) if pid&.positive? && alive?(pid)
+    end
+
     # Value: protects=an agent can't delete the workspace it runs in; fails_when=the pane or
     # cwd check goes; why_new=new refusal; seam=none
     def test_deleting_from_inside_the_workspace_is_refused

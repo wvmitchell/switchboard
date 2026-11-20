@@ -1054,12 +1054,16 @@ module Switchboard
       FileUtils.mkdir_p(dir)
       wt = Worktree.new(project: "proj", path: dir, primary: false)
       stub_method(Process, :daemon, ->(*a) { calls << [:daemon, *a] }) do
-        stub_method(SessionName, :work, ->(*a) { calls << [:work, *a] }) do
-          stub_method(Model, :workspace_at, ->(*) { wt }) { CLI.run(["sync-session-name", dir, "new"]) }
-          CLI.run(%w[sync-session-name])
+        stub_method(Dir, :chdir, ->(d) { calls << [:chdir, d] }) do # never move this test process
+          stub_method(SessionName, :work, ->(*a) { calls << [:work, *a] }) do
+            stub_method(Model, :workspace_at, ->(*) { wt }) { CLI.run(["sync-session-name", dir, "new"]) }
+            CLI.run(%w[sync-session-name])
+          end
         end
       end
-      assert_equal [[:daemon, true, true], [:work, dir, "new"]], calls
+      # Detached, it leaves the workspace's folder: it may wait an hour, and a delete counts a
+      # process sitting in the folder as still running there.
+      assert_equal [[:daemon, true, true], [:chdir, "/"], [:work, dir, "new"]], calls
     end
 
     # Value: protects=the public verb types only into a switchboard workspace; fails_when=a
