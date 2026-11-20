@@ -71,9 +71,10 @@ only has room for the most common ones, so whenever you forget a key, press
 
 ## Step 3: Add your first project
 
-Press **`a`**. A prompt appears. You can either register a repo you already have
-on disk or clone one from a URL. To register an existing repo, type its path
-(e.g. `~/code/myapp`) and press Enter.
+Press **`a`**. A menu appears on the bottom row: **`l`** registers a repo you
+already have on disk, **`c`** clones one from a URL, and **`n`** creates a new one.
+To register an existing repo, press **`l`**, then type or paste its path (e.g.
+`~/code/myapp`) and press Enter.
 
 The project appears in the tree as a header row, with its existing worktrees
 listed beneath it. (If the repo only has its main checkout, you'll see just the

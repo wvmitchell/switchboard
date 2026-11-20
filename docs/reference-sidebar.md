@@ -265,6 +265,44 @@ forward, `←` back, and any other key closes it.
 
 ---
 
+## Pasting
+
+The sidebar turns on bracketed paste for its whole life, so the terminal marks where a
+paste begins and ends. A marked paste is never keys, wherever it lands:
+
+| Where | What a paste does |
+|---|---|
+| The tree, `?` help, the `p` link view, a committed search | Dropped. A notice says so, once per paste. Help and the link view stay open. |
+| A `/` search being typed | Query text: its printable ASCII is added, everything else (newlines too) dropped. |
+| A text prompt (`n` task, `r` rename, the `a` path, URL and name) | Text. Newlines and tabs fold to one space, and only a `↵` you press submits. A name keeps ASCII only, so non-ASCII is dropped from a pasted name; the task prompt keeps it. |
+| A one-key prompt (a `y/N` confirm, the `a` menu, an error's "any key") | No answer: a confirm reads it as no, and the `a` menu closes. |
+
+The notices, on tmux's status line:
+
+- `switchboard: paste ignored — press n first to paste a task` in the tree. The key
+  follows a `sidebar_keys` remap of `new_workspace`.
+- `switchboard: paste ignored — clear the search (Esc), then press n to paste a task` in a
+  committed search, where `n` means the next match.
+- `switchboard: paste ignored — close this view, then press n to paste a task` under `?`
+  help or the `p` link view.
+- `switchboard: paste ignored, so the prompt closed with no answer` from a one-key prompt.
+- `switchboard: paste still open: stop typing, keys work again about 5s after the last one`
+  when a paste is still open two seconds after it began. A tmux paste arrives in one write,
+  so this means its end marker was lost or the link stalled.
+
+A paste whose end marker never arrives ends after 5 seconds with no input at all. Every
+byte restarts that wait, typing included, so stop typing and your keys work again about 5
+seconds later. A keypress clears a tmux notice, so the stall notice can vanish before
+you've read it.
+
+Only marked pastes are covered. tmux's `prefix ]` and your terminal's own paste (once
+tmux passes the markers on) are marked. tmux's pane-menu Paste (`prefix >`) and terminals
+without bracketed paste are not: those pastes arrive as typed keys, and only the older
+guards apply (a confirm drops keys batched around its answer, and a prompt's batched
+newline can't submit).
+
+---
+
 ## Related
 
 - [Reference: keybindings](reference-keybindings.md) — the keys that act on every row here.

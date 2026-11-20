@@ -885,7 +885,7 @@ module Switchboard
       with_stdin_pipe do |writer|
         stub_method(Tmux, :go, ->(*, **) { writer.write("\e[") }) { sb.send(:handle, "/oauth\r") }
       end
-      assert_equal "\e[", sb.instance_variable_get(:@pending)
+      refute sb.instance_variable_get(:@paste_frame).idle?, "the split `\\e[` is held for the next read"
 
       sb = tree
       focus_ins = 0

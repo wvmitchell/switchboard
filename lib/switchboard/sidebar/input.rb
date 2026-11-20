@@ -45,6 +45,8 @@ module Switchboard
       # new_workspace owns n, and they mean next and previous only while a search is on.
       SEARCH_KEYS = ["n", "N", "\e", "\r", "\n"].freeze
 
+      PASTE_STALL_NOTICE = "switchboard: paste still open: stop typing, keys work again about 5s after the last one"
+
       # The keys that turn the ? overlay's pages (→ / Space forward, ← back) when it
       # spans more than one; every other real key closes it.
       HELP_PAGE_STEPS = { "\e[C" => 1, " " => 1, "\e[D" => -1 }.freeze
@@ -53,14 +55,17 @@ module Switchboard
       # sequence]. The grammar it recognizes (the only escapes a tmux pane delivers):
       #
       #   \e [ <param/intermediate 0x20-0x3F>* <final 0x40-0x7E>   CSI: arrows, focus (\e[I/\e[O)
-      #   \e <any other byte>                                      Alt / SS3 lead (2-byte token)
+      #   \e O <final 0x40-0x7E>                                   SS3: F1-F4 (3-byte token)
+      #   \e <any other byte>                                      Alt (2-byte token)
       #   \e        (alone at the end of the buffer)               the Esc key
       #   <byte>                                                   a plain key
       #
       # An incomplete CSI (`\e[…` with no final byte yet) is returned as the remainder
       # rather than emitted, so its final byte can never be read alone as a key. `\e`
-      # plus any non-`[` byte is consumed TOGETHER (a 2-byte token), so the `O` in an
-      # SS3 `\eO…` can't escape alone either. A lone trailing `\e` is emitted as the
+      # plus any other byte is consumed TOGETHER (a 2-byte token), so the `O` in an
+      # SS3 `\eO…` can't escape alone either. A trailing `\eO` is carried only when the
+      # read was `full` (its final byte may be in the next read); otherwise it is Alt-Shift-O,
+      # and carrying it would swallow the next key. A lone trailing `\e` is emitted as the
       # Esc key, not carried: terminals write a sequence's bytes as one unit, so a `\e`
       # with nothing after it is the key — and carrying it would stall Esc (search /
       # prompt cancel) waiting for bytes that never come. The one case this leaves open
@@ -69,7 +74,7 @@ module Switchboard
       # fragment a 3-byte focus event across reads — it doesn't (it writes the sequence
       # in one go, and READ_BYTES reads it whole) — so it's unreachable here; closing
       # it for good would mean an Esc-timeout in the run loop, not worth the timing.
-      def self.tokenize(buf)
+      def self.tokenize(buf, full: false)
         tokens = []
         i = 0
         n = buf.bytesize
@@ -80,7 +85,12 @@ module Switchboard
           elsif i + 1 >= n                      # lone trailing \e -> the Esc key
             tokens << buf.byteslice(i, 1)
             i += 1
-          elsif buf.getbyte(i + 1) != 0x5b      # \e + non-'[' -> Alt / SS3 lead, kept whole
+          elsif buf.getbyte(i + 1) == 0x4f && i + 2 >= n && full # \eO cut off by a full read
+            return [tokens, buf.byteslice(i, 2)]
+          elsif buf.getbyte(i + 1) == 0x4f && i + 2 < n && (0x40..0x7e).cover?(buf.getbyte(i + 2))
+            tokens << buf.byteslice(i, 3)       # SS3: F1-F4, kept whole
+            i += 3
+          elsif buf.getbyte(i + 1) != 0x5b      # \e + non-'[' -> Alt, kept whole
             tokens << buf.byteslice(i, 2)
             i += 2
           else                                  # CSI: \e[ params/intermediates, then a final byte
@@ -100,7 +110,6 @@ module Switchboard
         end
         [tokens, +""]
       end
-
 
       private
 
@@ -141,9 +150,10 @@ module Switchboard
       # its task, typed during a busy tick) are the prompt's, not the tree's: it takes
       # them from @typeahead, so they neither vanish from the task nor fire as commands.
       # They only fill it: a newline among them doesn't submit (Prompt#take_typeahead).
+      #
+      # A paste arrives as PasteFrame::Text items among the keys, never as keys (`pasted`).
       def handle(buf)
-        tokens, @pending = Input.tokenize(@pending + buf.to_s)
-        @typeahead = tokens
+        @typeahead = input_items(buf.to_s)
         while (t = @typeahead.shift)
           was_open = overlay_open?
           return false unless dispatch(t)
@@ -155,7 +165,23 @@ module Switchboard
         @typeahead = nil
       end
 
+      # Every reader's view of a read: key tokens and PasteFrame::Text items, in order. A Text
+      # drops a partial sequence a paste start cut off, so it can't rejoin the first key after
+      # the paste. Only the key string that ends the read may carry a split `\eO` (D12).
+      def input_items(bytes, full: bytes.bytesize >= READ_BYTES)
+        frame = @paste_frame.feed(bytes, full: full)
+        frame.each_with_index.flat_map do |item, i|
+          if item.is_a?(PasteFrame::Text)
+            @pending = +""
+            next [item]
+          end
+          tokens, @pending = Input.tokenize(@pending + item, full: full && i == frame.size - 1)
+          tokens
+        end
+      end
+
       def dispatch(key)
+        return pasted(key) if key.is_a?(PasteFrame::Text) # before any overlay: a paste is never a key
         return link_view_key(key) if @link_view # p overlay is open: Tab/←/→ act, pokes run, other keys close
         return help_key(key) if @help     # ? overlay is open: a real key closes it, pokes pass through
         return search_key(key) if @search.typing? # typing a / search swallows the normal bindings
@@ -179,6 +205,41 @@ module Switchboard
         when "\e[D"             then resize(-WIDTH_STEP) # ← narrow the pane
         when "\r", "\n"         then enter
         else                         return dispatch_action(key, count)
+        end
+        true
+      end
+
+      # A paste into a `/` search being typed is query text, its newlines dropped (one would
+      # commit). Anywhere else in the tree it's dropped, and a notice says what to do instead.
+      def pasted(text)
+        @count = nil
+        if @search.typing?
+          query = text.bytes.each_char.select { |c| printable?(c) }.join
+          edit_search { @search.append(query) } unless query.empty?
+          return paste_notice(text, nil)
+        end
+        paste_notice(text, paste_hint)
+      end
+
+      def paste_hint
+        key = key_hint(:new_workspace)
+        if overlay_open? then "switchboard: paste ignored — close this view, then press #{key} to paste a task"
+        elsif @search.committed? then "switchboard: paste ignored — clear the search (Esc), then press #{key} to paste a task"
+        else "switchboard: paste ignored — press #{key} first to paste a task"
+        end
+      end
+
+      # Once per paste: the drop notice (`message`, nil where the paste is welcome text), or
+      # the stall notice once the paste has stayed open, which replaces it.
+      def paste_notice(text, message)
+        if text.stalled
+          return true if @paste_stalled == text.paste
+
+          @paste_stalled = @paste_noticed = text.paste
+          Tmux.notify(PASTE_STALL_NOTICE)
+        elsif message && @paste_noticed != text.paste
+          @paste_noticed = text.paste
+          Tmux.notify(message)
         end
         true
       end

@@ -44,6 +44,7 @@ module Switchboard
       assert_nil layer_of("elsewhere/stray")
       assert_equal :operations, layer_of("ops/installer/keybindings")
       assert_equal :interfaces, layer_of("sidebar/edges")
+      assert_equal :interfaces, layer_of("sidebar/paste_frame")
       assert_equal :support, layer_of("root")
     end
 
