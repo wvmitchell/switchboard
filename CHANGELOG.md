@@ -10,7 +10,7 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
-## [0.80.1] — A paste is never keys in the sidebar (2026-11-20)
+## [0.81.1] — A paste is never keys in the sidebar (2026-11-20)
 
 ### Fixed
 - A bracketed paste into the sidebar no longer runs as keystrokes anywhere. The sidebar
@@ -26,6 +26,29 @@ refer to the project's earlier, private repository; the public tracker starts at
 - F1 to F4 no longer act as `P`, `Q`, `R` and `S` in the tree (F3 refreshed PRs) or type a
   letter into a prompt. Refresh is still `R`. A modified arrow such as Ctrl-← drops whole in
   a prompt instead of leaking `;5D` into a name.
+## [0.81.0] — Workspaces list newest first, and J/K move them (2026-11-20)
+
+### Added
+- `J`/`K` in the sidebar move the highlighted workspace down or up within its project,
+  and take a count (`3K`). On a branch row they move that row's workspace; on a project
+  header they move the project. A moved workspace keeps its place across restarts, and
+  every other sidebar repaints in the new order straight away. A move that can't be
+  saved says which folder failed in the tmux status line.
+- Remap them with `move_row_down` and `move_row_up` under `sidebar_keys`.
+
+### Changed
+- Workspaces in a project now list newest first (by when git created the worktree),
+  instead of A–Z by their folder's original name. The order changes on upgrade, and
+  there's no setting to restore A–Z; move rows with `J`/`K` instead.
+- A workspace you dispatch with `n` shows at the top of its project while it builds,
+  not at the bottom.
+- The project order you set with `J`/`K` is saved in its own file; `config.yml` is
+  never rewritten.
+
+### Upgrading
+- If you already mapped `J` or `K` to another action in `sidebar_keys`, it keeps that
+  action; remap `move_row_down`/`move_row_up` to clear doctor's collision note.
+- Run `switchboard reload-sidebars` so every open sidebar picks up the new order.
 
 ## [0.80.0] — Delete reports everything its plan promised (2026-11-19)
 

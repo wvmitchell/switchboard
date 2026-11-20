@@ -23,10 +23,10 @@ module Switchboard
 
     # --- rows ---------------------------------------------------------------------
 
-    def test_a_build_git_does_not_list_yet_shows_last_in_its_project
+    def test_a_build_git_does_not_list_yet_shows_first_in_its_project
       record(path: "/wt/quiet-otter")
       sb = hydrated([proj("app"), ws("alpha"), ws("beta"), proj("other"), ws("x", project: "other")])
-      assert_equal %w[alpha beta quiet-otter], rows_of(sb).select { |n| n.project == "app" && n.kind == "ws" }.map(&:name)
+      assert_equal %w[quiet-otter alpha beta], rows_of(sb).select { |n| n.project == "app" && n.kind == "ws" }.map(&:name)
       assert rows_of(sb).find { |n| n.name == "quiet-otter" }.creation
     end
 

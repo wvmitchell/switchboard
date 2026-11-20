@@ -224,6 +224,104 @@ module Switchboard
         [node.kind, node.path, node.project, (node.branch if node.kind == "br")]
       end
 
+      # J/K: move the selected workspace within its project, or the selected project, by
+      # `delta` rows (a count), clamped at the ends. The order lives on disk (Order,
+      # ProjectOrder), so every other sidebar follows on the broadcast.
+      def move_row(delta)
+        node = current or return
+        node.kind == "proj" ? move_project(node.project, delta) : move_workspace(node, delta)
+      end
+
+      # Ranks sort highest first. The moved workspace gets a rank between its new
+      # neighbours: one write. Only real rows count: a ◌ row git doesn't list yet stays
+      # pinned on top, and a row being deleted is passed over.
+      def move_workspace(node, delta)
+        all = @nodes.select { |n| n.kind == "ws" && n.project == node.project && !n.creation }
+        rows = all.reject { |n| @pending_delete.include?(n.path) }
+        from = rows.index { |n| n.path == node.path } or return
+        to = (from + delta).clamp(0, rows.size - 1)
+        return if to == from
+
+        ranks = workspace_ranks(node.project)
+        others = rows.reject.with_index { |_, i| i == from }
+        above = to.zero? ? nil : others[to - 1].path
+        below = others[to]&.path
+        rank = slot_rank(ranks, above, below)
+        unless rank
+          return unless renumber(all, ranks)
+
+          rank = slot_rank(ranks, above, below)
+        end
+        return order_unsaved(Order.state_dir, "the new rank wouldn't fit") unless rank
+        return if (why = Order.set(node.path, rank)) && order_unsaved(Order.state_dir, why)
+
+        rebuild
+        @cursor = @rows.index { |n| n.kind == "ws" && n.path == node.path } || @cursor
+        Tmux.broadcast_warm(except: ENV["TMUX_PANE"]) # every other sidebar shows the new order now
+      end
+
+      # A rank strictly between the row above (higher) and the one below, or past the end;
+      # nil when the gap is used up (or a neighbour's rank is unusable), so the caller renumbers.
+      def slot_rank(ranks, above, below)
+        hi = above && ranks[above]
+        lo = below && ranks[below]
+        rank = if above.nil? then lo + Order::STEP
+               elsif below.nil? then hi - Order::STEP
+               else (hi + lo) / 2.0
+               end
+        rank if Order.usable?(rank) && (hi.nil? || rank < hi) && (lo.nil? || rank > lo)
+      rescue NoMethodError, TypeError
+        nil
+      end
+
+      # Respace every real workspace in the project above its highest rank, keeping their
+      # order, written top-down: after each write the rewritten ones still sit above the
+      # rest in order, so a failure part-way shuffles nothing. Updates `ranks` in place.
+      def renumber(all, ranks)
+        top = all.map { |n| ranks[n.path] || 0.0 }.max || 0.0
+        all.each_with_index do |n, k|
+          rank = top + (all.size - k) * Order::STEP
+          if (why = Order.set(n.path, rank))
+            order_unsaved(Order.state_dir, why)
+            return false
+          end
+          ranks[n.path] = rank
+        end
+        true
+      end
+
+      # { path => rank } as the Model sorted them.
+      def workspace_ranks(project)
+        trees = @model.projects.find { |p| p.name == project }&.worktrees || []
+        trees.each_with_object({}) { |w, h| h[w.path] = w.rank if w.rank }
+      end
+
+      # Every configured project keeps its slot, hidden ones included: only the shown ones
+      # reorder, so a project whose folder is briefly missing doesn't lose its place.
+      def move_project(name, delta)
+        shown = @model.projects.map(&:name)
+        from = shown.index(name) or return
+        to = (from + delta).clamp(0, shown.size - 1)
+        return if to == from
+
+        moved = shown.dup
+        moved.insert(to, moved.delete_at(from))
+        queue = moved.dup
+        full = ProjectOrder.sort(@config.projects).filter_map { |row| ProjectOrder.name_of(row) }
+                           .map { |n| shown.include?(n) ? queue.shift : n }
+        return if (why = ProjectOrder.write(full)) && order_unsaved(ProjectOrder.path, why)
+
+        rebuild
+        @cursor = @rows.index { |n| n.kind == "proj" && n.project == name } || @cursor
+        Tmux.broadcast_warm(except: ENV["TMUX_PANE"])
+      end
+
+      # Never silent: what failed, where, and what to do. True, for `return if ... && ...`.
+      def order_unsaved(where, why)
+        Tmux.notify("switchboard: couldn't save the order (#{where}: #{why}); check that folder is writable, or run switchboard doctor")
+        true
+      end
+
       # a: register a new project. n only makes worktrees *inside* a project, so
       # this is the keyboard path to the first project — switchboard can now stand
       # up from an empty sidebar with no CLI round-trip. Three modes: point at a

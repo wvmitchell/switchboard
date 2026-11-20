@@ -70,7 +70,9 @@ Three row kinds, indented by depth:
   for does. A narrow pane drops the count before the glyph. `↵` on it folds/unfolds; `n` creates a
   workspace in it. The fold is shared on disk and durable across restarts.
 - **Workspace row** — one per worktree git reports, minus the project's primary
-  (trunk) checkout, which is never a switch target. This is the row you act on.
+  (trunk) checkout, which is never a switch target. This is the row you act on. Listed
+  newest first; `J`/`K` move it down or up, and on a project header they move the project
+  (see [the order](explanation-sidebar-views.md#workspace-and-project-order)).
 - **Branch-history row** — when a workspace has held more than one branch over
   its life (you `git checkout -b` in place), it expands into inline child rows
   read from its HEAD reflog, newest first, up to
@@ -114,7 +116,7 @@ steady green `●`. A declared `monitoring notify` sparkles too; `:waiting` does
 since it already blinks for attention.
 
 A workspace dispatched with `n` shows `◌` from the moment you press `↵` — even
-before git lists its worktree — sitting last in its project, with your task dimmed
+before git lists its worktree — sitting first in its project (`J`/`K` don't move it), with your task dimmed
 on the right. The task stays there until the workspace gets a real name. A failure
 shows `✘` with a short reason (`setup exit 1`). When setup itself failed, the `✘` stays
 until you delete the workspace and re-entering it opens a plain shell, not the agent; an

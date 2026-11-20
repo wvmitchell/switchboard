@@ -81,6 +81,8 @@ module Switchboard
       ENV["SWITCHBOARD_SESSION_NAME_DIR"] = path("session-name") # SessionName outcome markers + typing locks
       ENV["SWITCHBOARD_CREATION_DIR"]  = path("creation")  # Creation records (background dispatch lifecycle)
       ENV["SWITCHBOARD_COLLAPSE_DIR"]  = path("collapse")  # Collapse folds (shared project collapse state)
+      ENV["SWITCHBOARD_ORDER_DIR"]     = path("order")     # Order ranks (J/K-moved workspaces)
+      ENV["SWITCHBOARD_PROJECT_ORDER_FILE"] = path("project_order") # ProjectOrder (J/K-moved projects)
       ENV["SWITCHBOARD_FULL_HEADER_FILE"] = path("full_header") # FullHeader toggle (full header on every session)
       ENV["SWITCHBOARD_WIDTH_FILE"]    = path("width")     # Width (shared sidebar pane width, ←/→ resize)
       ENV["SWITCHBOARD_CACHE_DIR"]     = path("cache")     # Pr cache (T3 seam)
