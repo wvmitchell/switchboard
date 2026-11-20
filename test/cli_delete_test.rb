@@ -812,6 +812,12 @@ module Switchboard
       assert_equal 8, code, err
       assert_match(/process #{agent} \(node\)/, err)
       assert_empty signals
+
+      # A shell someone opened under it is no agent session's helper either: it refuses.
+      under = detached.merge(6000 => { ppid: agent, uid: Process.uid, tty: "ttys002", comm: "zsh" })
+      code, _out, err = run_forced_with([], [puma(pid: 6000, comm: "zsh", tty: "ttys002")], signals, agents: { agent => @real }, procs: under)
+      assert_equal 8, code, err
+      assert_match(/process 6000 \(zsh, has a terminal\)/, err)
     ensure
       Process.kill("KILL", agent) && Process.wait(agent) if agent
     end

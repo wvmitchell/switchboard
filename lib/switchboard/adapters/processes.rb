@@ -76,8 +76,8 @@ module Switchboard
       false
     end
 
-    # Every process whose working folder is `real` or under it, except this process and its
-    # ancestors: [{ pid:, start:, comm:, tty:, uid: }], or nil when the scan can't be trusted
+    # Every process whose working folder is `real` or under it, except this process and a
+    # tmux server: [{ pid:, start:, comm:, tty:, uid: }], or nil when the scan can't be trusted
     # to be complete. Only the kernel cwd counts; a process that merely has a file open in
     # the tree isn't found (walking every open file is far too slow).
     def in_tree(real, table: self.table, cwds: table && self.cwds(table))
