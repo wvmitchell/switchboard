@@ -288,7 +288,12 @@ module Switchboard
       Leftovers.interrupted(config).each do |r|
         puts row(false, "interrupted delete of #{r['path']} — run `switchboard delete #{Shellwords.escape("#{r['project']}/#{r['name']}")}` to finish it")
       end
-      Leftovers.stray_folders(config).each do |dir|
+      left = Leftovers.files_left(config)
+      left.each do |dir|
+        puts row(false, "#{dir} still has files a delete left — if nothing in it is needed, " \
+                        "run `rm -rf #{Shellwords.escape(dir)}`, then `switchboard prune`")
+      end
+      Leftovers.stray_folders(config).reject { |dir| left.any? { |l| Paths.real_or_self(l) == Paths.real_or_self(dir) } }.each do |dir|
         puts row(false, "#{dir} is under the worktree root but isn't a workspace — if nothing in it is needed, " \
                         "run `rm -rf #{Shellwords.escape(dir)}`")
       end

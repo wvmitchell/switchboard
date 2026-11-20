@@ -200,6 +200,23 @@ module Switchboard
       assert_equal [dead], found(:session_locks)
     end
 
+    # Value: protects=prune never unlinks a typing lock a worker holds, even under a dead
+    # pid; fails_when=Leftovers.remove plain-deletes session_locks instead of drop_lock;
+    # why_new=session_name_test covers drop_lock and sweep, not prune's remove path;
+    # seam=none; no_claim=a second process holding it (a same-process flock stands in)
+    def test_prune_leaves_a_held_typing_lock_and_takes_it_once_released
+      dead = dead_pid
+      FileUtils.mkdir_p(SessionName::Claude.locks_dir)
+      lock = SessionName::Claude.lock_path(dead)
+      File.open(lock, File::RDWR | File::CREAT) do |held|
+        held.flock(File::LOCK_EX)
+        assert_equal 0, Leftovers.clear(config)[:session_locks]
+        assert File.exist?(lock), "held, so prune leaves it"
+      end
+      assert_equal 1, Leftovers.clear(config)[:session_locks]
+      refute File.exist?(lock), "released and dead: prune takes it"
+    end
+
     def test_a_pending_delete_marker_is_a_leftover_only_past_its_ttl
       PendingDelete.mark("/some/path")
       assert_empty found(:pending_delete), "a live delete keeps its marker"

@@ -329,7 +329,7 @@ module Switchboard
         stub_method(Git, :clean?, ->(*) { true }) do
           stub_method(Git, :remove_worktree, ->(repo, p, **) { removed = [repo, p]; true }) do
             stub_method(Git, :worktrees, ->(*, **) { [] }) do
-              stub_method(Deletion, :forget, ->(r) { branch_deleted = r["branches"].map { |b| b.split(":", 2)[1] } and [[], [], []] }) do
+              stub_method(Deletion, :forget, ->(r) { branch_deleted = r["branches"].map { |b| b.split(":", 2)[1] } and Deletion::Forgot.new(removed: [], kept: [], gone: [], failed: []) }) do
                 stub_method(Tmux, :session_of, ->(*) { "sb/home" }) do
                   stub_method(Tmux, :session_name, ->(*) { "sb/app/a" }) do
                     stub_method(Tmux, :kill, ->(*) {}) do
@@ -538,7 +538,7 @@ module Switchboard
       stub_method(Process, :spawn, ->(*_a, **_k) { raise Errno::ENOENT }) do
         stub_method(Git, :remove_worktree, ->(*, **) { true }) do
           stub_method(Git, :worktrees, ->(*, **) { [] }) do
-            stub_method(Deletion, :forget, ->(r) { deleted = r["branches"] and [[], [], []] }) do
+            stub_method(Deletion, :forget, ->(r) { deleted = r["branches"] and Deletion::Forgot.new(removed: [], kept: [], gone: [], failed: []) }) do
               sb.send(:start_removal, "/repos/app", "/wt/a", "feature", branches: planned)
             end
           end

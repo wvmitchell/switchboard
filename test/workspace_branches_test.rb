@@ -389,19 +389,23 @@ module Switchboard
       git(repo, "branch", "taken")
       git(repo, "worktree", "add", "-q", path("elsewhere"), "taken")
       entry = WorkspaceBranches.entry(repo, "taken", "main")
-      kept = []
-      Deletion.branches({ "repo" => repo, "branches" => ["#{entry.sha}:taken"], "deleted" => [] }, [], kept, [])
-      assert_equal ["branch taken (another workspace uses it)"], kept
+      out = Deletion::Forgot.new(removed: [], kept: [], gone: [], failed: [])
+      Deletion.branches({ "repo" => repo, "branches" => ["#{entry.sha}:taken"], "deleted" => [] }, out)
+      assert_equal ["branch taken (another workspace uses it)"], out.kept
       assert_includes branches(repo), "taken"
     end
 
     def test_a_branch_already_gone_is_not_reported_as_kept
       repo = temp_git_repo("app")
-      removed = []
-      kept = []
+      out = Deletion::Forgot.new(removed: [], kept: [], gone: [], failed: [])
       receipt = { "repo" => repo, "branches" => ["abc:gone"], "deleted" => [] }
-      Deletion.branches(receipt, removed, kept, [])
-      assert_empty kept
+      Deletion.branches(receipt, out)
+      assert_empty out.kept
+      assert_equal ["branch gone"], out.gone, "reported as already gone"
+
+      out = Deletion::Forgot.new(removed: [], kept: [], gone: [], failed: [])
+      Deletion.branches({ "repo" => repo, "branches" => ["abc:taken-before"], "deleted" => ["taken-before"] }, out)
+      assert_equal ["branch taken-before"], out.gone, "one an interrupted delete already took"
       assert_equal ["gone"], receipt["deleted"], "an absent ref counts as deleted"
     end
   end

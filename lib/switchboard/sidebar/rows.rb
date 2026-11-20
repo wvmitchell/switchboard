@@ -4,7 +4,7 @@ module Switchboard
   class Sidebar
     # Rows (#57): the view-model half between the Tree and the paint — rebuild
     # (hydrating every shared on-disk view preference), the collapse/branch-fold
-    # row transforms (#107), what the / search reveals and matches, and the off-paint
+    # row transforms (#107), what the / search matches, and the off-paint
     # diff-count cache with its mtime gate (#79). A concern module on Sidebar
     # (see CLAUDE.md conventions); what a row SHOWS stays here, what a row
     # LOOKS like lives in Render.
@@ -23,8 +23,6 @@ module Switchboard
         # names (the stable registry, not the git-built tree, so a project that
         # momentarily fails to build doesn't lose its fold).
         @collapsed = Collapse.collapsed(@config.projects.map { |p| p["name"] })
-        # A project another window unfolded is no longer ours to hold open: ↵ on it should fold.
-        @search.sticky = nil unless @collapsed.include?(@search.sticky)
         # Workspaces mid-deletion: hidden in every window while a detached daemon runs
         # the slow `git worktree remove` (the marker is cleared when it finishes, or
         # aged out by TTL if the daemon dies). Git still lists the worktree until the
@@ -83,12 +81,11 @@ module Switchboard
         end
       end
 
-      # Visible rows: all nodes, minus the children of folded projects. A search hides no row;
-      # it only changes which projects count as folded. Matches and reveals move rows under a
-      # search's cursor, so it stays on its row by identity (normal-tree callers use keep_cursor).
+      # Visible rows: all nodes, minus the children of folded projects. A search hides no row and
+      # changes no fold. A scan can move rows under a search's cursor, so it stays on its row by
+      # identity (normal-tree callers use keep_cursor).
       def recompute_rows
         here = [row_key(current), current.project] if @search.active? && current
-        @revealed = revealed_projects
         @rows = visible_tree
         @search_hits = @search.active? ? @rows.each_index.select { |i| @search.match?(search_text(@rows[i])) } : []
         restore_cursor(*here) if here
@@ -116,24 +113,8 @@ module Switchboard
         [@cursor, @cursor - 1].find(&sibling) || @rows.each_index.to_a.reverse.find(&sibling)
       end
 
-      # Folded as drawn: collapsed on disk and not being shown by a search in this sidebar.
-      def folded?(project)
-        @collapsed.include?(project) && !@revealed.include?(project)
-      end
-
-      # Collapsed projects with a matching child, plus the one a finished search left open. A
-      # header that matches on its own name is already on screen, so it reveals nothing.
-      def revealed_projects
-        revealed = Set.new([@search.sticky].compact)
-        return revealed unless @search.active?
-
-        @nodes.each do |n|
-          next if n.kind == "proj" || !@collapsed.include?(n.project) || @pending_delete.include?(n.path)
-
-          revealed << n.project if @search.match?(search_text(n))
-        end
-        revealed
-      end
+      # Folded as drawn. A search never unfolds anything: it sees only the rows you see.
+      def folded?(project) = @collapsed.include?(project)
 
       # The one piece of a row a search reads: its drawn name, so a match always has something
       # to highlight. Render's name_spans reads the same part of the row. A branch row is history

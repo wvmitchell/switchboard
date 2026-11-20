@@ -361,8 +361,9 @@ workspace it dispatched, so it refuses anything that could lose work.
   file written after that.
 - **`--force`** is for a human: it overrides `[dirty]`, `[unpushed]`, `[branches-unknown]`
   and `[busy]` (exit 5) and nothing else.
-- **`-n` / `--dry-run`** runs every check and prints the plan (session, folder, branches
-  with ✓ or !, record, history kept), and exits as the real run would. It changes nothing.
+- **`-n` / `--dry-run`** runs every check and prints the plan (folder, session, branches
+  with ✓ or !, record, stored name, markers, ignored files, history kept), and exits as
+  the real run would. It changes nothing.
 - **Ignored files go with the folder**, as with `git worktree remove`: build output, a
   `.env`, notes in a gitignored folder. `-n` lists them first.
 - **Agent history stays.** Claude's transcripts and Codex's sessions aren't switchboard's,
@@ -372,12 +373,32 @@ On success it prints stable lines a script can read, and exits 0:
 
 ```
 removed: folder /Users/you/worktrees/app/quiet-otter
-removed: name oauth-fix
+removed: session sb/app/quiet-otter
 removed: branch oauth-fix
-removed: record 20261116135217-a1b2c3
 kept: branch shared-fix (another workspace uses it)
+removed: record 20261116135217-a1b2c3
+removed: name oauth-fix
+removed: markers (attention 1, agents 1, session locks 1)
 kept: history /Users/you/.claude/projects/-Users-you-worktrees-app-quiet-otter (Claude's own)
 ```
+
+The report has one line for every line of the dry run's plan, in the same order: the
+folder, each session, each branch, the record, the stored name, the markers (a count per
+store), any ignored files, and Claude's history. Each line starts with one prefix:
+
+- `removed:` this run removed it.
+- `kept:` left on purpose, with the reason in parentheses: a branch another workspace
+  uses or that moved since the check, every branch when a `--force` delete can't tell
+  which are its own, Claude's history, the typing lock of a Claude
+  that may still be running, or, when finishing an interrupted delete, a session it can't
+  confirm closed or a folder git no longer lists but whose files are left.
+- `already gone:` the plan named it, but it was gone before this run reached it: a branch
+  someone deleted, a session that had exited, or anything an interrupted delete finished
+  before this one took over.
+- `no session`, `no stored name`, `no markers`: there was nothing of that kind, in the
+  plan and the report alike.
+
+Anything that failed isn't a line here: it's listed under `[partial]`.
 
 Every failure is one stderr line, `[token] <what>; changed: <none or what>; fix: <what to
 do> (reference-cli.md#delete-<token>)`, then up to 20 indented detail lines. Exit 5 is the
@@ -409,8 +430,10 @@ do> (reference-cli.md#delete-<token>)`, then up to 20 indented detail lines. Exi
 | [`[failed]`](#delete-failed) | 70 |
 
 An interrupted delete leaves a receipt: the next `delete` of the same workspace (or
-`switchboard prune`, once git no longer lists it) finishes it, and `doctor` names one that
-stopped while git still lists the workspace.
+`switchboard prune`, once git no longer lists it and no files are left in its folder)
+finishes it, and `doctor` names one that stopped while git still lists the workspace. Files
+git left in the folder are yours to remove: `doctor` names that folder with the `rm -rf`
+to run, then `switchboard prune`.
 
 A `--force` delete moves anyone else attached to the session to `sb/home` before closing
 it, so they land back in switchboard instead of being detached (an unforced delete refuses
@@ -469,7 +492,7 @@ relying on `--creation`: an older sidebar can still collect a `new` record you'v
 `[remove-failed]`, exit 6. Git refused or failed, or the folder's removal couldn't be confirmed. The session is closed. Fix: retry the same command once; fails again, ask a human with git's message.
 
 #### delete: partial
-`[partial]`, exit 7. The folder is gone but something listed below was left. The receipt is kept. Fix: `switchboard prune` finishes it, or remove each item.
+`[partial]`, exit 7. The folder is gone but something listed below was left. The receipt is kept. Fix: `switchboard prune` finishes it, or remove each item. Files git left in the folder come first: remove them with the `rm -rf` their line names, then prune.
 
 #### delete: session-alive
 `[session-alive]`, exit 8. Its session didn't close. The record is acknowledged; the folder wasn't touched. Fix: `tmux kill-session -t =<name>`, then retry.
@@ -549,7 +572,8 @@ that clashes and falls back to the folder name; a session or unpushed branch who
 disagrees with the workspace's; an unreadable names store; sidebars that don't read stored
 names, or a tmux that can't list its panes), files deleted workspaces left in its stores
 (counted once they're an hour old, with `prune` as the fix) and folders under the worktree
-root that git no longer lists, the remote links (`⇅`) it sees (or a warning
+root that git no longer lists (one a delete left files in says so, with the `rm -rf` and
+then `prune`), the remote links (`⇅`) it sees (or a warning
 when Claude is running but its session files are missing, none are in the shape
 switchboard reads, or every live one fails the start-time check, i.e. a Claude update
 moved or reshaped them), a `CLAUDE_CONFIG_DIR` that differs between your shell and tmux

@@ -56,11 +56,18 @@ module Switchboard
     def test_a_deleted_workspace_leaves_no_trace
       rec = seed
       refute_empty Dir.children(AgentState.state_dir), "precondition: the real reporter wrote a hook file"
+      # Its Claude's typing lock carries only a pid: delete drops it once that agent is gone.
+      agent = Process.spawn("sleep", "30")
+      start = ProcessIdentity.start_of(agent)
+      Process.kill("KILL", agent)
+      Process.wait(agent)
+      FileUtils.mkdir_p(SessionName::Claude.locks_dir)
+      File.write(SessionName::Claude.lock_path(agent), "")
       code = nil
       stub_method(Tmux, :sessions_strict, -> { [] }) do
         stub_method(Agents, :scan_pids, -> { {} }) do
           stub_method(Tmux, :broadcast_warm, ->(**) {}) do
-            stub_method(Deletion, :busy, ->(_t) { nil }) do # the seeded ◷ hold is a live busy signal
+            stub_method(Deletion, :busy, ->(t) { t.agents = [[agent, start]] and nil }) do # the seeded ◷ hold is a live busy signal
               code = Deletion.run(Config.new, name: "renamed-trace").exit_code
             end
           end
@@ -83,6 +90,8 @@ module Switchboard
       end
       assert_empty hits, "these still name the deleted workspace"
       assert_nil Creation.find(rec["id"])
+      refute File.exist?(SessionName::Claude.lock_path(agent)), "its agent's typing lock"
+      assert_empty Dir.children(SessionName::Owner.dir), "the rename worker's claim"
       assert_equal [Pr::REPO_KEY, "main"], Pr.for_project("app").keys, "only the deleted branch's badge goes"
       assert_equal 1, Dir.children(PendingDelete.state_dir).size, "the unrelated hide marker stays"
       refute_includes git(@repo, "worktree", "list"), "trace-me"

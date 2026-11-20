@@ -40,10 +40,10 @@ module Switchboard
         return branches ? nil : Git.delete_branch(repo, branch, force: force_branch)
       end
 
-      _removed, kept, failed = Deletion.forget(receipt || receipt_fields(repo, path, real, branches))
+      out = Deletion.forget(receipt || receipt_fields(repo, path, real, branches))
       Git.delete_branch(repo, branch, force: force_branch) unless branches
-      DeleteReceipt.delete(real) if failed.empty?
-      report_kept(kept)
+      DeleteReceipt.delete(real) if out.failed.empty?
+      report_kept(out.kept)
     end
 
     def reaper_receipt(repo, path, real, branches)

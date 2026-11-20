@@ -130,12 +130,11 @@ module Switchboard
       assert_equal "▸ app", sb.send(:plain, proj("app"))
     end
 
-    # A search shows a matching child regardless of fold, so its header reads ▾
-    # even for a project that's collapsed in the normal tree.
-    def test_plain_shows_expanded_glyph_for_a_collapsed_project_a_search_reveals
+    # A search unfolds nothing, so a collapsed header keeps ▸ while it matches inside.
+    def test_plain_keeps_the_collapsed_glyph_during_a_search_that_matches_inside
       sb = sidebar(nodes: [proj("app"), ws("a")], collapsed: ["app"])
       sb.send(:handle, "/a")
-      assert_equal "▾ app", sb.send(:plain, proj("app"))
+      assert_equal "▸ app", sb.send(:plain, proj("app"))
     end
 
     def test_colored_project_is_bold
@@ -245,7 +244,7 @@ module Switchboard
       end
     end
 
-    # Value: protects=the glyph follows the rows every frame: viewing clears it, an expanded or revealed header never shows it; fails_when=the glyph is cached or drawn without a fold clone; why_new=D3 per-frame rule; seam=none; no_claim=the scan cadence
+    # Value: protects=the glyph follows the rows every frame: viewing clears it, an expanded header never shows it; fails_when=the glyph is cached or drawn without a fold clone; why_new=D3 per-frame rule; seam=none; no_claim=the scan cadence
     def test_the_folded_header_glyph_follows_its_rows_every_frame
       sb = fold_sb(attention: [wt("b")])
       node = folded_proj("app", 2)

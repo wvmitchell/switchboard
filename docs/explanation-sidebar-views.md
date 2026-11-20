@@ -46,8 +46,7 @@ built the way the branch fold's `▸N` is (below): `visible_tree` swaps the head
 shallow clone carrying the count in `folded`, the same field that means "N child rows
 are hidden here" on a folded workspace, so `@nodes` stays untouched and no new field or
 on-disk state is needed. The count is what unfolding would show: in-flight and failed
-dispatch rows count, a workspace being deleted and every branch row don't. A project a
-search is showing isn't folded as drawn, so its header carries no count and reads `▾`.
+dispatch rows count, a workspace being deleted and every branch row don't.
 
 Folding used to hide the one thing worth unfolding for: a `◆` or a bold name inside
 went out of sight, and the chime gave no hint which project it came from. So after the
@@ -321,7 +320,8 @@ cache logic alone.
 ## Vim-style search
 
 `/` searches the tree the way vim searches a buffer: matches light up where they are, and
-`n`/`N` step through them. It replaced an fzf-style filter that narrowed the list and turned
+`n`/`N` step through them. Only rows on screen are searched, so a folded project's
+workspaces aren't. It replaced an fzf-style filter that narrowed the list and turned
 every key into query text. That filter broke the habit it was meant to serve, because `j`
 and `k` typed letters, and hiding rows took away the tree you navigate by.
 
@@ -383,29 +383,40 @@ payload doesn't carry one, so `n` then `↵` during an upgrade can still create 
 The highlights going away is the cue, and an upgrade landing in those seconds is rare enough
 not to justify growing a cross-version contract.
 
-### Reaching folded rows without touching the shared folds
+### A search sees what you see
+
+`/` is for getting quickly to a row you can already see, not for finding one you can't. A
+fold says you don't want a project's rows in front of you right now, and a search shouldn't
+overrule that. So a fold hides rows from the search the same way it hides them from you:
+`@search_hits` is worked out over the drawn rows only. A folded project's header is drawn,
+so it still matches its own name. When something hidden needs you, the folded header's
+glyph (`◆`, `✘` or `●`) is what tells you, not the search. Only folds limit a search: a row
+scrolled out of a short pane is still drawn, so it still matches and `n` scrolls to it.
+
+With `api` folded and `auth-fix` in an unfolded project:
+
+- `/th` stops only on `auth-fix`, though the folded `oauth` contains "th" too.
+- `/oauth` says `no matches`.
+- `/api` stops on the folded `api` header.
+
+So `no matches` can mean the row is inside a folded project. To search there, end the
+search (`Esc`), press `↵` on the folded header to unfold it (for every window), then `/`
+again. `z` doesn't help, since it folds branch rows, not projects.
 
 Folds are shared on disk across every window, and a search is a private act in one pane, so
-a search must never write them. `Sidebar#folded?` is the one question everything drawn asks:
-collapsed on disk, and not currently shown by a search here. `recompute_rows` works out
-`@revealed` from the collapsed projects holding a matching child. A header matching on its
-own name reveals nothing, since it's already on screen.
+a search never writes them. `↵` on a project header during a search ends the search and
+stops. `/name` `↵` `↵` lands there easily, and toggling would write a shared fold. A further
+`↵` folds or unfolds as usual.
 
-Ending a search re-folds what it revealed, which could remove the row under the cursor. So
-every on-screen end goes through `end_search`, which keeps the cursor's project open if that
-project is collapsed on disk: the *sticky* project. There's at most one, and each on-screen
-end sets or clears it. It also goes when the pane leaves the screen, when `↵` on its header
-folds it back (locally, with no disk write, since `toggle_collapse` would unfold it for every
-window), and when `rebuild` finds another window has unfolded the project.
+A search follows folds made in other windows. An unfold there makes its rows matchable, a
+fold drops them, and the search stays on either way, so `n` still means next match.
 
-`↵` on a project header during a search ends the search and stops. `/name` `↵` `↵` lands
-there easily, and toggling would write a shared fold. A further `↵` folds or unfolds as usual.
-
-While a search is on, the cursor follows its row by identity (`row_key`), since matches and
-reveals move rows. If the row is gone, it goes to that row's workspace, then a neighbor in
-the same project, then the project's header, then the current workspace, then the top. `n`
-and `d` act on whatever it's on, so it never keeps a stale index. A neighbor comes before
-the header because the header is where a repeated `d` `y` would remove a whole project.
+While a search is on, the cursor follows its row by identity (`row_key`), since a scan or
+another window's fold can move rows. If the row is gone, it goes to that row's workspace,
+then a neighbor in the same project, then the project's header, then the current workspace,
+then the top. `n` and `d` act on whatever it's on, so it never keeps a stale index. A
+neighbor comes before the header because the header is where a repeated `d` `y` would
+remove a whole project.
 
 ### A search doesn't outlive its time on screen
 
@@ -422,9 +433,8 @@ That check repaints once, even with `prewarm` off. A hidden pane keeps its last 
 switch-in, and the warm gate's fingerprint can't see in-memory state, so without the repaint
 the old highlights would flash on the way back.
 
-Opening a row from the search ends it at once. The row is captured first and handed to
-`enter`, since ending the search can move what's under the cursor. A row you can't switch
-into yet goes nowhere, so the search stays.
+Opening a row from the search ends it at once. A row you can't switch into yet goes
+nowhere, so the search stays.
 
 Only typing holds a hot reload (`reexec_allowed?`). A committed search can sit on screen for
 hours, and it mustn't block an upgrade.

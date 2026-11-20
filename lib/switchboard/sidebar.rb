@@ -26,7 +26,7 @@ module Switchboard
   #             │                                 └─▶ keg moved? (CodeReload.stale?) ─▶ reload requested
   #   loop top: maybe_reexec ─ due + no overlay ─▶ Reloader (reloader.rb): preflight ─▶ exec self in place (#48)
   #                                             │
-  #        rebuild ─▶ Rows (rows.rb: fold rows, search reveals + @diffs cache)
+  #        rebuild ─▶ Rows (rows.rb: fold rows, search matches + @diffs cache)
   #        refresh_agents ─▶ Presence.scan ─▶ @edges.on_scan (edges.rb:
   #             │               completion edges ─▶ bold/sound/sparkle/PR-spawn)
   #             └─▶ returned edges ─▶ refresh_diffs
@@ -111,7 +111,6 @@ module Switchboard
                            # on-disk store (Collapse) on every rebuild, so all
                            # windows' sidebars fold the same and a respawn keeps it
       @search = Search.new # the / search; per-process, never on disk (see search.rb)
-      @revealed = Set.new  # collapsed projects a search shows anyway, in this sidebar only
       @search_hits = []    # indexes into @rows that match the search, derived by recompute_rows
       @help = false        # ? help overlay: when set, render paints the full key map
                            # over the tree and the next real keystroke dismisses it
@@ -773,10 +772,10 @@ module Switchboard
     # so this asks for a real answer first. The repaint is here because the warm gate can't see
     # in-memory state, and a hidden pane keeps its last frame until switch-in.
     def end_search_if_hidden
-      return if @visible || !(@search.active? || @search.sticky)
+      return if @visible || !@search.active?
       return unless Tmux.hidden?(ENV["TMUX_PANE"])
 
-      end_search(to_origin: @search.typing?, leave_open: false)
+      end_search(to_origin: @search.typing?)
       render
     end
 

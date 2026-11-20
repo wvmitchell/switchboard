@@ -101,10 +101,19 @@ module Switchboard
       assert_equal 5, code, "a `done` from before the agent started (read from the real ps) can't vouch for it"
       assert_match(/no idle report since it started/, err)
 
+      # A report from the agent's own start second reads busy (a tie), so a fast runner could
+      # land here inside it: write the fresh `done` once the clock is past that second.
+      start = ProcessIdentity.start_epoch(`pgrep -f claude-stand-in`.split.first.to_i) or flunk "no start time"
+      wait_until("a second past the agent's start") { Time.now.to_i > start }
       File.write(File.join(AgentState.state_dir, "1"), "done\t#{real}\t#{Time.now.to_i}\n")
+      started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
       code, _out, err = delete(leaf)
+      took = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
       assert_equal 0, code, err
-      wait_until("the agent died with its session") { `pgrep -f claude-stand-in`.strip == "" }
+      # Delete waits (up to POST_CLOSE_WAIT) for the agents it recorded to exit after the
+      # session kill, so this one is already gone when it returns.
+      assert_equal "", `pgrep -f claude-stand-in`.strip, "the agent exited within the post-close wait"
+      puts format("\n  delete with a live agent took %.2fs (post-close wait cap %.0fs)", took, Deletion::POST_CLOSE_WAIT)
     end
 
     # Value: protects=an agent can't delete the workspace it runs in; fails_when=the pane or
