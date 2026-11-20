@@ -26,7 +26,6 @@ refer to the project's earlier, private repository; the public tracker starts at
 ### Changed
 - After closing the session, delete waits only for the session's own processes, so an idle
   agent running in the folder from another terminal no longer holds it for 5 seconds.
-||||||| 4adb85a
 
 ## [0.81.0] — Workspaces list newest first, and J/K move them (2026-11-20)
 

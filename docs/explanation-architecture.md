@@ -428,7 +428,8 @@ fails until a new store is a row or is declared global.
 The order is what makes it safe to run unattended. Every check runs before anything
 changes: the target must be a workspace, not where the caller is, not still building or
 being deleted, clean, with every commit on its base or a remote, and with nobody using it
-(an agent thinking, a hookless agent process, a live ∞ or ◷, another attached client). An
+(an agent thinking, a hookless agent process, a live ∞ or ◷, another attached client, a
+process left running in the folder). An
 agent counts as idle when its newest hook report is `done` and was written after the agent
 started, however old: Claude and Codex both report `done` when they start and at the end of
 every turn ([agent presence](explanation-agent-presence.md)), so an older one belongs to a
@@ -440,7 +441,8 @@ once git no longer lists the worktree does delete forget the name, the branches 
 the sha pinned at preflight, after checking no other worktree uses it), their PR badges,
 the record and the markers. The typing locks of rename-sync workers carry only a Claude's
 pid, not a path, so `switchboard delete` records the workspace's agents (with their start times) at
-preflight, waits a moment after closing the session for them to exit, and removes a lock
+preflight, waits a moment after closing the session for the session's own processes to
+exit, and removes a lock
 only once its pid is provably not that agent any more, and only while holding the lock, so
 a worker typing for a reused pid keeps it. When a forced delete closes a session someone else is still
 attached to, they're moved to `sb/home` first rather than detached; `d` does the same. Forgetting waits for the folder because a removal that fails must leave a
