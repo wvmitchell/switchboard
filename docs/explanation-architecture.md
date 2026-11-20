@@ -419,7 +419,7 @@ pane ids, so it can end up reading a different live pane and double-fire complet
 `switchboard delete` and the sidebar's `d` both end in the same place: the folder gone and
 nothing switchboard keeps still naming it. The problem is that a workspace leaves traces in
 a dozen stores (its name, its dispatch record, the bold and ∞ and ◷ markers, agent hook
-states, rename-sync notes and worker claims, the hide marker), and most of them only heal
+states, rename-sync notes and worker claims, the hide marker, a moved workspace's place), and most of them only heal
 when some sidebar happens to scan. The approach is one registry, `Leftovers`, that lists
 every per-workspace store. Delete clears this workspace's entries from every row, doctor
 counts what deleted workspaces left, and prune clears it, so the three can't drift; a test
