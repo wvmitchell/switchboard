@@ -570,6 +570,27 @@ module Switchboard
                            "needed, run `rm -rf #{Shellwords.escape(File.realpath(stray))}`"
     end
 
+    # Value: protects=a stray folder with a process still running in it names that process
+    # before the rm -rf (else it re-creates the folder); fails_when=the process clause goes or
+    # names a process from another folder; why_new=item 1 (a dev server re-seeded a deleted
+    # workspace); seam=Processes (one scan)
+    def test_a_stray_folder_names_a_process_still_running_in_it
+      feat, = leftover_project
+      stray = File.join(File.dirname(feat), "old copy")
+      FileUtils.mkdir_p(stray)
+      real = File.realpath(stray)
+      dev = { pid: 4242, start: "s", comm: "puma", tty: "??", uid: Process.uid }
+      out = stub_method(Processes, :table, -> { {} }) do
+        stub_method(Processes, :cwds, ->(_t) { {} }) do
+          stub_method(Processes, :in_tree, ->(dir, **) { dir == real ? [dev] : [] }) do
+            capture { Doctor.doctor_leftovers(Config.new) }
+          end
+        end
+      end
+      assert_includes out, "#{real} is under the worktree root but isn't a workspace — process 4242 (puma) is still " \
+                           "running in it: stop it first (`kill 4242`), then if nothing in it is needed, run `rm -rf"
+    end
+
     # Value: protects=doctor never changes a file, leftovers and stale outcomes included;
     # fails_when=any check GCs on read (Outcome.all used to); why_new=doctor is the read-only
     # surface the monitor runs; seam=Pr.authenticated? (network)

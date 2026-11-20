@@ -289,16 +289,36 @@ module Switchboard
         puts row(false, "interrupted delete of #{r['path']} — run `switchboard delete #{Shellwords.escape("#{r['project']}/#{r['name']}")}` to finish it")
       end
       left = Leftovers.files_left(config)
+      strays = Leftovers.stray_folders(config).reject { |dir| left.any? { |l| Paths.real_or_self(l) == Paths.real_or_self(dir) } }
+      running = running_in(left + strays)
       left.each do |dir|
-        puts row(false, "#{dir} still has files a delete left — if nothing in it is needed, " \
+        puts row(false, "#{dir} still has files a delete left — #{running.call(dir)}if nothing in it is needed, " \
                         "run `rm -rf #{Shellwords.escape(dir)}`, then `switchboard prune`")
       end
-      Leftovers.stray_folders(config).reject { |dir| left.any? { |l| Paths.real_or_self(l) == Paths.real_or_self(dir) } }.each do |dir|
-        puts row(false, "#{dir} is under the worktree root but isn't a workspace — if nothing in it is needed, " \
+      strays.each do |dir|
+        puts row(false, "#{dir} is under the worktree root but isn't a workspace — #{running.call(dir)}if nothing in it is needed, " \
                         "run `rm -rf #{Shellwords.escape(dir)}`")
       end
     rescue StandardError
       nil
+    end
+
+    # A process still running in a folder doctor would have you remove re-creates it (a dev
+    # server writing its cache): name it first. One process scan per doctor run, and none
+    # without such a folder. A scan that fails adds nothing; the rm -rf advice stands.
+    def running_in(dirs)
+      return ->(_dir) { "" } if dirs.empty?
+
+      table = Processes.table
+      cwds = table && Processes.cwds(table)
+      lambda do |dir|
+        procs = Processes.in_tree(Paths.real_or_self(dir), table: table, cwds: cwds) || []
+        next "" if procs.empty?
+
+        names = procs.first(3).map { |p| "#{p[:pid]} (#{p[:comm]})" }.join(", ")
+        "process #{names} #{procs.size == 1 ? 'is' : 'are'} still running in it: stop #{procs.size == 1 ? 'it' : 'them'} first " \
+          "(`kill #{procs.map { |p| p[:pid] }.join(' ')}`), then "
+      end
     end
 
     # Stored workspace names (Names). Info lines only, each with the command that fixes

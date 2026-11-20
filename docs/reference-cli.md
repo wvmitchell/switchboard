@@ -355,15 +355,22 @@ workspace it dispatched, so it refuses anything that could lose work.
 - **Checks, before anything changes:** not the project's own checkout, not where you are,
   not still building, not already being deleted, not locked by you, no uncommitted or
   untracked changes, no commits that are on neither its base nor a remote (including ones
-  only its own history log reaches, and its submodules' commits), and nobody using it.
+  only its own history log reaches, and its submodules' commits), and nobody using it,
+  including any process whose working folder is in it outside its tmux session (a dev
+  server left running in the background).
   After a rebase or amend, the commits you replaced still count until you push or
   `--force`. The last three are re-checked after its session closes, and git itself refuses a
   file written after that.
 - **`--force`** is for a human: it overrides `[dirty]`, `[unpushed]`, `[branches-unknown]`
-  and `[busy]` (exit 5) and nothing else.
+  and `[busy]` (exit 5) and nothing else. Once the session is closed it stops each process
+  still running in the folder that has no terminal, is yours, and is the same process the
+  check saw (TERM, then KILL after 5 seconds), and reports it as `stopped: process <pid>
+  (<name>)`. It never signals a process with a terminal (someone's shell in the folder) or
+  another user's: those refuse [`[process-alive]`](#delete-process-alive).
 - **`-n` / `--dry-run`** runs every check and prints the plan (folder, session, branches
   with ✓ or !, record, stored name, markers, ignored files, history kept), and exits as
-  the real run would. It changes nothing.
+  the real run would. With `--force` it also lists each process it would stop (`would stop:`)
+  or refuse over (`would refuse:`). It changes nothing.
 - **Ignored files go with the folder**, as with `git worktree remove`: build output, a
   `.env`, notes in a gitignored folder. `-n` lists them first.
 - **Agent history stays.** Claude's transcripts and Codex's sessions aren't switchboard's,
@@ -425,6 +432,7 @@ do> (reference-cli.md#delete-<token>)`, then up to 20 indented detail lines. Exi
 | [`[remove-failed]`](#delete-remove-failed) | 6 |
 | [`[partial]`](#delete-partial) | 7 |
 | [`[session-alive]`](#delete-session-alive) | 8 |
+| [`[process-alive]`](#delete-process-alive) | 8 |
 | [`[changed-during-delete]`](#delete-changed-during-delete) | 8 |
 | [`[usage]`](#delete-usage) | 64 |
 | [`[failed]`](#delete-failed) | 70 |
@@ -486,7 +494,7 @@ relying on `--creation`: an older sidebar can still collect a `new` record you'v
 `[branches-unknown]`, exit 5. It can't tell which branches are its own, or git couldn't count their commits. Fix: ask a human. With `--force` the workspace goes and every branch stays.
 
 #### delete: busy
-`[busy]`, exit 5. Someone may still be using it: an agent thinking or waiting, a live agent process with no idle report since it started, a Claude session with a dialog open, background work still running, or an idle only a moment old (found by its command line or session file, however it was launched), a live ∞ monitor, a ◷ hold, or another tmux client attached. A process scan that fails, or a Claude session it can't read, counts as busy. An agent idle at its prompt doesn't, however long ago it finished: the newest hook report is `done` and was written after every agent in it started (an agent a wrapper script restarted counts on its own). An agent whose hooks never report (Codex with its global block untrusted, or Claude with hooks off) has no such report, so it needs `--force`. Fix: wait for it and retry at the next check, or ask a human.
+`[busy]`, exit 5. Someone may still be using it: an agent thinking or waiting, a live agent process with no idle report since it started, a Claude session with a dialog open, background work still running, or an idle only a moment old (found by its command line or session file, however it was launched), a live ∞ monitor, a ◷ hold, another tmux client attached, or a process running in it outside its tmux session (named with its pid). A process inside one of the session's panes doesn't count: closing the session stops it. Only a process's working folder counts; one that merely has a file open in it isn't found, and another user's process can't be seen at all. A process scan that fails, or a Claude session it can't read, counts as busy. An agent idle at its prompt doesn't, however long ago it finished: the newest hook report is `done` and was written after every agent in it started (an agent a wrapper script restarted counts on its own). An agent whose hooks never report (Codex with its global block untrusted, or Claude with hooks off) has no such report, so it needs `--force`. Fix: wait for it and retry at the next check, or ask a human.
 
 #### delete: remove-failed
 `[remove-failed]`, exit 6. Git refused or failed, or the folder's removal couldn't be confirmed. The session is closed. Fix: retry the same command once; fails again, ask a human with git's message.
@@ -496,6 +504,9 @@ relying on `--creation`: an older sidebar can still collect a `new` record you'v
 
 #### delete: session-alive
 `[session-alive]`, exit 8. Its session didn't close. The record is acknowledged; the folder wasn't touched. Fix: `tmux kill-session -t =<name>`, then retry.
+
+#### delete: process-alive
+`[process-alive]`, exit 8. A forced delete closed the session, but a process it won't stop is still running in the folder: one with a terminal, another user's, one it couldn't confirm is the process the check saw, or one that outlived KILL. A failed process scan refuses the same way. The session is closed and the record acknowledged; the folder wasn't touched. Fix: close that terminal or `cd` out of the folder, or stop the process, then retry.
 
 #### delete: changed-during-delete
 `[changed-during-delete]`, exit 8. The re-check after its session closed found new changes, commits or a busy signal, or git refused an unforced removal. The session is closed and the record acknowledged; the workspace still shows. Fix: open it to see what changed (`claude --continue` there resumes the agent), then retry or ask a human.
@@ -573,7 +584,7 @@ disagrees with the workspace's; an unreadable names store; sidebars that don't r
 names, or a tmux that can't list its panes), files deleted workspaces left in its stores
 (counted once they're an hour old, with `prune` as the fix) and folders under the worktree
 root that git no longer lists (one a delete left files in says so, with the `rm -rf` and
-then `prune`), the remote links (`⇅`) it sees (or a warning
+then `prune`, and a process still running in one is named first, with the `kill`), the remote links (`⇅`) it sees (or a warning
 when Claude is running but its session files are missing, none are in the shape
 switchboard reads, or every live one fails the start-time check, i.e. a Claude update
 moved or reshaped them), a `CLAUDE_CONFIG_DIR` that differs between your shell and tmux

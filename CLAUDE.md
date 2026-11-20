@@ -93,6 +93,8 @@ The ones that broke something before. Each doc above explains why.
 - **Dispatch never starts an agent on an un-set-up tree, and never destroys work**: the
   agent starts only through `Creation.authorize_launch`, and rollback removes only what it
   can prove is its own.
+- **Delete never signals a process with a terminal, and only a forced delete signals
+  anything** outside its tmux session.
 - **A delete leaves nothing:** every per-workspace store is a row in `Leftovers`, which
   delete, doctor and prune all read (`test/leftovers_test.rb`, `test/no_trace_test.rb`).
 - **Session-name sync: at most one Enter per session per worker.** Don't add a retry.

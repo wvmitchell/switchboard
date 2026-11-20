@@ -17,6 +17,7 @@ module Switchboard
       "adapters/agents" => 1,          # a ps command name, to tell an agent CLI from a helper
       "adapters/claude_sessions" => 1, # a process's argv[0]
       "adapters/hook_file" => 1,       # a hook script's own file name
+      "adapters/processes" => 1,       # a process's executable name, for the report
       "cli" => 1,                      # `switchboard path` also accepts a folder name
       "ops/code_reload" => 1,          # a binary's name
       "ops/creator" => 4,              # shells and commands, not workspaces

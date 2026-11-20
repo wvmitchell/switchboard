@@ -69,5 +69,68 @@ module Switchboard
       assert_equal({}, Processes.commands([child]), "exited")
       assert_equal({}, Processes.commands([]))
     end
+    # Value: protects=a scan that missed a process of ours, or this process, reads as
+    # "couldn't check", never "nobody's in the tree"; fails_when=the completeness check
+    # loosens (lsof exits 0 while leaving processes out); why_new=item 1 (D15); seam=none
+    def test_an_incomplete_cwd_scan_is_nil
+      me = Process.pid
+      table = { me => { ppid: 1, uid: Process.uid, tty: "??", comm: "ruby" } }
+      here = { me => Dir.pwd }
+      scan = ->(found) { stub_method(Processes, :proc_cwds, -> { found }) { stub_method(Processes, :lsof_cwds, ->(*) { found }) { Processes.cwds(table) } } }
+      assert_equal here, scan.call(here)
+      assert_nil scan.call({ 1 => "/" }), "this process is missing"
+      assert_nil scan.call({ me => "/somewhere/else" }), "this process at the wrong folder"
+      assert_nil scan.call(nil), "lsof printed nothing"
+
+      child = spawn("sleep 30")
+      begin
+        table[child] = { ppid: me, uid: Process.uid, tty: "??", comm: "sleep" }
+        assert_nil scan.call(here), "a live process of ours the scan left out"
+      ensure
+        Process.kill("KILL", child)
+        Process.wait(child)
+      end
+      assert_equal here, scan.call(here), "one that exited since the table is fine"
+    end
+
+    # Value: protects=lsof's -F cwd output is read per pid, \xNN escapes decoded; fails_when=
+    # the p/n field parsing breaks; why_new=item 1 scans every process with it; seam=IO.popen
+    def test_lsof_cwd_output_is_parsed
+      out = "p12\nfcwd\nn/wt/a\np34\nfcwd\nn/wt/caf\\xc3\\xa9 b\n"
+      stub_method(IO, :popen, ->(*, **) { out }) do
+        assert_equal({ 12 => "/wt/a", 34 => "/wt/café b" }, Processes.lsof_cwds)
+      end
+    end
+
+    # Value: protects=a real process started in a folder is found with its name and start,
+    # on this platform's scan (/proc on Linux, lsof on a Mac), and the scan sees it gone;
+    # fails_when=the platform scan or the tree match breaks; why_new=item 1; seam=none (our
+    # own child, no tmux)
+    def test_finds_a_real_process_running_in_a_folder
+      dir = File.realpath(Dir.mktmpdir)
+      child = Process.spawn("sleep", "30", chdir: dir)
+      begin
+        sleep 0.2
+        found = Processes.in_tree(dir)
+        refute_nil found, "the scan completed"
+        hit = found.find { |p| p[:pid] == child }
+        refute_nil hit, "found the child running in #{dir}"
+        assert_equal "sleep", hit[:comm]
+        assert_equal ProcessIdentity.start_of(child), hit[:start]
+        assert Processes.detached?(hit) || hit[:tty].to_s.start_with?("tty", "pts")
+      ensure
+        Process.kill("KILL", child)
+        Process.wait(child)
+        FileUtils.rm_rf(dir)
+      end
+    end
+
+    def test_subtree_follows_parents_to_a_root
+      t = { 10 => { ppid: 1 }, 11 => { ppid: 10 }, 12 => { ppid: 11 }, 20 => { ppid: 1 } }
+      assert Processes.subtree?(12, [10], t)
+      assert Processes.subtree?(10, [10], t)
+      refute Processes.subtree?(20, [10], t)
+      refute Processes.subtree?(99, [10], t), "unknown pid"
+    end
   end
 end

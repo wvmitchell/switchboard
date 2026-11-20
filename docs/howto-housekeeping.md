@@ -164,8 +164,11 @@ switchboard delete oauth-fix
 It refuses rather than lose work, with one line saying why and what to do. The ones worth
 retrying:
 
-- **`[busy]`**: an agent is still working, a monitor is live, or someone is attached. Wait,
+- **`[busy]`**: an agent is still working, a monitor is live, someone is attached, or a
+  process left running in the folder (a dev server) is named. Wait, or stop that process,
   then retry.
+- **`[process-alive]`**: a forced delete found a process it won't stop, such as a shell in
+  another window that's `cd`'d into the folder. Close it or `cd` out, then retry.
 - **`[building]`**: its dispatch hasn't finished. Retry once it's ready.
 - **`[deleting]`**: another delete of it is running. Retry; a delete whose process died is
   taken over automatically.
@@ -196,6 +199,9 @@ Every token is in [Reference: CLI](reference-cli.md#switchboard-delete-name--pro
 - **Completion sounds fire twice.** Check `doctor` for orphaned sidebar
   processes; they self-reap within a few seconds, but a persistent one means a
   pane closed uncleanly.
+- **A deleted workspace's folder came back.** A process still running in it (a dev server's
+  cache) wrote it back. `doctor` names the process with the `kill` to run; stop it, then
+  remove the folder.
 - **Can't find a renamed workspace's folder.** A rename never moves the folder, so it
   keeps its placeholder name on disk. `switchboard path <name>` prints it:
   `p=$(switchboard path oauth-fix) && cd -- "$p"`.
