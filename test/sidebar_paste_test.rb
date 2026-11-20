@@ -416,6 +416,31 @@ module Switchboard
       assert_equal "one two", result
     end
 
+    # Value: protects=removing one C1 pair can't splice its neighbours into another; fails_when=drop_c1 strips in a single pass; why_new=the split-pair test nests nothing; seam=none; no_claim=what a terminal does with a drawn C1
+    def test_a_nested_c1_pair_never_reaches_the_drawn_task_line
+      ["a\xC2\xC2\x9B\x9Bb", "a\xC2\xC2\x80\x9Bb"].each do |text|
+        sb = three_rows
+        draws = []
+        result = nil
+        stub_method(sb, :draw_prompt, ->(_l, shown, **) { draws << shown.dup }) do
+          with_reads(sb, "\e[200~#{text}\e[201~".b, "\r") { result = sb.send(:prompt_line, "task", task: true) }
+        end
+        (draws + [result]).each { |d| refute d.b.match?(/\xC2[\x80-\x9F]/n), "#{text.b.inspect} left a C1 control" }
+      end
+    end
+
+    # Value: protects=a sequence cut off at the end of a full read that opened n with a paste still completes in the task prompt; fails_when=replaying the typeahead's paste clears @pending; why_new=the cut test has no paste in its typeahead; seam=none; no_claim=none beyond protects
+    def test_a_typeahead_paste_keeps_the_partial_sequence_that_followed_it
+      sb = sidebar(nodes: [proj("app")])
+      tasks = []
+      read = "n\e[200~#{'a' * 1007}\e[201~\e[1;"
+      assert_equal Sidebar::Input::READ_BYTES, read.bytesize
+      stub_method(Creator, :dispatch, ->(_c, _p, task) { tasks << task; :no_name }) do
+        stub_method(sb, :flash, ->(*) {}) { notices { with_reads(sb, "5D\r") { sb.send(:handle, read) } } }
+      end
+      assert_equal ["a" * 1007], tasks, "Ctrl-← stayed whole: no 5D in the task"
+    end
+
     private
 
     def three_rows = sidebar(nodes: [proj("app"), ws("a"), ws("b"), ws("c")], cursor: 1)

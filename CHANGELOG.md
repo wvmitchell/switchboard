@@ -21,8 +21,8 @@ refer to the project's earlier, private repository; the public tracker starts at
   tmux's `prefix ]` and your terminal's own paste; tmux's pane-menu Paste (`prefix >`) isn't
   bracketed and still arrives as typed keys. A paste whose end marker is lost ends after 5
   seconds without input, and a notice says so when one stays open.
-- A pasted newline no longer submits any prompt: the rename and `a` prompts now fold it to a
-  space, as the task prompt did. Press `↵` to submit.
+- A newline in a bracketed paste no longer submits any prompt: the rename and `a` prompts
+  now fold it to a space, as the task prompt did. Press `↵` to submit.
 - F1 to F4 no longer act as `P`, `Q`, `R` and `S` in the tree (F3 refreshed PRs) or type a
   letter into a prompt. Refresh is still `R`. A modified arrow such as Ctrl-← drops whole in
   a prompt instead of leaking `;5D` into a name.

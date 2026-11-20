@@ -9,6 +9,7 @@ module Switchboard
     module Prompt
       FOCUS_OUT = "\e[O"
       ONE_KEY_PASTE_NOTICE = "switchboard: paste ignored, so the prompt closed with no answer"
+      C1_PAIR = /\xC2[\x80-\x9F]/n
 
       private
 
@@ -123,7 +124,7 @@ module Switchboard
       def edit_items(items, buf, fold_newlines: false, full: false, whole: false)
         items.each_with_index do |item, i|
           result = if item.is_a?(PasteFrame::Text)
-                     @pending = +"" # a paste start cut it off: it can't rejoin a later key
+                     @pending = +"" unless whole # a paste start cut it off (typeahead's was cut when it was framed)
                      paste_notice(item, nil)
                      add_pasted(buf, item.bytes, keep_high: fold_newlines)
                      :edit
@@ -177,9 +178,10 @@ module Switchboard
       end
 
       # C1 controls (U+0080-U+009F, `C2 80`-`C2 9F` in UTF-8) act on the terminal when the
-      # line is drawn. Run on the whole buffer, so a pair split across reads still goes.
+      # line is drawn. Run on the whole (binary) buffer, so a pair split across reads still
+      # goes, and until none is left: removing one can splice its neighbours into another.
       def drop_c1(buf)
-        buf.replace(buf.b.gsub(/\xC2[\x80-\x9F]/n, "")) if buf.b.match?(/\xC2[\x80-\x9F]/n)
+        nil while buf.gsub!(C1_PAIR, "")
       end
 
       def fold_space(buf)
