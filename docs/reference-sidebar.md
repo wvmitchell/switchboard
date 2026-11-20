@@ -263,6 +263,8 @@ pane too short for the whole map it splits into pages (the bottom row reads
 `1/2 · → more · other keys close`): `→` or `Space` turns
 forward, `←` back, and any other key closes it.
 
+---
+
 ## Pasting
 
 The sidebar turns on bracketed paste for its whole life, so the terminal marks where a
