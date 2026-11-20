@@ -83,8 +83,12 @@ module Switchboard
     def in_tree(real, table: self.table, cwds: table && self.cwds(table))
       return nil unless table && cwds
 
-      hits = cwds.select { |_, cwd| (c = Paths.real_or_self(cwd)) == real || c.start_with?("#{real}/") }.keys
+      # The kernel reports resolved paths, so no realpath (which can hang on a dead mount).
+      hits = cwds.select { |_, cwd| cwd == real || cwd.start_with?("#{real}/") }.keys
       hits -= ancestors(Process.pid, table) << Process.pid
+      # A tmux server keeps the folder it was started in, but holds no file there and
+      # carries every session on it: never a process of the workspace's.
+      hits.reject! { |pid| tmux?(table[pid]) }
       table = self.table || {} unless hits.all? { |pid| table.key?(pid) } # started after the table was read
       hits.filter_map do |pid|
         row = table[pid]
@@ -96,6 +100,8 @@ module Switchboard
         { pid: pid, start: start, comm: File.basename(row[:comm]), tty: row[:tty], uid: row[:uid] }
       end
     end
+
+    def tmux?(row) = row && File.basename(row[:comm].to_s).start_with?("tmux")
 
     # A process with no controlling terminal (`??` on macOS, `?` on Linux).
     def detached?(row) = %w[?? ?].include?(row[:tty])
@@ -119,7 +125,7 @@ module Switchboard
       return nil unless found && Paths.real_or_self(found[Process.pid].to_s) == Paths.real_or_self(Dir.pwd)
 
       missing = table.select { |pid, row| row[:uid] == Process.uid && !found.key?(pid) }.keys
-      missing.all? { |pid| !ProcessIdentity.alive?(pid) || zombie?(pid) } ? found : nil
+      missing.all? { |pid| !ProcessIdentity.alive?(pid) || zombie?(pid) || hidden?(pid) } ? found : nil
     rescue StandardError
       nil
     end
@@ -144,7 +150,7 @@ module Switchboard
     end
 
     def lsof_cwds(only = [])
-      out = IO.popen(["lsof", "-nP", "-a", "-d", "cwd", *only, "-Fpn"], err: File::NULL, &:read)
+      out = IO.popen(["lsof", "-nPbw", "-a", "-d", "cwd", *only, "-Fpn"], err: File::NULL, &:read)
       found = {}
       pid = nil
       out.each_line(chomp: true) do |line|
@@ -153,6 +159,19 @@ module Switchboard
         end
       end
       found.empty? ? nil : found
+    end
+
+    # Linux refuses another of your own processes' cwd only when it made itself
+    # non-dumpable (ssh-agent, gpg-agent): unreadable by design, not a scan that failed.
+    def hidden?(pid)
+      return false unless File.directory?("/proc/self")
+
+      File.readlink("/proc/#{pid}/cwd")
+      false
+    rescue Errno::EACCES, Errno::EPERM
+      true
+    rescue StandardError
+      false
     end
 
     def zombie?(pid)

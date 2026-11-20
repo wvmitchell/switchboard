@@ -713,17 +713,22 @@ module Switchboard
     def puma(**over) = { pid: 4242, start: "Thu Nov 19 10:00:00 2026", comm: "puma", tty: "??", uid: Process.uid }.merge(over)
 
     # A forced real run whose tree holds `procs` until a TERM or KILL reaches them. Every
-    # signal and identity read is recorded in `log`, in order.
-    def run_forced_with(procs, log, same: ->(_pid, _start) { true }, cwd: nil)
+    # signal and identity read is recorded in `log`, in order. `later` joins the tree once
+    # the forced stop begins (started after preflight's scan).
+    def run_forced_with(procs, log, same: ->(_pid, _start) { true }, cwd: nil, later: [], **stubs)
       signalled = []
+      stopping = [false]
       kill = Process.method(:kill)
+      stop = Deletion.method(:stop_detached)
       code = out = err = nil
-      tree = -> { procs.reject { |p| signalled.include?(p[:pid]) } }
+      tree = -> { (stopping[0] ? procs + later : procs).reject { |p| signalled.include?(p[:pid]) } }
       wt = cwd || @wt # a stub's body runs as the stubbed module, not this test
       stub_method(ProcessIdentity, :same?, ->(pid, start) { (log << [:same, pid]) && !signalled.include?(pid) && same.call(pid, start) }) do
         stub_method(Processes, :cwd_of, ->(pid) { (log << [:cwd, pid]) && wt }) do
           stub_method(Process, :kill, ->(sig, pid) { procs.any? { |p| p[:pid] == pid } ? (log << [sig, pid]) && signalled << pid : kill.call(sig, pid) }) do
-            code, out, err = run_delete("feat", "--force", in_tree: tree)
+            stub_method(Deletion, :stop_detached, ->(t) { (stopping[0] = true) && stop.call(t) }) do
+              code, out, err = run_delete("feat", "--force", in_tree: tree, **stubs)
+            end
           end
         end
       end
@@ -783,7 +788,7 @@ module Switchboard
       log = []
       code, _out, err = run_forced_with([shell], log)
       assert_equal 8, code
-      assert_match(/\A\[process-alive\] process 777 \(zsh, has a terminal\) is still running in feat; changed: its session is closed/, err)
+      assert_match(/\A\[process-alive\] process 777 \(zsh, has a terminal\) is still running in feat; changed: feat's session is closed if it had one; the folder was not touched/, err)
       assert(log.none? { |e| e[0].is_a?(String) }, "no signal sent")
       assert listed?
       assert Dir.exist?(@wt)
@@ -801,6 +806,61 @@ module Switchboard
       assert listed?
     end
 
+    # Value: protects=a process with children outside the folder (an editor's main process,
+    # a launcher) is never stopped, even detached and ours; fails_when=the children check
+    # goes; why_new=red team (a tmux server or editor started from the folder); seam=ps
+    def test_a_process_with_children_elsewhere_is_never_signalled
+      table = { 4242 => { ppid: 1, uid: Process.uid, tty: "??", comm: "code" }, 5000 => { ppid: 4242, uid: Process.uid, tty: "??", comm: "helper" } }
+      log = []
+      code, _out, err = run_forced_with([puma(comm: "code")], log, procs: table)
+      assert_equal 8, code, err
+      assert_match(/\A\[process-alive\] process 4242 \(code, runs processes outside it\)/, err)
+      assert(log.none? { |e| e[0].is_a?(String) }, "no signal sent")
+      assert Dir.exist?(@wt)
+    end
+
+    # Value: protects=a forced delete leaves an idle agent running outside tmux (and its
+    # helpers) alone, as an unforced one does, instead of refusing over it; fails_when=
+    # stop_detached judges agents as escaped; why_new=state matrix; seam=scan_pids (a real child)
+    def test_a_forced_delete_leaves_an_idle_agent_alone
+      write_agent("done")
+      agent = Process.spawn("sleep", "30")
+      log = []
+      code, _out, err = run_forced_with([puma(pid: agent, comm: "codex")], log, agents: { agent => @real })
+      assert_equal 0, code, err
+      assert(log.none? { |e| e[0].is_a?(String) }, "the agent was not signalled")
+    ensure
+      Process.kill("KILL", agent) && Process.wait(agent) if agent
+    end
+
+    # Value: protects=a scan that fails once the session is closed refuses with the folder
+    # kept, never reads as an empty tree; fails_when=a nil scan in stop_detached proceeds;
+    # why_new=specialist (untested path); seam=Processes.in_tree
+    def test_a_scan_that_fails_while_stopping_refuses
+      failing = [false]
+      scan = -> { failing[0] ? nil : [] }
+      code = err = nil
+      stub_method(Deletion, :stop_detached, Deletion.method(:stop_detached).then { |m| ->(t) { (failing[0] = true) && m.call(t) } }) do
+        code, _out, err = run_delete("feat", "--force", in_tree: scan)
+      end
+      assert_equal 8, code, err
+      assert_match(/\A\[process-alive\] couldn't check for processes still running in it/, err)
+      assert Dir.exist?(@wt)
+      assert listed?
+    end
+
+    # Value: protects=an unforced delete whose session closed but left a process behind (it
+    # ignored SIGHUP) stops before the folder; fails_when=the post-close re-check ignores
+    # processes; why_new=specialist (untested path); seam=tmux, Processes.in_tree
+    def test_a_process_that_outlives_the_session_stops_an_unforced_delete
+      # Under a pane at the check (so it should have died with the session), still there after.
+      table = { 900 => { ppid: 1, uid: Process.uid, tty: "ttys001", comm: "zsh" }, 4242 => { ppid: 900, uid: Process.uid, tty: "ttys001", comm: "puma" } }
+      code, _out, err = run_with_session("feat", panes: [{ pid: 900, sidebar: false }], procs: table, in_tree: [puma(tty: "ttys001")])
+      assert_equal 8, code
+      assert_match(/\A\[changed-during-delete\] feat changed after the check: .*process 4242 \(puma\)/, err)
+      assert Dir.exist?(@wt)
+    end
+
     # Value: protects=a process that left the folder since the scan (its cwd read again just
     # before the signal) is never signalled; fails_when=the cwd re-check goes; why_new=item 1;
     # seam=Process.kill
@@ -809,6 +869,71 @@ module Switchboard
       code, _out, err = run_forced_with([puma], log, cwd: "/elsewhere")
       assert_equal 8, code, err
       assert(log.none? { |e| e[0].is_a?(String) }, "no signal sent")
+    end
+
+    # Value: protects=a process that ignores TERM gets KILL and the delete finishes; one that
+    # outlives KILL refuses process-alive with the folder kept; fails_when=KILL is dropped, or
+    # a survivor counts as stopped; why_new=other tests exit on TERM; seam=Process.kill,
+    # exits_within? (the 5s wait); no_claim=real signal delivery (smoke covers TERM)
+    def test_a_process_that_ignores_term_is_killed_and_a_survivor_refuses
+      log = []
+      waits = 0
+      code, out, err = stub_method(Deletion, :exits_within?, ->(_p, _secs) { (waits += 1) > 1 }) { run_forced_with([puma], log) }
+      assert_equal 0, code, err
+      assert_equal [["TERM", 4242], ["KILL", 4242]], log.select { |e| e[0].is_a?(String) }
+      assert_includes out.lines.map(&:chomp), "stopped: process 4242 (puma)"
+
+      setup_workspace_again
+      log = []
+      code, _out, err = stub_method(Deletion, :exits_within?, ->(_p, _secs) { false }) { run_forced_with([puma], log) }
+      assert_equal 8, code, err
+      assert_match(/\A\[process-alive\] process 4242 \(puma\) is still running in feat/, err)
+      assert Dir.exist?(@wt), "the folder stays"
+      assert listed?
+    end
+
+    # Value: protects=another user's process in the tree is never signalled, even forced: the
+    # dry run says would refuse and the real run refuses process-alive; fails_when=stoppable?
+    # drops its uid check; why_new=only the tty half of stoppable? is tested; seam=Process.kill
+    def test_another_users_process_is_never_signalled
+      theirs = puma(uid: Process.uid + 1)
+      code, dry, = run_delete("feat", "-n", "--force", in_tree: [theirs])
+      assert_equal 8, code
+      assert_includes dry.lines.map(&:chomp), "would refuse: process 4242 (puma, another user's)"
+
+      log = []
+      code, _out, err = run_forced_with([theirs], log)
+      assert_equal 8, code, err
+      assert_match(/\A\[process-alive\] process 4242 \(puma, another user's\)/, err)
+      assert(log.none? { |e| e[0].is_a?(String) }, "no signal sent")
+      assert listed?
+    end
+
+    # Value: protects=a forced delete stops only what preflight showed: a process that entered
+    # the tree since is not signalled and refuses with the folder kept; fails_when=the seen-list
+    # check goes (force would kill whatever wandered in); why_new=no test changes the tree
+    # between check and stop; seam=Process.kill
+    def test_a_process_that_arrived_after_the_check_is_not_stopped
+      log = []
+      newcomer = puma(pid: 5151, comm: "vite", start: "Fri Nov 20 09:00:00 2026")
+      code, _out, err = run_forced_with([puma], log, later: [newcomer])
+      assert_equal 8, code, err
+      assert_match(/\A\[process-alive\] process 5151 \(vite\) is still running in feat/, err)
+      refute_includes log, ["TERM", 5151]
+      assert Dir.exist?(@wt), "the folder stays"
+    end
+
+    # Value: protects=an agent's own helper running in the tree isn't an escaped process (the
+    # agent rule judges it), so force never plans to stop it; fails_when=process_reasons stops
+    # excluding the agents' subtrees; why_new=only the pane exclusion is tested; seam=ps, pgrep
+    def test_an_agents_helper_is_not_an_escaped_process
+      procs = { 500 => { ppid: 1, uid: Process.uid, tty: "??", comm: "codex" },
+                501 => { ppid: 500, uid: Process.uid, tty: "??", comm: "node" } }
+      helper = puma(pid: 501, comm: "node")
+      _, dry, = run_delete("feat", "-n", "--force", agents: { 500 => @wt }, procs: procs, in_tree: [helper])
+      refute_includes dry, "process 501"
+      _, dry, = run_delete("feat", "-n", "--force", procs: procs, in_tree: [helper])
+      assert_includes dry.lines.map(&:chomp), "would stop: process 501 (node)", "control: with no agent it is one"
     end
 
     # Value: protects=a session that exited between the check and the kill reads "already

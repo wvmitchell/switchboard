@@ -530,21 +530,29 @@ module Switchboard
     end
 
     # Forced only (a human's call): stop each process still in the tree that has no terminal,
-    # is ours, and is the very process preflight saw (pid and start time). One with a
-    # terminal belongs to a person and is never signalled; it, another user's, or one that
-    # outlives KILL refuses with the folder untouched. Returns the stopped lines, or that.
+    # is ours, is the very process preflight saw (pid and start time), and has no child
+    # outside the tree (a launcher or editor main process carries work elsewhere). One with
+    # a terminal belongs to a person and is never signalled; it, another user's, one with
+    # children elsewhere, or one that outlives KILL refuses with the folder untouched. An
+    # agent judged idle, and its helpers, are left running, as an unforced delete leaves
+    # them. Returns the stopped lines, or that refusal.
     def stop_detached(t)
       seen = (t.escaped || []).map { |p| [p[:pid], p[:start]] } + (t.pane_procs || [])
+      agents = (t.agents || []).select { |pid, start| ProcessIdentity.same?(pid, start) }.map(&:first)
       stopped = []
       2.times do # stop what's there, then look again for anything that started meanwhile
-        procs = Processes.in_tree(t.real)
+        table = Processes.table
+        procs = table && Processes.in_tree(t.real, table: table)
         return refuse_alive(t, ["couldn't check for processes still running in it"]) if procs.nil?
 
+        procs.reject! { |p| Processes.subtree?(p[:pid], agents, table) }
+        inside = procs.map { |p| p[:pid] }
+        elsewhere = ->(p) { table.any? { |pid, row| row[:ppid] == p[:pid] && !inside.include?(pid) } }
         left = procs.reject do |p|
-          stoppable?(p) && seen.include?([p[:pid], p[:start]]) && stop_process(p, t.real) &&
-            stopped << "process #{p[:pid]} (#{p[:comm]})"
+          stoppable?(p) && seen.include?([p[:pid], p[:start]]) && !elsewhere.call(p) &&
+            stop_process(p, t.real) && stopped << "process #{p[:pid]} (#{p[:comm]})"
         end
-        return refuse_alive(t, left.map { |p| process_line(p) }) if left.any?
+        return refuse_alive(t, left.map { |p| process_line(p, (", runs processes outside it" if elsewhere.call(p))) }) if left.any?
         return stopped if procs.empty?
       end
       stopped
@@ -552,14 +560,14 @@ module Switchboard
 
     def stoppable?(p) = Processes.detached?(p) && p[:uid] == Process.uid
 
-    def process_line(p)
-      why = if !Processes.detached?(p) then ", has a terminal" elsif p[:uid] != Process.uid then ", another user's" end
+    def process_line(p, why = nil)
+      why ||= if !Processes.detached?(p) then ", has a terminal" elsif p[:uid] != Process.uid then ", another user's" end
       "process #{p[:pid]} (#{p[:comm]}#{why})"
     end
 
     def refuse_alive(t, lines)
       refuse("process-alive", "#{lines.first} is still running in #{t.name}",
-             changed: "its session is closed and its record acknowledged; the folder was not touched",
+             changed: "#{t.name}'s session is closed if it had one; the folder was not touched",
              fix: "close that terminal or `cd` out of the folder, or stop the process, then retry", details: lines.drop(1))
     end
 

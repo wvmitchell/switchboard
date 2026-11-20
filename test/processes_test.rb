@@ -132,5 +132,67 @@ module Switchboard
       refute Processes.subtree?(20, [10], t)
       refute Processes.subtree?(99, [10], t), "unknown pid"
     end
+
+    # Value: protects=in_tree matches the folder and its subfolders only (not a sibling sharing
+    # its prefix), skips this process and its parent and one that exited, and reads a live
+    # process missing from the table as an incomplete scan; fails_when=the "/" boundary, the
+    # self exclusion or the nil goes; why_new=only a real child is tested; seam=none
+    def test_in_tree_matches_the_folder_only_and_skips_itself
+      me = Process.pid
+      table = { me => { ppid: Process.ppid, uid: Process.uid, tty: "??", comm: "ruby" },
+                50_001 => { ppid: 1, uid: Process.uid, tty: "??", comm: "/usr/bin/node" },
+                50_002 => { ppid: 1, uid: Process.uid, tty: "??", comm: "sibling" },
+                50_003 => { ppid: 1, uid: Process.uid, tty: "??", comm: "gone" } }
+      cwds = { me => "/wt/a", Process.ppid => "/wt/a", 50_001 => "/wt/a/src", 50_002 => "/wt/ab", 50_003 => "/wt/a" }
+      stub_method(ProcessIdentity, :start_of, ->(pid) { pid == 50_003 ? "" : "s#{pid}" }) do
+        assert_equal [{ pid: 50_001, start: "s50001", comm: "node", tty: "??", uid: Process.uid }],
+                     Processes.in_tree("/wt/a", table: table, cwds: cwds)
+        assert_nil Processes.in_tree("/wt/a", table: table, cwds: nil), "no cwd scan"
+
+        stub_method(Processes, :table, -> { table }) do
+          stub_method(ProcessIdentity, :alive?, ->(_pid) { true }) do
+            assert_nil Processes.in_tree("/wt/a", table: table, cwds: cwds.merge(50_004 => "/wt/a")), "live but unlisted"
+          end
+        end
+      end
+    end
+    # Value: protects=a tmux server whose start folder is the tree is never a process of the
+    # workspace's (it carries every session); fails_when=the tmux exclusion goes; why_new=red
+    # team (a forced delete could stop the developer's server); seam=cwds, table
+    def test_a_tmux_server_is_never_in_the_tree
+      me = Process.pid
+      table = { me => { ppid: 1, uid: Process.uid, tty: "??", comm: "ruby" },
+                70 => { ppid: 1, uid: Process.uid, tty: "??", comm: "/opt/homebrew/bin/tmux" },
+                71 => { ppid: 1, uid: Process.uid, tty: "?", comm: "tmux: server" },
+                72 => { ppid: 1, uid: Process.uid, tty: "??", comm: "puma" } }
+      cwds = { me => Dir.pwd, 70 => "/wt/a", 71 => "/wt/a/sub", 72 => "/wt/a" }
+      found = stub_method(ProcessIdentity, :start_of, ->(pid) { "start #{pid}" }) do
+        Processes.in_tree("/wt/a", table: table, cwds: cwds)
+      end
+      assert_equal [72], found.map { |p| p[:pid] }
+    end
+
+    # Value: protects=a process of ours Linux won't show the cwd of (non-dumpable, like
+    # ssh-agent) doesn't fail every scan, while one missing for another reason still does;
+    # fails_when=EACCES counts as missing, or any error as hidden; why_new=red team (delete
+    # unusable on Linux with ssh-agent); seam=File.readlink, /proc
+    def test_a_process_linux_hides_is_unreadable_not_missing
+      me = Process.pid
+      child = spawn("sleep 30")
+      table = { me => { ppid: 1, uid: Process.uid, tty: "??", comm: "ruby" }, child => { ppid: me, uid: Process.uid, tty: "??", comm: "ssh-agent" } }
+      here = { me => Dir.pwd }
+      read = File.method(:readlink)
+      scan = lambda do |err|
+        link = ->(path) { path == "/proc/#{child}/cwd" ? raise(err) : read.call(path) }
+        stub_method(File, :directory?, ->(path) { path == "/proc/self" || File::Stat.new(path).directory? rescue false }) do
+          stub_method(File, :readlink, link) { stub_method(Processes, :proc_cwds, -> { here }) { Processes.cwds(table) } }
+        end
+      end
+      assert_equal here, scan.call(Errno::EACCES), "hidden by design"
+      assert_nil scan.call(Errno::ENOENT), "missing for another reason fails closed"
+    ensure
+      Process.kill("KILL", child)
+      Process.wait(child)
+    end
   end
 end

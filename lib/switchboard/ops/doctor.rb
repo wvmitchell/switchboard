@@ -313,11 +313,15 @@ module Switchboard
       cwds = table && Processes.cwds(table)
       lambda do |dir|
         procs = Processes.in_tree(Paths.real_or_self(dir), table: table, cwds: cwds) || []
-        next "" if procs.empty?
-
-        names = procs.first(3).map { |p| "#{p[:pid]} (#{p[:comm]})" }.join(", ")
-        "process #{names} #{procs.size == 1 ? 'is' : 'are'} still running in it: stop #{procs.size == 1 ? 'it' : 'them'} first " \
-          "(`kill #{procs.map { |p| p[:pid] }.join(' ')}`), then "
+        stop, person = procs.partition { |p| Processes.detached?(p) && p[:uid] == Process.uid }
+        names = ->(ps) { ps.first(3).map { |p| "#{p[:pid]} (#{p[:comm]})" }.join(", ") + (ps.size > 3 ? ", …" : "") }
+        hint = +""
+        hint << "a terminal is open in it (process #{names.call(person)}): close it or `cd` out first, then " if person.any?
+        if stop.any?
+          hint << "process #{names.call(stop)} #{stop.size == 1 ? 'is' : 'are'} still running in it: stop " \
+                  "#{stop.size == 1 ? 'it' : 'them'} first (`kill #{stop.map { |p| p[:pid] }.join(' ')}`), then "
+        end
+        hint
       end
     end
 
