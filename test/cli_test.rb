@@ -873,7 +873,7 @@ module Switchboard
       out, err, code = run[from: path("proj")]
       assert_equal ["", 4], [out, code]
       assert_includes err, "[primary]"
-      [stray, path("nope")].each do |dir|
+      [stray, path("nope"), "~no-such-user-zz/x"].each do |dir|
         out, err, code = run[dir, from: @dir]
         assert_equal ["", 1], [out, code], dir
         assert_includes err, "[not-found]", dir

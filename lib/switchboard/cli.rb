@@ -732,7 +732,11 @@ module Switchboard
     # git checkout above it decides. Failures as `path`'s: empty stdout and a [token] on
     # stderr: 1 not found, 3 names unreadable, 4 a project's own checkout.
     def workspace_name(arg)
-      dir = File.expand_path(arg.to_s.empty? ? "." : arg)
+      dir = begin
+        File.expand_path(arg.to_s.empty? ? "." : arg)
+      rescue ArgumentError # `~someone` with no such user, or `~` with no HOME
+        arg
+      end
       unless File.exist?(dir)
         warn "[not-found] no such folder: #{dir}"
         exit 1

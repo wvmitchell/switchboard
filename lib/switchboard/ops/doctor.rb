@@ -45,8 +45,8 @@ module Switchboard
 
     # Every workspace by its real path, built once per run, so a per-workspace line can lead
     # with the name the sidebar shows rather than a folder nobody sees.
-    def workspace_index(config)
-      Model.new(config, with_dirty: false).projects.flat_map(&:worktrees).to_h { |w| [w.real_path, w] }
+    def workspace_index(config = nil)
+      Model.new(config || Config.new, with_dirty: false).projects.flat_map(&:worktrees).to_h { |w| [w.real_path, w] }
     rescue StandardError
       {}
     end
@@ -72,7 +72,8 @@ module Switchboard
     # Session-name sync types into Claude's pane, so it reports what it couldn't do
     # (SessionName::Outcome) and canaries the session-file fields it relies on: `status`
     # (it gates on it) and `name` (it confirms by it). Silent when there's nothing to say.
-    def doctor_session_names(index = workspace_index(Config.new))
+    def doctor_session_names(index = nil)
+      index ||= workspace_index
       SessionName::Outcome.all.each do |o|
         retry_hint = "retry with `#{rename_cmd(o[:path], o[:name])}`"
         retry_hint = "clear that prompt, then #{retry_hint}" if o[:kind] == SessionName::Outcome::FAILED_SEND
