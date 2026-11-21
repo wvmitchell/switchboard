@@ -339,6 +339,21 @@ On failure stdout is empty and stderr carries one of these:
 | `[ambiguous]` | 2 | The name is in several projects; the candidates follow as `<project>/<name>` lines. |
 | `[names-unreadable]` | 3 | The names store can't be read. |
 
+### `switchboard name [path]`
+The other direction: print the `<project>/<name>` of the workspace a folder belongs to.
+`path` defaults to the current directory and can be anywhere inside a workspace, a file
+included; the nearest git checkout above it decides. The output is the form `path` and
+`delete` accept, so `switchboard path "$(switchboard name)"` gives back the folder.
+
+It prints exactly one line on stdout and exits 0. On failure stdout is empty and stderr
+carries one of these:
+
+| Token | Exit | Meaning |
+|---|---|---|
+| `[not-found]` | 1 | No such folder, or no workspace owns it (a stray folder, or a repo that isn't a registered project). |
+| `[names-unreadable]` | 3 | The names store can't be read. |
+| `[primary]` | 4 | It's a project's own checkout, not a workspace. |
+
 ### `switchboard delete <name> | <project>/<name> [--creation <id>] [--force] [-n]`
 Delete a workspace from a shell: its session, its folder, the branches that are its alone,
 and everything switchboard kept for it (its stored name, its dispatch record, and every
@@ -587,7 +602,9 @@ when Claude is running but its session files are missing, none are in the shape
 switchboard reads, or every live one fails the start-time check, i.e. a Claude update
 moved or reshaped them), a `CLAUDE_CONFIG_DIR` that differs between your shell and tmux
 (inside tmux only), orphaned sidebar processes, a rename's session-name sync that failed
-(with the retry), and sidebars left on old code by a failed reload. Read-only. Its
+(with the retry), and sidebars left on old code by a failed reload. A line about one
+workspace leads with its `<project>/<name>`, as the sidebar shows it, with the folder after
+it in parentheses; a folder no workspace owns says it has no name. Read-only. Its
 network calls are the release check (Homebrew only) and `gh`'s auth check. Hook staleness is judged
 only from the installed `switchboard`; run from another copy, doctor just reports the
 hooks as present.

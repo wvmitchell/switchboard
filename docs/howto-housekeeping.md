@@ -100,7 +100,9 @@ This sweeps `sb/home` too — fine, it's recreated lazily next time.
 ## Run the doctor
 
 `switchboard doctor` is read-only and the first place to look when something's
-off. It checks, with the fix inline for anything red:
+off. A line about one workspace names it the way the sidebar does, `app/oauth-fix
+(~/worktrees/app/brave-finch-9468)`, since a renamed workspace's folder keeps its
+placeholder name. It checks, with the fix inline for anything red:
 
 - `tmux` / `git` / `gh` on PATH, and tmux ≥ 3.0.
 - Config present and parseable (reports a parse error and the file to fix).
@@ -205,6 +207,8 @@ Every token is in [Reference: CLI](reference-cli.md#switchboard-delete-name--pro
 - **Can't find a renamed workspace's folder.** A rename never moves the folder, so it
   keeps its placeholder name on disk. `switchboard path <name>` prints it:
   `p=$(switchboard path oauth-fix) && cd -- "$p"`.
+- **Which workspace is this folder?** `switchboard name` prints the `project/name` of the
+  workspace you're standing in (or of a path you give it), the name the sidebar shows.
 - **Deleting the workspace you're in.** Safe — switchboard switches you to home
   first, then kills it, so you land on the full tree, not a bare shell.
 

@@ -279,6 +279,18 @@ module Switchboard
                                  also: %w[Installer.bin_dir CodexHook.home])
     end
 
+    # Value: protects=a path is shortened to `~` only when it is $HOME or under it;
+    # fails_when=the prefix check drops its `/` (a sibling like `~me2/x` reads as
+    # `~2/x`) or $HOME itself stops reading as `~`; why_new=doctor's labels now print it and
+    # nothing pins its edges; seam=none; no_claim=a HOME Dir.home can't resolve
+    def test_home_relative_shortens_only_home_and_below
+      ENV["HOME"] = home = path("me")
+      assert_equal "~", Paths.home_relative(home)
+      assert_equal "~/worktrees/app/feat", Paths.home_relative("#{home}/worktrees/app/feat")
+      assert_equal "#{home}2/x", Paths.home_relative("#{home}2/x"), "a sibling that shares the prefix"
+      assert_equal "/elsewhere/x", Paths.home_relative("/elsewhere/x")
+    end
+
     def assert_every_store_is_utf8(roots, also: [])
       env = { "LC_ALL" => "C", "LANG" => "C" }.merge(roots)
       (STATE.values + CACHE.values).each { |name, _| env[name] = nil }

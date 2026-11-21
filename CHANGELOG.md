@@ -10,6 +10,23 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
+## [0.83.0] — doctor and `switchboard name` use the names the sidebar shows (2026-11-20)
+
+### Added
+- `switchboard name [path]` prints the `project/name` of the workspace a folder belongs to,
+  the other direction from `switchboard path`. It defaults to the folder you're in, works
+  from any subfolder or file inside a workspace, and its output is what `path` and `delete`
+  take, so `switchboard path "$(switchboard name)"` gives back the folder. Failures follow
+  `path`'s format: `[not-found]` (exit 1), `[names-unreadable]` (3), and `[primary]` (4)
+  for a project's own checkout.
+
+### Changed
+- `doctor` names a workspace the way the sidebar does. A renamed workspace keeps its
+  placeholder folder, so each line about one workspace now leads with its `project/name`
+  and puts the folder after it, `app/oauth-fix (~/worktrees/app/brave-finch-9468)`.
+  The "hooks here" rows say which workspace "here" is, and a folder no workspace owns
+  says it has no name. Commands inside a line still use full, escaped paths.
+
 ## [0.82.0] — Delete refuses while something still runs in the folder (2026-11-20)
 
 ### Added

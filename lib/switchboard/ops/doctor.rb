@@ -21,6 +21,7 @@ module Switchboard
     end
 
     def run(config)
+      index = workspace_index(config)
       %w[tmux git gh].each do |tool|
         puts row(!`command -v #{tool} 2>/dev/null`.strip.empty?, tool)
       end
@@ -30,17 +31,33 @@ module Switchboard
       doctor_max_branch_history(config)
       doctor_install(config)
       doctor_sidebar_keys(config)
-      doctor_hooks(config)
+      doctor_hooks(config, index)
       doctor_prs(config)
       doctor_sounds(config)
       doctor_sessions(config)
       doctor_names(config)
       doctor_leftovers(config)
       doctor_remote_links
-      doctor_session_names
+      doctor_session_names(index)
       doctor_orphan_sidebars
       doctor_reload_failures
     end
+
+    # Every workspace by its real path, built once per run, so a per-workspace line can lead
+    # with the name the sidebar shows rather than a folder nobody sees.
+    def workspace_index(config = nil)
+      Model.new(config || Config.new, with_dirty: false).projects.flat_map(&:worktrees).to_h { |w| [w.real_path, w] }
+    rescue StandardError
+      {}
+    end
+
+    # `app/oauth-fix (~/worktrees/app/brave-finch-9468)`, or nil when no workspace owns path.
+    def label(index, path)
+      w = index[Paths.real_or_self(path)]
+      w && labelled(w)
+    end
+
+    def labelled(w) = "#{w.project}/#{w.display_name} (#{Paths.home_relative(w.path)})"
 
     # A sidebar whose code reload failed keeps running its old code (#48); it flags its
     # pane. Silent when none did.
@@ -55,11 +72,13 @@ module Switchboard
     # Session-name sync types into Claude's pane, so it reports what it couldn't do
     # (SessionName::Outcome) and canaries the session-file fields it relies on: `status`
     # (it gates on it) and `name` (it confirms by it). Silent when there's nothing to say.
-    def doctor_session_names
+    def doctor_session_names(index = nil)
+      index ||= workspace_index
       SessionName::Outcome.all.each do |o|
-        retry_hint = "retry with `switchboard rename #{o[:name]}` from inside it"
+        retry_hint = "retry with `#{rename_cmd(o[:path], o[:name])}`"
         retry_hint = "clear that prompt, then #{retry_hint}" if o[:kind] == SessionName::Outcome::FAILED_SEND
-        puts "  #{Marks.note} session name: #{o[:path]} — #{SessionName::Outcome::MESSAGES.fetch(o[:kind], o[:kind])}; #{retry_hint}"
+        puts "  #{Marks.note} session name: #{label(index, o[:path]) || o[:path]} — " \
+             "#{SessionName::Outcome::MESSAGES.fetch(o[:kind], o[:kind])}; #{retry_hint}"
       end
       h = RemoteLink.health
       if h[:matched].positive? && h[:unknown_kind] == h[:matched]
@@ -286,7 +305,7 @@ module Switchboard
                         "run `switchboard prune` to clear them")
       end
       Leftovers.interrupted(config).each do |r|
-        puts row(false, "interrupted delete of #{r['path']} — run `switchboard delete #{Shellwords.escape("#{r['project']}/#{r['name']}")}` to finish it")
+        puts row(false, "interrupted delete of #{r['project']}/#{r['name']} (#{Paths.home_relative(r['path'])}) — run `switchboard delete #{Shellwords.escape("#{r['project']}/#{r['name']}")}` to finish it")
       end
       left = Leftovers.files_left(config)
       strays = Leftovers.stray_folders(config).reject { |dir| left.any? { |l| Paths.real_or_self(l) == Paths.real_or_self(dir) } }
@@ -296,7 +315,7 @@ module Switchboard
                         "run `rm -rf #{Shellwords.escape(dir)}`, then `switchboard prune`")
       end
       strays.each do |dir|
-        puts row(false, "#{dir} is under the worktree root but isn't a workspace — #{running.call(dir)}if nothing in it is needed, " \
+        puts row(false, "#{dir}: a folder no workspace owns (git doesn't list it, so it has no name) — #{running.call(dir)}if nothing in it is needed, " \
                         "run `rm -rf #{Shellwords.escape(dir)}`")
       end
     rescue StandardError
@@ -350,10 +369,10 @@ module Switchboard
     def doctor_name_entry(entry, by_real, map, info)
       if !by_real.key?(entry.real)
         moved = by_real.values.find { |w| !map.key?(w.real_path) && !entry.branch.empty? && w.branch == entry.branch }
-        hint = moved ? "it looks like it moved to #{moved.path}: run `#{rename_cmd(moved.path, entry.name)}`" : "if you moved it, run `cd <its new folder> && switchboard rename #{Shellwords.escape(entry.name)}`"
-        info["name `#{entry.name}` was for #{entry.real}, which is gone; #{hint}"]
+        hint = moved ? "it looks like it moved to #{labelled(moved)}: run `#{rename_cmd(moved.path, entry.name)}`" : "if you moved it, run `cd <its new folder> && switchboard rename #{Shellwords.escape(entry.name)}`"
+        info["#{"#{entry.project}/" unless entry.project.to_s.empty?}#{entry.name}: its folder #{entry.real} is gone; #{hint}"]
       elsif Names.clash?(entry, map)
-        info["`#{entry.name}` (#{entry.real}) clashes with another workspace in that folder, so it shows its folder name; rename one of them"]
+        info["#{labelled(by_real[entry.real])}: its stored name `#{entry.name}` clashes with another workspace in that folder, so it shows its folder name; rename one of them"]
       end
     end
 
@@ -365,10 +384,10 @@ module Switchboard
       session = Tmux.session_for(w)
       leaf = session&.delete_prefix(Tmux.session_prefix(w.project))
       if leaf && leaf != Tmux.session_name(w).delete_prefix(Tmux.session_prefix(w.project))
-        info["#{w.path}: its session is called `#{leaf}` but it has no stored name; to keep it, run `#{rename_cmd(w.path, leaf)}`"]
+        info["#{labelled(w)}: its session is called `#{leaf}` but it has no stored name; to keep it, run `#{rename_cmd(w.path, leaf)}`"]
       elsif w.branch.to_s != "" && File.basename(w.branch) != w.folder_name &&
             w.branch == Rename.branch_for(config, File.basename(w.branch)) && !Git.pushed?(w.path, w.branch)
-        info["#{w.path}: branch `#{w.branch}` doesn't match its name `#{w.display_name}`; if a rename was interrupted, run `#{rename_cmd(w.path, File.basename(w.branch))}`"]
+        info["#{labelled(w)}: branch `#{w.branch}` doesn't match its name `#{w.display_name}`; if a rename was interrupted, run `#{rename_cmd(w.path, File.basename(w.branch))}`"]
       end
     end
 
@@ -639,28 +658,31 @@ module Switchboard
     # Report the materialized reporter, then claude (per-worktree) and codex (global)
     # status. A present hook file/block isn't proof the agent runs it — Codex needs a
     # one-time `/hooks` trust — so a bare "enabled" line would be false confidence.
-    def doctor_hooks(config)
+    def doctor_hooks(config, index = nil)
       doctor_reporter
       here = Git.toplevel(Dir.pwd)
+      if here && (w = (index || workspace_index(config))[Paths.real_or_self(here)])
+        at = " (#{w.primary ? w.project : "#{w.project}/#{w.display_name}"})"
+      end
       AgentHooks::ADAPTERS.each do |adapter| # claude, per-worktree
         next unless here # the codex block below is global, so it reports from any shell
 
         # Present isn't enough: hooks written by an older release miss its new entries. Only
         # the installed binary can judge that: hooks call back into the binary that wrote them.
         if adapter.unreadable?(here)
-          puts row(false, "#{adapter.label} hooks here: can't read #{adapter.settings_path(here)}")
+          puts row(false, "#{adapter.label} hooks here#{at}: can't read #{adapter.settings_path(here)}")
         elsif adapter.unparseable?(here) # ours or not: enable-hooks refuses either
-          puts row(false, "#{adapter.label} hooks here: #{adapter.corrupt_reason(here)} — fix it, then `switchboard enable-hooks`")
+          puts row(false, "#{adapter.label} hooks here#{at}: #{adapter.corrupt_reason(here)} — fix it, then `switchboard enable-hooks`")
         elsif !adapter.enabled?(here)
-          puts "  #{Marks.note} #{adapter.label} hooks off here — `switchboard enable-hooks`"
+          puts "  #{Marks.note} #{adapter.label} hooks off here#{at} — `switchboard enable-hooks`"
         elsif !Installer.installed_bin?
-          puts "  #{Marks.note} #{adapter.label} hooks here: #{adapter.settings_path(here)} (run the installed `switchboard doctor` to check they're current)"
+          puts "  #{Marks.note} #{adapter.label} hooks here#{at}: #{adapter.settings_path(here)} (run the installed `switchboard doctor` to check they're current)"
         elsif adapter.current?(here)
-          puts "  #{Marks.ok} #{adapter.label} hooks here: #{adapter.settings_path(here)}"
+          puts "  #{Marks.ok} #{adapter.label} hooks here#{at}: #{adapter.settings_path(here)}"
         elsif Installer.configured_worktrees.any? { |wt| File.identical?(wt, here) }
-          puts "  #{Marks.note} #{adapter.label} hooks here are out of date — `switchboard upgrade` (or `switchboard enable-hooks`)"
+          puts "  #{Marks.note} #{adapter.label} hooks here#{at} are out of date — `switchboard upgrade` (or `switchboard enable-hooks`)"
         else # upgrade only refreshes configured projects
-          puts "  #{Marks.note} #{adapter.label} hooks here are out of date — `switchboard enable-hooks` (not a configured project, so `upgrade` skips it)"
+          puts "  #{Marks.note} #{adapter.label} hooks here#{at} are out of date — `switchboard enable-hooks` (not a configured project, so `upgrade` skips it)"
         end
       end
 
