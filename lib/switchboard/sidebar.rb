@@ -142,7 +142,7 @@ module Switchboard
       @resized = false     # a ←/→ press is pending: commit_resize pins + persists ONCE
                            # after the input burst drains, so a held key stays smooth
       @mouse = nil         # mouse reports on in this pane? nil until the first sync_mouse
-      @mouse_press = nil   # [row_key, line, monotonic] of a left press awaiting its release
+      @mouse_press = nil   # [row_key, line, monotonic, lit] of a left press awaiting its release
       @mouse_click = nil   # [row_key, line, deadline]: the last click, which a second one opens
       @mouse_open = nil    # [row_key, at]: a click's open, held until tmux's double-click has run
       @painted_bar = nil   # the row_key render last lit with the cursor bar (nil unfocused)

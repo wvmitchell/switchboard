@@ -168,17 +168,6 @@ module Switchboard
       end
     end
 
-    # A prompt opened by a key is gone with the key; this is the loop held some other way.
-    def test_an_open_the_loop_reaches_late_is_dropped
-      sb = clicky(cursor: 1)
-      with_tmux do |log|
-        pending_open(sb)
-        at(sb, 100.0 + Sidebar::Mouse::CLICK_SETTLE + Sidebar::Mouse::PRESS_TTL + 0.1)
-        sb.send(:open_due_click)
-        assert_empty log[:go]
-      end
-    end
-
     def test_a_click_on_another_row_cancels_a_pending_open
       sb = clicky(cursor: 1)
       light(sb, 1)

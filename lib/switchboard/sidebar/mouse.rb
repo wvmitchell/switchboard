@@ -105,7 +105,6 @@ module Switchboard
         return unless key && monotonic >= at
 
         @mouse_open = nil
-        return if monotonic - at > PRESS_TTL # the loop was held (a prompt): that click is stale
         return if @help || @link_view || @search.typing? # opened since: that has the keys now
 
         i = @rows.index { |n| row_key(n) == key } or return
