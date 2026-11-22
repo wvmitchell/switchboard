@@ -52,8 +52,8 @@ and follows it. Edit it like any other doc, in a PR.
 
 ### Keep it armed
 
-`CronCreate` jobs live only in the session and **expire after 7 days**. So the monitor
-re-arms itself: every check, if `cron.armed_at` is more than 6 days old (or `CronList`
+`CronCreate` jobs live only in the session and **expire after 30 days**. So the monitor
+re-arms itself: every check, if `cron.armed_at` is more than 29 days old (or `CronList`
 no longer shows `cron.id`), it creates a fresh job with the same schedule and prompt,
 deletes the old one, and records the new id. After a session restart, start the monitor
 again from step 1.
