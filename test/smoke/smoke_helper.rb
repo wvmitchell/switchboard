@@ -382,6 +382,11 @@ module Switchboard
       tmux("capture-pane", "-t", pane, "-p")
     end
 
+    # The row under a sidebar's reverse-video cursor bar ("" when it isn't focused).
+    def cursor_row(pane)
+      tmux("capture-pane", "-e", "-p", "-t", pane).lines.find { |l| l.match?(/\e\[(?:\d+;)*7m/) }.to_s.gsub(/\e\[[0-9;]*m/, "")
+    end
+
     def session_attached?(name)
       tmux("display-message", "-p", "-t", name, fmt("session_attached")).strip == "1"
     end

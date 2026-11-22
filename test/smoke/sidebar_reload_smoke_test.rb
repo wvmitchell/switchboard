@@ -37,18 +37,13 @@ module Switchboard
     def failed_flag = tmux("show-options", "-p", "-q", "-v", "-t", @pane, CodeReload::FAILED_TAG).strip
     def tag = tmux("show-options", "-p", "-v", "-t", @pane, CodeReload::TAG).strip
 
-    # The row under the reverse-video cursor bar, or nil.
-    def cursor_row
-      tmux("capture-pane", "-e", "-p", "-t", @pane).lines.find { |l| l.match?(/\e\[(?:\d+;)*7m/) }.to_s.gsub(/\e\[[0-9;]*m/, "")
-    end
-
     # Focus the sidebar (the bar only shows when focused) and move the cursor onto proj2.
     def put_cursor_on_proj2
       tmux!("select-pane", "-t", @pane)
-      wait_until("the cursor bar shows") { !cursor_row.strip.empty? }
+      wait_until("the cursor bar shows") { !cursor_row(@pane).strip.empty? }
       wait_until("the cursor moves onto proj2") do
-        tmux!("send-keys", "-t", @pane, "j") unless cursor_row.include?("proj2")
-        cursor_row.include?("proj2")
+        tmux!("send-keys", "-t", @pane, "j") unless cursor_row(@pane).include?("proj2")
+        cursor_row(@pane).include?("proj2")
       end
     end
 
@@ -68,7 +63,7 @@ module Switchboard
       point_opt_at("B")
       assert run_bin("reload-sidebars"), "the verb exits 0"
       assert_swapped_in_place
-      assert_includes cursor_row, "proj2", "the cursor rode the payload across exec"
+      assert_includes cursor_row(@pane), "proj2", "the cursor rode the payload across exec"
     end
 
     # Value: protects=a plain `brew upgrade` (nobody signals) still reloads (planning D3);
@@ -91,7 +86,7 @@ module Switchboard
       assert_includes capture(@pane), Sidebar::WORDMARK, "still A's frame"
       wait_until("it still answers keys") do
         tmux!("send-keys", "-t", @pane, "k")
-        !cursor_row.include?("proj2")
+        !cursor_row(@pane).include?("proj2")
       end
     end
 

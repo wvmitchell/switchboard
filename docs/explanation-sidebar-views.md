@@ -335,6 +335,10 @@ matches highlighted, so `↵` opens the row and `j`, `k`, `r` and `d` do what th
 is. The class owns the state, the query and the origin. The rows and the cursor stay with
 `Sidebar`, in the `Input` and `Rows` concerns.
 
+A paste into a search you're typing becomes query text: its printable ASCII is added in
+one edit, and its newlines are dropped, since one would commit the search. Once the search
+is committed, a paste is dropped like anywhere else in the tree.
+
 **With one workspace to go to, `↵` opens it.** There's nothing to step through, so a second
 press would only delay you, and `Tab` remains the way to the normal keys. Two kinds of lone
 match still stop. A project header does, so `↵` `↵` can't write a fold every window shares. A

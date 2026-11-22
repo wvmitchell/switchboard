@@ -420,9 +420,10 @@ scan is silent instead.
 **It never swaps at a bad moment.** Never under `?` or the QR code, or while a `/` search is
 being typed; a committed search can sit for hours, so it doesn't hold a swap, and the swap
 ends it. Never
-mid-prompt (prompts block the loop); and never with half an escape sequence in `@pending`,
-since the new image would read its tail (`O`, from a focus-out) as a key. All of these live
-in `reexec_allowed?`. `frame_timeout` consults it too, and honors the deadline
+mid-prompt (prompts block the loop); never with half an escape sequence in `@pending`,
+since the new image would read its tail (`O`, from a focus-out) as a key; and never
+mid-paste, or with part of a paste marker held, since the new image would read the rest of
+the paste as keys. All of these live in `reexec_allowed?`. `frame_timeout` consults it too, and honors the deadline
 (`Reloader#reexec_wait`) only while the reload is allowed, so a held reload can't spin
 `IO.select` on a deadline that has passed.
 
@@ -562,6 +563,12 @@ hands over to a new one:
   `SIGUSR1` keep what they mean.
 - **`Creation` records stay readable by older launchers,** because a launcher
   (`Creator.launch`) lives as long as its agent and keeps the code it started with.
+
+A downgrade crosses the contract the other way once: a sidebar turns bracketed paste on in
+`setup` and leaves it on, and an older image (0.83.0 and before) only turned it on for its
+task prompt. After a downgrade the mode stays on until that older task prompt's close turns
+it off. Until then the older tree reads a paste's markers as unbound keys, and its letters
+act as keys, as every paste into that tree always did.
 
 ### How it's tested
 

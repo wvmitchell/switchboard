@@ -61,6 +61,7 @@ locally without touching real state:
 | Workspace names (`Names`), rename that never moves a folder, `switchboard path` / `name` | [explanation-architecture § A rename never moves the folder](docs/explanation-architecture.md#a-rename-never-moves-the-folder), [reference-cli](docs/reference-cli.md) |
 | Session-name sync (typing `/rename` into Claude's pane) | [explanation-session-name-sync](docs/explanation-session-name-sync.md) |
 | Folds, full header, width, diff counts, `/` search, `?` overlay, `sidebar_keys`, clicks | [explanation-sidebar-views](docs/explanation-sidebar-views.md) |
+| Bracketed paste (`PasteFrame`): a paste is never keys, in the tree, a search or a prompt | [reference-sidebar § Pasting](docs/reference-sidebar.md#pasting), [explanation-background-dispatch](docs/explanation-background-dispatch.md) |
 | Baked paths (`StablePath`), releases, the update line, `switchboard upgrade` | [explanation-distribution](docs/explanation-distribution.md), [reference-release](docs/reference-release.md) |
 | Config keys | [reference-config](docs/reference-config.md) |
 | What each sidebar row shows | [reference-sidebar](docs/reference-sidebar.md) |
@@ -142,7 +143,7 @@ tracks these lines; update them when you re-verify one.
 - Every file starts with `# frozen_string_literal: true`.
 - Stateless helpers are `module_function` modules (`ClaudeHook`, `CodexHook`,
   `MarkerBlock`, `Tmux`, `Installer`, …); only `Model`, `Config`, `Sidebar` (with its
-  `Edges`, `UpdateCue` and `Reloader` collaborators) and `AgentState` are classes (they
+  `Edges`, `UpdateCue`, `Reloader`, `Search` and `PasteFrame` collaborators) and `AgentState` are classes (they
   hold state).
 - One stateful class may split across **concern files** when it outgrows a
   single one (`Sidebar` + `lib/switchboard/sidebar/*`): nested modules

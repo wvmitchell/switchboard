@@ -68,11 +68,17 @@ gets onto the agent's command line depends on the command:
 When you come back to the workspace later, a `{task}` template resolves to the bare
 command, and a now-empty `'…'` is dropped.
 
-The task prompt itself keeps non-ASCII text (read as raw bytes and decoded as UTF-8)
-and turns on bracketed paste. So a paste that arrives over many reads stays text: it
-can't submit on its first newline or reach `dispatch` as keystrokes. A paste marker split
-across two reads is held for the next read; otherwise paste mode would never end and
-would swallow ↵ and Esc. Input still in flight after you submit is drained.
+The task prompt itself keeps non-ASCII text (read as raw bytes and decoded as UTF-8).
+The sidebar turns on bracketed paste for its whole life, and `Sidebar::PasteFrame` splits
+every read into keys and pasted text, whichever reader takes it. So a paste that arrives
+over many reads stays text: it can't submit on its first newline in any prompt, and it
+never reaches `dispatch` as keystrokes. A paste into the tree is dropped with a notice to
+press `n` first, and a one-key prompt reads it as no. A marker split across two reads is
+held for the next one, and a paste whose end marker is lost ends after 5 seconds of
+silence, so it can't swallow ↵ and Esc for good. Input still in flight after you submit
+is drained, through the frame, so a paste cut off there can't leave an end marker behind.
+[Reference: the sidebar § Pasting](reference-sidebar.md#pasting) lists what each surface
+does.
 
 Keys that arrive in one read with the `n` that opened the prompt, as they can when you type
 during a busy moment, fill the prompt but can't submit it. Only a `↵` read once the prompt is
@@ -80,9 +86,10 @@ up does, so you always see what would run. Everything after a newline in that ba
 dropped, and the same goes for every other text prompt. A confirm takes none of them: keys
 batched around its answer are dropped too, so a pasted `dy` can't delete a workspace.
 
-This doesn't stop pasted letters from acting as keys on the tree, and a paste without
-bracketing that splits across reads can still submit from a later read whose only newline
-is its last byte.
+Pastes the terminal doesn't bracket get none of this: tmux's pane-menu Paste
+(`prefix >`) and terminals without bracketed paste deliver keystrokes. For those only the
+rules above hold, and an unbracketed paste that splits across reads can still submit from
+a later read whose only newline is its last byte.
 
 ## The record: many writers, one lock
 

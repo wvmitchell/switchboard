@@ -16,7 +16,9 @@ module Switchboard
     def with_reads(sb, *reads)
       stub_method(sb, :winsize, ->(*) { [24, 40] }) do
         stub_method(sb, :read_prompt_key, ->(*) { reads.shift }) do
-          capture_stdout { yield reads }
+          stub_method(sb, :escape_rest, -> { reads.shift }) do
+            capture_stdout { yield reads }
+          end
         end
       end
     end

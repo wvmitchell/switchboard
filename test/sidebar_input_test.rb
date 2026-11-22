@@ -407,7 +407,7 @@ module Switchboard
       # The crux of the bug: `O` only ever appears as a CSI final (focus-out) or an
       # SS3 lead's byte, never on its own — so it can't be mistaken for open_repo.
       assert_equal [[27, 79]], tok("\eO"),  "`\\eO` (SS3 lead) keeps the O with the esc"
-      assert_equal [[27, 79], [65]], tok("\eOA"), "SS3 arrow: O stays absorbed, A is harmless"
+      assert_equal [[27, 79, 65]], tok("\eOA"), "an SS3 arrow is one token, so the A can't act"
       assert_equal [[79]], tok("O"), "a genuine standalone O is its own key (open_repo)"
     end
 
@@ -442,6 +442,21 @@ module Switchboard
       assert_equal [27, 91], rest("\e["), "a short partial is still carried normally"
     end
 
+    # Value: protects=F1-F4 are whole SS3 tokens, so F3 can't fire R or F1 type a P; a short read's `\eO` is
+    # Alt-Shift-O and never waits; only a full read carries it; fails_when=tokenize slices SS3 at 2 bytes or
+    # carries every trailing `\eO`; why_new=SS3 had no grammar; seam=none; no_claim=terminals sending SS3 for arrows
+    def test_tokenize_reads_ss3_as_one_token_and_carries_a_lead_only_from_a_full_read
+      assert_equal [[27, 79, 80]], tok("\eOP"), "F1"
+      assert_equal [[27, 79, 82]], tok("\eOR"), "F3"
+      assert_equal [[27, 79]], tok("\eO"), "a short read's \\eO is Alt-Shift-O"
+      assert_empty rest("\eO")
+      tokens, carried = Sidebar::Input.tokenize("\eO".b, full: true)
+      assert_empty tokens
+      assert_equal "\eO", carried, "a full read's \\eO waits for its final byte"
+      assert_equal [[27, 79], [13]], tok("\eO\r"), "a non-final byte stays its own key"
+      assert_equal [[27, 79, 106]], tok("\eOj"), "Alt-Shift-O then j in one read is one unbound token (accepted)"
+    end
+
     # --- handle: dispatch across read boundaries (the open_repo bug) ----------
     # The reported symptom: after `n` creates a workspace, the focus-event flurry
     # from the session switch could land a stray `O` and open the repo on GitHub.
@@ -451,8 +466,9 @@ module Switchboard
       sb.define_singleton_method(:open_repo) { opened = true }
 
       stream = "\e[O\e[O\e[O".b # the old fixed read sliced this mid-sequence
-      sb.send(:handle, stream[0, 8]) # first read leaves a partial in @pending
-      assert_equal [27, 91], sb.instance_variable_get(:@pending).bytes, "partial carried"
+      sb.send(:handle, stream[0, 8]) # first read leaves a partial behind (the frame holds `\e[`)
+      refute sb.instance_variable_get(:@paste_frame).idle?, "the frame holds the split \\e[ for the next read"
+      assert_empty sb.instance_variable_get(:@pending), "...instead of @pending"
       sb.send(:handle, stream[8..]) # the remaining byte completes the carried sequence
 
       refute opened, "the reassembled sequence is focus-out, never open_repo"

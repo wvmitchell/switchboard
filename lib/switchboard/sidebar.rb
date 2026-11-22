@@ -18,12 +18,12 @@ module Switchboard
   # files under sidebar/ own the rest and are required at the BOTTOM (see the
   # note there). How a scan flows through them:
   #
-  #   stdin ─▶ run ─▶ IO.select ─┬─ bytes ──▶ Input (tokenize → dispatch) ─▶ Actions
-  #             ▲                │              (input.rb)          (actions.rb, via
-  #             │                │                                   Prompt, prompt.rb)
+  #   stdin ─▶ run ─▶ IO.select ─┬─ bytes ──▶ PasteFrame ─▶ Input (tokenize → dispatch) ─▶ Actions
+  #             ▲                │          (paste_frame.rb)   (input.rb)        (actions.rb, via
+  #             │                │                                                Prompt, prompt.rb)
   #             │                ├─ wake pipe (SIGUSR1) ─▶ reload requested
-  #             │                └─ timeout ─▶ tick ─▶ reload / warm gate (HERE)
-  #             │                                 └─▶ keg moved? (CodeReload.stale?) ─▶ reload requested
+  #             │                └─ timeout ─▶ PasteFrame#expire, tick ─▶ reload / warm gate (HERE)
+  #             │                                                    └─▶ keg moved? (CodeReload.stale?) ─▶ reload requested
   #   loop top: maybe_reexec ─ due + no overlay ─▶ Reloader (reloader.rb): preflight ─▶ exec self in place (#48)
   #                                             │
   #        rebuild ─▶ Rows (rows.rb: fold rows, search matches + @diffs cache)
@@ -179,6 +179,9 @@ module Switchboard
       @pending = +""       # an incomplete escape sequence split across reads, carried
                            # to the next one and reassembled by tokenize (see handle) —
                            # so a sequence's final byte is never read alone as a key
+      @paste_frame = PasteFrame.new # bracketed paste for every stdin reader (paste_frame.rb)
+      @paste_noticed = nil # the paste number whose drop notice has shown (once per paste)
+      @paste_stalled = nil # ...and whose stall notice has
     end
 
     def run
@@ -231,6 +234,7 @@ module Switchboard
           end
         else
           @idle_read = false
+          @paste_frame.expire # only here, never in handle: a busy sidebar can't end a paste early
           @pulse += 1
           # While pulsing we wake ~8x/s; re-check visibility a little faster than a
           # full scan so a pane that just went off-screen stops fast-spinning (and
@@ -250,6 +254,7 @@ module Switchboard
                 end
       # Wake for a spread-out reload, but never while an overlay blocks it: a passed
       # deadline would make every select return at once (R8). Closing it is a key.
+      timeout = [timeout, PasteFrame::QUIET].min unless @paste_frame.idle? # a lost end marker heals on time
       wait = @reloader.reexec_wait
       timeout = [timeout, wait].min if wait && reexec_allowed?
       [timeout, mouse_open_wait].compact.min # a click's open waiting out tmux's (Mouse)
@@ -878,7 +883,7 @@ module Switchboard
       $stdin.raw!
       # ?1004h opts this pane into focus reporting — without it tmux won't send
       # the focus in/out escapes (\e[I / \e[O) we use to dim instantly.
-      print "\e[?25l\e[?1004h" # hide cursor, request focus events
+      print "\e[?25l\e[?1004h\e[?2004h" # hide cursor, request focus events, bracket pastes
       sync_mouse
       # Clear — unless a code reload exec'd us in place: the old image's frame stays up
       # until ours overwrites it, so the swap shows no blank frame (#48).
@@ -889,18 +894,18 @@ module Switchboard
       @reloader.restore_reload_trap
       $stdin.cooked!
       print Mouse::MOUSE_OFF unless @mouse == false
-      print "\e[?1004l\e[?25h" # stop focus events, show cursor
+      print "\e[?2004l\e[?1004l\e[?25h" # stop bracketing pastes and focus events, show cursor
     rescue StandardError
       nil
     end
 
     # --- code reload (#48): Reloader owns the swap; these feed it the sidebar's state --------
 
-    # Also never with half an escape sequence pending: the new image would read its tail (an
-    # `O` from focus-out) as a key. Here, not only in maybe_reexec, so frame_timeout can't spin
-    # on an overdue deadline while it waits for the rest of the sequence.
+    # Also never with half an escape sequence pending, or mid-paste: the new image would read
+    # the tail (an `O` from focus-out, the rest of a paste) as keys. Here, not only in
+    # maybe_reexec, so frame_timeout can't spin on an overdue deadline while it waits.
     def reexec_allowed?
-      !@help && !@link_view && !@search.typing? && @pending.empty?
+      !@help && !@link_view && !@search.typing? && @pending.empty? && @paste_frame.idle?
     end
 
     def maybe_reexec
@@ -972,6 +977,7 @@ require_relative "sidebar/update_cue"
 require_relative "sidebar/reloader"
 require_relative "sidebar/search"
 require_relative "sidebar/render"
+require_relative "sidebar/paste_frame"
 require_relative "sidebar/input"
 require_relative "sidebar/actions"
 require_relative "sidebar/prompt"

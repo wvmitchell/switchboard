@@ -20,7 +20,7 @@ module Switchboard
       MOUSE_READ_TTL = 1.0 # focus_in re-reads tmux's `mouse` at most this often
 
       def self.report?(token)
-        token.start_with?("\e[<") && token.b.match?(MOUSE_REPORT)
+        token.is_a?(String) && token.start_with?("\e[<") && token.b.match?(MOUSE_REPORT) # not a paste's Text
       end
 
       private

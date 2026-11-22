@@ -80,6 +80,8 @@ the complete key map, the in-app home for every shortcut.
 Every name prompt (`a` add local/clone/new, `r` rename) edits in raw mode:
 `Esc` (or `Ctrl-C`) cancels and returns to the tree with nothing created, `↵`
 submits, `Backspace` edits, `Ctrl-U` clears the line. The prompt shows `(esc cancel)` until you start typing.
+A paste into one of these prompts (or the `n` task prompt) is text, so only a `↵` you press submits; see
+[Reference: the sidebar § Pasting](reference-sidebar.md#pasting) for what a paste does elsewhere.
 
 `↵` on a workspace **creates the session on first switch** and runs the project's
 `session_command` then (only then — never on a re-switch into a live session). `n`

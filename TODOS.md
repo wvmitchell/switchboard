@@ -69,11 +69,11 @@ safe today; each is narrow).
   folders, so they can't land on a record's path, and rename refuses a name an in-flight
   build reserved.) *Start in:* the relabel in `Creator.move_off`: refuse a destination a
   record claims, under `Creation.with_project_lock`. **Priority:** P3.
-- **Input edges in the task prompt and modals.** *Why:* an unpaired paste-start marker
-  wedges the task prompt in paste mode (Esc/^C/↵ all become text; `prefix-s` escapes); a
-  literal paste-end inside pasted text ends the paste early; a 1 KB read split on a
-  terminal without bracketed paste can submit early and spill keys. *Start in:*
-  `prompt.rb` `edit_buffer` — bound paste mode. **Priority:** P2.
+- **Paste edges bracketing doesn't cover.** *Why:* a literal end marker inside pasted text
+  ends the paste early, and the rest runs as keys; a 1 KB read split on a terminal without
+  bracketed paste can still submit early and spill keys; tmux's pane-menu Paste (`prefix >`)
+  sends `paste-buffer` without `-p`, so that paste is never bracketed. *Start in:*
+  `PasteFrame#feed` and `Prompt#edit_keys`. **Priority:** P2.
 - **Say what's actually wrong when the config fails a build.** *Why:* the `config`
   reason's pane/row text says the config couldn't be read, but `setup_invalid?` now fires
   it for a file that parsed fine; `doctor` never checks `setup_invalid?`; the config
@@ -227,25 +227,6 @@ safe today; each is narrow).
   reloads in `sidebar.rb` (the catch-up and the tree tick), `warm_poke`'s on-screen reload
   and `focus_in`'s catch-up reload, and check the warm frame still matches the switch-in
   frame, or the flash comes back.
-
-- **A read that ends on a lone `\e` fires as Esc.** *Why:* `Input.tokenize` carries an
-  incomplete CSI across reads, but a read ending just before a sequence's `[` flushes the `\e`
-  as Esc. A read that fills `READ_BYTES` can do this: with 344 `→` in one buffer, the first read
-  closes help, then the second read's arrows resize the pane, a persisted width. The same split
-  could orphan a focus event's `O` into open_repo, though tmux writes those whole, so that path
-  hasn't been reached. *Start in:* `Input.tokenize`: carry a trailing `\e` when the read filled
-  `READ_BYTES`, which a lone Esc keypress never does. Carrying every lone `\e` would stall the Esc
-  key unless `Sidebar#run` grows a short Esc timeout, which is more timing than this is worth.
-  **Priority:** P3.
-
-- **Unify the name-prompt reader onto `tokenize`.** `Prompt#edit_keys` (the inline
-  `r`/`n` name prompt, `sidebar/prompt.rb`) still slices escapes at a fixed 3 bytes, the same
-  shape the main loop's `handle` had before the tokenizer. *Why low:* the prompt already
-  reads 1024 bytes and no destructive key is bound during a name edit, so a split sequence
-  there just drops a stray char into the name you can see and backspace — not a footgun
-  like the open-repo orphan was. *Start in:* `Prompt#edit_keys` — route it through
-  `Input.tokenize` so both readers share one grammar. Pure cleanup; do it next time
-  the prompt path is touched.
 
 ## Sidebar off-screen-work (architecture-review) follow-ups
 
