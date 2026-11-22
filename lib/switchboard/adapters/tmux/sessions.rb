@@ -11,7 +11,9 @@ module Switchboard
     # `start` (config's session_command) is typed into the window only when the
     # session is first created — never on a re-switch into a live one. Non-exec
     # so callers (the sidebar loop) keep running.
-    def go(worktree, start: nil)
+    # `click_stamp` (a sidebar click opened the row) marks the target session just before
+    # the switch, so its sidebar can drop the second half of a double-click (CLICK_SWITCH).
+    def go(worktree, start: nil, click_stamp: false)
       name = session_for_switch(worktree) or return
       # A rename may have renamed it since the lookup: re-check by folder before creating
       # one, or the start command would launch a second agent in this folder.
@@ -20,6 +22,7 @@ module Switchboard
       ensure_sidebar(name)      # reconcile every window to the saved @sb_sidebar flag
       sidebar = window_sidebar_pane(name) # the window we'll land on (nil if hidden)
       focus_work(name, sidebar) # land on the workspace's terminal, not its tree
+      stamp_click(name) if click_stamp
       switch(name)              # may exec (attach) when launched outside tmux
       pin(sidebar)              # snap to fixed width at the now-current client size
     end
@@ -333,6 +336,46 @@ module Switchboard
       return if old_name == new_name
 
       system("tmux", "-u", "rename-session", "-t", "=#{old_name}", new_name, out: File::NULL, err: File::NULL)
+    end
+
+    # A session option a click-switch writes on its target: the CLOCK_MONOTONIC time of the
+    # switch, which is system-wide, so the target's sidebar process can compare it with its
+    # own clock. A cross-version contract: sidebars of either version read it during a rolling
+    # reload, so its name and meaning (a bare float on the target session) never change.
+    CLICK_SWITCH = "@sb_click_switch"
+
+    # Best effort: a failed stamp only costs one double-click its guard.
+    def stamp_click(name)
+      at = Process.clock_gettime(Process::CLOCK_MONOTONIC).to_s
+      system("tmux", "-u", "set-option", "-t", name, CLICK_SWITCH, at, out: File::NULL, err: File::NULL)
+    end
+
+    # The last click-switch into this pane's session, or nil (unset, garbage, no tmux).
+    def click_switch_at(pane = ENV["TMUX_PANE"])
+      return nil unless pane
+
+      Float(query("display-message", "-p", "-t", pane, "#\{#{CLICK_SWITCH}}").to_s.strip, exception: false)
+    end
+
+    # Whether tmux reports the mouse for this pane: its session's `mouse` option, which a
+    # format resolves through to the global value. Anything but "1" (unset, no tmux) is off.
+    def mouse?(pane = ENV["TMUX_PANE"])
+      return false unless pane
+
+      query("display-message", "-p", "-t", pane, "#\{mouse}").to_s.strip == "1"
+    end
+
+    # For doctor: the global `mouse` value and each sb/ session whose effective value
+    # differs from it, as [global_on, {session => on}]; nil when there's no server.
+    def mouse_states
+      global = query("show-options", "-gv", "mouse") or return nil
+      on = global.strip == "on"
+      rows = query("list-sessions", "-F", "#\{mouse}\t#\{session_name}").to_s.lines(chomp: true)
+      overrides = rows.filter_map do |line|
+        flag, name = line.split("\t", 2)
+        [name, flag == "1"] if name&.start_with?("sb/") && (flag == "1") != on
+      end
+      [on, overrides.to_h]
     end
 
     def switch(name)

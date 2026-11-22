@@ -43,7 +43,7 @@ module Switchboard
     def test_scaffold_template_advertises_the_optional_knobs
       %w[tmux_keys sidebar_keys sounds session_command worktree_creation_command base prune_on_launch
          projects_root auto_rename diff_counts prewarm remote_link_stale_after update_check
-         sync_session_name count_indicator agent_dispatch max_branch_history].each do |knob|
+         sync_session_name count_indicator agent_dispatch max_branch_history sidebar_mouse].each do |knob|
         assert_includes Config::SCAFFOLD_TEMPLATE, knob, "a fresh config should advertise #{knob}"
       end
     end
@@ -322,6 +322,13 @@ module Switchboard
     def test_remote_link_stale_after_judges_the_seconds_not_the_minutes
       assert_equal 7200, cfg("remote_link_stale_after" => 1e308).remote_link_stale_after
       assert_equal 1, cfg("remote_link_stale_after" => 0.001).remote_link_stale_after
+    end
+
+    def test_sidebar_mouse_on_by_default_off_only_when_false
+      assert cfg({}).sidebar_mouse?
+      assert cfg("sidebar_mouse" => true).sidebar_mouse?
+      refute cfg("sidebar_mouse" => false).sidebar_mouse?
+      assert_empty cfg("sidebar_mouse" => false).unknown_keys
     end
 
     def test_prewarm_on_by_default_off_only_when_false

@@ -112,7 +112,7 @@ module Switchboard
       def switch(node)
         Tmux.go(Worktree.new(project: node.project, path: node.path, branch: node.branch,
                              dirty: false, pr: node.pr, base: nil, primary: false),
-                start: entry_command(node))
+                start: entry_command(node), click_stamp: @via_click == true)
         drop_queued_keys
       end
 

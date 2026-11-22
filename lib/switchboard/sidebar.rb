@@ -40,6 +40,7 @@ module Switchboard
                    # pane). Long enough that a dormant pane costs ~one tmux call/8s,
                    # short enough that an uncovered switch-in still self-heals fast.
     TREE_TICKS = 5 # rebuild the whole tree every Nth tick (~15s) while visible
+    QUEUED_WAIT = 0.005 # a select returning sooner found input already queued (stamp_wake)
     PULSE = 0.12   # animation frame cadence while a dot is on screen (drives the spinner/blink)
     VIS_POLL = 2   # while pulsing, re-check visibility this often (s) so a pane that
                    # went off-screen stops fast-spinning within ~VIS_POLL instead of
@@ -141,6 +142,13 @@ module Switchboard
                            # the first reload) so run's opening pin matches the spawn -l.
       @resized = false     # a ←/→ press is pending: commit_resize pins + persists ONCE
                            # after the input burst drains, so a held key stays smooth
+      @mouse = nil         # mouse reports on in this pane? nil until the first sync_mouse
+      @mouse_press = nil   # [row_key, line, monotonic] of a left press awaiting its release
+      @mouse_quiet = nil   # [line, deadline]: a click acted there, so a double-click's tail drops
+      @painted_top = nil   # the header height render last painted rows under (hit tests)
+      @read_at = nil       # monotonic of the last stdin read
+      @input_since = nil   # earliest that read's bytes could have arrived (see click_switch_tail?)
+      @idle_read = false   # the last read held only reports that can't act: skip its repaint
       @visible = false     # is this pane currently on screen? gates render + pulse;
                            # the single source of truth, mutated only via set_visible
       @pane_tty = nil      # our pane's pty, captured at startup — the durable pane
@@ -202,11 +210,13 @@ module Switchboard
       @last_scan = monotonic
       loop do
         maybe_reexec # returns only when no reload is due (or it failed safe)
-        render if @visible # never paint a hidden pane
+        render if @visible && !@idle_read # never paint a hidden pane
         # Wake often enough to animate the spinner/blink, but only while a dot is
         # on screen; otherwise sit on the slow REFRESH/IDLE interval. State scans
         # stay gated to REFRESH (scan_due?) so the fast frames don't hammer tmux.
+        waited_from = monotonic
         if (ready = IO.select([$stdin, @reloader.wake_r].compact, nil, nil, frame_timeout))
+          stamp_wake(waited_from)
           @reloader.drain_wake if ready.first.include?(@reloader.wake_r)
           next unless ready.first.include?($stdin)
 
@@ -214,7 +224,15 @@ module Switchboard
           break if key == :eof # our pane's pty hit EOF (closed) — exit, don't spin as an orphan
           break unless handle(key)
           commit_resize if @resized # ←/→ pinned + persisted ONCE per burst, post-drain
+          # A wheel flood never times the select out, so it would starve the tick (and the
+          # rebuild that applies a mouse-off or config edit).
+          if @idle_read && scan_due?
+            @idle_read = false # the tick may change what's drawn
+            break unless tick
+          end
         else
+          @idle_read = false
+          @woke_at = monotonic
           @pulse += 1
           # While pulsing we wake ~8x/s; re-check visibility a little faster than a
           # full scan so a pane that just went off-screen stops fast-spinning (and
@@ -226,6 +244,15 @@ module Switchboard
     ensure
       teardown
     end
+
+    # Bytes ready the moment select was called queued while the loop was busy, so they may
+    # have arrived any time since the last wake; otherwise they arrived just now.
+    def stamp_wake(waited_from)
+      woke = monotonic
+      @input_since = woke - waited_from < QUEUED_WAIT ? (@woke_at || 0.0) : woke
+      @woke_at = woke
+    end
+    private :stamp_wake
 
     def frame_timeout
       timeout = if pulsing? then PULSE
@@ -853,6 +880,7 @@ module Switchboard
       # ?1004h opts this pane into focus reporting — without it tmux won't send
       # the focus in/out escapes (\e[I / \e[O) we use to dim instantly.
       print "\e[?25l\e[?1004h" # hide cursor, request focus events
+      sync_mouse
       # Clear — unless a code reload exec'd us in place: the old image's frame stays up
       # until ours overwrites it, so the swap shows no blank frame (#48).
       print "\e[2J" unless @reloader.resume
@@ -861,6 +889,7 @@ module Switchboard
     def teardown
       @reloader.restore_reload_trap
       $stdin.cooked!
+      print Mouse::MOUSE_OFF unless @mouse == false
       print "\e[?1004l\e[?25h" # stop focus events, show cursor
     rescue StandardError
       nil
@@ -948,3 +977,4 @@ require_relative "sidebar/input"
 require_relative "sidebar/actions"
 require_relative "sidebar/prompt"
 require_relative "sidebar/rows"
+require_relative "sidebar/mouse"

@@ -10,6 +10,7 @@ module Switchboard
       PASTE_START = "\e[200~" # bracketed paste (the task prompt turns it on)
       PASTE_END = "\e[201~"
       FOCUS_OUT = "\e[O"
+      MOUSE_REPORTS = /\e\[<\d+;\d+;\d+[Mm]/n # a click or wheel while a prompt is up: never text
 
       private
 
@@ -63,7 +64,7 @@ module Switchboard
         draw_prompt(label, display_text(buf, task), hint: hint, tail: task)
         typed = take_typeahead
         loop do
-          chunk = typed.empty? ? read_prompt_key : typed
+          chunk = whole_escape(typed.empty? ? read_prompt_key : typed)
           typed = ""
           return nil if chunk.nil? # read fault / dead pane: cancel
           case edit_buffer(chunk, buf, fold_newlines: task, paste: task ? paste : nil)
@@ -140,7 +141,7 @@ module Switchboard
           end
           keys, sep, rest = paste ? rest.partition(PASTE_START) : [rest, "", ""]
           keys, paste[:carry] = held_marker(keys, PASTE_START, 3) if paste && sep.empty?
-          result = edit_keys(keys, buf, fold_newlines: fold_newlines)
+          result = edit_keys(keys.gsub(MOUSE_REPORTS, ""), buf, fold_newlines: fold_newlines)
           return result unless result == :edit
 
           paste[:on] = true unless sep.empty?
@@ -206,13 +207,25 @@ module Switchboard
       # not as a swallowed control or a signal. nil on a dead pane (EOF) so prompt_line
       # cancels rather than spinning; a spurious select wakeup with nothing to read
       # retries rather than cancelling, matching read_key's no-op on the same race.
-      def read_prompt_key
-        IO.select([$stdin]) # block until there's something to read
+      #
+      # With a `timeout`, nil when nothing arrives in time.
+      def read_prompt_key(timeout: nil)
+        return nil unless IO.select([$stdin], nil, nil, timeout) # no timeout: block until there's something
         $stdin.read_nonblock(1024)
       rescue IO::WaitReadable
-        retry
+        timeout ? nil : retry
       rescue EOFError
         nil
+      end
+
+      # A read that stops inside an escape (Input.escape_tail?) gets the rest, which tmux has
+      # already queued, so a split click can't type its tail and a split \e isn't an Esc. A
+      # lone \e with nothing after it is the Esc key.
+      def whole_escape(chunk)
+        while chunk && Input.escape_tail?(chunk) && (more = read_prompt_key(timeout: Input::ESCAPE_WAIT))
+          chunk = chunk.b + more.b
+        end
+        chunk
       end
 
       # Repaint the inline prompt on the bottom row and park a real cursor right after
@@ -287,8 +300,9 @@ module Switchboard
         held = []
         after = []
         loop do
-          chunk = read_prompt_key or return nil
+          chunk = whole_escape(read_prompt_key) or return nil
           tokens, @pending = Input.tokenize(@pending.to_s + chunk)
+          tokens.reject! { |t| Mouse.report?(t) } # a click can't answer, or dismiss a flash
           at = tokens.index { |t| !Input::POKE_BYTES.include?(t) || (leaving_closes && t == FOCUS_OUT) }
           next held.concat(tokens) unless at
 

@@ -23,6 +23,8 @@ module Switchboard
                                    # key-repeat, a switch's focus-event flurry) is never capped
                                    # mid-sequence — so the tokenizer only ever carries a genuine
                                    # producer-fragmented tail, not one we sliced ourselves
+      ESCAPE_WAIT = 0.05           # a read ending in the start of an escape waits this long for
+                                   # the rest (escape_tail?)
       CSI_MAX = 32                 # longest partial CSI tokenize will carry across reads; real
                                    # CSIs are short, so a longer param run is garbage — drop it
                                    # rather than let @pending grow unbounded on a junk byte stream
@@ -65,10 +67,9 @@ module Switchboard
       # with nothing after it is the key — and carrying it would stall Esc (search /
       # prompt cancel) waiting for bytes that never come. The one case this leaves open
       # is a CSI split BEFORE its `[` (a read ending on a lone `\e`, the next starting
-      # `[O`): the `\e` flushes as Esc and the `O` could re-orphan. That needs tmux to
-      # fragment a 3-byte focus event across reads — it doesn't (it writes the sequence
-      # in one go, and READ_BYTES reads it whole) — so it's unreachable here; closing
-      # it for good would mean an Esc-timeout in the run loop, not worth the timing.
+      # `[O`): the `\e` flushes as Esc and the `O` could re-orphan. tmux writes each
+      # sequence in one go, so only a full READ_BYTES read can split one (a wheel flood
+      # can); read_key then waits briefly for the rest (escape_tail?).
       def self.tokenize(buf)
         tokens = []
         i = 0
@@ -102,6 +103,16 @@ module Switchboard
       end
 
 
+      # A buffer ending in what could begin an escape sequence: a lone \e, \e[, or a mouse
+      # report's \e[<digits;. tmux writes each sequence in one go, so when a read stops there
+      # (a wheel flood filling READ_BYTES) the rest is already queued; read it rather than
+      # firing \e as Esc and the rest as keys.
+      def self.escape_tail?(buf)
+        i = buf.b.rindex("\e") or return false
+        tail = buf.b.byteslice(i..)
+        tail == "\e" || tail == "\e[" || tail.match?(/\A\e\[<[\d;]*\z/n)
+      end
+
       private
 
       # --- input ---------------------------------------------------------------
@@ -110,7 +121,14 @@ module Switchboard
       # cleanly instead of busy-spinning forever on a dead pty; nil when select woke
       # us spuriously with nothing to read (treated as no key).
       def read_key
-        $stdin.read_nonblock(READ_BYTES)
+        @read_at = monotonic
+        buf = $stdin.read_nonblock(READ_BYTES)
+        while Input.escape_tail?(buf) && IO.select([$stdin], nil, nil, ESCAPE_WAIT)
+          more = $stdin.read_nonblock(READ_BYTES, exception: false)
+          break unless more.is_a?(String) # EOF or a spurious wake: keep what was read
+          buf += more
+        end
+        buf
       rescue EOFError
         :eof
       rescue IO::WaitReadable
@@ -143,6 +161,8 @@ module Switchboard
       # They only fill it: a newline among them doesn't submit (Prompt#take_typeahead).
       def handle(buf)
         tokens, @pending = Input.tokenize(@pending + buf.to_s)
+        @idle_read = !tokens.empty? && tokens.all? { |t| ignored_report?(t) }
+        @click_batch = {}
         @typeahead = tokens
         while (t = @typeahead.shift)
           was_open = overlay_open?
@@ -156,6 +176,7 @@ module Switchboard
       end
 
       def dispatch(key)
+        return mouse(key) if Mouse.report?(key) # never a key: can't close an overlay or reach a search
         return link_view_key(key) if @link_view # p overlay is open: Tab/←/→ act, pokes run, other keys close
         return help_key(key) if @help     # ? overlay is open: a real key closes it, pokes pass through
         return search_key(key) if @search.typing? # typing a / search swallows the normal bindings
@@ -212,6 +233,7 @@ module Switchboard
         when "\e[O" # tmux focus-out: drop it, and any half-typed count (you've left the pane)
           @focused = false
           @count = nil
+          @mouse_press = nil # a release now would be from a drag that left the pane
         end
         true
       end
@@ -257,6 +279,7 @@ module Switchboard
         reappeared = !@visible
         set_visible(true)
         reload(announce_sounds: false) if reappeared
+        sync_mouse(throttle: true) # a `mouse off` reaches this pane now, not at the next rebuild
         # Going back to the sidebar selects the workspace you're in; under the p overlay or a
         # search, keep the row you were on, so you land where you left.
         cursor_to_current unless @link_view || @search.committed?

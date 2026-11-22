@@ -224,7 +224,7 @@ module Switchboard
       sb.instance_variable_set(:@config, Config.new)
       target = nil
       started = :unset
-      stub_method(Tmux, :go, ->(worktree, start:) { target = worktree; started = start }) do
+      stub_method(Tmux, :go, ->(worktree, start:, **) { target = worktree; started = start }) do
         sb.send(:enter)
       end
       assert_equal "/wt/a", target.path

@@ -281,6 +281,7 @@ module Switchboard
 
         visible = @rows[@offset, height].to_a
         @visible_rows = visible # the on-screen slice — pulsing? animates only for these
+        @painted_top = top      # rows sit on lines top+1.. (a click's hit test)
         adds_w, dels_w, pr_w = column_widths(@rows) # fixed columns, measured once (#118)
         out = +"\e[H"
         head.each_with_index do |text, i|
@@ -484,7 +485,7 @@ module Switchboard
       # the ANSI is wrapped on, so truncation can never cut an escape (line()).
       def help_sections(cols)
         sections = [["#{BRAND}#{trunc(WORDMARK, cols)}\e[0m"], ["", "#{BRAND}#{trunc(LEGEND_HEADING, cols)}\e[0m", *legend_lines(cols)]]
-        (Keymap.help_rows(@bindings) + tmux_help_rows).each do |key, desc|
+        (help_key_rows + tmux_help_rows).each do |key, desc|
           if key.empty?
             sections << ["", "#{BRAND}#{trunc(desc, cols)}\e[0m"] # blank separator, then the heading
           else
@@ -492,6 +493,16 @@ module Switchboard
           end
         end
         sections
+      end
+
+      # The in-pane keys, plus a click row right after ↵'s while clicks are live (appended, it
+      # would land under the last heading).
+      def help_key_rows
+        rows = Keymap.help_rows(@bindings)
+        return rows unless @mouse
+
+        at = rows.index { |key, _| key == "↵" }
+        at ? rows.dup.insert(at + 1, ["click", "same as ↵"]) : rows
       end
 
       # Help's glyph legend: one row per glyph, laid out like the key rows (glyph in the

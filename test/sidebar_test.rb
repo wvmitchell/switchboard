@@ -63,8 +63,8 @@ module Switchboard
     # deliberate act — update the pin with it (the concern parts each own theirs).
     def test_sidebar_core_constants_and_singletons_are_pinned
       expected = %i[
-        Actions Edges IDLE Input NAV_TTL POKE_TTL PULSE Prompt REFRESH Reloader Render
-        Rows Search TREE_TICKS UpdateCue VIS_POLL WARM_TTL
+        Actions Edges IDLE Input Mouse NAV_TTL POKE_TTL PULSE Prompt QUEUED_WAIT REFRESH Reloader
+        Render Rows Search TREE_TICKS UpdateCue VIS_POLL WARM_TTL
       ]
       assert_equal expected, Sidebar.constants(false).sort,
                    "the core constant set moved — if deliberate, update this pin"

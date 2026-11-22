@@ -49,6 +49,7 @@ module Switchboard
           @width = new_width
         end
         recompute_rows
+        sync_mouse if @visible # after refresh_config, so a sidebar_mouse edit lands here
       end
 
       # Splice a synthetic ws row into @nodes for every live record whose worktree git

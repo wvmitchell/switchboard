@@ -170,7 +170,7 @@ module Switchboard
       result = nil
       capture_stdout do # swallow prompt_line's ensure cursor-restore escape
         stub_method(sb, :draw_prompt, ->(*) {}) do
-          stub_method(sb, :read_prompt_key, -> { keys.shift }) do
+          stub_method(sb, :read_prompt_key, ->(**) { keys.shift }) do
             result = sb.send(:prompt_line, "name")
           end
         end
@@ -261,7 +261,7 @@ module Switchboard
 
       cancel = capture_stdout do
         stub_method(sb, :draw_prompt, ->(*, **) {}) do
-          stub_method(sb, :read_prompt_key, -> { "\e" }) { sb.send(:prompt_line, "app task", task: true) }
+          stub_method(sb, :read_prompt_key, ->(timeout: nil) { timeout ? nil : "\e" }) { sb.send(:prompt_line, "app task", task: true) }
         end
       end
       assert_includes cancel, "\e[?2004l", "Esc leaves paste mode too"
