@@ -70,8 +70,12 @@ module Switchboard
       tmux!("set-option", "-g", "status-position", "bottom")
       tmux!("set-option", "-g", "mouse", "on")
       home = sidebar_pane_ids(HOME).first
-      refocus(home)
-      wait_until("the sidebar asks for mouse reports") { modes(home) == "11" }
+      # focus_in re-reads tmux at most once a second, and the sidebar's own startup read may
+      # be that second: keep coming back, as the mouse-off test does
+      wait_until("the sidebar asks for mouse reports", interval: 0.6) do
+        refocus(home)
+        modes(home) == "11"
+      end
       home
     end
 
