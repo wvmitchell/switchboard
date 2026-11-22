@@ -570,6 +570,47 @@ module Switchboard
                            "needed, run `rm -rf #{Shellwords.escape(File.realpath(stray))}`"
     end
 
+    # Value: protects=a stray folder with a process still running in it names that process
+    # before the rm -rf (else it re-creates the folder); fails_when=the process clause goes or
+    # names a process from another folder; why_new=item 1 (a dev server re-seeded a deleted
+    # workspace); seam=Processes (one scan)
+    def test_a_stray_folder_names_a_process_still_running_in_it
+      feat, = leftover_project
+      stray = File.join(File.dirname(feat), "old copy")
+      FileUtils.mkdir_p(stray)
+      real = File.realpath(stray)
+      dev = { pid: 4242, start: "s", comm: "puma", tty: "??", uid: Process.uid }
+      out = stub_method(Processes, :table, -> { {} }) do
+        stub_method(Processes, :cwds, ->(_t) { {} }) do
+          stub_method(Processes, :in_tree, ->(dir, **) { dir == real ? [dev] : [] }) do
+            capture { Doctor.doctor_leftovers(Config.new) }
+          end
+        end
+      end
+      assert_includes out, "#{real} is under the worktree root but isn't a workspace — process 4242 (puma) is still " \
+                           "running in it: stop it first (`kill 4242`), then if nothing in it is needed, run `rm -rf"
+    end
+
+    # Value: protects=doctor never puts a person's terminal in its kill hint, only detached
+    # processes of ours, and names the terminal separately; fails_when=the hint lists every
+    # pid; why_new=red team (the hint could kill a shell or a tmux server); seam=Processes
+    def test_a_terminal_in_a_stray_folder_is_named_not_killed
+      feat, = leftover_project
+      stray = File.join(File.dirname(feat), "old copy")
+      FileUtils.mkdir_p(stray)
+      real = File.realpath(stray)
+      shell = { pid: 777, start: "s", comm: "zsh", tty: "ttys004", uid: Process.uid }
+      dev = { pid: 4242, start: "s", comm: "puma", tty: "??", uid: Process.uid }
+      out = stub_method(Processes, :table, -> { {} }) do
+        stub_method(Processes, :cwds, ->(_t) { {} }) do
+          stub_method(Processes, :in_tree, ->(dir, **) { dir == real ? [shell, dev] : [] }) { capture { Doctor.doctor_leftovers(Config.new) } }
+        end
+      end
+      assert_includes out, "a terminal is open in it (process 777 (zsh)): close it or `cd` out first, then process 4242 (puma) is still running"
+      assert_includes out, "(`kill 4242`)"
+      refute_includes out, "kill 777"
+    end
+
     # Value: protects=doctor never changes a file, leftovers and stale outcomes included;
     # fails_when=any check GCs on read (Outcome.all used to); why_new=doctor is the read-only
     # surface the monitor runs; seam=Pr.authenticated? (network)

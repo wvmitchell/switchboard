@@ -565,7 +565,7 @@ hands over to a new one:
   (`Creator.launch`) lives as long as its agent and keeps the code it started with.
 
 A downgrade crosses the contract the other way once: a sidebar turns bracketed paste on in
-`setup` and leaves it on, and an older image (0.81.0 and before) only turned it on for its
+`setup` and leaves it on, and an older image (0.82.0 and before) only turned it on for its
 task prompt. After a downgrade the mode stays on until that older task prompt's close turns
 it off. Until then the older tree reads a paste's markers as unbound keys, and its letters
 act as keys, as every paste into that tree always did.

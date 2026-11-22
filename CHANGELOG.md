@@ -10,7 +10,7 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
-## [0.81.1] — A paste is never keys in the sidebar (2026-11-20)
+## [0.82.1] — A paste is never keys in the sidebar (2026-11-22)
 
 ### Fixed
 - A bracketed paste into the sidebar no longer runs as keystrokes anywhere. The sidebar
@@ -26,6 +26,24 @@ refer to the project's earlier, private repository; the public tracker starts at
 - F1 to F4 no longer act as `P`, `Q`, `R` and `S` in the tree (F3 refreshed PRs) or type a
   letter into a prompt. Refresh is still `R`. A modified arrow such as Ctrl-← drops whole in
   a prompt instead of leaking `;5D` into a name.
+
+
+## [0.82.0] — Delete refuses while something still runs in the folder (2026-11-20)
+
+### Added
+- `switchboard delete` now finds every process whose working folder is in the workspace,
+  not only its tmux session. A dev server left running in the background used to survive
+  the delete and write the folder back. Now delete refuses and names it, `[busy]` when
+  unforced and the new `[process-alive]` (exit 8) when forced, because delete never signals
+  anything outside its session. You stop it (`kill 4242`) and retry. A process under the
+  session's panes still goes with the session, an agent session with a terminal is left
+  running, and a tmux server started in the folder is ignored.
+- `doctor` names a process still running in a folder it suggests removing, with the `kill`
+  to run first, so the folder doesn't come straight back.
+
+### Changed
+- After closing the session, delete waits only for the session's own processes, so an idle
+  agent running in the folder from another terminal no longer holds it for 5 seconds.
 
 ## [0.81.0] — Workspaces list newest first, and J/K move them (2026-11-20)
 

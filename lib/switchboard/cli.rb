@@ -192,6 +192,7 @@ module Switchboard
       return unless wt && !wt.primary && Paths.real_or_nil(wt.path) == Paths.real_or_nil(dest)
 
       Process.daemon(true, true)
+      Dir.chdir("/") # it may wait an hour: never sit in the workspace a delete is about to check
       SessionName.work(dest, name)
     rescue StandardError
       nil
