@@ -250,7 +250,7 @@ switchboard doctor
 - **`prefix-s` does nothing after an upgrade.** tmux still has the old bindings.
   Run `switchboard upgrade` (it finishes a setup an earlier upgrade left undone) or
   `tmux source-file ~/.tmux.conf`; `doctor` confirms with `prefix-s bound (toggle-sidebar)`.
-- **`– claude hooks here are out of date`.** This worktree's hooks were written by an
+- **`– claude hooks here (<project>/<name>) are out of date`.** This worktree's hooks were written by an
   older release. Run `switchboard upgrade`, or `switchboard enable-hooks` in it. If the
   worktree isn't in a configured project, `upgrade` skips it (doctor says so): run
   `switchboard enable-hooks` there.

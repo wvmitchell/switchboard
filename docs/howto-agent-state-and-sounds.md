@@ -185,7 +185,7 @@ one-time global install above. Observation-only agents show a dot but stay silen
 - **Claude's dot turns magenta only seconds after a permission prompt opens.** That
   worktree's hooks predate the instant permission-prompt hook. Run `switchboard
   upgrade` (or `switchboard enable-hooks` there); `doctor` flags such a worktree as
-  `claude hooks here are out of date`.
+  `claude hooks here (<project>/<name>) are out of date`.
 - **Codex dots don't move.** Check `doctor`. If it says the block is stale, re-run
   `switchboard install` from the install you use first. Then run `/hooks` in codex
   and approve the switchboard hooks. Do that even when `doctor` shows every hook

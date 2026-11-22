@@ -262,6 +262,8 @@ module Switchboard
         when :toggle_full_header then toggle_full_header # seat the full header on every session
         when :help               then show_help # the full key map overlay (issue #62)
         when :phone_link         then open_link_view # the row's /rc link as a QR
+        when :move_row_down      then move_row(count)
+        when :move_row_up        then move_row(-count)
         when :quit               then return quit # q: tear down ALL switchboard sessions
         end
         true

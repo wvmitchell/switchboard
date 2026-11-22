@@ -29,7 +29,7 @@ module Switchboard
         # removal lands, so it's in @nodes — visible_tree below drops it from the rows.
         @pending_delete = PendingDelete.pending(@nodes.select { |n| n.kind == "ws" }.map(&:path))
         # Background dispatches (n → task): GC the lifecycle records, then show each one
-        # git doesn't list yet as a synthetic row LAST in its project (DR2), and map the
+        # git doesn't list yet as a synthetic row FIRST in its project, and map the
         # rest onto their real rows for the ◌/✘ glyph and the task label.
         inject_creations(Creation.gc(projects: @config.projects.map { |p| p["name"] }, owners: !@warming))
         @full_header = FullHeader.enabled? # shared toggle: full header on every session
@@ -53,17 +53,19 @@ module Switchboard
       end
 
       # Splice a synthetic ws row into @nodes for every live record whose worktree git
-      # doesn't list, after its project's last row — so collapse, search and the cursor
-      # treat it like any other workspace — then index records by row path.
+      # doesn't list, first in its project (newest first, as real rows sort), so the
+      # finished worktree lands where its row already is. Collapse, search and the cursor
+      # treat it like any other workspace. Then index records by row path.
       def inject_creations(records)
         real = @nodes.select { |n| n.kind == "ws" }.to_h { |n| [Creation.real_path(n.path), n.path] }
         pending = records.reject { |r| r["state"] == "canceled" || real.key?(Creation.real_path(r["path"].to_s)) }
         pending.group_by { |r| r["project"] }.each do |project, recs|
-          last = @nodes.rindex { |n| n.project == project }
-          next unless last # project no longer configured
+          header = @nodes.index { |n| n.kind == "proj" && n.project == project }
+          next unless header # project no longer configured
 
-          rows = recs.map { |r| Tree::Node.new(kind: "ws", project: project, path: r["path"], name: r["name"], creation: r) }
-          @nodes.insert(last + 1, *rows)
+          rows = recs.sort_by { |r| -r["created_at"].to_f }
+                     .map { |r| Tree::Node.new(kind: "ws", project: project, path: r["path"], name: r["name"], creation: r) }
+          @nodes.insert(header + 1, *rows)
         end
         index_creations(records)
       end

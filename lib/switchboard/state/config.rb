@@ -135,6 +135,8 @@ module Switchboard
         # help: "?"               # help overlay
         # quit: q                 # quit all sessions
         # phone_link: p           # show the row's phone link as a QR
+        # move_row_down: J        # move the workspace / project down
+        # move_row_up: K          # move the workspace / project up
 
       projects: []   # grown by `a` in the sidebar or `switchboard add <name> <path>`
     YAML

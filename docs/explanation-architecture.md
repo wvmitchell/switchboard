@@ -286,7 +286,9 @@ are compared the way tmux will spell them, so `foo.bar` and `foo-bar` count as t
 
 The cost is that a folder's name on disk stops matching what you call the workspace.
 `switchboard path <name>` closes that gap for shells and scripts: it prints the folder of
-the workspace with that name.
+the workspace with that name, and `switchboard name` goes the other way, from a folder to
+its `project/name`. `doctor` does the same in its own output: a line about one workspace
+leads with its name and puts the folder after it.
 
 Every sidebar is its own process, and one still running older code would show folder names
 and race a rename. So a sidebar that reads stored names says so with a pane option
@@ -419,7 +421,7 @@ pane ids, so it can end up reading a different live pane and double-fire complet
 `switchboard delete` and the sidebar's `d` both end in the same place: the folder gone and
 nothing switchboard keeps still naming it. The problem is that a workspace leaves traces in
 a dozen stores (its name, its dispatch record, the bold and ∞ and ◷ markers, agent hook
-states, rename-sync notes and worker claims, the hide marker), and most of them only heal
+states, rename-sync notes and worker claims, the hide marker, a moved workspace's place), and most of them only heal
 when some sidebar happens to scan. The approach is one registry, `Leftovers`, that lists
 every per-workspace store. Delete clears this workspace's entries from every row, doctor
 counts what deleted workspaces left, and prune clears it, so the three can't drift; a test
@@ -428,7 +430,8 @@ fails until a new store is a row or is declared global.
 The order is what makes it safe to run unattended. Every check runs before anything
 changes: the target must be a workspace, not where the caller is, not still building or
 being deleted, clean, with every commit on its base or a remote, and with nobody using it
-(an agent thinking, a hookless agent process, a live ∞ or ◷, another attached client). An
+(an agent thinking, a hookless agent process, a live ∞ or ◷, another attached client, a
+process left running in the folder). An
 agent counts as idle when its newest hook report is `done` and was written after the agent
 started, however old: Claude and Codex both report `done` when they start and at the end of
 every turn ([agent presence](explanation-agent-presence.md)), so an older one belongs to a
@@ -440,7 +443,8 @@ once git no longer lists the worktree does delete forget the name, the branches 
 the sha pinned at preflight, after checking no other worktree uses it), their PR badges,
 the record and the markers. The typing locks of rename-sync workers carry only a Claude's
 pid, not a path, so `switchboard delete` records the workspace's agents (with their start times) at
-preflight, waits a moment after closing the session for them to exit, and removes a lock
+preflight, waits a moment after closing the session for the session's own processes to
+exit, and removes a lock
 only once its pid is provably not that agent any more, and only while holding the lock, so
 a worker typing for a reused pid keeps it. When a forced delete closes a session someone else is still
 attached to, they're moved to `sb/home` first rather than detached; `d` does the same. Forgetting waits for the folder because a removal that fails must leave a
@@ -457,6 +461,18 @@ forget step finishes from the receipt. Prune finishes those too, but only once n
 left in the folder: files git left behind are yours, so doctor names that folder with the
 `rm -rf` to run, and prune waits. Doctor also names a delete that stopped while git still
 lists its workspace. Rename refuses while a live receipt exists.
+
+Closing the session isn't enough on its own. A dev server started in the background
+(`nohup`, a daemon) leaves the session's process tree, keeps running in the folder, and
+writes it back after the delete. So `switchboard delete` looks for every process whose
+working folder is in the tree. One under the session's panes goes with the session, an
+agent session (an agent with a terminal) is left running, and a tmux server started there
+is ignored (it carries every session). Any other blocks the delete by name, forced or not:
+delete never signals anything outside its session, because whether a process is debris or
+someone's work (a shell, an editor, a server with workers elsewhere) can't be told safely
+from outside. Stopping it is one `kill` for the person who knows. Doctor names a process
+still running in a folder it would have you remove, since removing the folder first only
+gets it re-created.
 
 One window stays open: a writer that passed its "folder exists" check just before the
 folder went can still leave a marker. Delete clears its rows a second time at the very end,

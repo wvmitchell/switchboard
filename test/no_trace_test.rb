@@ -25,6 +25,7 @@ module Switchboard
       Creation.update(rec["id"], state: "turn_done", worktree_added: true)
       PendingDelete.mark(path("elsewhere", "unrelated")) # an unrelated hide marker must survive
       Attention.mark(@wt)
+      Order.set(@wt, 1.0)
       Monitoring.mark(@wt)
       Notify.mark(@wt)
       OffstageHold.hold(@wt, pid: Process.pid)

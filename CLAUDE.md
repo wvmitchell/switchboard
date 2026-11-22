@@ -58,7 +58,7 @@ locally without touching real state:
 | The rename nudge, the agent-dispatch instruction, completion sounds, bold until viewed, `KeyedMarkerStore` | [explanation-agent-presence § One edge, four consumers](docs/explanation-agent-presence.md#one-edge-four-consumers), [§ The self-naming nudge](docs/explanation-agent-presence.md#the-self-naming-nudge), [§ The agent-dispatch instruction](docs/explanation-agent-presence.md#the-agent-dispatch-instruction) |
 | ∞ monitoring + `monitoring notify`, ⇅ remote links + QR, ◷ background work | [explanation-agent-presence § Background monitors](docs/explanation-agent-presence.md#background-monitors-the-), [§ ◷](docs/explanation-agent-presence.md#waiting-on-background-work-the-), [§ ⇅](docs/explanation-agent-presence.md#remote-links-the-) |
 | `switchboard delete`, the `Leftovers` inventory, delete receipts | [explanation-architecture § Deleting leaves nothing behind](docs/explanation-architecture.md#deleting-leaves-nothing-behind), [reference-cli](docs/reference-cli.md) |
-| Workspace names (`Names`), rename that never moves a folder, `switchboard path` | [explanation-architecture § A rename never moves the folder](docs/explanation-architecture.md#a-rename-never-moves-the-folder), [reference-cli](docs/reference-cli.md) |
+| Workspace names (`Names`), rename that never moves a folder, `switchboard path` / `name` | [explanation-architecture § A rename never moves the folder](docs/explanation-architecture.md#a-rename-never-moves-the-folder), [reference-cli](docs/reference-cli.md) |
 | Session-name sync (typing `/rename` into Claude's pane) | [explanation-session-name-sync](docs/explanation-session-name-sync.md) |
 | Folds, full header, width, diff counts, `/` search, `?` overlay, `sidebar_keys`, clicks | [explanation-sidebar-views](docs/explanation-sidebar-views.md) |
 | Baked paths (`StablePath`), releases, the update line, `switchboard upgrade` | [explanation-distribution](docs/explanation-distribution.md), [reference-release](docs/reference-release.md) |
@@ -93,6 +93,8 @@ The ones that broke something before. Each doc above explains why.
 - **Dispatch never starts an agent on an un-set-up tree, and never destroys work**: the
   agent starts only through `Creation.authorize_launch`, and rollback removes only what it
   can prove is its own.
+- **Delete never signals a process outside its tmux session**, forced or not: it names it
+  and refuses (`[process-alive]`).
 - **A delete leaves nothing:** every per-workspace store is a row in `Leftovers`, which
   delete, doctor and prune all read (`test/leftovers_test.rb`, `test/no_trace_test.rb`).
 - **Session-name sync: at most one Enter per session per worker.** Don't add a retry.
@@ -111,10 +113,10 @@ tracks these lines; update them when you re-verify one.
 - **Hooks:** last verified live against **Claude Code 2.1.301–2.1.303** and **codex-cli
   0.163.0** (v0.51.1): payload fields, linked-worktree delivery, the nesting-guard env, and
   a silent PermissionRequest hook leaving the prompt to the user. **codex-cli 0.164.0**
-  (v0.55.2), **0.165.0** (v0.60.7) and **0.167.0** (v0.66.12) re-passed the real-Codex smoke only: linked-worktree
+  (v0.55.2), **0.165.0** (v0.60.7), **0.167.0** (v0.66.12) and **0.171.0** (v0.80.0) re-passed the real-Codex smoke only: linked-worktree
   delivery, hook ordering, untrusted-block silence. On 0.167.0 an open approval held
   `waiting` with no later hook overwriting it (checked live).
-- **Codex is global:** Codex (verified 0.142 through 0.167) doesn't load a *linked*
+- **Codex is global:** Codex (verified 0.142 through 0.171) doesn't load a *linked*
   worktree's own hooks, so switchboard writes one `[hooks]` block into
   `~/.codex/config.toml`. An empty `CODEX_HOME` means `~/.codex` to Codex (checked live on
   0.167.0) and to us.

@@ -849,6 +849,42 @@ module Switchboard
       end
     end
 
+    # Value: protects=`switchboard name` answers "which workspace is this folder?" in the
+    # form `path` takes back, with `path`'s failure contract; fails_when=it prints the folder
+    # name, a subdirectory or file misses, a failure reaches stdout, or an exit code moves;
+    # why_new=item 6 (folders keep their birth names); seam=none (real worktree, real names)
+    def test_name_prints_the_workspace_a_folder_belongs_to
+      old = rename_fixture("calm-fern-0a1b")
+      Dir.chdir(old) { capture { CLI.rename("oauth-fix") } }
+      FileUtils.mkdir_p(File.join(old, "lib", "deep"))
+      File.write(File.join(old, "lib", "a.rb"), "")
+      stray = path("wts", "proj", "old copy").tap { |d| FileUtils.mkdir_p(d) }
+      run = lambda do |*argv, from: old|
+        code = 0
+        out = nil
+        err = capture_err { out = Dir.chdir(from) { capture { begin; CLI.run(["name", *argv]); rescue SystemExit => e; code = e.status; end } } }
+        [out, err, code]
+      end
+      assert_equal ["proj/oauth-fix\n", "", 0], run[], "the cwd, by its stored name"
+      assert_equal ["proj/oauth-fix\n", "", 0], run[from: File.join(old, "lib", "deep")], "from a subdirectory"
+      assert_equal ["proj/oauth-fix\n", "", 0], run[File.join(old, "lib", "a.rb"), from: @dir], "a file inside it"
+      assert_equal "#{File.realpath(old)}\n", capture { CLI.run(["path", run[].first.chomp]) }, "round-trips through path"
+
+      out, err, code = run[from: path("proj")]
+      assert_equal ["", 4], [out, code]
+      assert_includes err, "[primary]"
+      [stray, path("nope"), "~no-such-user-zz/x"].each do |dir|
+        out, err, code = run[dir, from: @dir]
+        assert_equal ["", 1], [out, code], dir
+        assert_includes err, "[not-found]", dir
+      end
+      stub_method(Names, :read_all, -> { [:error, "/n", "EACCES"] }) do
+        out, err, code = run[]
+        assert_equal ["", 3], [out, code]
+        assert_includes err, "[names-unreadable]"
+      end
+    end
+
     # Value: protects=a name two projects share never resolves to one of them silently (a
     # script's cd would land in the wrong project), and project/name disambiguates;
     # fails_when=path takes the first hit or drops exit 2; why_new=the path test above has a
@@ -1054,12 +1090,16 @@ module Switchboard
       FileUtils.mkdir_p(dir)
       wt = Worktree.new(project: "proj", path: dir, primary: false)
       stub_method(Process, :daemon, ->(*a) { calls << [:daemon, *a] }) do
-        stub_method(SessionName, :work, ->(*a) { calls << [:work, *a] }) do
-          stub_method(Model, :workspace_at, ->(*) { wt }) { CLI.run(["sync-session-name", dir, "new"]) }
-          CLI.run(%w[sync-session-name])
+        stub_method(Dir, :chdir, ->(d) { calls << [:chdir, d] }) do # never move this test process
+          stub_method(SessionName, :work, ->(*a) { calls << [:work, *a] }) do
+            stub_method(Model, :workspace_at, ->(*) { wt }) { CLI.run(["sync-session-name", dir, "new"]) }
+            CLI.run(%w[sync-session-name])
+          end
         end
       end
-      assert_equal [[:daemon, true, true], [:work, dir, "new"]], calls
+      # Detached, it leaves the workspace's folder: it may wait an hour, and a delete counts a
+      # process sitting in the folder as still running there.
+      assert_equal [[:daemon, true, true], [:chdir, "/"], [:work, dir, "new"]], calls
     end
 
     # Value: protects=the public verb types only into a switchboard workspace; fails_when=a

@@ -10,6 +10,64 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
+## [0.83.0] — doctor and `switchboard name` use the names the sidebar shows (2026-11-20)
+
+### Added
+- `switchboard name [path]` prints the `project/name` of the workspace a folder belongs to,
+  the other direction from `switchboard path`. It defaults to the folder you're in, works
+  from any subfolder or file inside a workspace, and its output is what `path` and `delete`
+  take, so `switchboard path "$(switchboard name)"` gives back the folder. Failures follow
+  `path`'s format: `[not-found]` (exit 1), `[names-unreadable]` (3), and `[primary]` (4)
+  for a project's own checkout.
+
+### Changed
+- `doctor` names a workspace the way the sidebar does. A renamed workspace keeps its
+  placeholder folder, so each line about one workspace now leads with its `project/name`
+  and puts the folder after it, `app/oauth-fix (~/worktrees/app/brave-finch-9468)`.
+  The "hooks here" rows say which workspace "here" is, and a folder no workspace owns
+  says it has no name. Commands inside a line still use full, escaped paths.
+
+## [0.82.0] — Delete refuses while something still runs in the folder (2026-11-20)
+
+### Added
+- `switchboard delete` now finds every process whose working folder is in the workspace,
+  not only its tmux session. A dev server left running in the background used to survive
+  the delete and write the folder back. Now delete refuses and names it, `[busy]` when
+  unforced and the new `[process-alive]` (exit 8) when forced, because delete never signals
+  anything outside its session. You stop it (`kill 4242`) and retry. A process under the
+  session's panes still goes with the session, an agent session with a terminal is left
+  running, and a tmux server started in the folder is ignored.
+- `doctor` names a process still running in a folder it suggests removing, with the `kill`
+  to run first, so the folder doesn't come straight back.
+
+### Changed
+- After closing the session, delete waits only for the session's own processes, so an idle
+  agent running in the folder from another terminal no longer holds it for 5 seconds.
+
+## [0.81.0] — Workspaces list newest first, and J/K move them (2026-11-20)
+
+### Added
+- `J`/`K` in the sidebar move the highlighted workspace down or up within its project,
+  and take a count (`3K`). On a branch row they move that row's workspace; on a project
+  header they move the project. A moved workspace keeps its place across restarts, and
+  every other sidebar repaints in the new order straight away. A move that can't be
+  saved says which folder failed in the tmux status line.
+- Remap them with `move_row_down` and `move_row_up` under `sidebar_keys`.
+
+### Changed
+- Workspaces in a project now list newest first (by when git created the worktree),
+  instead of A–Z by their folder's original name. The order changes on upgrade, and
+  there's no setting to restore A–Z; move rows with `J`/`K` instead.
+- A workspace you dispatch with `n` shows at the top of its project while it builds,
+  not at the bottom.
+- The project order you set with `J`/`K` is saved in its own file; `config.yml` is
+  never rewritten.
+
+### Upgrading
+- If you already mapped `J` or `K` to another action in `sidebar_keys`, it keeps that
+  action; remap `move_row_down`/`move_row_up` to clear doctor's collision note.
+- Run `switchboard reload-sidebars` so every open sidebar picks up the new order.
+
 ## [0.80.0] — Delete reports everything its plan promised (2026-11-19)
 
 ### Changed

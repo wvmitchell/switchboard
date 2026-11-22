@@ -1,9 +1,9 @@
 # Explanation: the sidebar's views and keys
 
-How the sidebar decides what to show: folds, the full header and the pane width, which
-every window's sidebar shares, and the diff counts, the search and the `?` overlay,
-which each sidebar keeps to itself. It also covers how the in-sidebar keys are remapped,
-and what a mouse click on a row does.
+How the sidebar decides what to show: folds, the full header, the pane width and the order
+of workspaces and projects, which every window's sidebar shares, and the diff counts, the
+search and the `?` overlay, which each sidebar keeps to itself. It also covers how the
+in-sidebar keys are remapped, and what a mouse click on a row does.
 
 ## Shared view state lives on disk
 
@@ -169,6 +169,52 @@ next `pin_if_resized`, which pins to the same `@width` and so never fights the r
 
 While you type a `/` search, `←`/`→` do nothing. Their escape sequences aren't printable,
 so `search_key` ignores them. Once the search is committed they resize as usual.
+
+## Workspace and project order
+
+Within a project, workspaces are listed newest first, and `J`/`K` move the highlighted
+workspace (or project header) down or up, taking a count like `j`/`k`.
+
+### Newest first, by when git made the worktree
+
+A workspace's folder keeps the placeholder name it was born with, so sorting by name would
+sort by something you can't see. Instead each workspace has a rank, and the default rank is
+the moment git created the worktree: the birth time of its admin folder
+(`.git/worktrees/<id>`), or, where the filesystem has no birth time, the time of the
+`commondir` file git writes there once. `Git.created_at` reads it with a file read and a
+stat rather than a git call, because every rebuild and every hook command builds this
+order. A workspace dispatched with `n` shows on top from the moment you press ↵, and stays
+there when git starts listing it.
+
+A copy or restore that resets file times (`cp -R`, some backup tools) gives every
+workspace the same rank, and the order falls back to A–Z by folder until you move some.
+
+### A move is one file, written once
+
+`J`/`K` give the moved workspace a rank halfway between its new neighbours and store it in
+`Order` (`order.rb`): a `KeyedMarkerStore` file per moved workspace, holding its realpath
+and rank (`SWITCHBOARD_ORDER_DIR`). One keypress is one atomic write, so two sidebars never
+read-modify-write a shared list, and delete clears the file like any other per-workspace
+store. A moved workspace keeps its rank over its creation time; a workspace created later
+still lands above it. When repeated moves use up the room between two ranks, the move first
+respaces the whole project above its highest rank, top to bottom, so a failure halfway
+leaves the visible order as it was. A rank whose folder has gone missing is kept for 30
+days, in case the folder is on a volume that's only unmounted.
+
+Project order is a view preference too, so it lives in its own file
+(`SWITCHBOARD_PROJECT_ORDER_FILE`), one project name per line, and `config.yml` is never
+rewritten by a keypress. Projects the file doesn't name, such as one you just added, follow
+in config order. A project hidden because its folder is missing keeps its place when you
+move another, but one you rename by hand in `config.yml` loses it.
+
+Every move broadcasts a warm reload, so other windows' sidebars repaint in the new order at
+once, and a background reload keeps each sidebar's highlight on the row it was on. A save
+that fails says so on the tmux status line, naming the folder and the reason.
+
+To try it, highlight the second workspace in a project and press `K`; `J` puts it back. To
+go back to plain newest-first, delete the files in the order folder (by default
+`~/.local/state/switchboard/order`) and the `project_order` file beside it, then run
+`switchboard reload-sidebars`. Both are view preferences and safe to delete.
 
 ## Workspace diff counts
 

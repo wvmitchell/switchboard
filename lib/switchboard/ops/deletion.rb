@@ -25,7 +25,7 @@ module Switchboard
       "primary" => 4, "inside" => 4, "not-yours" => 4, "building" => 4, "locked" => 4, "deleting" => 4,
       "listing-failed" => 4, "other-server" => 4, "tmux-unknown" => 4,
       "dirty" => 5, "unpushed" => 5, "branches-unknown" => 5, "busy" => 5,
-      "remove-failed" => 6, "partial" => 7, "session-alive" => 8, "changed-during-delete" => 8,
+      "remove-failed" => 6, "partial" => 7, "session-alive" => 8, "process-alive" => 8, "changed-during-delete" => 8,
       "usage" => 64, "failed" => 70
     }.freeze
     FORCEABLE = %w[dirty unpushed branches-unknown busy].freeze
@@ -39,7 +39,8 @@ module Switchboard
     # Everything preflight learned, captured before anything goes (the realpath stops
     # resolving once the folder is gone).
     Target = Struct.new(:project, :repo, :base, :path, :real, :name, :rec, :branches, :sessions,
-                        :sidebars, :head, :force, :agents, :stored_name, :markers, :ignored, keyword_init: true)
+                        :sidebars, :head, :force, :agents, :stored_name, :markers, :ignored, :panes, :pane_procs, :escaped,
+                        keyword_init: true)
 
     # What forget settled, each a list of subjects ("name x", "branch y", "record z"):
     # removed now, kept on purpose, already gone before this run reached it, or failed.
@@ -194,6 +195,7 @@ module Switchboard
       return refuse("tmux-unknown", "tmux couldn't list the panes of #{t.name}'s session", fix: "check `tmux ls`, then retry") if panes.any?(&:nil?)
 
       panes = panes.flatten
+      t.panes = panes.map { |p| p[:pid] }
       t.sidebars = panes.select { |p| p[:sidebar] }.map { |p| [p[:pid], ProcessIdentity.start_of(p[:pid])] }
       inside = inside?(t, panes)
       return refuse("inside", "you're inside #{t.name} (#{inside})", fix: "run it from another workspace or a shell outside this one, or press d in the sidebar") if inside
@@ -217,6 +219,10 @@ module Switchboard
       t.branches = WorkspaceBranches.plan(t.repo, t.path, t.base, gc: false)
       refusal = safety(t)
       return refusal if refusal
+      # A forced delete never signals anything outside its session: one already running in
+      # the folder (busy, which --force overrides, named it) stops it here, before anything.
+      return refuse_alive(t, ["couldn't check for processes running in it"], changed: "none") if t.force && t.escaped.nil?
+      return refuse_alive(t, t.escaped.map { |p| process_line(p) }, changed: "none") if t.force && t.escaped.any?
 
       facts(t)
       nil
@@ -287,10 +293,12 @@ module Switchboard
       hooks = hook_states(t.real)
       newest = hooks.max_by { |_, _, epoch| epoch }
       agents = Agents.scan_pids
+      table = Processes.table
       mine = agents&.select { |_, cwd| under?(Paths.real_or_self(cwd), t.real) }&.keys
       # Each with its start time, so forget can prove it gone before dropping its typing lock.
       t.agents ||= (mine || []).filter_map { |pid| (start = ProcessIdentity.start_of(pid)).empty? ? nil : [pid, start] }
-      reasons = mine.nil? ? ["couldn't scan for running agents"] : agent_reasons(mine, newest)
+      reasons = mine.nil? ? ["couldn't scan for running agents"] : agent_reasons(mine, newest, table)
+      reasons.concat(process_reasons(t, table, mine || []))
       reasons << "∞ monitoring is live" if monitoring?(t.real)
       reasons << "a ◷ hold waits on background work" if KeyedMarkerStore.entries(OffstageHold.state_dir).any? { |_, c, _| c.split("\t").first == t.real }
       t.sessions.each do |s|
@@ -305,9 +313,8 @@ module Switchboard
     # report must be `done` and written after every agent started: both Claude and Codex
     # report `done` at startup and at every turn's end, so an older one (or one from the
     # same second) is a previous agent's. Claude's own session can still say it isn't idle.
-    def agent_reasons(pids, newest)
+    def agent_reasons(pids, newest, table)
       working = newest && newest[0] != "done" ? ["an agent is #{newest[0]} in #{newest[1]}"] : []
-      table = Processes.table unless pids.empty? || working.any?
       pids = pids.select { |pid| table.key?(pid) || ProcessIdentity.alive?(pid) } if table # gone since pgrep
       if pids.empty?
         fresh = newest && Time.now.to_i - newest[2] <= AgentState::PRESENCE_TTL
@@ -329,6 +336,21 @@ module Switchboard
       return ["couldn't read the agents' command lines"] if argv.nil?
 
       claude_reasons(pids.select { |pid| claude?(pid, table, argv) })
+    end
+
+    # Processes running in the tree that won't go with the session: not under one of its
+    # panes (the kill's SIGHUP reaches those) and not an agent judged above or its helpers.
+    # Preflight's answer is kept: the pane processes are what the post-close wait waits on,
+    # and the rest are what a forced delete refuses over (nil: the scan failed).
+    def process_reasons(t, table, agents)
+      procs = table && Processes.in_tree(t.real, table: table)
+      return ["couldn't check for processes running in it"] if procs.nil?
+
+      inside, outside = procs.partition { |p| Processes.subtree?(p[:pid], t.panes || [], table) }
+      outside.reject! { |p| Processes.subtree?(p[:pid], agents, table) }
+      t.pane_procs ||= inside.map { |p| [p[:pid], p[:start]] }
+      t.escaped ||= outside
+      outside.map { |p| "process #{p[:pid]} (#{p[:comm]}) runs in it outside its tmux session" }
     end
 
     # By ps name or command line (npm's runs as `node …/claude`), or by its session file
@@ -410,12 +432,17 @@ module Switchboard
       receipt["sessions_gone"] = closed[:gone]
       advance(receipt, "session_closed")
       t.sessions = [] # gone now: the re-check asks only about what could still write
+      t.panes = []    # and so are its panes: every process still in the tree counts
       again = safety(t)
       return abandon(t, refuse("changed-during-delete", "#{t.name} changed after the check: #{again.what}",
                                changed: "its session is closed and its record acknowledged",
                                fix: "the agent in it was stopped; open it to see what changed (`claude --continue` there resumes it), then retry or ask a human")) if again
       return abandon(t, changed_head(t)) if !t.force && !token_ok?(t)
 
+      if t.force
+        left = left_running(t)
+        return abandon(t, left) if left
+      end
       removed = remove_folder(t, receipt)
       return removed if removed.is_a?(Result)
 
@@ -491,7 +518,7 @@ module Switchboard
       end
       return { gone: gone } unless wait
 
-      waiting = t.sidebars + (t.agents || [])
+      waiting = t.sidebars + (t.pane_procs || t.agents || []) # the session's own processes; one elsewhere never exits on the kill
       deadline = Time.now + POST_CLOSE_WAIT
       sleep 0.1 while Time.now < deadline && waiting.any? { |pid, start| ProcessIdentity.same?(pid, start) }
       t.sidebars.each do |pid, start|
@@ -500,6 +527,32 @@ module Switchboard
         nil
       end
       { gone: gone }
+    end
+
+    # Forced only: the session is closed, and anything still running in the folder (one
+    # that outlived its SIGHUP) stops the delete before the folder, named. An unforced one
+    # already refused through busy. An agent session (an agent with a terminal) and its
+    # helpers that have one are left running, as an unforced delete leaves them.
+    def left_running(t)
+      table = Processes.table
+      procs = table && Processes.in_tree(t.real, table: table)
+      return refuse_alive(t, ["couldn't check for processes still running in it"]) if procs.nil?
+
+      agents = (t.agents || []).select { |pid, start| ProcessIdentity.same?(pid, start) }.map(&:first)
+      sessions = agents.select { |pid| table[pid] && !Processes.detached?(table[pid]) }
+      procs.reject! { |p| !Processes.detached?(p) && Processes.subtree?(p[:pid], sessions, table) }
+      procs.empty? ? nil : refuse_alive(t, procs.map { |p| process_line(p) })
+    end
+
+    def process_line(p)
+      why = if !Processes.detached?(p) then ", has a terminal" elsif p[:uid] != Process.uid then ", another user's" end
+      "process #{p[:pid]} (#{p[:comm]}#{why})"
+    end
+
+    # Delete never signals a process outside its session: the person stops it.
+    def refuse_alive(t, lines, changed: "#{t.name}'s session is closed if it had one; the folder was not touched")
+      refuse("process-alive", "#{lines.first} is still running in #{t.name}", changed: changed, details: lines.drop(1),
+                                                                              fix: "stop it (or close that terminal, or `cd` out of the folder), then retry")
     end
 
     # Step 5. Unforced, git itself refuses a file written after the re-check. Returns the
