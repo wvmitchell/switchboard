@@ -106,6 +106,35 @@ newer to fetch.
 `switchboard doctor` flags a binding that's wired in config but not yet **live**
 in the running server — the "prefix-s stopped working after a `git pull`" case.
 
+## Clicking rows
+
+A left click on a sidebar row does what `↵` does: it switches to the workspace or folds the
+project. It needs tmux's own mouse support on. To check, from any pane of the sidebar's
+session:
+
+```sh
+tmux display -p '#{mouse}'   # 1 = on; from outside, add -t '=sb/<project>/<name>'
+```
+
+To turn it on for good, add this to `~/.tmux.conf` and reload it:
+
+```sh
+set -g mouse on
+```
+
+```sh
+tmux source-file ~/.tmux.conf
+```
+
+A working click moves the highlight to the row on press and opens it on release; the `?`
+overlay lists `click  same as ↵`, and `switchboard doctor` prints a `sidebar clicks:` line.
+
+To turn clicks off for the sidebar only (so its text selects natively and the wheel scrolls
+it again), put `sidebar_mouse: false` in your config. `set -g mouse off` turns the mouse off
+for all of tmux. Either change reaches a running sidebar when it next comes on screen or
+gets focus. See [Clicking a row](explanation-sidebar-views.md#clicking-a-row) for what a
+click can and can't do.
+
 ## Troubleshooting
 
 - **Key didn't change.** Run `switchboard doctor`. If it says the binding isn't
@@ -132,6 +161,9 @@ in the running server — the "prefix-s stopped working after a `git pull`" case
 - **A malformed config.** switchboard keeps running and keeps the tmux keys already
   bound (the defaults only if none were bound yet); `doctor` reports the parse error and
   the file to fix, and `install` and `upgrade` exit 1 until it's fixed.
+- **A click on a row does nothing.** Run `switchboard doctor` and read its
+  `sidebar clicks:` line: it names what's off (tmux's `mouse`, a session that overrides it,
+  or `sidebar_mouse: false`). After turning one on, focus another pane and come back.
 - **A sidebar key didn't change.** Run `switchboard doctor`. If it says the value
   "isn't a single printable key", you used more than one character (or a named
   key) — `sidebar_keys` takes exactly one printable char. If it says the key

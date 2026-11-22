@@ -2,7 +2,8 @@
 
 How the sidebar decides what to show: folds, the full header and the pane width, which
 every window's sidebar shares, and the diff counts, the search and the `?` overlay,
-which each sidebar keeps to itself. It also covers how the in-sidebar keys are remapped.
+which each sidebar keeps to itself. It also covers how the in-sidebar keys are remapped,
+and what a mouse click on a row does.
 
 ## Shared view state lives on disk
 
@@ -584,6 +585,83 @@ switch-in `C-l` or a peer's warm broadcast can land between your `3` and your `j
 leave the count alone. Focus leaving the pane does clear it. That can't split a count
 you're typing, and it keeps a forgotten digit from turning your next `j`, an hour later,
 into a jump.
+
+## Clicking a row
+
+The sidebar is built for the keyboard, but a hand already on the mouse (after clicking into
+an agent's pane) shouldn't have to come back to `j j ↵`. So a left click on a row does what
+`↵` does there: it switches to a workspace or branch, or folds or unfolds a project. That's
+the whole feature: no wheel scrolling, no clickable footer, no right-click menu.
+
+### Two switches decide whether clicks work
+
+Clicks need tmux's own `mouse` option on, and the `sidebar_mouse` config key not set to
+`false` (it's on by default). tmux's option comes first because with it off, tmux never
+passes the mouse to any pane, so the sidebar couldn't see a click anyway. But tmux's option
+alone isn't a real opt-in: plenty of people turn it on only to click between panes, and some
+tmux builds ship with it on. `sidebar_mouse: false` is for them. It keeps the sidebar out of
+the mouse while the rest of tmux keeps it.
+
+While both are on, the sidebar asks the terminal for mouse reports (`\e[?1006h\e[?1000h`,
+the SGR format first, so a click can never arrive as raw bytes the key parser would read as
+keys). That has a cost over the sidebar's pane, and it's the same cost any mouse-aware
+program in a tmux pane has:
+
+- the wheel no longer scrolls the sidebar into copy-mode; it does nothing;
+- dragging, double-clicking and triple-clicking no longer select text there, and the
+  right-click pane menu doesn't open (your terminal's selection modifier, often ⌥ or ⇧,
+  still selects natively);
+- everything else in tmux is unchanged.
+
+With either switch off, the sidebar never asks for reports and none of this applies.
+
+A change to either switch reaches a running sidebar the next time it rebuilds while on
+screen (a switch-in, or the tree tick every ~15 seconds) or the next time you focus it,
+whichever comes first. An open prompt (`n`, `r`, `a` or a y/N question) holds that off
+until you finish or cancel it.
+
+### A click acts on release, on the row you pressed
+
+The press moves the cursor to the row under it, so you see what you're about to open. The
+release then opens *that* row, the one the press found, not whatever is on that line by
+then: a reload can repaint the tree between press and release, and the click must not land
+somewhere else. A release on another line cancels, like dragging off a button, though the
+cursor stays where the press put it.
+
+Finding the row uses the frame the sidebar last painted: which rows were on screen and how
+many header lines sat above them. A click on the header, the footer or the blank space below
+the tree does nothing. A click in a prompt, a `y/N` question or a message you have to
+dismiss never types, answers or dismisses anything, and a click under the `?` or `p` overlay
+leaves it open.
+
+### A double-click opens once
+
+A double-click is two clicks, so without care the second one would act too: fold a project
+and unfold it again, or land in the sidebar of the session the first click just switched to.
+Two guards stop that:
+
+- **In the same sidebar,** a second click on the same line within about half a second of a
+  click that acted is ignored. It's keyed on the line, not the row, because a fold can move
+  another row under your pointer. Expanding a project and at once clicking one of its
+  workspaces (another line) still works.
+- **Across sessions,** a click that switches writes the time into a tmux option on the
+  target session (`@sb_click_switch`). The target's sidebar drops a click that could have
+  arrived within half a second of it. Its timing is about arrival, not reading: a sidebar busy
+  with its switch-in reload reads queued input late. tmux has already moved focus to that
+  sidebar by then, so the sidebar hands it back to the workspace's own pane and your typing
+  goes to the agent.
+
+The option holds a bare number from the system's monotonic clock, which every process on
+the machine shares, and it dies with its session. It isn't a file on purpose: it's
+short-lived, nothing reads it outside a click, and keeping its meaning fixed lets old and new
+sidebars read it during a [hot reload](explanation-sidebar-lifecycle.md#swapping-in-new-code-without-a-restart).
+
+### Why not a tmux binding
+
+tmux could turn a click into a key (bind `MouseDown1Pane` to send `↵`). That would mean
+rewriting the user's tmux bindings, which only the installed binary may do, overriding any
+mouse binding of their own, and still parsing which row was hit. Reading the report in the
+sidebar keeps all of it in the one process that knows what it painted.
 
 ## Related
 
