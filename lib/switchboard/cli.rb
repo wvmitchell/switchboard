@@ -38,6 +38,7 @@ module Switchboard
       when "disable-hooks"     then exit(1) if disable_hooks(argv[1]) == false
       when "rename"            then exit(1) unless rename(argv[1])
       when "path"              then path(argv[1])
+      when "name"              then workspace_name(argv[1])
       when "delete"            then exit(delete(argv.drop(1)))
       when "rename-nudge"      then HookCommands.rename_nudge(argv.drop(1))
       when "sync-session-name" then sync_session_name(argv[1], argv[2])
@@ -265,7 +266,7 @@ module Switchboard
               else "in ANOTHER project (#{project}, you're in #{here})"
               end
       puts %(dispatched a new workspace #{where}: "#{rec['name']}" (◌ building))
-      puts "  path: #{home_relative(rec['path'])}"
+      puts "  path: #{Paths.home_relative(rec['path'])}"
       puts "  id:   #{rec['id']}"
       puts "  delete: switchboard delete --creation #{rec['id']}"
     end
@@ -287,20 +288,13 @@ module Switchboard
 
       here = Model.workspace_at(config)&.project
       name_w = projects.map { |p| p["name"].length }.max
-      paths = projects.map { |p| home_relative(p["path"]) }
+      paths = projects.map { |p| Paths.home_relative(p["path"]) }
       path_w = paths.map(&:length).max
       projects.each_with_index do |p, i|
         mark = p["name"] == here ? "*" : " "
         puts "#{mark} #{p['name'].ljust(name_w)}  #{paths[i].ljust(path_w)}   (base #{p['base_ref']})"
       end
       true
-    end
-
-    def home_relative(path)
-      home = Dir.home
-      path.to_s == home || path.to_s.start_with?("#{home}/") ? "~#{path.to_s.delete_prefix(home)}" : path.to_s
-    rescue ArgumentError
-      path.to_s
     end
 
     # The one line the worker types into a dispatched workspace's pane.
@@ -733,6 +727,37 @@ module Switchboard
       end
     end
 
+    # `switchboard name [path]`: `path` the other way round. The workspace a folder (default:
+    # the cwd) belongs to, as the `project/name` that `path` and `delete` accept; the nearest
+    # git checkout above it decides. Failures as `path`'s: empty stdout and a [token] on
+    # stderr: 1 not found, 3 names unreadable, 4 a project's own checkout.
+    def workspace_name(arg)
+      dir = begin
+        File.expand_path(arg.to_s.empty? ? "." : arg)
+      rescue ArgumentError # `~someone` with no such user, or `~` with no HOME
+        arg
+      end
+      unless File.exist?(dir)
+        warn "[not-found] no such folder: #{dir}"
+        exit 1
+      end
+      status, map, err = Names.read_all
+      unless status == :ok
+        warn "[names-unreadable] #{map}: #{err}"
+        exit 3
+      end
+      wt = Model.workspace_at(config, File.directory?(dir) ? dir : File.dirname(dir))
+      unless wt
+        warn "[not-found] no workspace owns #{dir} (no registered project's git lists it)"
+        exit 1
+      end
+      if wt.primary
+        warn "[primary] #{dir} is in #{wt.project}'s own checkout, not a workspace"
+        exit 4
+      end
+      puts "#{wt.project}/#{wt.display_name}"
+    end
+
     # Play a configured sound, for trying audio out / picking sounds (and showing
     # it off). `switchboard sound [done|waiting|alert]` — defaults to done. Uses the
     # GLOBAL sound config (no project context), blocks until it finishes, and
@@ -780,6 +805,7 @@ module Switchboard
           switchboard disable-hooks [P]  remove them from that worktree
           switchboard rename NAME    rename the current workspace (name + branch + tmux session + Claude session name; the folder never moves)
           switchboard path NAME      print the folder of the workspace called NAME (or PROJECT/NAME): p=$(switchboard path x) && cd -- "$p"
+          switchboard name [PATH]    print the PROJECT/NAME of the workspace a folder (default: here) belongs to
           switchboard delete NAME    delete a workspace and everything switchboard kept for it; refuses anything that could lose work (-n: the plan; --creation ID: the one `new` built; --force: a human's override)
           switchboard monitoring on [secs]|off  flag this workspace as running a background monitor (∞; optional secs = liveness ttl for slow loops; bare = status)
           switchboard monitoring notify  (from a monitored workspace) surface this cycle's output — bold + a distinct alert sound, even though routine ticks stay silent

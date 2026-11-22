@@ -287,7 +287,9 @@ are compared the way tmux will spell them, so `foo.bar` and `foo-bar` count as t
 
 The cost is that a folder's name on disk stops matching what you call the workspace.
 `switchboard path <name>` closes that gap for shells and scripts: it prints the folder of
-the workspace with that name.
+the workspace with that name, and `switchboard name` goes the other way, from a folder to
+its `project/name`. `doctor` does the same in its own output: a line about one workspace
+leads with its name and puts the folder after it.
 
 Every sidebar is its own process, and one still running older code would show folder names
 and race a rename. So a sidebar that reads stored names says so with a pane option
