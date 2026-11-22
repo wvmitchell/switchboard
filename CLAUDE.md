@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Switchboard is a keyboard-only switcher/creator for git-worktree workspaces — a
+Switchboard is a keyboard-first switcher/creator for git-worktree workspaces — a
 terminal-native alternative to Conductor/emdash. It's pure Ruby with **zero gem
 dependencies**: everything is stdlib plus shelling out to `tmux`, `git`, and `gh`. There
 is no Gemfile and no build step. Ruby **>= 3.3** is required (CI runs 3.3 and 4.0);
@@ -60,7 +60,7 @@ locally without touching real state:
 | `switchboard delete`, the `Leftovers` inventory, delete receipts | [explanation-architecture § Deleting leaves nothing behind](docs/explanation-architecture.md#deleting-leaves-nothing-behind), [reference-cli](docs/reference-cli.md) |
 | Workspace names (`Names`), rename that never moves a folder, `switchboard path` / `name` | [explanation-architecture § A rename never moves the folder](docs/explanation-architecture.md#a-rename-never-moves-the-folder), [reference-cli](docs/reference-cli.md) |
 | Session-name sync (typing `/rename` into Claude's pane) | [explanation-session-name-sync](docs/explanation-session-name-sync.md) |
-| Folds, full header, width, diff counts, `/` search, `?` overlay, `sidebar_keys` | [explanation-sidebar-views](docs/explanation-sidebar-views.md) |
+| Folds, full header, width, diff counts, `/` search, `?` overlay, `sidebar_keys`, clicks | [explanation-sidebar-views](docs/explanation-sidebar-views.md) |
 | Bracketed paste (`PasteFrame`): a paste is never keys, in the tree, a search or a prompt | [reference-sidebar § Pasting](docs/reference-sidebar.md#pasting), [explanation-background-dispatch](docs/explanation-background-dispatch.md) |
 | Baked paths (`StablePath`), releases, the update line, `switchboard upgrade` | [explanation-distribution](docs/explanation-distribution.md), [reference-release](docs/reference-release.md) |
 | Config keys | [reference-config](docs/reference-config.md) |

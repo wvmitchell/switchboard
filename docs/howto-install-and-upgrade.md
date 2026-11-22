@@ -202,6 +202,10 @@ switchboard doctor
 
 ## Troubleshooting
 
+- **After going back to an older release, clicks in the sidebar type stray text or close
+  menus.** The older sidebar inherited the newer one's mouse reporting. Press your toggle
+  key (`prefix-s` by default) twice: the sidebar restarts on the installed code without it.
+
 - **`Refusing to load formula … from untrusted tap wvmitchell/switchboard`.**
   Homebrew wants the tap trusted first: run `brew trust wvmitchell/switchboard`,
   then `brew install switchboard` again.

@@ -2,7 +2,7 @@
 
 **Run a dozen coding agents at once and always know who needs you — without touching the mouse.**
 
-Switchboard is a keyboard-only `tmux` sidebar for git-worktree workspaces. Every
+Switchboard is a keyboard-first `tmux` sidebar for git-worktree workspaces. Every
 workspace shows up as a row with a live dot telling you whether its agent is thinking,
 done, or waiting on you; one keystroke switches to it. Worktrees are discovered straight
 from `git`, so anything you create just shows up. Pure Ruby, zero gem dependencies.

@@ -141,6 +141,14 @@ module Switchboard
                            # the first reload) so run's opening pin matches the spawn -l.
       @resized = false     # a ←/→ press is pending: commit_resize pins + persists ONCE
                            # after the input burst drains, so a held key stays smooth
+      @mouse = nil         # mouse reports on in this pane? nil until the first sync_mouse
+      @mouse_press = nil   # [row_key, line, monotonic, lit] of a left press awaiting its release
+      @mouse_click = nil   # [row_key, line, deadline]: the last click, which a second one opens
+      @mouse_open = nil    # [row_key, at]: a click's open, held until tmux's double-click has run
+      @painted_bar = nil   # the row_key render last lit with the cursor bar (nil unfocused)
+      @focused_at = nil    # monotonic of the last focus-in
+      @painted_top = nil   # the header height render last painted rows under (hit tests)
+      @idle_read = false   # the last read held only reports that can't act: skip its repaint
       @visible = false     # is this pane currently on screen? gates render + pulse;
                            # the single source of truth, mutated only via set_visible
       @pane_tty = nil      # our pane's pty, captured at startup — the durable pane
@@ -205,7 +213,8 @@ module Switchboard
       @last_scan = monotonic
       loop do
         maybe_reexec # returns only when no reload is due (or it failed safe)
-        render if @visible # never paint a hidden pane
+        open_due_click
+        render if @visible && !@idle_read # never paint a hidden pane
         # Wake often enough to animate the spinner/blink, but only while a dot is
         # on screen; otherwise sit on the slow REFRESH/IDLE interval. State scans
         # stay gated to REFRESH (scan_due?) so the fast frames don't hammer tmux.
@@ -217,7 +226,14 @@ module Switchboard
           break if key == :eof # our pane's pty hit EOF (closed) — exit, don't spin as an orphan
           break unless handle(key)
           commit_resize if @resized # ←/→ pinned + persisted ONCE per burst, post-drain
+          # A wheel flood never times the select out, so it would starve the tick (and the
+          # rebuild that applies a mouse-off or config edit).
+          if @idle_read && scan_due?
+            @idle_read = false # the tick may change what's drawn
+            break unless tick
+          end
         else
+          @idle_read = false
           @paste_frame.expire # only here, never in handle: a busy sidebar can't end a paste early
           @pulse += 1
           # While pulsing we wake ~8x/s; re-check visibility a little faster than a
@@ -240,9 +256,8 @@ module Switchboard
       # deadline would make every select return at once (R8). Closing it is a key.
       timeout = [timeout, PasteFrame::QUIET].min unless @paste_frame.idle? # a lost end marker heals on time
       wait = @reloader.reexec_wait
-      return timeout unless wait && reexec_allowed?
-
-      [timeout, wait].min
+      timeout = [timeout, wait].min if wait && reexec_allowed?
+      [timeout, mouse_open_wait].compact.min # a click's open waiting out tmux's (Mouse)
     end
 
     # A thinking/waiting dot is actually on screen and worth animating. Gated on
@@ -869,6 +884,7 @@ module Switchboard
       # ?1004h opts this pane into focus reporting — without it tmux won't send
       # the focus in/out escapes (\e[I / \e[O) we use to dim instantly.
       print "\e[?25l\e[?1004h\e[?2004h" # hide cursor, request focus events, bracket pastes
+      sync_mouse
       # Clear — unless a code reload exec'd us in place: the old image's frame stays up
       # until ours overwrites it, so the swap shows no blank frame (#48).
       print "\e[2J" unless @reloader.resume
@@ -877,6 +893,7 @@ module Switchboard
     def teardown
       @reloader.restore_reload_trap
       $stdin.cooked!
+      print Mouse::MOUSE_OFF unless @mouse == false
       print "\e[?2004l\e[?1004l\e[?25h" # stop bracketing pastes and focus events, show cursor
     rescue StandardError
       nil
@@ -965,3 +982,4 @@ require_relative "sidebar/input"
 require_relative "sidebar/actions"
 require_relative "sidebar/prompt"
 require_relative "sidebar/rows"
+require_relative "sidebar/mouse"

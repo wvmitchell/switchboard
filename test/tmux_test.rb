@@ -979,5 +979,21 @@ module Switchboard
           end
         end
       end
-    end  end
+    end
+
+    def test_mouse_is_on_only_for_a_one
+      { "1\n" => true, "0\n" => false, "" => false, nil => false }.each do |out, on|
+        stub_method(Tmux, :query, ->(*) { out }) { assert_equal on, Tmux.mouse?("%1"), out.inspect }
+      end
+      refute Tmux.mouse?(nil), "outside tmux"
+    end
+
+    def test_mouse_states_name_the_sessions_that_override_the_global_value
+      outs = { "show-options" => "on\n", "list-sessions" => "1\tsb/app/a\n0\tsb/app/b\n0\tother\n" }
+      stub_method(Tmux, :query, ->(cmd, *) { outs[cmd] }) do
+        assert_equal [true, { "sb/app/b" => false }], Tmux.mouse_states
+      end
+      stub_method(Tmux, :query, ->(*) { nil }) { assert_nil Tmux.mouse_states, "no server" }
+    end
+  end
 end

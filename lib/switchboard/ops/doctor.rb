@@ -31,6 +31,7 @@ module Switchboard
       doctor_max_branch_history(config)
       doctor_install(config)
       doctor_sidebar_keys(config)
+      doctor_sidebar_clicks(config)
       doctor_hooks(config, index)
       doctor_prs(config)
       doctor_sounds(config)
@@ -41,6 +42,23 @@ module Switchboard
       doctor_session_names(index)
       doctor_orphan_sidebars
       doctor_reload_failures
+    end
+
+    # Whether a click on a sidebar row acts, and which gate stops it: an info row, never a
+    # failure (a click is optional). Doctor runs outside the sidebar's pane, so it reads
+    # tmux's global `mouse` and names any sb/ session that overrides it. Silent with no server.
+    def doctor_sidebar_clicks(config)
+      on, overrides = Tmux.mouse_states
+      return if on.nil?
+
+      msg = if !config.sidebar_mouse?
+              tmux_ok = on || overrides.values.any?
+              "off (sidebar_mouse: false in #{config.file}; #{tmux_ok ? 'remove it to turn them on' : 'tmux mouse is off too'})"
+            elsif on then "on (global tmux mouse on)"
+            else "off (global tmux mouse off; `set -g mouse on` enables them)"
+            end
+      differs = config.sidebar_mouse? ? overrides.map { |name, val| "#{val ? 'on' : 'off'} in #{name} by a session override" } : []
+      puts "  #{Marks.note} sidebar clicks: #{[msg, *differs].join('; ')}"
     end
 
     # Every workspace by its real path, built once per run, so a per-workspace line can lead

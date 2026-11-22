@@ -246,7 +246,10 @@ One line, ending in the `? help` gateway except during a search:
 
 - **Normal:** the highlighted row's nav hint + `? help` — `↑↓ move · ↵ open · ? help` on
   a workspace or branch row, `↑↓ move · ↵ open/collapse · ? help` on a project. On the home session it shows the
-  title; on an empty tree, the "press `a` to add a project" invite. While you're
+  title; on an empty tree, the "press `a` to add a project" invite. A left click on a row
+  selects it and a click on the highlighted row (or a double-click) acts like `↵` while clicks
+  are live (tmux `mouse` on and `sidebar_mouse` not `false`); the `?` overlay then lists
+  `click  select; again = ↵`. While you're
   typing a movement count (the `3` of `3j`), the count takes the nav verb's or title's
   place, as `3… · ? help`, until the next key uses it; `count_indicator: false` hides it.
 - **During a `/` search:** one line — the query, your place among the matches and the keys:

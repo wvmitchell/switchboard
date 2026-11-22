@@ -36,6 +36,7 @@ or `e` in the sidebar — both reload on save.
 | `count_indicator` | bool | `true` | Show a half-typed movement count (the `3` of `3j`) in the sidebar footer. `false` hides it; counts still work. Global only. |
 | `max_branch_history` | whole number | `10` | How many branch rows a workspace that has held several branches shows. Older rows drop off the list; the branches stay. Global only. See [`max_branch_history`](#max_branch_history). |
 | `prewarm` | bool | `true` | Keep off-screen sidebars warm so switching sessions doesn't flash a stale tree. `false` restores full dormancy (no off-screen work). See [`prewarm`](#prewarm). |
+| `sidebar_mouse` | bool | `true` | With tmux's own `mouse` on, a left click on a sidebar row selects it, and a click on the highlighted row (or a double-click) does what `↵` does there. `false` keeps the sidebar out of the mouse (its text selects natively) while the rest of tmux keeps it. Global only. See [Clicking a row](explanation-sidebar-views.md#clicking-a-row). |
 | `remote_link_stale_after` | minutes or `false` | `120` | How long a `/remote-control`-linked Claude session can sit idle before its `⇅` turns grey and it counts as an **idle link**. `false` or `0` turns that off; anything else invalid uses 120. Global only. See [`remote_link_stale_after`](#remote_link_stale_after). |
 | `update_check` | bool | `true` | Homebrew installs: check for a newer release in the background (one `git ls-remote` of switchboard's public release tags every 4 hours, nothing else sent) and show `↑ 0.58.0 available · switchboard upgrade` under the wordmark. `false` stops the check and hides the line; `SWITCHBOARD_NO_UPDATE_CHECK=1` in the environment stops the check too. Clone and `--HEAD` installs never check. Global only. |
 | `sync_session_name` | bool | `true` | After a rename, give the workspace's live Claude session the new name too (what the phone's session list and the resume picker show). Per-project override wins. See [`sync_session_name`](#sync_session_name). |
@@ -70,6 +71,7 @@ diff_counts: true                        # show +adds −dels on each row (false
 count_indicator: true                    # show a half-typed count (the 3 of 3j) in the footer
 max_branch_history: 10                   # branch rows per workspace; older rows drop off the list
 prewarm: true                            # keep off-screen sidebars warm (false = full dormancy)
+sidebar_mouse: true                      # with tmux mouse on, click selects a row, a click on the highlight acts like ↵
 remote_link_stale_after: 120             # minutes before an idle /rc link's ⇅ turns grey
 update_check: true                       # Homebrew: a line under the wordmark when a newer release is out
 sync_session_name: true                  # a rename renames the live Claude session too

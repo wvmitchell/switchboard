@@ -117,6 +117,9 @@ placeholder name. It checks, with the fix inline for anything red:
   after a `git pull` until tmux reloads; `doctor` tells you when a reload is
   needed. It also names a `tmux_keys` key you edited in `config.yml` that tmux
   hasn't applied yet (`switchboard upgrade` applies it), and a key tmux refused.
+- Whether a click on a sidebar row works, as a `sidebar clicks:` line: on, or what turns
+  it off (tmux's global `mouse`, an `sb/` session that overrides it, or `sidebar_mouse:
+  false`). See [Clicking a row](explanation-sidebar-views.md#clicking-a-row).
 - Whether a newer release is out (Homebrew installs check GitHub's release tags,
   bounded to 5s, and say so when offline); a clone or `--HEAD` install says which
   branch it follows. `switchboard upgrade` fetches it.

@@ -33,7 +33,7 @@ module Switchboard
       worktree_root projects_root base branch_prefix session_command worktree_creation_command
       prune_on_launch auto_rename diff_counts prewarm background_presence
       remote_link_stale_after update_check sync_session_name count_indicator agent_dispatch
-      max_branch_history sounds tmux_keys sidebar_keys projects
+      max_branch_history sidebar_mouse sounds tmux_keys sidebar_keys projects
     ].freeze
 
     # Top-level keys switchboard once read and no longer does, with what replaced them. Still
@@ -90,6 +90,7 @@ module Switchboard
       # count_indicator: true                      # show a half-typed count (the 3 of 3j) in the sidebar footer; false hides it, counts still work
       # max_branch_history: 10                     # how many branch rows a workspace that has held several branches shows; older ones drop off the list, the branches stay
       # prewarm: true                              # keep off-screen sidebars warm so switching sessions doesn't flash a stale tree
+      # sidebar_mouse: true                        # with tmux `mouse on`, a click selects a sidebar row and a click on the highlighted one does what ↵ does; false keeps the sidebar out of the mouse
       # remote_link_stale_after: 120               # minutes a /remote-control-linked session can sit idle before its ⇅ turns grey; false turns it off
       # update_check: true                        # Homebrew installs: a line under the wordmark when a newer release is out (one git ls-remote every few hours); false never checks
       # sync_session_name: true                    # after a rename, type /rename <name> into the workspace's Claude pane, between turns and while nobody is at it (not focused, untouched for 2 s), so its session (and phone list) shows the workspace name
@@ -354,6 +355,13 @@ module Switchboard
     # full dormancy (no off-screen work). Global only, like diff_counts.
     def prewarm?
       @data.fetch("prewarm", true) != false
+    end
+
+    # Whether the sidebar takes clicks: select a row, open the highlighted one (also needs tmux's `mouse` on).
+    # On by default; `sidebar_mouse: false` keeps the sidebar out of mouse reporting, so
+    # its text selects natively while tmux's pane clicks keep working. Global only.
+    def sidebar_mouse?
+      @data.fetch("sidebar_mouse", true) != false
     end
 
     # Seconds a /remote-control-linked session may sit idle before its ⇅ turns grey

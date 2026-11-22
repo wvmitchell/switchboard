@@ -49,7 +49,7 @@ drifts from a remap.
 | `g` / `G` | `top` / `bottom` | Jump to the top / bottom of the tree. |
 | `←` / `→` | _(fixed)_ | Narrow / widen the sidebar pane (2 cols per press; hold to resize smoothly). The width is shared across every window's sidebar and survives a restart. Inert while you type a search. |
 | `/` | `filter` | Search the tree by name, highlighting matches. See [Search](#search) below. |
-| `↵` (Enter) | _(fixed)_ | On a workspace/branch row: switch to its tmux session (creating it if needed). On a project header: collapse/expand it. |
+| `↵` (Enter) | _(fixed)_ | On a workspace/branch row: switch to its tmux session (creating it if needed). On a project header: collapse/expand it. A click on the highlighted row, or a double-click on any row, does the same (a click elsewhere selects) while tmux's `mouse` is on and [`sidebar_mouse`](reference-config.md#top-level-keys) isn't `false`; set `sidebar_mouse: false` to turn clicks off for the sidebar only, or `set -g mouse off` for all of tmux. See [clicking rows](howto-keybindings.md#clicking-rows). |
 | `a` | `add_project` | Add a project — register a local repo, clone a URL, or create a new repo (a small prompt). |
 | `n` | `new_workspace` | Dispatch a new worktree + branch in the highlighted project, in the background: type a task for the agent (or `↵` for none, `Esc` to cancel). You stay put; the row shows `◌` while it builds and pings you when it's ready (`✘` if it fails). No name prompt — it gets a placeholder name, which stays its folder name for good; you rename it later with `r` (or let the agent name it). |
 | `o` / `Ctrl-O` | `open_pr` | Open the highlighted PR in the browser (`gh pr view --web`). Only the `o` letter is remappable; `Ctrl-O` is a fixed alias. |

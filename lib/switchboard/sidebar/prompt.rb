@@ -60,7 +60,7 @@ module Switchboard
         typed = take_typeahead
         loop do
           result = if typed.empty?
-                     chunk = read_prompt_key or return nil # read fault / dead pane: cancel
+                     chunk = whole_escape(read_prompt_key) or return nil # read fault / dead pane: cancel
                      edit_buffer(chunk, buf, fold_newlines: task)
                    else
                      edit_items(typed, buf, fold_newlines: task, whole: true) # already framed and tokenized
@@ -227,6 +227,16 @@ module Switchboard
         end
       end
 
+      # A read that stops inside an escape (Input.escape_tail?) gets the rest, which tmux has
+      # already queued, so a split click can't type its tail and a split \e isn't an Esc. A
+      # lone \e with nothing after it is the Esc key.
+      def whole_escape(chunk)
+        while chunk && Input.escape_tail?(chunk) && (more = escape_rest)
+          chunk = chunk.b + more.b
+        end
+        chunk
+      end
+
       # Repaint the inline prompt on the bottom row and park a real cursor right after
       # the typed text. An empty buffer shows a dim hint advertising the escape hatch
       # (issue #68); it clears the moment you type so a long name isn't crowded on the
@@ -300,8 +310,8 @@ module Switchboard
         held = []
         after = []
         loop do
-          chunk = read_prompt_key or return nil
-          tokens = input_items(chunk)
+          chunk = whole_escape(read_prompt_key) or return nil
+          tokens = input_items(chunk).reject { |t| Mouse.report?(t) } # a click can't answer, or dismiss a flash
           at = tokens.index { |t| !Input::POKE_BYTES.include?(t) || (leaving_closes && t == FOCUS_OUT) }
           next held.concat(tokens) unless at
 

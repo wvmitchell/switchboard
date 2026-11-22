@@ -49,6 +49,30 @@ module Switchboard
     end
 
     def untagged(log) = log.reject { |e| e.is_a?(Array) && e.first == :tag }
+
+    def wheel_flood(tick_due:)
+      ticks = 0
+      _out, log, = run_sidebar(visible: true, held_stdin: lambda { |sb, w|
+        sb.define_singleton_method(:scan_due?) { tick_due }
+        sb.define_singleton_method(:tick) { ticks += 1; true }
+        w.write("\e[<64;5;5M" * 300) # past one READ_BYTES read, so a report splits
+        w.close
+      })
+      [log.count(:render), ticks]
+    end
+
+    # Value: protects=a wheel flood costs no repaints and can't starve the tick that applies a
+    # mouse-off or config edit; fails_when=the render skip or the post-read tick goes, or the
+    # skip reuses handle's return (ending the loop); why_new=both Eng voices; seam=none;
+    # no_claim=real trackpad rates
+    def test_a_wheel_flood_skips_its_repaint_but_still_ticks
+      renders, ticks = wheel_flood(tick_due: false)
+      assert_equal 2, renders, "the opening paint and the first loop top, none for the flood"
+      assert_equal 0, ticks
+      renders, ticks = wheel_flood(tick_due: true)
+      assert_operator ticks, :>=, 1, "a due tick runs though the select never timed out"
+      assert_operator renders, :>, 2, "and what it changed is painted"
+    end
     def reloader(sb) = sb.instance_variable_get(:@reloader)
     def request(sb) = reloader(sb).request_reload(visible: sb.instance_variable_get(:@visible))
 

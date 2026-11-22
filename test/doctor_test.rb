@@ -1421,6 +1421,24 @@ module Switchboard
 
     private
 
+    def clicks_row(states, config = {})
+      File.write(Config.path, YAML.dump(config))
+      stub_method(Tmux, :mouse_states, -> { states }) { capture { Doctor.doctor_sidebar_clicks(Config.new) } }
+    end
+
+    # Value: protects=doctor says which gate stops clicks and never claims they work when a
+    # session override stops them; fails_when=it reads only the global value or names one
+    # blocker; seam=none (tmux stubbed); no_claim=real multi-session tmux
+    def test_doctor_names_what_stops_sidebar_clicks
+      assert_match(/sidebar clicks: on \(global tmux mouse on\)$/, clicks_row([true, {}]))
+      assert_match(/on \(global tmux mouse on\); off in sb\/app\/x by a session override/, clicks_row([true, { "sb/app/x" => false }]))
+      assert_match(/off \(global tmux mouse off; `set -g mouse on` enables them\)/, clicks_row([false, {}]))
+      assert_match(/off \(sidebar_mouse: false in .*; remove it to turn them on\)/, clicks_row([true, {}], "sidebar_mouse" => false))
+      assert_match(/off \(sidebar_mouse: false in .*; tmux mouse is off too\)/, clicks_row([false, {}], "sidebar_mouse" => false))
+      refute_match(/✗/, clicks_row([false, {}]), "an info row, never a failure")
+      assert_empty clicks_row(nil), "no server: no row"
+    end
+
     def capture
       out = StringIO.new
       orig = $stdout

@@ -335,6 +335,27 @@ module Switchboard
       system("tmux", "-u", "rename-session", "-t", "=#{old_name}", new_name, out: File::NULL, err: File::NULL)
     end
 
+    # Whether tmux reports the mouse for this pane: its session's `mouse` option, which a
+    # format resolves through to the global value. Anything but "1" (unset, no tmux) is off.
+    def mouse?(pane = ENV["TMUX_PANE"])
+      return false unless pane
+
+      query("display-message", "-p", "-t", pane, "#\{mouse}").to_s.strip == "1"
+    end
+
+    # For doctor: the global `mouse` value and each sb/ session whose effective value
+    # differs from it, as [global_on, {session => on}]; nil when there's no server.
+    def mouse_states
+      global = query("show-options", "-gv", "mouse") or return nil
+      on = global.strip == "on"
+      rows = query("list-sessions", "-F", "#\{mouse}\t#\{session_name}").to_s.lines(chomp: true)
+      overrides = rows.filter_map do |line|
+        flag, name = line.split("\t", 2)
+        [name, flag == "1"] if name&.start_with?("sb/") && (flag == "1") != on
+      end
+      [on, overrides.to_h]
+    end
+
     def switch(name)
       if ENV["TMUX"]
         system("tmux", "-u", "switch-client", "-t", name)
