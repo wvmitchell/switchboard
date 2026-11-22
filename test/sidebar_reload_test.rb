@@ -1211,5 +1211,37 @@ module Switchboard
       assert_empty edges_scan(edges, { "/wt/a" => :done }), "no baseline, no edge — as for a fresh process"
       assert_equal({ hook_states: { "/wt/a" => :done }, notify: {} }, edges.baseline)
     end
+
+    # Value: protects=the tree's keys come back after a paste whose end marker was lost; fails_when=run's
+    # timeout branch stops calling PasteFrame#expire, so the tree reads every later key as paste text
+    # forever; why_new=the frame tests call expire by hand, never through run; seam=none; no_claim=real select timing
+    def test_the_run_loop_ends_a_lost_paste_on_a_quiet_timeout
+      now = 0
+      states = []
+      frame = nil
+      frame_open = -> { frame.open? }
+      script = [
+        ->(w) { w.write("\e[200~j"); [[$stdin]] },
+        ->(_) { states << :open_before_quiet if frame_open.call; now = 10; nil },
+        ->(w) { states << (frame_open.call ? :still_open : :expired); w.close; [[$stdin]] }
+      ]
+      writer = nil
+      held = lambda do |sb, w|
+        frame = sb.instance_variable_get(:@paste_frame)
+        writer = w
+      end
+      real = IO.method(:select)
+      select = lambda do |reads, *rest|
+        next real.call(reads, *rest) unless writer && reads.include?($stdin) # only run's own wait is scripted
+
+        (script.shift || ->(w) { w.close unless w.closed?; [[$stdin]] }).call(writer)
+      end
+      stub_method(Tmux, :notify, ->(*) {}) do
+        stub_method(Sidebar::PasteFrame, :clock, -> { now }) do
+          stub_method(IO, :select, select) { run_sidebar(visible: false, held_stdin: held) }
+        end
+      end
+      assert_equal %i[open_before_quiet expired], states
+    end
   end
 end

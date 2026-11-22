@@ -7,9 +7,9 @@ module Switchboard
     # (issue #68), the dim-hint prompt paint, and the flash message. Stays raw
     # the whole time so Esc/Ctrl-C arrive as bytes and always cancel.
     module Prompt
-      PASTE_START = "\e[200~" # bracketed paste (the task prompt turns it on)
-      PASTE_END = "\e[201~"
       FOCUS_OUT = "\e[O"
+      ONE_KEY_PASTE_NOTICE = "switchboard: paste ignored, so the prompt closed with no answer"
+      C1_PAIR = /\xC2[\x80-\x9F]/n
 
       private
 
@@ -50,23 +50,23 @@ module Switchboard
       # an overflowing line scrolls to the caret instead of clipping what you're typing
       # (DR11), a multi-line paste folds into one line instead of submitting its first
       # line on the spot (DR12), and it keeps non-ASCII text (a task pasted from Slack
-      # has smart quotes; a name stays ASCII). Pastes are fenced with bracketed paste,
-      # so a paste spread over many reads stays text — none of it can submit early or
-      # spill into the tree as keystrokes (where `d`…`y` deletes). Name prompts keep the
-      # original behavior.
+      # has smart quotes; a name stays ASCII). A bracketed paste is text in every prompt
+      # (PasteFrame): only a ↵ you press submits.
       def prompt_line(label, hint: " (esc cancel)", task: false)
         # bare ↵ ⇒ "": a name prompt cancels on it, the task prompt makes a bare create.
         # The task buffer holds raw bytes (UTF-8 can arrive split across reads).
         buf = task ? String.new : +""
-        paste = { on: false }
-        print "\e[?2004h" if task
         draw_prompt(label, display_text(buf, task), hint: hint, tail: task)
         typed = take_typeahead
         loop do
-          chunk = typed.empty? ? read_prompt_key : typed
-          typed = ""
-          return nil if chunk.nil? # read fault / dead pane: cancel
-          case edit_buffer(chunk, buf, fold_newlines: task, paste: task ? paste : nil)
+          result = if typed.empty?
+                     chunk = read_prompt_key or return nil # read fault / dead pane: cancel
+                     edit_buffer(chunk, buf, fold_newlines: task)
+                   else
+                     edit_items(typed, buf, fold_newlines: task, whole: true) # already framed and tokenized
+                   end
+          typed = []
+          case result
           when :cancel then return nil
           when :submit
             drain_input if task # whatever followed the ↵ in flight was never meant as keys
@@ -77,114 +77,116 @@ module Switchboard
       rescue StandardError
         nil
       ensure
-        print "\e[?2004l" if task
         print "\e[?25l"
       end
 
       # Keys already read past the one that opened the prompt fill it, but can't act on it:
       # only a ↵ read after the prompt is up may submit, so you always see what would run.
-      # So the batch stops at its first newline outside a paste, and the rest is dropped.
+      # So the batch stops at its first newline key (a pasted one is inside a Text), and the
+      # rest is dropped. A partial sequence still pending is the next read's to finish, unless
+      # the cut dropped the keys it followed.
       def take_typeahead
-        tokens = @typeahead.to_a.dup
+        items = @typeahead.to_a.dup
         @typeahead&.clear
-        carried = @pending.to_s
-        @pending = ""
-        in_paste = false
-        kept = tokens.take_while do |token|
-          in_paste = token == PASTE_START || (in_paste && token != PASTE_END)
-          in_paste || !["\r", "\n"].include?(token)
-        end
-        kept.size == tokens.size ? kept.join + carried : kept.join
+        kept = items.take_while { |item| !["\r", "\n"].include?(item) }
+        @pending = +"" if kept.size < items.size
+        kept
       end
 
       def display_text(buf, task)
         task ? buf.dup.force_encoding(Encoding::UTF_8).scrub("") : buf
       end
 
-      # Discard input already waiting (never blocks).
+      # Discard input already waiting (never blocks). The frame still sees it, so a paste cut
+      # off here doesn't leave its end marker to be read as keys later.
       def drain_input
-        loop { $stdin.read_nonblock(1024) }
+        @pending = +"" # what would have finished it was just discarded
+        loop do
+          chunk = $stdin.read_nonblock(Input::READ_BYTES)
+          @paste_frame.feed(chunk, full: chunk.bytesize >= Input::READ_BYTES)
+        end
       rescue IO::WaitReadable, EOFError, StandardError
         nil
       end
 
       # Fold one raw read into the prompt buffer, returning :submit / :cancel / :edit. A
-      # read arrives as a burst — a paste (the `a` clone URL / local path), or a fast
-      # key-repeat — so process it token by token the way the main loop's `handle`
-      # does (escape-led tokens are 3 bytes), NOT all-or-nothing: a pasted URL must
-      # land its printable bytes while an arrow burst ("\e[A") still drops whole rather
-      # than leaking "[A" into the name. Cooked `gets` buffered pastes for free; raw
-      # mode has to reassemble them here.
-      #
-      # With fold_newlines (the task prompt), text between bracketed-paste markers
-      # (`paste:` carries the in-a-paste state across reads) is literal: newlines fold
-      # to one space, nothing in it is a key. Outside a paste — a terminal without
-      # bracketed paste — a ↵ submits when it's the read's ONLY newline and its last
-      # byte (a lone ↵, or a fast last key + ↵ batched into one read); a read with
-      # several lines folds them too.
-      #
-      # A marker can straddle two reads (a paste longer than one read), so a read that
-      # ENDS in part of one holds that part back (`paste[:carry]`) for the next: a split
-      # end marker would otherwise leave the prompt in paste mode, swallowing ↵/Esc/^C.
-      # Outside a paste only a 3+ byte start (`\e[2`…) is held, so a lone Esc still
-      # cancels and `\e[` + ↵ still submits.
-      def edit_buffer(chunk, buf, fold_newlines: false, paste: nil)
-        rest = paste ? paste.delete(:carry).to_s + chunk.b : chunk.b
-        until rest.empty?
-          if paste&.fetch(:on)
-            text, sep, rest = rest.partition(PASTE_END)
-            text, paste[:carry] = held_marker(text, PASTE_END, 1) if sep.empty?
-            add_pasted(buf, text)
-            paste[:on] = false unless sep.empty?
-            next
-          end
-          keys, sep, rest = paste ? rest.partition(PASTE_START) : [rest, "", ""]
-          keys, paste[:carry] = held_marker(keys, PASTE_START, 3) if paste && sep.empty?
-          result = edit_keys(keys, buf, fold_newlines: fold_newlines)
-          return result unless result == :edit
+      # read arrives as a burst (a fast key-repeat, an unbracketed paste), so it's split by
+      # the terminal grammar the way `handle` splits it, NOT all-or-nothing: a typed URL lands
+      # its printable bytes while an arrow (`\e[A`, Ctrl-← `\e[1;5D`) drops whole rather than
+      # leaking `[A` into the name. A sequence split across reads is carried in @pending.
+      def edit_buffer(chunk, buf, fold_newlines: false)
+        full = chunk.bytesize >= Input::READ_BYTES
+        edit_items(@paste_frame.feed(chunk, full: full), buf, fold_newlines: fold_newlines, full: full)
+      end
 
-          paste[:on] = true unless sep.empty?
+      # Framed items: a Text is pasted text, a key string is keys. `whole` items are single
+      # tokens already (typeahead), so they're never re-split or joined to @pending.
+      def edit_items(items, buf, fold_newlines: false, full: false, whole: false)
+        items.each_with_index do |item, i|
+          result = if item.is_a?(PasteFrame::Text)
+                     @pending = +"" unless whole # a paste start cut it off (typeahead's was cut when it was framed)
+                     paste_notice(item, nil)
+                     add_pasted(buf, item.bytes, keep_high: fold_newlines)
+                     :edit
+                   elsif whole
+                     edit_tokens([item], buf, fold_newlines, false)
+                   else
+                     edit_keys(item, buf, fold_newlines: fold_newlines, full: full && i == items.size - 1)
+                   end
+          return result unless result == :edit
         end
         :edit
+      ensure
+        drop_c1(buf) if fold_newlines
       end
 
-      # [text, held]: the longest proper prefix of `marker` (at least `min` bytes) that
-      # `text` ends with is split off to wait for the rest of the marker.
-      def held_marker(text, marker, min)
-        (marker.length - 1).downto(min) do |k|
-          return [text[0...-k], marker[0, k]] if text.end_with?(marker[0, k])
-        end
-        [text, ""]
-      end
-
-      def edit_keys(chunk, buf, fold_newlines: false)
+      # Outside a paste (a terminal without bracketed paste) the task prompt folds newlines
+      # too, except a ↵ that is the key string's ONLY newline and its last byte (a lone ↵,
+      # or a fast last key + ↵ batched into one read). Judged on the string as the frame
+      # hands it over, so a ↵ typed right after a paste's end marker submits.
+      def edit_keys(chunk, buf, fold_newlines: false, full: false)
         typed_enter = chunk.match?(/\A[^\r\n]*(\r\n?|\n)\z/)
-        chunk = chunk.dup # slice! mutates; never consume the caller's (possibly frozen) read
-        until chunk.empty?
-          token = chunk.start_with?("\e") ? chunk.slice!(0, 3) : chunk.slice!(0, 1)
+        tokens, @pending = Input.tokenize(@pending.to_s + chunk, full: full)
+        edit_tokens(tokens, buf, fold_newlines, typed_enter)
+      end
+
+      def edit_tokens(tokens, buf, fold_newlines, typed_enter)
+        tokens.each do |token|
           if fold_newlines && !typed_enter && ["\r", "\n"].include?(token)
             fold_space(buf)
             next
           end
           case token
           when "\e", "\x03" then return :cancel  # bare Esc / Ctrl-C
-          when "\r", "\n"   then return :submit  # ↵ (a name prompt drops the rest of a paste, like gets; the task prompt folded it above)
+          when "\r", "\n"   then return :submit  # ↵ (a name prompt drops the rest of the read, like gets)
           when "\x7F", "\b" then backspace(buf, fold_newlines)
           when "\x15"       then buf.clear       # Ctrl-U: clear the line
-          else buf << token if printable?(token) || (fold_newlines && token.getbyte(0) >= 0x80)
+          else buf << token if printable?(token) || (fold_newlines && token.bytesize == 1 && token.getbyte(0) >= 0x80)
           end
         end
         :edit
       end
 
-      # Pasted text: printable and non-ASCII bytes land, newlines/tabs fold to a space,
-      # other control bytes (a stray escape) drop.
-      def add_pasted(buf, text)
+      # Pasted text: printable bytes land, newlines/tabs fold to a space, other control bytes
+      # (a stray escape) drop. Non-ASCII lands only where `keep_high` (names stay ASCII).
+      def add_pasted(buf, text, keep_high: false)
         text.each_byte do |b|
-          if b >= 0x80 || b.between?(0x20, 0x7E) then buf << b.chr
+          if b.between?(0x20, 0x7E) || (keep_high && b >= 0x80) then buf << b.chr
           elsif [0x0A, 0x0D, 0x09].include?(b) then fold_space(buf)
           end
         end
+      end
+
+      # C1 controls (U+0080-U+009F, `C2 80`-`C2 9F` in UTF-8) act on the terminal when the
+      # line is drawn. Run on the whole buffer, so a pair split across reads still goes, and
+      # as a stack, so removing one pair can't splice its neighbours into another (one linear
+      # pass, where stripping a pair at a time is quadratic on a nested run).
+      def drop_c1(buf)
+        return unless buf.force_encoding(Encoding::BINARY).match?(C1_PAIR)
+
+        kept = []
+        buf.each_byte { |b| b.between?(0x80, 0x9F) && kept.last == 0xC2 ? kept.pop : kept << b }
+        buf.replace(kept.pack("C*"))
       end
 
       def fold_space(buf)
@@ -206,13 +208,23 @@ module Switchboard
       # not as a swallowed control or a signal. nil on a dead pane (EOF) so prompt_line
       # cancels rather than spinning; a spurious select wakeup with nothing to read
       # retries rather than cancelling, matching read_key's no-op on the same race.
+      #
+      # While a paste is open (or a marker start held) the wait is capped at QUIET, so a lost
+      # end marker heals on silence and Esc and ↵ work again.
       def read_prompt_key
-        IO.select([$stdin]) # block until there's something to read
-        $stdin.read_nonblock(1024)
-      rescue IO::WaitReadable
-        retry
-      rescue EOFError
-        nil
+        loop do
+          if @paste_frame.idle?
+            IO.select([$stdin]) # block until there's something to read
+          elsif !IO.select([$stdin], nil, nil, PasteFrame::QUIET)
+            @paste_frame.expire
+            next
+          end
+          return $stdin.read_nonblock(Input::READ_BYTES)
+        rescue IO::WaitReadable
+          next
+        rescue EOFError
+          return nil
+        end
       end
 
       # Repaint the inline prompt on the bottom row and park a real cursor right after
@@ -282,18 +294,23 @@ module Switchboard
       #
       # Keys batched before the prompt appeared or behind its answer are dropped: they can't
       # answer something you hadn't seen, and they mustn't fire on the tree once it closes.
+      # A paste is no answer: it returns "", which every caller reads as no, and says so.
       def read_char(leaving_closes: false)
         @typeahead&.select! { |key| Input::POKE_BYTES.include?(key) }
         held = []
         after = []
         loop do
           chunk = read_prompt_key or return nil
-          tokens, @pending = Input.tokenize(@pending.to_s + chunk)
+          tokens = input_items(chunk)
           at = tokens.index { |t| !Input::POKE_BYTES.include?(t) || (leaving_closes && t == FOCUS_OUT) }
           next held.concat(tokens) unless at
 
           held.concat(tokens[0...at])
           after = tokens[(at + 1)..]
+          if tokens[at].is_a?(PasteFrame::Text)
+            paste_notice(tokens[at], ONE_KEY_PASTE_NOTICE)
+            return ""
+          end
           return tokens[at] unless tokens[at] == FOCUS_OUT
 
           after.unshift(FOCUS_OUT)
