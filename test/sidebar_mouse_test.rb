@@ -139,6 +139,46 @@ module Switchboard
       end
     end
 
+    # A click on the lit row, then the newer intent before its open runs.
+    def pending_open(sb)
+      light(sb, 1)
+      at(sb, 100.0)
+      sb.send(:handle, click(3))
+    end
+
+    def test_a_key_after_a_click_cancels_its_pending_open
+      sb = clicky(cursor: 1)
+      with_tmux do |log|
+        pending_open(sb)
+        sb.send(:handle, "j")
+        at(sb, 101.0)
+        sb.send(:open_due_click)
+        assert_empty log[:go]
+      end
+    end
+
+    def test_a_focus_out_cancels_a_pending_open
+      sb = clicky(cursor: 1)
+      with_tmux do |log|
+        pending_open(sb)
+        sb.send(:handle, "\e[O")
+        at(sb, 101.0)
+        sb.send(:open_due_click)
+        assert_empty log[:go]
+      end
+    end
+
+    # A prompt opened by a key is gone with the key; this is the loop held some other way.
+    def test_an_open_the_loop_reaches_late_is_dropped
+      sb = clicky(cursor: 1)
+      with_tmux do |log|
+        pending_open(sb)
+        at(sb, 100.0 + Sidebar::Mouse::CLICK_SETTLE + Sidebar::Mouse::PRESS_TTL + 0.1)
+        sb.send(:open_due_click)
+        assert_empty log[:go]
+      end
+    end
+
     def test_a_click_on_another_row_cancels_a_pending_open
       sb = clicky(cursor: 1)
       light(sb, 1)
@@ -515,6 +555,107 @@ module Switchboard
       assert_equal true, said
       with_reads(sb = sidebar, "\e", "[<0;5;3M", "y") { said = sb.send(:confirm, "delete x?") }
       assert_equal true, said, "a split report isn't an Esc"
+    end
+
+    # Value: protects=a click split by a full read types nothing in a real prompt; fails_when=
+    # whole_escape's completion read can't run against the real reads (escape_rest);
+    # why_new=with_reads stubs both reads; seam=none;
+    # no_claim=tmux's own write boundaries (a pipe stands in for the pty)
+    def test_a_click_split_by_a_full_read_types_nothing_through_the_real_reads
+      sb = sidebar
+      name = "a" * (Sidebar::Input::READ_BYTES - 1)
+      r, w = IO.pipe
+      w.write("#{name}#{click(12)}\r") # the first full read ends on the click's \e
+      result = nil
+      capture_stdout do
+        stub_method(sb, :winsize, ->(*) { [24, 40] }) do
+          with_stdin(r) { result = sb.send(:prompt_line, "name") }
+        end
+      end
+      assert_equal name, result
+    ensure
+      r&.close
+      w&.close
+    end
+
+    # Value: protects=the tree's read_key completes an escape a full read split, and a lone Esc or
+    # a dead pane doesn't hang it; fails_when=escape_rest stops reading the queued rest, blocks
+    # with nothing queued, or raises on EOF; why_new=tests stub escape_rest, and the wheel-flood
+    # test only counts renders; seam=none; no_claim=tmux's write boundaries (a pipe stands in)
+    def test_read_key_completes_a_split_escape_from_the_real_pipe
+      sb = sidebar
+      head = ("j" * (Sidebar::Input::READ_BYTES - 1)) + "\e"
+      [["#{head}[<0;5;3M", "#{head}[<0;5;3M", false], [head, head, false], [head, head, true]].each do |bytes, want, eof|
+        r, w = IO.pipe
+        w.write(bytes)
+        w.close if eof
+        with_stdin(r) { assert_equal want, sb.send(:read_key), "#{bytes.bytesize} bytes, eof: #{eof}" }
+      ensure
+        r&.close
+        w&.close unless w&.closed?
+      end
+    end
+
+    # Value: protects=a held open whose row is gone by its settle does nothing; fails_when=the
+    # missing-row guard goes, so @cursor turns nil and enter runs on nothing (or a stale row);
+    # why_new=every held-open test keeps the row; seam=none; no_claim=a real rebuild (rows set directly)
+    def test_a_held_open_whose_row_vanished_does_nothing
+      sb = clicky(cursor: 1)
+      light(sb, 1)
+      with_tmux do |log|
+        at(sb, 100.0)
+        sb.send(:handle, click(3))
+        sb.instance_variable_set(:@nodes, [proj("app"), ws("b")]) # a deleted between press and settle
+        sb.send(:recompute_rows)
+        at(sb, 101.0)
+        sb.send(:open_due_click)
+        assert_empty log[:go]
+        assert_nil sb.instance_variable_get(:@mouse_open)
+        assert_equal "b", current_node(sb).name
+      end
+    end
+
+    # Value: protects=the hit test maps a screen line to the row render painted there, scrolled or
+    # not, and only a focused sidebar's bar counts as lit; fails_when=@painted_top or the slice drift
+    # from what's drawn, or the focus gate on @painted_bar goes; why_new=other tests set these ivars by
+    # hand; seam=none; no_claim=tmux's pane offset (smoke)
+    def test_render_records_what_it_painted_on_each_line
+      nodes = [proj("app"), *%w[a b c d e f].map { |n| ws(n) }]
+      [[30, 1], [6, 6]].each do |rows, cursor|
+        sb = sidebar(nodes: nodes, cursor: cursor)
+        out = nil
+        stub_method(sb, :winsize, ->(*) { [rows, 40] }) { out = capture_stdout { sb.send(:render) } }
+        painted = out.scan(/\e\[(\d+);1H\e\[K((?:(?!\e\[\d+;1H).)*)/m).to_h { |y, text| [y.to_i, strip_ansi(text).strip] }
+        hits = painted.filter_map do |y, text|
+          node = rows_of(sb).find { |n| row_key(sb, n) == sb.send(:row_key_at, y) } or next
+          assert_equal (node.kind == "proj" ? "▾ #{node.project}" : node.name), text, "line #{y} (#{rows} rows)"
+        end
+        assert_operator hits.size, :>=, 3, "rows were hit (#{rows} rows)"
+        assert_operator sb.instance_variable_get(:@offset), :>, 0 if rows == 6
+        assert_equal row_key(sb, current_node(sb)), sb.instance_variable_get(:@painted_bar)
+      end
+      sb = sidebar(nodes: nodes, cursor: 1, focused: false)
+      stub_method(sb, :winsize, ->(*) { [30, 40] }) { capture_stdout { sb.send(:render) } }
+      assert_nil sb.instance_variable_get(:@painted_bar), "an unfocused sidebar shows no bar to click"
+    end
+
+    def row_key(sb, node) = sb.send(:row_key, node)
+
+    # Value: protects=a sidebar_mouse edit reaches a visible sidebar at its next rebuild, never a
+    # hidden one; fails_when=rebuild stops syncing, syncs before refresh_config, or writes to a
+    # hidden pane; why_new=sync tests call sync_mouse directly; seam=none; no_claim=tmux's mouse (stubbed)
+    def test_a_rebuild_applies_a_sidebar_mouse_edit_only_while_visible
+      repo = temp_git_repo("app")
+      File.write(Config.path, YAML.dump("projects" => [{ "name" => "app", "path" => repo }], "sidebar_mouse" => false))
+      [[true, true], [false, false]].each do |visible, writes|
+        sb = sidebar(nodes: [])
+        sb.instance_variable_set(:@config, Config.new)
+        sb.instance_variable_set(:@mouse, true)
+        sb.instance_variable_set(:@visible, visible)
+        out = stub_method(Tmux, :mouse?, ->(*) { true }) { capture_stdout { sb.send(:rebuild) } }
+        assert_equal writes, out.include?(Sidebar::Mouse::MOUSE_OFF), "visible: #{visible}"
+        assert_equal !writes, sb.instance_variable_get(:@mouse), "visible: #{visible}"
+      end
     end
 
     def test_escape_tail_spots_the_start_of_an_escape

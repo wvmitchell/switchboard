@@ -231,16 +231,6 @@ module Switchboard
       # already queued, so a split click can't type its tail and a split \e isn't an Esc. A
       # lone \e with nothing after it is the Esc key.
       def whole_escape(chunk)
-        while chunk && Input.escape_tail?(chunk) && (more = read_prompt_key(timeout: Input::ESCAPE_WAIT))
-          chunk = chunk.b + more.b
-        end
-        chunk
-      end
-
-      # A read that stops inside an escape (Input.escape_tail?) gets the rest, which tmux has
-      # already queued, so a split click can't type its tail and a split \e isn't an Esc. A
-      # lone \e with nothing after it is the Esc key.
-      def whole_escape(chunk)
         while chunk && Input.escape_tail?(chunk) && (more = escape_rest)
           chunk = chunk.b + more.b
         end

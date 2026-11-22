@@ -208,6 +208,7 @@ module Switchboard
       def dispatch(key)
         return pasted(key) if key.is_a?(PasteFrame::Text) # before any overlay: a paste is never a key
         return mouse(key) if Mouse.report?(key) # never a key: can't close an overlay or reach a search
+        @mouse_open = nil unless POKE_BYTES.include?(key) # a key after a click is the newer intent
         return link_view_key(key) if @link_view # p overlay is open: Tab/←/→ act, pokes run, other keys close
         return help_key(key) if @help     # ? overlay is open: a real key closes it, pokes pass through
         return search_key(key) if @search.typing? # typing a / search swallows the normal bindings
@@ -300,6 +301,7 @@ module Switchboard
           @focused = false
           @count = nil
           @mouse_press = nil # a release now would be from a drag that left the pane
+          @mouse_open = nil  # you left before the click's open ran
         end
         true
       end

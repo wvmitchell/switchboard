@@ -170,7 +170,7 @@ module Switchboard
       result = nil
       capture_stdout do # swallow prompt_line's ensure cursor-restore escape
         stub_method(sb, :draw_prompt, ->(*) {}) do
-          stub_method(sb, :read_prompt_key, ->(**) { keys.shift }) do
+          stub_method(sb, :read_prompt_key, -> { keys.shift }) do
             result = sb.send(:prompt_line, "name")
           end
         end

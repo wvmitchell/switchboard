@@ -691,7 +691,8 @@ next section) don't open it again, so a triple-click can't fold a project and un
 
 It opens the row the press found, not whatever is on that line by the release: a reload can
 repaint the tree in between, and the click must not land somewhere else. A click on another
-row while an open is pending cancels it and selects that row instead.
+row while an open is pending cancels it and selects that row instead, and so does any key
+you press or leaving the pane: whatever you did after the click is what you meant.
 
 Finding the row uses the frame the sidebar last painted: which rows were on screen and how
 many header lines sat above them. A click on the header, the footer or the blank space below
