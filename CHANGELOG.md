@@ -10,6 +10,28 @@ worktrees' hooks too. See the "Upgrading" section in the README.
 Issue and PR numbers cited for v0.49.1 and earlier (and in older code comments)
 refer to the project's earlier, private repository; the public tracker starts at #1.
 
+## [0.84.0] — Click a sidebar row to pick it, click again to open it (2026-11-22)
+
+### Added
+- With tmux's `mouse` on, the sidebar takes clicks. A left click selects a row, so `r`,
+  `p` and `↵` act on it. A click on the row that's already highlighted does what `↵` does
+  (switches to the workspace or branch, or folds the project), so a double-click on any
+  row opens it too. The `?` overlay lists `click  select; again = ↵`.
+- An open waits about a third of a second after your last click, so tmux's own
+  double-click handling runs first and focus lands on the agent you opened, not on the new
+  session's sidebar. A key you press or leaving the pane in that moment cancels it.
+- `switchboard doctor` prints a `sidebar clicks` line. It says whether clicks are on, which
+  switch turned them off, and any `sb/` session whose own `mouse` setting differs from the
+  global one.
+- A `sidebar_mouse` config key (default `true`). Set `sidebar_mouse: false` to get the
+  old sidebar back: no clicks, and its text selects natively, while the rest of tmux keeps
+  the mouse.
+
+### Changed
+- While clicks are on, the mouse wheel over the sidebar does nothing instead of scrolling
+  it into copy-mode, and dragging there no longer selects text. Your terminal's selection
+  modifier (often ⌥ or ⇧) still selects. `sidebar_mouse: false` restores both.
+
 ## [0.83.1] — A paste is never keys in the sidebar (2026-11-22)
 
 ### Fixed
