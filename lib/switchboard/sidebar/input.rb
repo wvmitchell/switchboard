@@ -121,7 +121,6 @@ module Switchboard
       # cleanly instead of busy-spinning forever on a dead pty; nil when select woke
       # us spuriously with nothing to read (treated as no key).
       def read_key
-        @read_at = monotonic
         buf = $stdin.read_nonblock(READ_BYTES)
         while Input.escape_tail?(buf) && IO.select([$stdin], nil, nil, ESCAPE_WAIT)
           more = $stdin.read_nonblock(READ_BYTES, exception: false)
@@ -162,7 +161,6 @@ module Switchboard
       def handle(buf)
         tokens, @pending = Input.tokenize(@pending + buf.to_s)
         @idle_read = !tokens.empty? && tokens.all? { |t| ignored_report?(t) }
-        @click_batch = {}
         @typeahead = tokens
         while (t = @typeahead.shift)
           was_open = overlay_open?
@@ -278,6 +276,7 @@ module Switchboard
       # poked switch-in already set @visible=true, so reappeared is false — no double.
       def focus_in
         @focused = true
+        @focused_at = monotonic
         reappeared = !@visible
         set_visible(true)
         reload(announce_sounds: false) if reappeared

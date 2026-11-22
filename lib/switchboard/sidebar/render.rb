@@ -282,6 +282,7 @@ module Switchboard
         visible = @rows[@offset, height].to_a
         @visible_rows = visible # the on-screen slice — pulsing? animates only for these
         @painted_top = top      # rows sit on lines top+1.. (a click's hit test)
+        @painted_bar = (row_key(current) if @focused && current) # a click here opens it
         adds_w, dels_w, pr_w = column_widths(@rows) # fixed columns, measured once (#118)
         out = +"\e[H"
         head.each_with_index do |text, i|
@@ -502,7 +503,7 @@ module Switchboard
         return rows unless @mouse
 
         at = rows.index { |key, _| key == "↵" }
-        at ? rows.dup.insert(at + 1, ["click", "same as ↵"]) : rows
+        at ? rows.dup.insert(at + 1, ["click", "select; again = ↵"]) : rows
       end
 
       # Help's glyph legend: one row per glyph, laid out like the key rows (glyph in the

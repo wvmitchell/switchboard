@@ -108,8 +108,8 @@ in the running server — the "prefix-s stopped working after a `git pull`" case
 
 ## Clicking rows
 
-A left click on a sidebar row does what `↵` does: it switches to the workspace or folds the
-project. It needs tmux's own mouse support on. To check, from any pane of the sidebar's
+A left click on a sidebar row selects it, and a click on the row that's already highlighted
+(so a double-click too) does what `↵` does: it switches to the workspace or folds the project. It needs tmux's own mouse support on. To check, from any pane of the sidebar's
 session:
 
 ```sh
@@ -126,8 +126,8 @@ set -g mouse on
 tmux source-file ~/.tmux.conf
 ```
 
-A working click moves the highlight to the row on press and opens it on release; the `?`
-overlay lists `click  same as ↵`, and `switchboard doctor` prints a `sidebar clicks:` line.
+A working click moves the highlight to the row, and a second click opens it; the `?` overlay
+lists `click  select; again = ↵`, and `switchboard doctor` prints a `sidebar clicks:` line.
 
 To turn clicks off for the sidebar only (so its text selects natively and the wheel scrolls
 it again), put `sidebar_mouse: false` in your config. `set -g mouse off` turns the mouse off

@@ -101,8 +101,7 @@ The ones that broke something before. Each doc above explains why.
 - **Hook commands print only JSON or nothing, and exit 0** (`rename-nudge`): a stray byte
   poisons Claude.
 - **Cross-version contracts**: a newer sidebar accepts every older resume payload;
-  `@sb_reload`, `@sb_reload_failed`, `@sb_caps`, `@sb_click_switch` (a session option holding a
-  monotonic float) and `SIGUSR1` never change meaning; `Creation`
+  `@sb_reload`, `@sb_reload_failed`, `@sb_caps` and `SIGUSR1` never change meaning; `Creation`
   records stay readable by older launchers. New `Keymap::ACTIONS` go LAST.
 
 ## Upstream contracts, last verified

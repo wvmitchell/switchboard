@@ -991,7 +991,7 @@ module Switchboard
                                                   "worktree_creation_command" => "bundle install" }] },
                                nodes: [proj("app"), ws("a", path: "/wt/a")])
       captured = :unset
-      stub_method(Tmux, :go, ->(_wt, start:, **) { captured = start }) do
+      stub_method(Tmux, :go, ->(_wt, start:) { captured = start }) do
         sb.send(:switch, ws("a", path: "/wt/a"))
       end
       assert_equal "claude", captured, "switching into an existing workspace must not re-run setup"
@@ -1003,7 +1003,7 @@ module Switchboard
                                  "projects" => [{ "name" => "app", "path" => "/p" }] },
                                nodes: [proj("app"), ws("a", path: "/wt/a")])
       captured = :unset
-      stub_method(Tmux, :go, ->(_wt, start:, **) { captured = start }) do
+      stub_method(Tmux, :go, ->(_wt, start:) { captured = start }) do
         sb.send(:switch, ws("a", path: "/wt/a"))
       end
       assert_equal "claude --model opus", captured.strip, "no literal {task} reaches the shell"
@@ -1083,7 +1083,7 @@ module Switchboard
       Creation.mark_failed(rec["id"], "setup", 1, from: "launching")
       sb.send(:index_creations, Creation.all)
       captured = :unset
-      stub_method(Tmux, :go, ->(_wt, start:, **) { captured = start }) { sb.send(:switch, ws("a", path: "/wt/a")) }
+      stub_method(Tmux, :go, ->(_wt, start:) { captured = start }) { sb.send(:switch, ws("a", path: "/wt/a")) }
       refute_includes captured, "claude"
       assert_equal ["echo", "switchboard: setup did not succeed (setup exit 1), so switchboard won't start the agent here; finish setup and start it by hand, or press d on the row"],
                    Shellwords.split(captured)
@@ -1100,7 +1100,7 @@ module Switchboard
       Creation.cancel_all
       sb.send(:index_creations, Creation.all)
       captured = :unset
-      stub_method(Tmux, :go, ->(_wt, start:, **) { captured = start }) { sb.send(:switch, ws("a", path: "/wt/a")) }
+      stub_method(Tmux, :go, ->(_wt, start:) { captured = start }) { sb.send(:switch, ws("a", path: "/wt/a")) }
       assert_equal "claude", captured
     end
 
@@ -1115,7 +1115,7 @@ module Switchboard
       Creation.cancel_all
       sb.send(:index_creations, Creation.all)
       captured = :unset
-      stub_method(Tmux, :go, ->(_wt, start:, **) { captured = start }) { sb.send(:switch, ws("a", path: "/wt/a")) }
+      stub_method(Tmux, :go, ->(_wt, start:) { captured = start }) { sb.send(:switch, ws("a", path: "/wt/a")) }
       refute_includes captured, "claude"
       assert_equal ["echo", Creation.notice(:reentry_canceled)], Shellwords.split(captured)
     end
@@ -1131,7 +1131,7 @@ module Switchboard
         Creation.transition(rec["id"], from: :queued, to: state, worktree_added: true)
         sb.send(:index_creations, Creation.all)
         captured = :unset
-        stub_method(Tmux, :go, ->(_wt, start:, **) { captured = start }) { sb.send(:switch, ws("a", path: "/wt/a")) }
+        stub_method(Tmux, :go, ->(_wt, start:) { captured = start }) { sb.send(:switch, ws("a", path: "/wt/a")) }
         assert_equal ["echo", Creation.notice(:reentry_building)], Shellwords.split(captured), state
       end
     end

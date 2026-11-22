@@ -40,7 +40,6 @@ module Switchboard
                    # pane). Long enough that a dormant pane costs ~one tmux call/8s,
                    # short enough that an uncovered switch-in still self-heals fast.
     TREE_TICKS = 5 # rebuild the whole tree every Nth tick (~15s) while visible
-    QUEUED_WAIT = 0.005 # a select returning sooner found input already queued (stamp_wake)
     PULSE = 0.12   # animation frame cadence while a dot is on screen (drives the spinner/blink)
     VIS_POLL = 2   # while pulsing, re-check visibility this often (s) so a pane that
                    # went off-screen stops fast-spinning within ~VIS_POLL instead of
@@ -144,10 +143,11 @@ module Switchboard
                            # after the input burst drains, so a held key stays smooth
       @mouse = nil         # mouse reports on in this pane? nil until the first sync_mouse
       @mouse_press = nil   # [row_key, line, monotonic] of a left press awaiting its release
-      @mouse_quiet = nil   # [line, deadline]: a click acted there, so a double-click's tail drops
+      @mouse_click = nil   # [row_key, line, deadline]: the last click, which a second one opens
+      @mouse_open = nil    # [row_key, at]: a click's open, held until tmux's double-click has run
+      @painted_bar = nil   # the row_key render last lit with the cursor bar (nil unfocused)
+      @focused_at = nil    # monotonic of the last focus-in
       @painted_top = nil   # the header height render last painted rows under (hit tests)
-      @read_at = nil       # monotonic of the last stdin read
-      @input_since = nil   # earliest that read's bytes could have arrived (see click_switch_tail?)
       @idle_read = false   # the last read held only reports that can't act: skip its repaint
       @visible = false     # is this pane currently on screen? gates render + pulse;
                            # the single source of truth, mutated only via set_visible
@@ -210,13 +210,12 @@ module Switchboard
       @last_scan = monotonic
       loop do
         maybe_reexec # returns only when no reload is due (or it failed safe)
+        open_due_click
         render if @visible && !@idle_read # never paint a hidden pane
         # Wake often enough to animate the spinner/blink, but only while a dot is
         # on screen; otherwise sit on the slow REFRESH/IDLE interval. State scans
         # stay gated to REFRESH (scan_due?) so the fast frames don't hammer tmux.
-        waited_from = monotonic
         if (ready = IO.select([$stdin, @reloader.wake_r].compact, nil, nil, frame_timeout))
-          stamp_wake(waited_from)
           @reloader.drain_wake if ready.first.include?(@reloader.wake_r)
           next unless ready.first.include?($stdin)
 
@@ -232,7 +231,6 @@ module Switchboard
           end
         else
           @idle_read = false
-          @woke_at = monotonic
           @pulse += 1
           # While pulsing we wake ~8x/s; re-check visibility a little faster than a
           # full scan so a pane that just went off-screen stops fast-spinning (and
@@ -245,15 +243,6 @@ module Switchboard
       teardown
     end
 
-    # Bytes ready the moment select was called queued while the loop was busy, so they may
-    # have arrived any time since the last wake; otherwise they arrived just now.
-    def stamp_wake(waited_from)
-      woke = monotonic
-      @input_since = woke - waited_from < QUEUED_WAIT ? (@woke_at || 0.0) : woke
-      @woke_at = woke
-    end
-    private :stamp_wake
-
     def frame_timeout
       timeout = if pulsing? then PULSE
                 elsif @visible then REFRESH
@@ -262,9 +251,8 @@ module Switchboard
       # Wake for a spread-out reload, but never while an overlay blocks it: a passed
       # deadline would make every select return at once (R8). Closing it is a key.
       wait = @reloader.reexec_wait
-      return timeout unless wait && reexec_allowed?
-
-      [timeout, wait].min
+      timeout = [timeout, wait].min if wait && reexec_allowed?
+      [timeout, mouse_open_wait].compact.min # a click's open waiting out tmux's (Mouse)
     end
 
     # A thinking/waiting dot is actually on screen and worth animating. Gated on

@@ -6,32 +6,37 @@ module Switchboard
   # A click on a sidebar row, through a real tmux and the PTY client: what the unit suite
   # stubs (tmux turning the bytes into a report, the pane's modes, the switch) all run here.
   class MouseSmokeTest < SmokeCase
-    # Value: protects=the end-to-end click on a real tmux; fails_when=modes aren't enabled, the
-    # hit test is off by the header or status line, or dispatch is wrong; why_new=unit tests stub
-    # tmux; seam=none; no_claim=real terminals (checked by hand in the sandbox)
-    def test_a_click_on_a_workspace_row_switches_the_client_there
+    # Value: protects=the end-to-end click and double-click on a real tmux; fails_when=modes
+    # aren't enabled, the hit test is off by the header or status line, a selecting click opens,
+    # or the double-click misses; why_new=unit tests stub tmux; seam=none; no_claim=real
+    # terminals and a real mouse's timing (checked by hand in the sandbox)
+    def test_a_click_selects_and_a_double_click_switches_there
       home = mouse_on # before the workspace's sidebar starts, as it would be for a real user
       sess = create_workspace
-      click_row(home, sess)
-      wait_until("the click switches the client to #{sess}") { client_session == sess }
+      x, y = click_row(home, sess)
+      sleep 0.8 # past the double-click window
+      assert_equal HOME, client_session, "one click only selects"
+      click_at(x, y)
+      sleep 0.15
+      click_at(x, y)
+      wait_until("the double-click switches the client to #{sess}") { client_session == sess }
       sleep 0.3
       assert_equal work_pane_id(sess), tmux("display-message", "-p", "-t", sess, fmt("pane_id")).strip, "focus on the agent"
     end
 
-    # Value: protects=typing after a double-click goes to the agent, not the tree; fails_when=
-    # a guarded drop doesn't hand focus back; why_new=new guard; seam=none; no_claim=a real
-    # mouse's double-click timing (sandbox checklist)
-    def test_a_double_click_leaves_focus_on_the_work_pane
+    # Value: protects=one click on the highlighted row opens it; fails_when=the bar isn't
+    # recorded or the hit misses it; why_new=the double-click test always starts unlit;
+    # seam=none; no_claim=real terminals
+    def test_a_click_on_the_highlighted_row_switches_there
       home = mouse_on
       sess = create_workspace
-      target = sidebar_pane_ids(sess).first
-      wait_until("#{sess}'s sidebar asks for mouse reports") { modes(target) == "11" }
       x, y = click_row(home, sess)
-      wait_until("the client lands on #{sess}", interval: 0.01) { client_session == sess }
-      @pty_in.write("\e[<0;#{x};#{y}M\e[<0;#{x};#{y}m") # the second half, as the switch lands
-      sleep 0.6 # let both clicks settle
-      assert_equal work_pane_id(sess), tmux("display-message", "-p", "-t", sess, fmt("pane_id")).strip
-      assert_equal 1, sb_sessions.count { |s| s.start_with?("sb/proj/") }, "one workspace, nothing else opened"
+      sleep 0.8 # the selecting click is long done, and the bar is painted on the row
+      assert_equal HOME, client_session, "the first click only selects"
+      click_at(x, y)
+      wait_until("one click on the lit row switches the client to #{sess}") { client_session == sess }
+      sleep 0.3
+      assert_equal work_pane_id(sess), tmux("display-message", "-p", "-t", sess, fmt("pane_id")).strip, "focus on the agent"
     end
 
     # Value: protects=the wheel over the sidebar doesn't freeze it in copy-mode; fails_when=the
@@ -82,11 +87,13 @@ module Switchboard
       [left + col + 1, top + line + 1]
     end
 
-    def click_row(pane, sess, times: 1)
+    def click_at(x, y) = @pty_in.write("\e[<0;#{x};#{y}M\e[<0;#{x};#{y}m")
+
+    def click_row(pane, sess)
       name = sess.delete_prefix("sb/proj/")
       line = wait_until("#{name}'s row is painted") { capture(pane).lines.index { |l| l.include?(name) } }
       x, y = client_xy(pane, 4, line)
-      @pty_in.write("\e[<0;#{x};#{y}M\e[<0;#{x};#{y}m" * times)
+      click_at(x, y)
       [x, y]
     end
   end

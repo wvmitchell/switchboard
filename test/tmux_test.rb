@@ -981,57 +981,11 @@ module Switchboard
       end
     end
 
-    def go_with(name:, set:, early: false)
-      wt = Worktree.new(project: "app", path: "/wt/feat")
-      stub_method(Tmux, :session_for_switch, ->(_w) { early ? nil : name }) do
-        stub_method(Tmux, :has_session?, ->(_n) { true }) do
-          stub_method(Tmux, :ensure_session, ->(*) {}) do
-            stub_method(Tmux, :ensure_sidebar, ->(*) {}) do
-              stub_method(Tmux, :focus_work, ->(*) {}) do
-                stub_method(Tmux, :switch, ->(n) { set << [:switch, n] }) do
-                  stub_method(Tmux, :pin, ->(*) {}) do
-                    stub_method(Tmux, :window_sidebar_pane, ->(*) { nil }) { yield wt }
-                  end
-                end
-              end
-            end
-          end
-        end
-      end
-    end
-
-    # Value: protects=the double-click guard reads the session the client lands in; fails_when=
-    # the stamp uses the expected name, or lands after the switch; seam=none (tmux stubbed);
-    # no_claim=real tmux (smoke)
-    def test_a_click_switch_stamps_the_resolved_session_just_before_switching
-      log = []
-      stub_method(Tmux, :stamp_click, ->(n) { log << [:stamp, n] }) do
-        go_with(name: "sb/app/healed", set: log) { |wt| Tmux.go(wt, click_stamp: true) }
-        go_with(name: "sb/app/healed", set: log) { |wt| Tmux.go(wt) }
-        go_with(name: nil, set: log, early: true) { |wt| Tmux.go(wt, click_stamp: true) }
-      end
-      assert_equal [[:stamp, "sb/app/healed"], [:switch, "sb/app/healed"], [:switch, "sb/app/healed"]], log
-    end
-
-    def test_a_failed_stamp_still_switches
-      log = []
-      stub_method(Tmux, :system, ->(*, **) { false }) do
-        go_with(name: "sb/app/x", set: log) { |wt| Tmux.go(wt, click_stamp: true) }
-      end
-      assert_equal [[:switch, "sb/app/x"]], log
-    end
-
     def test_mouse_is_on_only_for_a_one
       { "1\n" => true, "0\n" => false, "" => false, nil => false }.each do |out, on|
         stub_method(Tmux, :query, ->(*) { out }) { assert_equal on, Tmux.mouse?("%1"), out.inspect }
       end
       refute Tmux.mouse?(nil), "outside tmux"
-    end
-
-    def test_the_click_marker_reads_a_float_or_nothing
-      { "123.5\n" => 123.5, "\n" => nil, "junk" => nil, nil => nil }.each do |out, want|
-        stub_method(Tmux, :query, ->(*) { out }) { assert_equal want, Tmux.click_switch_at("%1"), out.inspect }
-      end
     end
 
     def test_mouse_states_name_the_sessions_that_override_the_global_value

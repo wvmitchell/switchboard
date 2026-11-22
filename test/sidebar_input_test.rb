@@ -317,7 +317,7 @@ module Switchboard
       sb = sidebar(nodes: [proj("app"), ws("a", path: "/wt/a")], cursor: 1)
       sb.instance_variable_set(:@config, Config.new)
       switched = nil
-      stub_method(Tmux, :go, ->(worktree, start:, **) { switched = worktree.path }) do
+      stub_method(Tmux, :go, ->(worktree, start:) { switched = worktree.path }) do
         sb.send(:dispatch, "\r")
       end
       assert_equal "/wt/a", switched, "↵ still switches regardless of any remap"
