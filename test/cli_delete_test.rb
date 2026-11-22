@@ -980,7 +980,7 @@ module Switchboard
     def test_doctor_names_an_interrupted_delete_still_listed
       live_receipt(pid: dead_pid)
       out = capture_io { Doctor.doctor_leftovers(Config.new) }.first
-      assert_includes out, "interrupted delete of #{@wt} — run `switchboard delete app/feat` to finish it"
+      assert_includes out, "interrupted delete of app/feat (~/worktrees/app/feat) — run `switchboard delete app/feat` to finish it"
     end
 
     # --- after the session closes -------------------------------------------------------
